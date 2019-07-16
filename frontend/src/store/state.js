@@ -1,0 +1,25 @@
+const state = {
+  token: null,
+  isAddBoard: false,
+  isAddTeam: false,
+  isShowBoardSettings: false,
+  isShowCode: false,
+  isShowCalendar: false,
+  user: {},
+  teams: [],
+  entireTeams: [],
+  team: {},
+  boards: [],
+  teamBoards: [],
+  board: {},
+  card: {},
+  entireBoards: [],
+  searchResult: [],
+  yuList:[],
+  bodyColor: '#6281B8',
+  navbarColor: '#6281B8',
+  messages: [],
+  socket: null,
+}
+
+export default state
