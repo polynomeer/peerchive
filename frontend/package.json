@@ -10,7 +10,7 @@
     "build": "cross-env NODE_ENV=production webpack --progress --hide-modules"
   },
   "dependencies": {
-    "axios": "^0.18.1",
+    "axios": "^0.21.2",
     "chart.js": "^2.9.4",
     "cheerio": "^1.0.0-rc.3",
     "cheerio-httpcli": "^0.7.4",
