@@ -4,7 +4,6 @@ const Op = Sequelize.Op
 const sequelize = new Sequelize(
   // dialect: 'sqlite',
   // storage: './db-dev.sqlite',
-  // // https://github.com/sequelize/sequelize/issues/8417
   // operatorsAliases: Sequelize.Op,
   // logging: console.log
   {

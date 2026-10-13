@@ -10,9 +10,27 @@ def git(*args):
 data = json.loads((ROOT / 'docs/history-map.json').read_text())
 assert git('rev-parse', data['backup_branch']) == data['original_head']
 assert git('rev-parse', data['milestones'][-1]['commit'] + '^{tree}') == git('rev-parse', data['original_base'] + '^{tree}')
-original = [line for line in git('ls-tree', '-r', data['original_head']).splitlines() if not line.endswith('\tREADME.md')]
-current = set(git('ls-tree', '-r', 'HEAD').splitlines())
-assert set(original) <= current, 'An original tracked file changed or disappeared'
+# Verify the immutable archive separately from the authorized working-tree cleanup.
+archive_tip = data['preserved_commits'][-1]['new']
+assert git('rev-parse', archive_tip + '^{tree}') == git('rev-parse', data['original_head'] + '^{tree}')
+original = {}
+for line in git('ls-tree', '-r', data['original_head']).splitlines():
+    metadata, path = line.split('\t', 1)
+    original[path] = metadata.split()[2]
+cleanup = json.loads((ROOT / 'docs/archive-cleanup.json').read_text())
+allowed = {}
+for change in cleanup['changes']:
+    path = change['path']
+    assert path not in allowed, 'Duplicate cleanup entry: ' + path
+    assert original.get(path) == change['original_blob'], 'Cleanup baseline mismatch: ' + path
+    allowed[path] = change['cleaned_blob']
+for path, blob in original.items():
+    if path == 'README.md':
+        continue  # Root project documentation is maintained separately.
+    expected = allowed.get(path, blob)
+    actual = subprocess.check_output(['git', 'hash-object', '--stdin'], cwd=ROOT,
+                                     input=(ROOT / path).read_bytes()).decode().strip()
+    assert actual == expected, 'Unexpected working-tree change: ' + path
 files = [p for m in data['milestones'] for p in m['files']]
 assert len(files) == len(set(files)), 'Duplicate milestone assignment'
 assert set(files) == set(git('ls-tree', '-r', '--name-only', data['original_base']).splitlines())
@@ -47,5 +65,5 @@ for item in data['preserved_commits']:
     ) + b'\n\n' + body
     assert objects[item['new']] == expected, item['old']
 assert git('merge-base', '--is-ancestor', data['preserved_commits'][-1]['new'], 'HEAD') == ''
-print(f"PASS: {len(files)} archive files, {len(data['milestones'])} dated milestones, {len(data['preserved_commits'])} preserved commits; original blobs and merge metadata match.")
+print(f"PASS: {len(files)} archive files, {len(data['milestones'])} dated milestones, {len(data['preserved_commits'])} preserved commits; archived original blobs and merge metadata match; working-tree files match the approved cleanup.")
 print('Known runtime blocker: backend/api/user.js is absent. Runtime/build success is not asserted.')

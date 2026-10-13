@@ -91,11 +91,6 @@
 </template>
 <script>
 import {mapState, mapMutations, mapActions} from 'vuex'
-// import chatIcon from 'vue-beautiful-chat/src/assets/chat-icon.svg'
-// import CloseIcon from 'vue-beautiful-chat/src/assets/close-icon.png'
-// import OpenIcon from 'vue-beautiful-chat/src/assets/logo-no-bg.svg'
-// import FileIcon from 'vue-beautiful-chat/src/assets/file.svg'
-// import CloseIconSvg from 'vue-beautiful-chat/src/assets/close.svg'
 import chatIcon from '../assets/images/chat-icon.svg'
 import CloseIcon from '../assets/images/close-icon.png'
 import OpenIcon from '../assets/images/logo-no-bg.svg'
@@ -150,7 +145,7 @@ export default {
         }
       }, // specifies the color scheme for the component
       alwaysScrollToBottom: false, // when set to true always scrolls the chat to the bottom when new events are in (new message, user starts typing...)
-      messageStyling: true, // enables *bold* /emph/ _underline_ and such (more info at github.com/mattezza/msgdown)
+      messageStyling: true,
       showTeamList: true,
       inUserList: false,
       isOpen: false,

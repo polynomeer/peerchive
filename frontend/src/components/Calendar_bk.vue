@@ -24,13 +24,6 @@
             DaySpan
           </template>
 
-          <!-- <template slot="menuRight">
-            <v-btn icon large href="https://github.com/ClickerMonkey/dayspan-vuetify" target="_blank">
-              <v-avatar size="32px" tile>
-                <img src="https://simpleicons.org/icons/github.svg" alt="Github">
-              </v-avatar>
-            </v-btn>
-          </template> -->
 
           <template slot="eventPopover" slot-scope="slotData">
              <ds-calendar-event-popover

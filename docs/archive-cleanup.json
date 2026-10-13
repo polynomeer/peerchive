@@ -1,0 +1,41 @@
+{
+  "date": "2026-10-13",
+  "scope": "Remove unused comments, external example links, and demo setup only; retain dependencies, required license notices, history, and backups.",
+  "changes": [
+    {
+      "path": "backend/index.js",
+      "original_blob": "53be95d83e772d0c0039658d9952b2c864936a79",
+      "cleaned_blob": "4fc59e25133ce0191af23dff546ece40a0aafb72"
+    },
+    {
+      "path": "backend/models.js",
+      "original_blob": "6de00cc27fb1a076fa32fc84a89d9ece72921f80",
+      "cleaned_blob": "1921213762ba54c787623a0f732af97967c14613"
+    },
+    {
+      "path": "frontend/README.md",
+      "original_blob": "77667ccfcc5383c4598c5281f59f0f8b52ac9579",
+      "cleaned_blob": "62536380cbbacecf895459b5c152eedb1eb29db3"
+    },
+    {
+      "path": "frontend/src/components/Calendar.vue",
+      "original_blob": "0583e86cb6feefcb770733a7f5a5406389fd812e",
+      "cleaned_blob": "4ac25b81e5cca9ed51aa61c35324ae44031b0b8b"
+    },
+    {
+      "path": "frontend/src/components/Calendar_bk.vue",
+      "original_blob": "aa5dc500c86ba5449f9ddb16b6dbb27f0036fbe4",
+      "cleaned_blob": "3cb12776fa4b88ed36de45618bcd8d1f7f285dcd"
+    },
+    {
+      "path": "frontend/src/components/Chat.vue",
+      "original_blob": "51729da7fa9130aee6b6ac2811ad3a4e97408411",
+      "cleaned_blob": "0079e2bec8101f2d0ca368c5a21c7b2b1cd04642"
+    },
+    {
+      "path": "frontend/webpack.config.js",
+      "original_blob": "9fe6efa8a29101a395b488810ea1abff923ffbff",
+      "cleaned_blob": "d57756c8b16496e8fb889e584188a00b274171dd"
+    }
+  ]
+}

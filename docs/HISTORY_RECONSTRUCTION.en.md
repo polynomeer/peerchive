@@ -70,3 +70,9 @@ git switch backup/pre-reconstruction-20261013
 This switches the checkout to the backup branch; it does not overwrite master or change the remote repository. The original history can also be browsed on the [remote backup branch](https://github.com/polynomeer/proofu-univ/tree/backup/pre-reconstruction-20261013). Publication of the reconstructed history is complete, and the backup branch is retained.
 
 See the [English project analysis](PROJECT_ANALYSIS.en.md) for architecture, runtime limitations, and the original file inventory.
+
+## Comment and example cleanup on October 13, 2026
+
+Unused external links, commented imports, demo setup, and generic frontend instructions were cleaned up. Executable code, dependencies, required license notices, existing Git history, and backups were retained. The cleanup is appended as a subsequent commit and does not rewrite the reconstructed 2019 history.
+
+[archive-cleanup.json](archive-cleanup.json) records the original and cleaned blob hashes for the seven changed files. The verification script checks the preserved original archive tree and history, then compares current working-tree files against the explicitly recorded cleanup hashes. Changes to other original files still fail verification. The root README is excluded as maintained project documentation.

@@ -1,18 +1,7 @@
-# ProofU
+# ProofU frontend
 
-> A Vue.js project
+프론트엔드의 기능, 기술 스택, 실행 제약은 [프로젝트 소개](../README.md)를 참고하세요.
 
-## Build Setup
+For features, technologies, and current runtime limitations, see the [English project overview](../README.en.md).
 
-``` bash
-# install dependencies
-npm install
-
-# serve with hot reload at localhost:8080
-npm run dev
-
-# build for production with minification
-npm run build
-```
-
-For detailed explanation on how things work, consult the [docs for vue-loader](http://vuejs.github.io/vue-loader).
+The existing commands are `npm run dev` and `npm run build`. Missing dependencies and legacy runtime compatibility issues must be resolved before use.
