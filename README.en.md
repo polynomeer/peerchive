@@ -83,7 +83,7 @@ The existing entry points are listed below. Missing files and compatibility issu
 | `frontend/` | `npm run build` | Generate distribution artifacts |
 | `backend/` | `node index.js` | Synchronize the database and start the server |
 
-The archive documentation and history work did not modify application source or install dependencies. See the [project analysis](docs/PROJECT_ANALYSIS.en.md) for detailed findings and suggested runtime restoration steps.
+The history reconstruction preserved the original source unchanged. The subsequent comment and example cleanup described below kept executable code and dependencies unchanged. Dependencies were not installed, and application runtime restoration was not performed. See the [project analysis](docs/PROJECT_ANALYSIS.en.md) for detailed findings and suggested runtime restoration steps.
 
 ## Development history and backup
 
@@ -95,6 +95,12 @@ The reconstructed history was published to [remote master](https://github.com/po
 
 Per-commit file assignments and instructions for accessing the original history are recorded in the [history reconstruction document](docs/HISTORY_RECONSTRUCTION.en.md) and the [commit mapping](docs/history-map.json).
 
+## Comment and example cleanup
+
+On October 13, 2026, unused external example links, commented imports, and demo user/board setup were removed, and generic frontend instructions were replaced with links to the project documentation. Seven files were cleaned up. Executable code, active UI markup, dependencies, and required copyright and license notices were retained.
+
+The cleanup was appended as a subsequent commit. The reconstructed 2019 history, existing history, and backups remain intact. Original and cleaned blob hashes for each changed file are recorded in the [cleanup mapping](docs/archive-cleanup.json).
+
 ## Archive verification and further reading
 
 From the repository root, verify preservation of the original files and reconstructed history without installing application dependencies:
@@ -103,7 +109,13 @@ From the repository root, verify preservation of the original files and reconstr
 python3 scripts/check_archive.py
 ```
 
-This check verifies file and Git history integrity. It does not establish that the application builds or runs successfully.
+The check distinguishes the preserved original archive from current working-tree files.
+
+- It verifies the archived tree, backup branch, assigned 2019 commit dates and file groups, and parent connections and metadata of the existing subsequent commits.
+- For the seven cleaned files, current contents are compared with the cleaned blob hashes in `docs/archive-cleanup.json`. Other original files are compared with their original blob hashes. Unexpected changes or missing files fail verification.
+- The root `README.md` is excluded from original-file hash comparison because it is maintained documentation. The newly added English README and documents are also outside the original-file comparison scope.
+
+This verifies archive/history integrity and agreement with the recorded cleanup. It does not establish that the application builds or runs successfully.
 
 Further reading:
 
