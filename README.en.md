@@ -83,7 +83,7 @@ The existing entry points are listed below. Missing files and compatibility issu
 | `frontend/` | `npm run build` | Generate distribution artifacts |
 | `backend/` | `node index.js` | Synchronize the database and start the server |
 
-The archive documentation and history work did not modify application source or install dependencies. See the [project analysis](docs/PROJECT_ANALYSIS.md) (in Korean) for detailed findings and suggested runtime restoration steps.
+The archive documentation and history work did not modify application source or install dependencies. See the [project analysis](docs/PROJECT_ANALYSIS.en.md) for detailed findings and suggested runtime restoration steps.
 
 ## Development history and backup
 
@@ -93,7 +93,7 @@ The reconstructed milestones are followed by 103 existing subsequent commits, in
 
 The reconstructed history was published to [remote master](https://github.com/polynomeer/proofu-univ/tree/master) on October 13, 2026. The original history remains available locally and on the [remote backup branch `backup/pre-reconstruction-20261013`](https://github.com/polynomeer/proofu-univ/tree/backup/pre-reconstruction-20261013).
 
-Per-commit file assignments and instructions for accessing the original history are recorded in the [history reconstruction document](docs/HISTORY_RECONSTRUCTION.md) (in Korean) and the [commit mapping](docs/history-map.json).
+Per-commit file assignments and instructions for accessing the original history are recorded in the [history reconstruction document](docs/HISTORY_RECONSTRUCTION.en.md) and the [commit mapping](docs/history-map.json).
 
 ## Archive verification and further reading
 
@@ -105,8 +105,8 @@ python3 scripts/check_archive.py
 
 This check verifies file and Git history integrity. It does not establish that the application builds or runs successfully.
 
-The following supporting documents are in Korean:
+Further reading:
 
-- [Project analysis](docs/PROJECT_ANALYSIS.md)
-- [History reconstruction and recovery guide](docs/HISTORY_RECONSTRUCTION.md)
-- [Codex working instructions](AGENTS.md)
+- [Project analysis](docs/PROJECT_ANALYSIS.en.md)
+- [History reconstruction and recovery guide](docs/HISTORY_RECONSTRUCTION.en.md)
+- [Codex working instructions (in Korean)](AGENTS.md)
