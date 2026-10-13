@@ -1,0 +1,750 @@
+{
+  "original_head": "97b5a9c363dee2a6441231c83bcb88e9a4319d05",
+  "original_base": "92f14ceee51236286300e1cfc10e3b98dc8d201d",
+  "backup_branch": "backup/pre-reconstruction-20261013",
+  "milestones": [
+    {
+      "date": "2019-06-03",
+      "commit": "54a6bf6b979543110912edf175452b66d52b7f97",
+      "subject": "chore: archive project manifests and build configuration",
+      "files": [
+        "README.md",
+        "backend/package-lock.json",
+        "backend/package.json",
+        "frontend/README.md",
+        "frontend/index.html",
+        "frontend/package-lock.json",
+        "frontend/package.json",
+        "frontend/webpack.config.js"
+      ]
+    },
+    {
+      "date": "2019-06-14",
+      "commit": "c299ec2b9cf79e30f8933385f11798dc46e5e7a8",
+      "subject": "feat: archive relational collaboration models",
+      "files": [
+        "backend/models.js"
+      ]
+    },
+    {
+      "date": "2019-06-27",
+      "commit": "86c1c1b2246ca33836f136a1c6706696fb767d08",
+      "subject": "feat: archive JWT authentication service",
+      "files": [
+        "backend/api/auth.js",
+        "backend/auth.js"
+      ]
+    },
+    {
+      "date": "2019-07-05",
+      "commit": "bd29039952412b950457a354b3f656727f532928",
+      "subject": "feat: archive application shell and visual assets",
+      "files": [
+        "frontend/arrow_next.svg",
+        "frontend/arrow_prev.svg",
+        "frontend/src/App.vue",
+        "frontend/src/assets/data/list.json",
+        "frontend/src/assets/images/a.png",
+        "frontend/src/assets/images/chat-icon.svg",
+        "frontend/src/assets/images/close-icon-big.png",
+        "frontend/src/assets/images/close-icon.png",
+        "frontend/src/assets/images/close.svg",
+        "frontend/src/assets/images/favicon.png",
+        "frontend/src/assets/images/file.svg",
+        "frontend/src/assets/images/git.png",
+        "frontend/src/assets/images/glass.png",
+        "frontend/src/assets/images/glass_black.png",
+        "frontend/src/assets/images/home_logo.png",
+        "frontend/src/assets/images/home_logoaa.png",
+        "frontend/src/assets/images/left_btn.png",
+        "frontend/src/assets/images/logo-no-bg.svg",
+        "frontend/src/assets/images/logo.png",
+        "frontend/src/assets/images/menu_logo.png",
+        "frontend/src/assets/images/pngfind.com-github-logo-png-1766942.png",
+        "frontend/src/assets/images/user_icon.png",
+        "frontend/src/assets/images/ws.png",
+        "frontend/src/assets/logo.png",
+        "frontend/src/css/main.css",
+        "frontend/src/main.js",
+        "frontend/user_icon.png"
+      ]
+    },
+    {
+      "date": "2019-07-16",
+      "commit": "da27b354e3fed3168cd959196607beea7b69acd6",
+      "subject": "feat: archive client API and Vuex state management",
+      "files": [
+        "frontend/src/api/index.js",
+        "frontend/src/store/actions.js",
+        "frontend/src/store/getters.js",
+        "frontend/src/store/index.js",
+        "frontend/src/store/mutations.js",
+        "frontend/src/store/state.js"
+      ]
+    },
+    {
+      "date": "2019-07-26",
+      "commit": "7136e359834833856c6b43ad83cffaaea2024e6a",
+      "subject": "feat: archive authentication and profile screens",
+      "files": [
+        "frontend/src/components/ChangePW.vue",
+        "frontend/src/components/Login.vue",
+        "frontend/src/components/Profile.vue",
+        "frontend/src/components/SignUp.vue",
+        "frontend/src/components/UserInfo.vue"
+      ]
+    },
+    {
+      "date": "2019-08-06",
+      "commit": "4f92fb48d0d56def726a4df0b615020dbe6b9f75",
+      "subject": "feat: archive team membership and join APIs",
+      "files": [
+        "backend/api/join.js",
+        "backend/api/member.js",
+        "backend/api/team.js"
+      ]
+    },
+    {
+      "date": "2019-08-16",
+      "commit": "1b26cf5b407400516c7d79b59887721eae176fcc",
+      "subject": "feat: archive team workspace screens",
+      "files": [
+        "frontend/src/components/AddTeam.vue",
+        "frontend/src/components/Team.vue",
+        "frontend/src/components/TeamBox.vue"
+      ]
+    },
+    {
+      "date": "2019-08-27",
+      "commit": "1c9e37a624bf7f1c3c3dd849a9f49d4e994e43fe",
+      "subject": "feat: archive board list and card APIs",
+      "files": [
+        "backend/api/board.js",
+        "backend/api/card.js",
+        "backend/api/list.js"
+      ]
+    },
+    {
+      "date": "2019-09-06",
+      "commit": "50ffa55cd346c84c946a4a68b2397f609750c028",
+      "subject": "feat: archive Kanban board and list interactions",
+      "files": [
+        "frontend/src/components/AddBoard.vue",
+        "frontend/src/components/AddList.vue",
+        "frontend/src/components/Board.vue",
+        "frontend/src/components/BoardSettings.vue",
+        "frontend/src/components/List.vue",
+        "frontend/src/utils/dragger.js"
+      ]
+    },
+    {
+      "date": "2019-09-17",
+      "commit": "e038b2a91fc7eea2f6ab9b5b085f38fc372d1c41",
+      "subject": "feat: archive card editing and shared modals",
+      "files": [
+        "frontend/src/components/AddCard.vue",
+        "frontend/src/components/Card.vue",
+        "frontend/src/components/CardItem.vue",
+        "frontend/src/components/CardModal.vue",
+        "frontend/src/components/Modal.vue"
+      ]
+    },
+    {
+      "date": "2019-09-27",
+      "commit": "dc08c03a1be16bac65a1585283e1a2a5c0f2c4de",
+      "subject": "feat: archive navigation search and project dashboard",
+      "files": [
+        "frontend/src/components/Home.vue",
+        "frontend/src/components/Left.vue",
+        "frontend/src/components/MyPage.vue",
+        "frontend/src/components/Navbar.vue",
+        "frontend/src/components/NotFound.vue",
+        "frontend/src/components/Search.vue",
+        "frontend/src/components/SearchBox.vue",
+        "frontend/src/router/index.js"
+      ]
+    },
+    {
+      "date": "2019-10-08",
+      "commit": "454ae9cd90b540a349ca1ab8b780691646e73712",
+      "subject": "feat: archive team chat and message persistence",
+      "files": [
+        "backend/api/message.js",
+        "frontend/src/components/Chat.vue"
+      ]
+    },
+    {
+      "date": "2019-10-18",
+      "commit": "be71b15563279d95392f3380f2d26e62f3f02fb7",
+      "subject": "feat: archive file uploads and code attachment screens",
+      "files": [
+        "backend/api/boardfile.js",
+        "backend/api/cardfile.js",
+        "frontend/src/components/Code.vue",
+        "frontend/src/components/CodeModal.vue"
+      ]
+    },
+    {
+      "date": "2019-10-29",
+      "commit": "13b55e2270da2b34314e36516d4a95aca7073f80",
+      "subject": "feat: archive university notice integration",
+      "files": [
+        "backend/api/html.js",
+        "frontend/src/components/YUnotice.vue"
+      ]
+    },
+    {
+      "date": "2019-11-08",
+      "commit": "7dc8ccc9cf087387c67d4e0ba0cf5f968c5725ad",
+      "subject": "feat: archive calendar interface and local state",
+      "files": [
+        "frontend/src/components/Calendar.vue",
+        "frontend/src/components/CalendarModal.vue"
+      ]
+    },
+    {
+      "date": "2019-11-18",
+      "commit": "c42017f020aeaea5e48c109b723bc145eccabd63",
+      "subject": "chore: archive server wiring and demonstration data",
+      "files": [
+        "backend/app.js",
+        "backend/build/config.gypi",
+        "backend/db-dev.sqlite",
+        "backend/index.js",
+        "backend/public/index.html",
+        "backend/upload/boardfiles/1/1574001391408_room1.jpg",
+        "backend/upload/boardfiles/2/1574053502797_Card.vue"
+      ]
+    },
+    {
+      "date": "2019-11-29",
+      "commit": "6a9a2f5f196d7a278a5e6b2aaa24effb4b26086c",
+      "subject": "chore: archive distribution bundles and prototype variants",
+      "files": [
+        "frontend/dist/build.js",
+        "frontend/dist/build.js.map",
+        "frontend/src/components/CalendarModal_bk.vue",
+        "frontend/src/components/Calendar_bk.vue",
+        "frontend/src/components/Card_bk.vue",
+        "frontend/src/components/Code_bk.vue"
+      ]
+    }
+  ],
+  "preserved_commits": [
+    {
+      "old": "e9e590da4e8673e595b0571d50f6f8b76d144b37",
+      "new": "e7f41536219595666b8bbeff3eb9ef68092e12b5",
+      "parents": 1
+    },
+    {
+      "old": "24e560c3ee76844dd735098ca234d68a9422bb1c",
+      "new": "48a161f67945fc30c3f8ee096bd272cc4009bd13",
+      "parents": 2
+    },
+    {
+      "old": "8873fcb8e0e01a5f80eba619e6dc2085ca405eaf",
+      "new": "7702976531161dad6e8e22162498ef6eeb98af04",
+      "parents": 1
+    },
+    {
+      "old": "70470e2765eb1f40ecd2d7ec01a94f283bfa171d",
+      "new": "282b7719378b7e29c5a94485f9270e8307ef0b04",
+      "parents": 2
+    },
+    {
+      "old": "7ec19dcef4db98907eaac4e1d2015d4827857c40",
+      "new": "ca09dabf727c1d3db05bfc2d90a5765588cc135a",
+      "parents": 1
+    },
+    {
+      "old": "ecd196436977aec08d1483adf565441dc3de8f08",
+      "new": "9210cc92c58152f0d71c30d3064a91ae22da4c26",
+      "parents": 2
+    },
+    {
+      "old": "9154e12866e15060af1232d63ce552e30d303291",
+      "new": "bf1196d2ca689b1871cc2c2461d11a5ee69e994b",
+      "parents": 1
+    },
+    {
+      "old": "413ebab4997c35a9bfe9524d47a45203bc4f2107",
+      "new": "6493a4077606d3d36299840e0a1658d7d7b55d75",
+      "parents": 2
+    },
+    {
+      "old": "52352dcabb0e7972de65eb440ab8eeded11d35bf",
+      "new": "082e937c9244c10e59cdc2dc848550f72d35ec40",
+      "parents": 1
+    },
+    {
+      "old": "a9c850d23760d1aa5c540e90fd72f2b626a2f0fa",
+      "new": "1c412f701a84f12a9efb7ce25ad0854947539f83",
+      "parents": 2
+    },
+    {
+      "old": "f5364beb201efd1a994710d9108bf49361a12a4f",
+      "new": "9b5d5fee5e8279094648e7c1d57c13cde5e9f529",
+      "parents": 1
+    },
+    {
+      "old": "85ee0a78ead3dc96cf68d11f14cb6bfa9e409ba0",
+      "new": "6539fdc4d58e49158d7dc22a72a8c778c4d3ed03",
+      "parents": 2
+    },
+    {
+      "old": "8bbc353aa59ee63b69180f1b05dcf0eec83603a9",
+      "new": "4547d44cfeaeeea8fe012dd7ccc8e5c80e6dddb2",
+      "parents": 1
+    },
+    {
+      "old": "4bf702b74b528bfc1d418507de32a1b296c319ae",
+      "new": "6f434b093f8b64619ac98da03db101163bcf7379",
+      "parents": 2
+    },
+    {
+      "old": "7c38cca47dd97eba271b94f3c938e0753d74b18a",
+      "new": "24bf1be9eb1dcad77e5103f4504ca8b35c2e4e0e",
+      "parents": 1
+    },
+    {
+      "old": "8358d7abd3ba833a14da71d68ca352cc8031e60e",
+      "new": "5c408489361dbb194d333020163c8ec5eaff2fba",
+      "parents": 2
+    },
+    {
+      "old": "aa86297adeebfc50ab5b498cc66f654afd24ee22",
+      "new": "1eeccd4c7893b0083a31ee90ac0e8861e6bcf3ce",
+      "parents": 1
+    },
+    {
+      "old": "4430ee42a901672e307c533419383b4faa3ccaee",
+      "new": "7e84622cf45b0f2ea46b8bdcae3bb7c223e3cd05",
+      "parents": 2
+    },
+    {
+      "old": "7ffbc64381c3cd93341055a04cf1dbfd278f30e7",
+      "new": "3985d94508c1eb651aff6d5d3c019b64a6c225dc",
+      "parents": 1
+    },
+    {
+      "old": "5c49f417f1641c410085fc4f1243a550cc2237b2",
+      "new": "e13c789fdcd26ac0f41dc637b83c4d1c56afe279",
+      "parents": 2
+    },
+    {
+      "old": "3cf9d8bc068e5cfbec820b7e83b3205e770c15d0",
+      "new": "26557617eab35f97f5a25e5a4380640af0f3258e",
+      "parents": 1
+    },
+    {
+      "old": "f4bfbfd26fd1fe70763a8faaa3f525377f2ee5ce",
+      "new": "e6aab4a11ae2c08d21c2c9c675538b4291fbc61c",
+      "parents": 2
+    },
+    {
+      "old": "fada18246985b47a01520e4533377a853d5dbbc0",
+      "new": "42a0d309b4c03cb3a79295072f0c1fd112e95912",
+      "parents": 1
+    },
+    {
+      "old": "90ba6e468e2c23959ba1ea2519d6392aff4f8223",
+      "new": "2f12b2e73874ae2d97f57d17d68706a24409db53",
+      "parents": 2
+    },
+    {
+      "old": "2e6559b81e987be92e6235ec47d156422f63d5e4",
+      "new": "b6594653ca7f33cd5ec56889b3aed127708b8688",
+      "parents": 1
+    },
+    {
+      "old": "1fa28df860c3b90a470c80680b1af48c9adb7dd3",
+      "new": "8c467dccbb72e40435afd1b76c45e6f8e66dc91a",
+      "parents": 2
+    },
+    {
+      "old": "a7578b4271bb324c09e7f47e937d8594ca56943c",
+      "new": "6a721c5d6f979567ebff1baf653c8dcb5cb824ac",
+      "parents": 1
+    },
+    {
+      "old": "ad7c5b871024d282a1666646a7cab44cc2d6e987",
+      "new": "3228f9f7da255cecca01312433add9c476a72235",
+      "parents": 2
+    },
+    {
+      "old": "19263199757404d3811acca6e61c94f247d5411c",
+      "new": "c868048c4f0cf8425717e83266dada84024cd72a",
+      "parents": 1
+    },
+    {
+      "old": "03774247d4a1b7cea1606ec1b7cfc6fb3623e197",
+      "new": "2203deddf8e718a3e9ed17b5ffa4bdde6115fc68",
+      "parents": 2
+    },
+    {
+      "old": "780db9ad02525ca9b6135f5c1d7adfe09c1b3c8d",
+      "new": "cf18105e15c96d776a576e6c5f79933e12483acf",
+      "parents": 1
+    },
+    {
+      "old": "78ffee6a0a87192a7892e5d85ac5a7a0f4b72b61",
+      "new": "d6835c5798ac192070c3b95dbec354e0f06bcfd9",
+      "parents": 2
+    },
+    {
+      "old": "6bc47d89ef8802a2205fd950b453bbc81e96915e",
+      "new": "6cce640b4137d0f39f7d8ccbc36b0dedf38795fd",
+      "parents": 1
+    },
+    {
+      "old": "70c66609c56f1f5425d4910bdb2da09f794b28e9",
+      "new": "2dff5cf2a75944d01774628cf47a17eb26dd4928",
+      "parents": 2
+    },
+    {
+      "old": "a577232ff5fba2ae83898d996a931dd55fea618a",
+      "new": "83dc936a7ce1fbc62c61f70e9445da3f2155d920",
+      "parents": 1
+    },
+    {
+      "old": "b8a6ccc1b4c8dd33dd04c8aff68cb1039ed22fcd",
+      "new": "c8ae0c811f25c82c08a93f742e4fb832fddf86c8",
+      "parents": 2
+    },
+    {
+      "old": "51f999532eb5eeeec76b0306ededf6e7a44a772c",
+      "new": "13391df7b847991cfbc2e444ed97dc896d86fc04",
+      "parents": 1
+    },
+    {
+      "old": "77af1d70508c9b5aa36da97711394782a5842a6e",
+      "new": "5930c16dedf04211a031f44ad7b6de7e3cc7bed9",
+      "parents": 2
+    },
+    {
+      "old": "be621f807ea7f248d48c750dfdde5022d15e991f",
+      "new": "6b9719f6f0fa0e46c66d161419d5485eca8e2a02",
+      "parents": 1
+    },
+    {
+      "old": "368a07640d9ceb69c298b8f388253aba35e38f9e",
+      "new": "39837572725b3ad222585be57c892cc1a7b17cf2",
+      "parents": 2
+    },
+    {
+      "old": "a9d912a4aead8fa6773febbad50118a9490b4fdb",
+      "new": "038c9f46564e46e1d5930f12f18e160858aefa98",
+      "parents": 1
+    },
+    {
+      "old": "d12c6f75ceddc2899c7b8c2b185dd8dc468084f5",
+      "new": "88599c451336b14b4fdd78690fb6446d9acad61b",
+      "parents": 2
+    },
+    {
+      "old": "c26cad1beea5fc8e3a4a65f4a6d479f758ebafce",
+      "new": "25ca2530bfc9070d03fdb51f0b071c67d70e093d",
+      "parents": 1
+    },
+    {
+      "old": "59f6fe1bbd94c7fc38e06dbd66986a557cb0bd6c",
+      "new": "81a39b2aa6810e500abfb09e81634640e5bff1df",
+      "parents": 2
+    },
+    {
+      "old": "f3a2c3b6efba2907b50d6a30147bc9f68e671fef",
+      "new": "441e401dd0ffce02958cb61ac22fff2dcd3d1607",
+      "parents": 1
+    },
+    {
+      "old": "bfdb0c8a9f9a4dbd859773815d5f813254c6a20d",
+      "new": "c45e09b4a797721b500af250098df278f2272f98",
+      "parents": 2
+    },
+    {
+      "old": "ce34e9e1aebff94d1b84675509330a3215682c9e",
+      "new": "8d6c6b0c969ba2a9c1b4d2842b0890ff3e8e9e2e",
+      "parents": 1
+    },
+    {
+      "old": "ed8fc28b997267c534f1f2b86c39661b0e6d51da",
+      "new": "96f4f6876d2bf00821092a09a98d439571079c0a",
+      "parents": 2
+    },
+    {
+      "old": "5bed4128124100aeed35623a18c9196872bc851d",
+      "new": "df9e5e2ed46d43b8ea57cdf7fe6578807121d7e6",
+      "parents": 1
+    },
+    {
+      "old": "ddc759785a390a782e074aea82d58a7cad2c5af6",
+      "new": "ce17b44d74e78c19aeb664f513489e622476d70c",
+      "parents": 2
+    },
+    {
+      "old": "b53bb5eb8ec7c743b9a84fb11660c018643a0871",
+      "new": "9bb6881101858475b32262207a5491a3a1a015b9",
+      "parents": 1
+    },
+    {
+      "old": "1ac9b20f26bb9e160d333c6fe0f67e4984a33d93",
+      "new": "aec89356501d805a9ef4ea2ed92822775bef59a1",
+      "parents": 2
+    },
+    {
+      "old": "c867b18c12e1ee1e0df246a01ce5c159e6f54a51",
+      "new": "f335375412fa3dfa9d1a55bf2ddde73f3534354b",
+      "parents": 1
+    },
+    {
+      "old": "8f90f5c32c5aa31ec54ac2b8b3a0262c61408b17",
+      "new": "7c70878954e6636e98ae13e13a4fef88b6aca5b3",
+      "parents": 2
+    },
+    {
+      "old": "ad976ec426912453777d10fc9fc99f503197dc39",
+      "new": "6a8ddef16f339d9138917e43a37bbb6e65ebfc88",
+      "parents": 1
+    },
+    {
+      "old": "458858fbd47943fa693bc9b58ff95bd335ad3d4b",
+      "new": "9a6f0adef3fb87a8f66aab0114cad36e0a35dd7d",
+      "parents": 2
+    },
+    {
+      "old": "8a8d784bfc50069f7b9613e2979758ccf9b10426",
+      "new": "91a2998a61a311f956d64855c6e5fe6cbf8d03f9",
+      "parents": 1
+    },
+    {
+      "old": "1bb27c979f78dc8ac8cb331bdfee4a9867b900a5",
+      "new": "91b0ace2c158382e5937ff405a3de0d17c584360",
+      "parents": 2
+    },
+    {
+      "old": "63062b7a2e81d759ea74e83ac21de5f6ff6f361b",
+      "new": "b3940a847bf0a7438f6f4ab918322bf7ccafeb59",
+      "parents": 1
+    },
+    {
+      "old": "779633f237ca696847547b2ab2a52158dd3df99d",
+      "new": "d0cd0112c2355939c6886a9c5e88d2d0154fce14",
+      "parents": 2
+    },
+    {
+      "old": "ca4c2ac6b9da5400dca36f99c8892b7824062462",
+      "new": "8f4a13b21a1a346a842792c5a89f3c7383a67d8f",
+      "parents": 1
+    },
+    {
+      "old": "ca80dc3b5ed23407d4774c6fe60f80b4318956e9",
+      "new": "a67b13f29b84ec6b4d76a826b455fd53e04b3fd8",
+      "parents": 2
+    },
+    {
+      "old": "6565a6d6cbe359bc1c489bb4805c1cc44c2157d9",
+      "new": "1910d3c58ca613070c56e09bfd0e6ee9ae4f68cb",
+      "parents": 1
+    },
+    {
+      "old": "a8472c3509dc4ec019f55b41dd592d9ba976a5a6",
+      "new": "6d77982574ecab277687a17e70c01906a4b3b026",
+      "parents": 2
+    },
+    {
+      "old": "b6673693dde2bb5dee7e0e0c2c183d8524bf436b",
+      "new": "d239feb1a149a2d5585683bf5973d37ce64d5291",
+      "parents": 1
+    },
+    {
+      "old": "fc2f380f65c0206186b415c25419edb3e30d0302",
+      "new": "34f7ed2712be34bebee7e6e9ca2d811bd38ba706",
+      "parents": 2
+    },
+    {
+      "old": "a8abae53306e866630a2be125e0ab916f90441b4",
+      "new": "4c945aebe4e58c67455e1c302e4ccadd224707ac",
+      "parents": 1
+    },
+    {
+      "old": "8a07c01ef91705961aa46d66b116246b6e41d676",
+      "new": "136ef2038933c366dc6317df5ec1eab1cde6c5f3",
+      "parents": 2
+    },
+    {
+      "old": "690b8f926d9e344a4119217fc570d4e907da6308",
+      "new": "cb8973c84560c3c9816cd6349d8b1c1788014ee9",
+      "parents": 1
+    },
+    {
+      "old": "c0443778bfabf27c6f89b15bea0cd4bc813e25c8",
+      "new": "724d1d4f659a1847ecca3de1fdb46866d96f2470",
+      "parents": 2
+    },
+    {
+      "old": "1805be8ee8d1525aeed25ab7c38030ecf5a42f25",
+      "new": "f6dcd177812791ba57d59ac8f384a7bca8edf054",
+      "parents": 1
+    },
+    {
+      "old": "7db5b90591307500ab61d406eff4b66ae043665e",
+      "new": "9ad6eb3c0c9ca72b7c7e7cb4661b2aa0e9427b76",
+      "parents": 2
+    },
+    {
+      "old": "28cf8b62d0fe0d97c300193ed75917a7e558b590",
+      "new": "88e2389b2c0388fe262c9157068b0d220eae7546",
+      "parents": 1
+    },
+    {
+      "old": "0a1e94c24bf6b2d700cfd676bb6c7429596816bd",
+      "new": "a145a03a71b04c5781da0b0d31b023d3cfcddbd0",
+      "parents": 2
+    },
+    {
+      "old": "731cc3148c8ff0d9bb0ed11aa5867e83fb003f45",
+      "new": "f43a288de651aa6bbcd23190310180483613fa07",
+      "parents": 1
+    },
+    {
+      "old": "444e3ce3e27f8c9aba6054df0c9bf5fd99d77e72",
+      "new": "11dad10a7eca0284fbbdb74565eb9491fa0e0e53",
+      "parents": 1
+    },
+    {
+      "old": "529bad7aa5cda6f542ad6420f1e52642e2cc30f6",
+      "new": "daf040ffcca6b83826853ef88e35c61202d13071",
+      "parents": 1
+    },
+    {
+      "old": "fcbb7eccdeba64c8a606834bf18df855b2a0526f",
+      "new": "525a92d01ea76b124e2365490c8da881fa677962",
+      "parents": 1
+    },
+    {
+      "old": "958ce5ee2f12ebb63431d870cd171f5a3eba4566",
+      "new": "7b4df167b3172501bb115802a3280a13956d6930",
+      "parents": 1
+    },
+    {
+      "old": "4ffd5f8bae4e765388551ce7efcde533dedf941e",
+      "new": "62143574f4e065e72d7bdc9d0b43a99d341f974d",
+      "parents": 1
+    },
+    {
+      "old": "56ad40913b4b740b3f21100c3fa2ae79064eb558",
+      "new": "a19583ebcfc82830c02ed15e244e40948a7542f4",
+      "parents": 1
+    },
+    {
+      "old": "4ebbd2d0b738b2f672ec9ed7689c62e51bc2fbac",
+      "new": "7de395f0ac11e0b4bcea4dce96ea8addd24899fd",
+      "parents": 1
+    },
+    {
+      "old": "4fc9c5e56dffd8cf700619639c0ea9e35a0632c6",
+      "new": "b700bce1eb661e8d286ce99093b6201d2b30063f",
+      "parents": 2
+    },
+    {
+      "old": "825669c827b7e89efe0d1515dbcc503909d05341",
+      "new": "fbc962c531c82972b3b0d9592770215c734a0f2f",
+      "parents": 2
+    },
+    {
+      "old": "e51d4cd2261039d9fcbd74549c0e5f973ff7ff7a",
+      "new": "01d3c704695106d9735319dbae086acaee0ffd60",
+      "parents": 2
+    },
+    {
+      "old": "d201eef2a51d2bce1f19d45a5f18e3b768e66975",
+      "new": "ab3ea0706c2731b1699c2d9df6244a29df9afc63",
+      "parents": 1
+    },
+    {
+      "old": "85980b1732a217eaf55dc43f4e0d3ded2b8e60e7",
+      "new": "b5388e9503e8c35dd7e2fe4d8b9c32035d6ad7c8",
+      "parents": 2
+    },
+    {
+      "old": "ec15321bde42c76ad29cbb4c168b5b8349fc3764",
+      "new": "0f944730b414d99c00db3b16143af94f1539d464",
+      "parents": 2
+    },
+    {
+      "old": "2c4df801dfba5f29d1ce0c61e1b76dd4bfeee9f5",
+      "new": "2d9078714543377442de5d0206aee12fbab60cf4",
+      "parents": 2
+    },
+    {
+      "old": "0ab2df90de9d92b0cd719c5d418d7dd10486fbfd",
+      "new": "b80269b70864aa935ca03c3845bef55042cd34a7",
+      "parents": 1
+    },
+    {
+      "old": "907bdbbc2498bb85345b85179b7bdcd173c918de",
+      "new": "8007454e32f7e8cecaf61be5ea5eb366590fd09f",
+      "parents": 2
+    },
+    {
+      "old": "7423f2fe124c4e7e4dec3ca2c7957e732e09375f",
+      "new": "90042be65e669afe68ef2dd63fd6aec3cd9bcf86",
+      "parents": 2
+    },
+    {
+      "old": "d458c0ef2d78c6c9b04f6c767393ea9dd67509ff",
+      "new": "080eb3d400270d5148f1e10c93ba0909bffa729f",
+      "parents": 2
+    },
+    {
+      "old": "3c61399e006e39d8f4e0552f3f9392bec56d8027",
+      "new": "f1ba727e3f37689f6c2bc081dff1d77d74a74ced",
+      "parents": 1
+    },
+    {
+      "old": "aef4ad97ed6660ae06e068c6f99d42de431e9b39",
+      "new": "0960c967d39b2c436a7e32e9008901df7908402b",
+      "parents": 2
+    },
+    {
+      "old": "c31b4814abe95f657ba05029b824fbc0d157b5d4",
+      "new": "c56e15c5ce843f3aaecf9b1c3dfbb1838d132240",
+      "parents": 2
+    },
+    {
+      "old": "bf7088b0a8152897dbda80bace2e69e7f37a0d48",
+      "new": "5b359b3358d926fb1d4ef7acd007d9c808729afd",
+      "parents": 2
+    },
+    {
+      "old": "74a1163483c4687f0cc3f47edd5f8eabea8b2883",
+      "new": "722cb9bcc92dd361bb054f64b7170f9294d7d606",
+      "parents": 2
+    },
+    {
+      "old": "2077982a91c89a422b64216506880b2532cfde5b",
+      "new": "3c614551cbe3f7acf10731aff0d23dc0141e557b",
+      "parents": 2
+    },
+    {
+      "old": "e12c624baf8cb71ac5e8340cb9ee588fe2a16b95",
+      "new": "ba485a166695827c7101df5bdea5abeae4cf9f5e",
+      "parents": 2
+    },
+    {
+      "old": "c1e5bd0b0b840743a4c20e8d4189bcb1548b8adb",
+      "new": "28e042e476553610c3288198ae728b79ae3e42bc",
+      "parents": 2
+    },
+    {
+      "old": "4ee0d4e6affc88258091a9414322336fec1fde96",
+      "new": "a9267d8c1453cfeaea361ac93b366cd45b72083d",
+      "parents": 2
+    },
+    {
+      "old": "97b5a9c363dee2a6441231c83bcb88e9a4319d05",
+      "new": "7021d742fdf83aca0581a346311119b8a14d21e4",
+      "parents": 2
+    }
+  ]
+}
