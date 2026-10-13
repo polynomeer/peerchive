@@ -1,6 +1,8 @@
-# ProofU evolution system design
+# Peerchive evolution system design
 
 [한국어](SYSTEM_DESIGN.md) | **English**
+
+Peerchive is the new name for the project originating from **ProofU**, an undergraduate graduation project developed in 2019. Combining *Peer + Archive*, the name expresses a public archive where students learn from one another’s assignment and project experiences. It distinguishes this project from the separate career command center project named `proofu`. The repository address `proofu-univ` and document paths remain unchanged; the archived code is the original ProofU implementation.
 
 Written: October 13, 2026 · Status: proposal before implementation
 
@@ -34,7 +36,7 @@ Live service data and a compatible runtime have not been established for this re
 | BoardFile, CardFile | Materials linked as evidence | Scan status, file versions, license/publication permissions, withdrawal |
 | Chat, Message | Need for feedback and discussion | Record-level feedback for the MVP; defer real-time chat |
 | Calendar | Time context | Simple deadlines/periods first; defer a separate calendar engine |
-| Images and logos | ProofU identity | Use after checking rights/origins; retain third-party usage conditions |
+| Images and logos | Reference for the original ProofU identity | Create separate Peerchive brand assets; check rights/origins before reusing existing assets and retain third-party usage conditions |
 | Notice collection | University context | Exclude from the new MVP because it is separate from the core flow |
 
 Use existing frontend flows, component purposes, and models as design references. Do not copy global DOM manipulation, Vue 2 lifecycles, plaintext passwords, long-lived localStorage tokens, exposed file paths, or Sequelize sync-based schema changes into new code.
@@ -240,7 +242,7 @@ Deleted materials may remain briefly in backups. Keep a separate deletion ledger
 
 The MVP lets students manually attach repository, PR, and commit links. Reports/design assignments without GitHub accounts or code should be equally usable. For P1 automatic integration, consider a GitHub App and request minimum permissions for selected repositories only. GitHub's official guidance describes granular permissions and selected-repository access. [GitHub App selection guide](https://docs.github.com/en/apps/creating-github-apps/about-creating-github-apps/deciding-when-to-build-a-github-app)
 
-Verify webhook signatures and delivery IDs; handle duplicate/out-of-order events. If a repository becomes private or access is revoked, reassess connection status and publication conditions rather than leaving collected content publicly copied. Do not automatically collect private repository contents in the MVP. Commit author email alone does not establish a ProofU user's contribution.
+Verify webhook signatures and delivery IDs; handle duplicate/out-of-order events. If a repository becomes private or access is revoked, reassess connection status and publication conditions rather than leaving collected content publicly copied. Do not automatically collect private repository contents in the MVP. Commit author email alone does not establish a Peerchive user's contribution.
 
 After P1, consider AI as an optional assistant for summarizing/translating records selected by students. Prevent claims unsupported by a publication candidate, teammates' statements becoming personal claims, and private materials being automatically sent to models. Require source attribution, editing, consent, final student approval, and a record of AI-generated scope. Core functionality remains usable without AI.
 

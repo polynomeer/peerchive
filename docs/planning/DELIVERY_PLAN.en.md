@@ -1,6 +1,8 @@
-# ProofU evolution delivery plan and validation criteria
+# Peerchive evolution delivery plan and validation criteria
 
 [한국어](DELIVERY_PLAN.md) | **English**
+
+Peerchive is the new name for the project originating from **ProofU**, an undergraduate graduation project developed in 2019. Combining *Peer + Archive*, the name expresses a public archive where students learn from one another’s assignment and project experiences. It distinguishes this project from the separate career command center project named `proofu`. The repository address `proofu-univ` and document paths remain unchanged; the archived code is the original ProofU implementation.
 
 Written: October 13, 2026 · Status: proposal
 
@@ -167,7 +169,7 @@ If budget is constrained, reduce automatic GitHub integration, sophisticated PDF
 
 ## 10. Git, archive, and documentation practices
 
-The planning work adds documentation to the current repository. Propose subsequent implementation commits on branches such as `codex/proofu-evolution-<feature>`. There is no reason to rewrite existing master history or change the backup branch.
+The planning work adds documentation to the current repository. Propose subsequent implementation commits on branches such as `codex/peerchive-evolution-<feature>`. There is no reason to rewrite existing master history or change the backup branch.
 
 Preserve `frontend/`, `backend/`, `docs/history-map.json`, and `docs/archive-cleanup.json` during modernization. If a separate request requires changing originals, record the change and verification criteria explicitly. New `apps/` and `packages/` contain their own tests, migrations, and operational documentation.
 

@@ -1,6 +1,8 @@
-# ProofU evolution proposal: a public archive that turns assignment processes into portfolios
+# Peerchive evolution proposal: a public archive that turns assignment processes into portfolios
 
 [한국어](PROOFU_EVOLUTION_PLAN.md) | **English**
+
+Peerchive is the new name for the project originating from **ProofU**, an undergraduate graduation project developed in 2019. Combining *Peer + Archive*, the name expresses a public archive where students learn from one another’s assignment and project experiences. It distinguishes this project from the separate career command center project named `proofu`. The repository address `proofu-univ` and document paths remain unchanged; the archived code is the original ProofU implementation.
 
 Written: October 13, 2026 (Asia/Seoul) · Status: proposal · Audience: product planning, system design, and implementation decisions
 
@@ -13,7 +15,7 @@ This document follows the original purpose described by the project creator. Fea
 
 ## 1. Restore the original purpose as the product's center
 
-ProofU began with assignment materials privately passed from older university students to younger ones, often called “jokbo” in Korea. Access depended on personal connections. The idea was to turn assignment processes and outcomes into public records that anyone could learn from.
+The original ProofU began with assignment materials privately passed from older university students to younger ones, often called “jokbo” in Korea. Access depended on personal connections. The idea was to turn assignment processes and outcomes into public records that anyone could learn from.
 
 The second purpose was to connect those records to personal portfolios. Beyond uploading a finished artifact, students would explain the problem, how they solved it, and their role within the team, helping employers understand entry-level candidates' experience and capabilities.
 
@@ -25,7 +27,7 @@ A proposed user-facing message is: “Finish your assignment. Capture the proces
 
 ## 2. Who should benefit, and how?
 
-| User | Hypothesized difficulty today | Behavior enabled by ProofU | How to validate |
+| User | Hypothesized difficulty today | Behavior enabled by Peerchive | How to validate |
 |---|---|---|---|
 | Student starting an assignment | Finished examples are available, but approaches and trial and error are hard to find | Find approaches from cases with similar constraints and stages, then make a personal plan | Interviews about recent assignments and case discovery exercises |
 | Student working on an assignment | Creating a portfolio at the end of term requires reconstructing memories and gathering files | Leave short records once or twice a week that become material for later explanations | Four-week recording experiment and writing-time measurement |
@@ -42,7 +44,7 @@ The initial adoption unit is a semester cohort or capstone team, rather than an 
 
 GitHub profile READMEs already support self-introductions. “A bio plus repository links” alone offers weak differentiation. [Official GitHub profile README guide](https://docs.github.com/en/account-and-profile/how-tos/profile-customization/managing-your-profile-readme)
 
-| Tool or format | Existing role | ProofU's focus |
+| Tool or format | Existing role | Peerchive's focus |
 |---|---|---|
 | GitHub repositories and profiles | Code, change history, development collaboration, and self-introduction | Connect assignment context, decisions, validation, and personal contributions in a form recruiters and other students understand |
 | Trello-style Kanban | To-do, in-progress, and completed task states | Capture reasons for attempts, failures, and improvements that task status omits |
@@ -53,7 +55,7 @@ This differentiation is a product hypothesis to validate with users, not a demon
 
 As checked on October 13, 2026, GitHub announced that Classroom was retired on August 28, 2026, while existing repositories, accounts, and organizations were unaffected. Do not plan Classroom-specific integration; start with ordinary repository links. [Official GitHub retirement announcement](https://github.com/orgs/community/discussions/205975)
 
-ProofU does not need to provide Git hosting, an IDE, autograding, general project management, or an applicant tracking system. First complete the flow that explains work created with existing tools as the student's own experience.
+Peerchive does not need to provide Git hosting, an IDE, autograding, general project management, or an applicant tracking system. First complete the flow that explains work created with existing tools as the student's own experience.
 
 ## 4. Core experience: workspace → learning case → personal portfolio
 
@@ -260,11 +262,11 @@ These official materials were checked on October 13, 2026. They establish tool/s
 
 - [GitHub profile README](https://docs.github.com/en/account-and-profile/how-tos/profile-customization/managing-your-profile-readme): confirms existing self-introduction support.
 - [GitHub Classroom retirement announcement](https://github.com/orgs/community/discussions/205975): confirms retirement timing and preservation of existing repositories.
-- [1EdTech CLR](https://www.1edtech.org/standards/clr): describes records connecting learner achievements and evidence. ProofU is not currently a certified issuer or standards-compliant service.
+- [1EdTech CLR](https://www.1edtech.org/standards/clr): describes records connecting learner achievements and evidence. Peerchive is not currently a certified issuer or standards-compliant service.
 
 ## Summary
 
-ProofU's original goal was to turn privately circulated university assignment materials into a public archive of learning processes and outcomes, then help students present their own contributions as employment portfolios. The proposed evolution centers on short records of attempts, decisions, validation, and reflection, linked to artifacts and personal contributions. Kanban remains an optional task view. Students explicitly publish reviewed versions; private workspace content is not exposed automatically. GitHub remains a source of evidence rather than a replacement target. This is a product and engineering proposal, not an implemented feature announcement.
+The original ProofU's goal was to turn privately circulated university assignment materials into a public archive of learning processes and outcomes, then help students present their own contributions as employment portfolios. The proposed evolution centers on short records of attempts, decisions, validation, and reflection, linked to artifacts and personal contributions. Kanban remains an optional task view. Students explicitly publish reviewed versions; private workspace content is not exposed automatically. GitHub remains a source of evidence rather than a replacement target. This is a product and engineering proposal, not an implemented feature announcement.
 
 ## Preservation of the original records
 

@@ -1,6 +1,8 @@
-# ProofU
+# Peerchive
 
 [한국어](README.md) | **English**
+
+Peerchive is the new name for the project originating from **ProofU**, an undergraduate graduation project developed in 2019. Combining *Peer + Archive*, the name expresses a public archive where students learn from one another’s assignment and project experiences. It distinguishes this project from the separate career command center project named `proofu`. The repository address `proofu-univ` and document paths remain unchanged; the archived code is the original ProofU implementation.
 
 ProofU was developed as an undergraduate graduation project for **archiving university assignment processes and outcomes and presenting them as student portfolios**. Its original goal was to turn assignment materials shared privately between students into public learning records, and help students explain their own contributions and outcomes to employers. The archived implementation uses a Trello-style Kanban board alongside team management, file sharing, chat, and personal activity views.
 

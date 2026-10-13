@@ -1,6 +1,8 @@
-# ProofU 고도화 제안: 과제의 과정이 포트폴리오가 되는 공개 아카이브
+# Peerchive 고도화 제안: 과제의 과정이 포트폴리오가 되는 공개 아카이브
 
 작성일: 2026-10-13 (Asia/Seoul) · 상태: 제안 · 대상: 제품 기획, 설계, 구현 착수 판단
+
+Peerchive(피어카이브)는 2019년 대학교 학부 졸업작품 **ProofU**에서 이어지는 프로젝트의 새 이름입니다. *Peer + Archive*를 결합해 학생들이 서로의 과제·프로젝트 경험에서 배우는 공개 아카이브라는 목적을 담았습니다. 별도의 커리어 관리 프로젝트 `proofu`와 구분하기 위해 이름을 변경했습니다. 현재 저장소 주소 `proofu-univ`와 문서 파일 경로는 유지하며, 보존된 코드는 기존 ProofU의 구현입니다.
 
 이 문서는 사용자가 설명한 최초 목적을 기준으로 작성했습니다. 기능·일정·지표는 앞으로 검증할 제안이며, 현재 구현된 기능이나 확인된 시장 수요를 의미하지 않습니다. 이번 작업은 문서 작성이며 앱 구현·운영 시작은 포함하지 않습니다.
 
@@ -11,7 +13,7 @@
 
 ## 1. 최초 목적을 제품의 중심으로 복원하기
 
-ProofU의 출발점은 대학생이 선배에게 비공개로 전달받는 과제 자료, 이른바 ‘족보’였습니다. 이런 자료에 대한 접근이 인맥에 따라 달라지는 상황에서, 과제의 진행 과정과 결과를 누구나 참고할 수 있는 공개 기록으로 전환하려는 발상이었습니다.
+기존 ProofU의 출발점은 대학생이 선배에게 비공개로 전달받는 과제 자료, 이른바 ‘족보’였습니다. 이런 자료에 대한 접근이 인맥에 따라 달라지는 상황에서, 과제의 진행 과정과 결과를 누구나 참고할 수 있는 공개 기록으로 전환하려는 발상이었습니다.
 
 두 번째 목적은 그 기록을 개인의 포트폴리오로 연결하는 것입니다. 결과물만 올리는 데서 그치지 않고, 어떤 문제를 어떻게 해결했고 팀에서 무엇을 맡았는지를 보여 주어 기업이 신입 지원자의 경험과 역량을 이해할 수 있게 합니다.
 
@@ -23,7 +25,7 @@ ProofU의 출발점은 대학생이 선배에게 비공개로 전달받는 과�
 
 ## 2. 누구에게 어떤 도움이 되어야 하는가
 
-| 사용자 | 지금의 어려움이라는 가설 | ProofU에서 달라지는 행동 | 확인할 방법 |
+| 사용자 | 지금의 어려움이라는 가설 | Peerchive에서 달라지는 행동 | 확인할 방법 |
 |---|---|---|---|
 | 과제를 시작하는 학생 | 결과물은 보지만 접근법과 시행착오를 찾기 어렵다 | 유사한 제약·단계의 사례에서 접근법을 찾아 자기 계획을 세운다 | 최근 과제 시작 경험 인터뷰, 사례 탐색 과제 |
 | 과제를 진행하는 학생 | 학기 말에 포트폴리오를 만들려면 기억과 파일을 다시 모아야 한다 | 주 1~2회 짧은 기록으로 이후 소개 글의 재료를 남긴다 | 4주 기록 유지 실험, 작성 시간 측정 |
@@ -40,7 +42,7 @@ ProofU의 출발점은 대학생이 선배에게 비공개로 전달받는 과�
 
 GitHub 프로필 README는 자기소개를 표시할 수 있습니다. 따라서 ‘자기소개 + 저장소 링크’만으로는 차별성이 약합니다. [GitHub 공식 프로필 README 안내](https://docs.github.com/en/account-and-profile/how-tos/profile-customization/managing-your-profile-readme)
 
-| 도구·형태 | 이미 제공하는 역할 | ProofU에서 집중할 역할 |
+| 도구·형태 | 이미 제공하는 역할 | Peerchive에서 집중할 역할 |
 |---|---|---|
 | GitHub 저장소·프로필 | 코드와 변경 기록, 개발 협업, 자기소개 | 과제 맥락·판단·검증·개인 기여를 채용자와 후배가 이해할 형태로 연결 |
 | Trello 형태 칸반 | 해야 할 일·진행 중·완료의 작업 상태 | 작업 상태에서 누락되는 시도 이유와 실패·개선의 기록 |
@@ -51,7 +53,7 @@ GitHub 프로필 README는 자기소개를 표시할 수 있습니다. 따라서
 
 2026-10-13 기준 GitHub는 Classroom을 2026-08-28 종료했다고 공지했습니다. 기존 저장소·계정·조직은 종료의 영향을 받지 않는다고 설명합니다. 따라서 Classroom 전용 연동은 계획하지 않고 일반 저장소 링크로 시작합니다. [GitHub 공식 종료 공지](https://github.com/orgs/community/discussions/205975)
 
-ProofU가 직접 Git 호스팅, IDE, 자동 채점, 범용 프로젝트 관리, 채용 지원자 추적 시스템까지 제공할 필요는 없습니다. 기존 도구로 만든 결과를 학생 자신의 경험으로 설명하는 흐름부터 완성합니다.
+Peerchive가 직접 Git 호스팅, IDE, 자동 채점, 범용 프로젝트 관리, 채용 지원자 추적 시스템까지 제공할 필요는 없습니다. 기존 도구로 만든 결과를 학생 자신의 경험으로 설명하는 흐름부터 완성합니다.
 
 ## 4. 핵심 경험: 작업 공간 → 학습 사례 → 개인 포트폴리오
 
@@ -258,11 +260,11 @@ UI/UX 스킬 검색에서 나온 단순한 타이포그래피·높은 대비·�
 
 - [GitHub 프로필 README](https://docs.github.com/en/account-and-profile/how-tos/profile-customization/managing-your-profile-readme): 자기소개 기능을 이미 제공함을 확인.
 - [GitHub Classroom 종료 공지](https://github.com/orgs/community/discussions/205975): 종료 시점과 기존 저장소 보존을 확인.
-- [1EdTech CLR](https://www.1edtech.org/standards/clr): 학습자의 성취와 근거를 연결하는 기록 표준을 확인. ProofU는 현재 공인 발급·표준 준수 서비스가 아닙니다.
+- [1EdTech CLR](https://www.1edtech.org/standards/clr): 학습자의 성취와 근거를 연결하는 기록 표준을 확인. Peerchive는 현재 공인 발급·표준 준수 서비스가 아닙니다.
 
 ## English summary
 
-ProofU's original goal was to turn privately circulated university assignment materials into a public archive of learning processes and outcomes, then help students present their own contributions as employment portfolios. The proposed evolution centers on short records of attempts, decisions, validation, and reflection, linked to artifacts and personal contributions. Kanban remains an optional task view. Students explicitly publish reviewed versions; private workspace content is not exposed automatically. GitHub remains a source of evidence rather than a replacement target. This is a product and engineering proposal, not an implemented feature announcement.
+The original ProofU's goal was to turn privately circulated university assignment materials into a public archive of learning processes and outcomes, then help students present their own contributions as employment portfolios. The proposed evolution centers on short records of attempts, decisions, validation, and reflection, linked to artifacts and personal contributions. Kanban remains an optional task view. Students explicitly publish reviewed versions; private workspace content is not exposed automatically. GitHub remains a source of evidence rather than a replacement target. This is a product and engineering proposal, not an implemented feature announcement.
 
 ## 원본 기록 보존
 
