@@ -2,9 +2,13 @@
 
 [한국어](README.md) | **English**
 
-ProofU is a **team project collaboration service** developed as an undergraduate graduation project. It brings team formation and membership requests, Kanban task management, file sharing, and team chat into one application. The code also includes project search, personal activity views, university notices, and a calendar interface.
+ProofU was developed as an undergraduate graduation project for **archiving university assignment processes and outcomes and presenting them as student portfolios**. Its original goal was to turn assignment materials shared privately between students into public learning records, and help students explain their own contributions and outcomes to employers. The archived implementation uses a Trello-style Kanban board alongside team management, file sharing, chat, and personal activity views.
 
 This repository preserves the project's source code, sample data, and distribution artifacts. Missing files and legacy dependencies currently prevent it from being ready to run immediately after installation.
+
+## Proposed evolution
+
+The [detailed product, system, and delivery proposal](docs/PROOFU_EVOLUTION_PLAN.md) (in Korean, with an English summary) centers on records of attempts, decisions, and validation that become public learning cases and personal portfolios. Kanban remains an optional task view, while individual contributions, evidence, and publication consent become central. These are proposed features and are not implemented yet.
 
 ## Main features
 
