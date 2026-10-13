@@ -8,10 +8,11 @@
 
 - 기존 HEAD: `97b5a9c363dee2a6441231c83bcb88e9a4319d05`
 - 개발 원본: `92f14ceee51236286300e1cfc10e3b98dc8d201d` (2020-05-02의 마지막 일괄 업로드 정리)
-- 백업 브랜치: `backup/pre-reconstruction-20261013`
+- 백업 브랜치: [`backup/pre-reconstruction-20261013`](https://github.com/polynomeer/proofu-univ/tree/backup/pre-reconstruction-20261013). 로컬과 원격 모두 기존 HEAD를 보존합니다.
 - 추가 백업: `/private/tmp/proofu-before-reconstruction-20261013.bundle` (임시 경로이므로 장기 보존 시 별도 복사)
-- 재구성 개발 기록 브랜치: `codex/reconstructed-2019`
-- 로컬 master에 재구성 기록을 적용했습니다. 원격 브랜치와 원격 추적 ref는 변경하지 않았으며 push하지 않았습니다.
+- 재구성 개발 기록 브랜치: `codex/reconstructed-2019` (로컬)
+- 2026-10-13에 로컬 및 [원격 master](https://github.com/polynomeer/proofu-univ/tree/master)에 재구성 기록을 반영했습니다. 원격 백업 브랜치를 먼저 게시한 뒤, 기존 원격 HEAD를 지정한 `--force-with-lease`로 master를 갱신했습니다.
+- 원격 반영 직후 master는 `90a597d015d848e2b178345f591bdd8af8c20706`, 백업은 `97b5a9c363dee2a6441231c83bcb88e9a4319d05`임을 확인했습니다. 이후 문서 업데이트 커밋은 master 뒤에 추가합니다.
 - 이후 기존 커밋 103개(merge 55개 포함)를 원래 부모 연결 구조와 순서로 연결했습니다. 모든 tree, 작성자, 작성/커밋 날짜, 메시지를 보존했습니다. 부모 해시 변경으로 커밋 해시는 변경되었습니다.
 - 원본 일괄 업로드 커밋 11개는 재구성 개발 기록의 마지막 커밋으로 매핑했습니다. 기존 개발 코드, lockfile, 바이너리, 배포 산출물 내용은 동일합니다.
 - Codex 환경·분석 문서는 merge 이력 뒤에 현재 날짜의 별도 커밋으로 추가했습니다.
@@ -48,4 +49,4 @@
 
 원본 조회는 `git log backup/pre-reconstruction-20261013`로 가능합니다.
 원본으로 돌아가려면 작업 변경을 보관한 뒤 `git switch backup/pre-reconstruction-20261013`를 사용하세요.
-원격에 이력을 적용하려면 별도의 이력 변경 push가 필요합니다. 이번 작업에는 포함하지 않았습니다.
+기존 이력은 [원격 백업 브랜치](https://github.com/polynomeer/proofu-univ/tree/backup/pre-reconstruction-20261013)에서도 조회할 수 있습니다. 재구성 이력의 원격 반영은 완료되었으며, 백업 브랜치는 유지합니다.

@@ -11,3 +11,6 @@ Vue 2 화면, Express API, MySQL/Sequelize 데이터 모델과 Socket.IO 팀 채
 
 2019년 커밋은 2020년에 업로드된 코드를 기능별로 재구성한 기록입니다.
 날짜와 작업 순서는 임의로 배정했으며, 실제 당시 개발 로그를 복원한 것은 아닙니다.
+
+2026-10-13에 재구성한 이력을 [원격 master](https://github.com/polynomeer/proofu-univ/tree/master)에 반영했습니다.
+기존 이력은 로컬 및 [원격 백업 브랜치](https://github.com/polynomeer/proofu-univ/tree/backup/pre-reconstruction-20261013)에 보존되어 있습니다.
