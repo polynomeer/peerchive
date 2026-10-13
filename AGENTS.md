@@ -1,6 +1,11 @@
-# ProofU 작업 안내
+# Peerchive 작업 안내
 
-대학교 졸업작품의 원본을 보존하는 Vue 2 / Express 프로젝트입니다.
+Peerchive(피어카이브)는 2019년 대학교 학부 졸업작품 ProofU에서 이어지는 과제 과정·산출물 아카이브와 포트폴리오 프로젝트입니다. 현재는 기존 Vue 2 / Express 원본을 보존하며 고도화를 준비합니다.
+
+- 로컬 프로젝트 폴더: `peerchive/`.
+- GitHub 저장소: https://github.com/polynomeer/peerchive
+- origin: `git@github.com:polynomeer/peerchive.git`.
+- 기존 이력 백업: [backup/pre-reconstruction-20261013](https://github.com/polynomeer/peerchive/tree/backup/pre-reconstruction-20261013). 로컬·원격 백업을 유지하세요.
 - frontend/: Vue 단일 파일 컴포넌트, Vuex, Vue Router, Webpack 3.
 - backend/: Express REST API, Sequelize/MySQL, Socket.IO.
 - 원본 코드와 lockfile, SQLite, 업로드 예제, 배포 산출물은 기록 보존 대상입니다. 요청 없이 현대화하거나 삭제하지 마세요.
