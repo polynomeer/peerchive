@@ -2,7 +2,7 @@
 
 작성일: 2026-10-13 · 상태: 구현 전 제안
 
-Peerchive(피어카이브)는 2019년 대학교 학부 졸업작품 **ProofU**에서 이어지는 프로젝트의 새 이름입니다. *Peer + Archive*를 결합해 학생들이 서로의 과제·프로젝트 경험에서 배우는 공개 아카이브라는 목적을 담았습니다. 별도의 커리어 관리 프로젝트 `proofu`와 구분하기 위해 이름을 변경했습니다. 현재 저장소 주소 `proofu-univ`와 문서 파일 경로는 유지하며, 보존된 코드는 기존 ProofU의 구현입니다.
+Peerchive(피어카이브)는 2019년 대학교 학부 졸업작품 **ProofU**에서 이어지는 프로젝트의 새 이름입니다. *Peer + Archive*를 결합해 학생들이 서로의 과제·프로젝트 경험에서 배우는 공개 아카이브라는 목적을 담았습니다. 별도의 커리어 관리 프로젝트 `proofu`와 구분하기 위해 이름을 변경했습니다. GitHub 저장소 이름과 주소도 `proofu-univ`에서 [`peerchive`](https://github.com/polynomeer/peerchive)로 변경했습니다. 문서 파일 경로는 유지하며, 보존된 코드는 기존 ProofU의 구현입니다.
 
 [제품 기획](../PROOFU_EVOLUTION_PLAN.md) · [실행 계획](DELIVERY_PLAN.md)
 
@@ -273,4 +273,4 @@ Board는 과제 초안, List/Card는 선택적 작업, 파일은 격리 자료�
 
 [아카이브 검증 스크립트](../../scripts/check_archive.py)는 기존 원본·2019년 재구성 이력·허용된 주석 정리를 검증합니다. 새 앱 코드의 정상 동작은 신규 테스트가 검증합니다. 원본 파일을 현대화하면서 검증 예외 목록만 계속 늘리는 방식은 피합니다. 기존 디렉터리를 유지하고 새 앱을 추가하는 구조에서는 두 검증을 각각 CI에서 실행할 수 있습니다.
 
-2019년 커밋은 실제 당시 개발 로그가 아닌 재구성 기록이며 새 서비스의 증빙 예제로 쓰려면 그 사실을 표시해야 합니다. [기존 이력 백업](https://github.com/polynomeer/proofu-univ/tree/backup/pre-reconstruction-20261013)은 유지합니다.
+2019년 커밋은 실제 당시 개발 로그가 아닌 재구성 기록이며 새 서비스의 증빙 예제로 쓰려면 그 사실을 표시해야 합니다. [기존 이력 백업](https://github.com/polynomeer/peerchive/tree/backup/pre-reconstruction-20261013)은 유지합니다.

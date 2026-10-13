@@ -2,7 +2,7 @@
 
 작성일: 2026-10-13 (Asia/Seoul) · 상태: 제안 · 대상: 제품 기획, 설계, 구현 착수 판단
 
-Peerchive(피어카이브)는 2019년 대학교 학부 졸업작품 **ProofU**에서 이어지는 프로젝트의 새 이름입니다. *Peer + Archive*를 결합해 학생들이 서로의 과제·프로젝트 경험에서 배우는 공개 아카이브라는 목적을 담았습니다. 별도의 커리어 관리 프로젝트 `proofu`와 구분하기 위해 이름을 변경했습니다. 현재 저장소 주소 `proofu-univ`와 문서 파일 경로는 유지하며, 보존된 코드는 기존 ProofU의 구현입니다.
+Peerchive(피어카이브)는 2019년 대학교 학부 졸업작품 **ProofU**에서 이어지는 프로젝트의 새 이름입니다. *Peer + Archive*를 결합해 학생들이 서로의 과제·프로젝트 경험에서 배우는 공개 아카이브라는 목적을 담았습니다. 별도의 커리어 관리 프로젝트 `proofu`와 구분하기 위해 이름을 변경했습니다. GitHub 저장소 이름과 주소도 `proofu-univ`에서 [`peerchive`](https://github.com/polynomeer/peerchive)로 변경했습니다. 문서 파일 경로는 유지하며, 보존된 코드는 기존 ProofU의 구현입니다.
 
 이 문서는 사용자가 설명한 최초 목적을 기준으로 작성했습니다. 기능·일정·지표는 앞으로 검증할 제안이며, 현재 구현된 기능이나 확인된 시장 수요를 의미하지 않습니다. 이번 작업은 문서 작성이며 앱 구현·운영 시작은 포함하지 않습니다.
 
@@ -268,4 +268,4 @@ The original ProofU's goal was to turn privately circulated university assignmen
 
 ## 원본 기록 보존
 
-2019년 6월~11월의 커밋 18개는 2020년 업로드 코드를 기능별로 재구성한 기록이며 실제 당시 개발 로그가 아닙니다. 이번 고도화 제안은 그 이력을 바꾸지 않습니다. 원본은 [백업 브랜치](https://github.com/polynomeer/proofu-univ/tree/backup/pre-reconstruction-20261013)에 유지하며, 현대화 구현은 향후 별도 후속 커밋으로 진행합니다.
+2019년 6월~11월의 커밋 18개는 2020년 업로드 코드를 기능별로 재구성한 기록이며 실제 당시 개발 로그가 아닙니다. 이번 고도화 제안은 그 이력을 바꾸지 않습니다. 원본은 [백업 브랜치](https://github.com/polynomeer/peerchive/tree/backup/pre-reconstruction-20261013)에 유지하며, 현대화 구현은 향후 별도 후속 커밋으로 진행합니다.

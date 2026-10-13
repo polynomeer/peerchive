@@ -2,7 +2,7 @@
 
 **한국어** | [English](README.en.md)
 
-Peerchive(피어카이브)는 2019년 대학교 학부 졸업작품 **ProofU**에서 이어지는 프로젝트의 새 이름입니다. *Peer + Archive*를 결합해 학생들이 서로의 과제·프로젝트 경험에서 배우는 공개 아카이브라는 목적을 담았습니다. 별도의 커리어 관리 프로젝트 `proofu`와 구분하기 위해 이름을 변경했습니다. 현재 저장소 주소 `proofu-univ`와 문서 파일 경로는 유지하며, 보존된 코드는 기존 ProofU의 구현입니다.
+Peerchive(피어카이브)는 2019년 대학교 학부 졸업작품 **ProofU**에서 이어지는 프로젝트의 새 이름입니다. *Peer + Archive*를 결합해 학생들이 서로의 과제·프로젝트 경험에서 배우는 공개 아카이브라는 목적을 담았습니다. 별도의 커리어 관리 프로젝트 `proofu`와 구분하기 위해 이름을 변경했습니다. GitHub 저장소 이름과 주소도 `proofu-univ`에서 [`peerchive`](https://github.com/polynomeer/peerchive)로 변경했습니다. 문서 파일 경로는 유지하며, 보존된 코드는 기존 ProofU의 구현입니다.
 
 ProofU는 대학교 학부 졸업작품으로 개발한 **과제 과정·산출물 아카이브와 포트폴리오 서비스**입니다. 선배에게 비공개로 전달받던 과제 자료를 누구나 참고할 수 있는 공개 이력으로 전환하고, 학생이 자신의 역할과 결과를 기업에 보여 줄 수 있도록 기획했습니다. 당시 구현은 Trello 형태의 칸반을 중심으로 팀 관리, 파일 공유, 채팅과 개인 활동 조회를 포함합니다.
 
@@ -97,7 +97,7 @@ SQLite 개발 DB 파일도 남아 있지만, 현재 서버의 활성 DB 설정�
 
 재구성 기록 뒤에는 기존 후속 커밋 103개(merge 55개 포함)를 연결했습니다. 기존 파일 내용과 커밋 메시지·작성자·날짜·merge 구조는 보존했으며, 부모 연결 변경으로 커밋 해시는 달라졌습니다.
 
-2026-10-13에 재구성한 이력을 [원격 master](https://github.com/polynomeer/proofu-univ/tree/master)에 반영했습니다. 기존 이력은 로컬과 [원격 백업 브랜치 `backup/pre-reconstruction-20261013`](https://github.com/polynomeer/proofu-univ/tree/backup/pre-reconstruction-20261013)에 유지되어 있습니다.
+2026-10-13에 재구성한 이력을 [원격 master](https://github.com/polynomeer/peerchive/tree/master)에 반영했습니다. 기존 이력은 로컬과 [원격 백업 브랜치 `backup/pre-reconstruction-20261013`](https://github.com/polynomeer/peerchive/tree/backup/pre-reconstruction-20261013)에 유지되어 있습니다.
 
 커밋별 파일 배정과 원본 이력 복구 방법은 [이력 재구성 문서](docs/HISTORY_RECONSTRUCTION.md)와 [커밋 대응표](docs/history-map.json)에 기록되어 있습니다.
 

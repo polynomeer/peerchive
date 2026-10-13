@@ -2,7 +2,7 @@
 
 [한국어](DELIVERY_PLAN.md) | **English**
 
-Peerchive is the new name for the project originating from **ProofU**, an undergraduate graduation project developed in 2019. Combining *Peer + Archive*, the name expresses a public archive where students learn from one another’s assignment and project experiences. It distinguishes this project from the separate career command center project named `proofu`. The repository address `proofu-univ` and document paths remain unchanged; the archived code is the original ProofU implementation.
+Peerchive is the new name for the project originating from **ProofU**, an undergraduate graduation project developed in 2019. Combining *Peer + Archive*, the name expresses a public archive where students learn from one another’s assignment and project experiences. It distinguishes this project from the separate career command center project named `proofu`. The GitHub repository name and address have also changed from `proofu-univ` to [`peerchive`](https://github.com/polynomeer/peerchive). Document paths remain unchanged; the archived code is the original ProofU implementation.
 
 Written: October 13, 2026 · Status: proposal
 
@@ -175,7 +175,7 @@ Preserve `frontend/`, `backend/`, `docs/history-map.json`, and `docs/archive-cle
 
 For each implementation unit, describe the problem, user behavior, completion criteria, authorization impact, and tests in the PR. README statuses distinguish “proposed,” “in development,” and “available.” Update this design with ADRs and reasons as research/experiments produce evidence.
 
-The 18 commits dated 2019 reconstruct code uploaded in 2020; they are not actual development logs from that period. Do not present them in the new service as contemporaneous development evidence or certified personal contribution. Retain the [original history backup](https://github.com/polynomeer/proofu-univ/tree/backup/pre-reconstruction-20261013).
+The 18 commits dated 2019 reconstruct code uploaded in 2020; they are not actual development logs from that period. Do not present them in the new service as contemporaneous development evidence or certified personal contribution. Retain the [original history backup](https://github.com/polynomeer/peerchive/tree/backup/pre-reconstruction-20261013).
 
 ## 11. Next steps
 

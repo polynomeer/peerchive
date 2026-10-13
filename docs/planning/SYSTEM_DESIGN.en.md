@@ -2,7 +2,7 @@
 
 [한국어](SYSTEM_DESIGN.md) | **English**
 
-Peerchive is the new name for the project originating from **ProofU**, an undergraduate graduation project developed in 2019. Combining *Peer + Archive*, the name expresses a public archive where students learn from one another’s assignment and project experiences. It distinguishes this project from the separate career command center project named `proofu`. The repository address `proofu-univ` and document paths remain unchanged; the archived code is the original ProofU implementation.
+Peerchive is the new name for the project originating from **ProofU**, an undergraduate graduation project developed in 2019. Combining *Peer + Archive*, the name expresses a public archive where students learn from one another’s assignment and project experiences. It distinguishes this project from the separate career command center project named `proofu`. The GitHub repository name and address have also changed from `proofu-univ` to [`peerchive`](https://github.com/polynomeer/peerchive). Document paths remain unchanged; the archived code is the original ProofU implementation.
 
 Written: October 13, 2026 · Status: proposal before implementation
 
@@ -275,4 +275,4 @@ Boards can become assignment drafts, Lists/Cards optional tasks, and files quara
 
 The [archive verification script](../../scripts/check_archive.py) verifies original materials, reconstructed 2019 history, and approved comment cleanup. New tests verify the new application. Avoid repeatedly expanding archive exceptions while modernizing original files. With the existing directories retained and a new app added, CI can run both verification paths separately.
 
-The 2019 commits are reconstructed records, not actual development logs from that time. Any use as evidence examples in the new service must disclose this. Retain the [original history backup](https://github.com/polynomeer/proofu-univ/tree/backup/pre-reconstruction-20261013).
+The 2019 commits are reconstructed records, not actual development logs from that time. Any use as evidence examples in the new service must disclose this. Retain the [original history backup](https://github.com/polynomeer/peerchive/tree/backup/pre-reconstruction-20261013).

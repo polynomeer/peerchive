@@ -43,7 +43,7 @@ A separate runtime restoration effort should start with recovering the missing u
 
 The 18 commits dated June–November 2019 are a retrospective, feature-based reconstruction of code uploaded in 2020. Their dates and ordering were assigned for archival purposes, not recovered from actual development logs. Intermediate archive milestones are not independently runnable versions.
 
-The reconstructed history was published to [remote master](https://github.com/polynomeer/proofu-univ/tree/master) on October 13, 2026. The original history remains on the local and [remote backup branch `backup/pre-reconstruction-20261013`](https://github.com/polynomeer/proofu-univ/tree/backup/pre-reconstruction-20261013). See the [history reconstruction and recovery guide](HISTORY_RECONSTRUCTION.en.md) for commit assignments, preservation details, and recovery instructions.
+The reconstructed history was published to [remote master](https://github.com/polynomeer/peerchive/tree/master) on October 13, 2026. The original history remains on the local and [remote backup branch `backup/pre-reconstruction-20261013`](https://github.com/polynomeer/peerchive/tree/backup/pre-reconstruction-20261013). See the [history reconstruction and recovery guide](HISTORY_RECONSTRUCTION.en.md) for commit assignments, preservation details, and recovery instructions.
 
 ## Complete original file inventory
 

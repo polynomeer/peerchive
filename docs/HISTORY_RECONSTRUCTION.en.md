@@ -11,10 +11,10 @@ Each milestone adds a group of final original files for preservation; it is not 
 
 - Original HEAD: `97b5a9c363dee2a6441231c83bcb88e9a4319d05`.
 - Original development snapshot: `92f14ceee51236286300e1cfc10e3b98dc8d201d`, the final cleanup of the May 2, 2020 bulk upload.
-- Backup branch: [`backup/pre-reconstruction-20261013`](https://github.com/polynomeer/proofu-univ/tree/backup/pre-reconstruction-20261013). Both local and remote branches preserve the original HEAD.
+- Backup branch: [`backup/pre-reconstruction-20261013`](https://github.com/polynomeer/peerchive/tree/backup/pre-reconstruction-20261013). Both local and remote branches preserve the original HEAD.
 - Additional backup created during reconstruction: `/private/tmp/proofu-before-reconstruction-20261013.bundle`. This temporary path is not durable storage; copy it elsewhere if long-term retention is needed.
 - Reconstructed development history branch: `codex/reconstructed-2019` (local).
-- The reconstructed history was applied to local and [remote master](https://github.com/polynomeer/proofu-univ/tree/master) on October 13, 2026. The remote backup branch was published first, then master was updated using `--force-with-lease` with the expected original remote HEAD.
+- The reconstructed history was applied to local and [remote master](https://github.com/polynomeer/peerchive/tree/master) on October 13, 2026. The remote backup branch was published first, then master was updated using `--force-with-lease` with the expected original remote HEAD.
 - Immediately after publication, master was verified as `90a597d015d848e2b178345f591bdd8af8c20706` and the backup as `97b5a9c363dee2a6441231c83bcb88e9a4319d05`. Subsequent documentation commits are appended to master.
 - The 103 existing subsequent commits, including 55 merges, were attached after the reconstructed milestones with their original parent topology and order. All trees, authors, author/committer dates, and messages were preserved. Commit hashes changed because parent references changed.
 - The 11 original bulk-upload commits were mapped to the final reconstructed milestone. Existing application code, lockfiles, binaries, and distribution artifacts remain unchanged.
@@ -67,7 +67,7 @@ To switch to the original snapshot, save any current working changes first, then
 git switch backup/pre-reconstruction-20261013
 ```
 
-This switches the checkout to the backup branch; it does not overwrite master or change the remote repository. The original history can also be browsed on the [remote backup branch](https://github.com/polynomeer/proofu-univ/tree/backup/pre-reconstruction-20261013). Publication of the reconstructed history is complete, and the backup branch is retained.
+This switches the checkout to the backup branch; it does not overwrite master or change the remote repository. The original history can also be browsed on the [remote backup branch](https://github.com/polynomeer/peerchive/tree/backup/pre-reconstruction-20261013). Publication of the reconstructed history is complete, and the backup branch is retained.
 
 See the [English project analysis](PROJECT_ANALYSIS.en.md) for architecture, runtime limitations, and the original file inventory.
 

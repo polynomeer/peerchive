@@ -2,7 +2,7 @@
 
 [한국어](PROOFU_EVOLUTION_PLAN.md) | **English**
 
-Peerchive is the new name for the project originating from **ProofU**, an undergraduate graduation project developed in 2019. Combining *Peer + Archive*, the name expresses a public archive where students learn from one another’s assignment and project experiences. It distinguishes this project from the separate career command center project named `proofu`. The repository address `proofu-univ` and document paths remain unchanged; the archived code is the original ProofU implementation.
+Peerchive is the new name for the project originating from **ProofU**, an undergraduate graduation project developed in 2019. Combining *Peer + Archive*, the name expresses a public archive where students learn from one another’s assignment and project experiences. It distinguishes this project from the separate career command center project named `proofu`. The GitHub repository name and address have also changed from `proofu-univ` to [`peerchive`](https://github.com/polynomeer/peerchive). Document paths remain unchanged; the archived code is the original ProofU implementation.
 
 Written: October 13, 2026 (Asia/Seoul) · Status: proposal · Audience: product planning, system design, and implementation decisions
 
@@ -270,4 +270,4 @@ The original ProofU's goal was to turn privately circulated university assignmen
 
 ## Preservation of the original records
 
-The 18 commits dated June–November 2019 are a feature-based reconstruction of code uploaded in 2020, not actual development logs from that period. This evolution proposal does not change that history. The original remains on the [backup branch](https://github.com/polynomeer/proofu-univ/tree/backup/pre-reconstruction-20261013), and future modernization is to be added through subsequent commits.
+The 18 commits dated June–November 2019 are a feature-based reconstruction of code uploaded in 2020, not actual development logs from that period. This evolution proposal does not change that history. The original remains on the [backup branch](https://github.com/polynomeer/peerchive/tree/backup/pre-reconstruction-20261013), and future modernization is to be added through subsequent commits.
