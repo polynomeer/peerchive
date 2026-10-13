@@ -8,7 +8,11 @@ This repository preserves the project's source code, sample data, and distributi
 
 ## Proposed evolution
 
-The [detailed product, system, and delivery proposal](docs/PROOFU_EVOLUTION_PLAN.md) (in Korean, with an English summary) centers on records of attempts, decisions, and validation that become public learning cases and personal portfolios. Kanban remains an optional task view, while individual contributions, evidence, and publication consent become central. These are proposed features and are not implemented yet.
+The [detailed product, system, and delivery proposal](docs/PROOFU_EVOLUTION_PLAN.en.md) centers on records of attempts, decisions, and validation that become public learning cases and personal portfolios. Kanban remains an optional task view, while individual contributions, evidence, and publication consent become central. These are proposed features and are not implemented yet.
+
+- [Product planning and proposed user experience](docs/PROOFU_EVOLUTION_PLAN.en.md)
+- [System, data, authorization, and API design](docs/planning/SYSTEM_DESIGN.en.md)
+- [Delivery roadmap, experiments, and release criteria](docs/planning/DELIVERY_PLAN.en.md)
 
 ## Main features
 
