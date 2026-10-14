@@ -6,7 +6,7 @@ Peerchive is the new name for the project originating from **ProofU**, an underg
 
 Written: October 13, 2026 · Status: proposal
 
-[Product proposal](../PROOFU_EVOLUTION_PLAN.en.md) · [System design](SYSTEM_DESIGN.en.md)
+[Product proposal](../PROOFU_EVOLUTION_PLAN.en.md) · [System design](SYSTEM_DESIGN.en.md) · [Concept addendum](CONCEPT_ADDENDUM.en.md)
 
 ## 1. Time and staffing assumptions
 

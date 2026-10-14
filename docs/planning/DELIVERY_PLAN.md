@@ -4,7 +4,7 @@
 
 Peerchive(피어카이브)는 2019년 대학교 학부 졸업작품 **ProofU**에서 이어지는 프로젝트의 새 이름입니다. *Peer + Archive*를 결합해 학생들이 서로의 과제·프로젝트 경험에서 배우는 공개 아카이브라는 목적을 담았습니다. 별도의 커리어 관리 프로젝트 `proofu`와 구분하기 위해 이름을 변경했습니다. GitHub 저장소 이름과 주소도 `proofu-univ`에서 [`peerchive`](https://github.com/polynomeer/peerchive)로 변경했습니다. 문서 파일 경로는 유지하며, 보존된 코드는 기존 ProofU의 구현입니다.
 
-[제품 기획](../PROOFU_EVOLUTION_PLAN.md) · [시스템 설계](SYSTEM_DESIGN.md)
+[제품 기획](../PROOFU_EVOLUTION_PLAN.md) · [시스템 설계](SYSTEM_DESIGN.md) · [컨셉 보완안](CONCEPT_ADDENDUM.md)
 
 ## 1. 시간과 인력에 대한 전제
 

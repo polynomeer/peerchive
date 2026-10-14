@@ -8,6 +8,7 @@ Peerchive(피어카이브)는 2019년 대학교 학부 졸업작품 **ProofU**�
 
 - [시스템·데이터·권한 설계](planning/SYSTEM_DESIGN.md)
 - [실행 계획·검증·출시 기준](planning/DELIVERY_PLAN.md)
+- [제품 컨셉 보완안: 과정 타임라인·과목 허브·선배 노트](planning/CONCEPT_ADDENDUM.md) (2026-10-14 추가)
 - [기존 코드 분석](PROJECT_ANALYSIS.md)
 - [원본 이력과 백업](HISTORY_RECONSTRUCTION.md)
 

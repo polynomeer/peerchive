@@ -10,6 +10,7 @@ This document follows the original purpose described by the project creator. Fea
 
 - [System, data, and authorization design](planning/SYSTEM_DESIGN.en.md)
 - [Delivery plan, validation, and release gates](planning/DELIVERY_PLAN.en.md)
+- [Concept addendum: process timeline, course hubs, senior notes](planning/CONCEPT_ADDENDUM.en.md) (added 2026-10-14)
 - [Existing code analysis](PROJECT_ANALYSIS.en.md)
 - [Original history and backup](HISTORY_RECONSTRUCTION.en.md)
 
