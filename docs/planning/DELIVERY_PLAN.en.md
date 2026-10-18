@@ -1,190 +1,226 @@
-# Peerchive evolution delivery plan and validation criteria
+# Peerchive delivery plan and validation criteria
 
 [한국어](DELIVERY_PLAN.md) | **English**
 
-Peerchive is the new name for the project originating from **ProofU**, an undergraduate graduation project developed in 2019. Combining *Peer + Archive*, the name expresses a public archive where students learn from one another’s assignment and project experiences. It distinguishes this project from the separate career command center project named `proofu`. The GitHub repository name and address have also changed from `proofu-univ` to [`peerchive`](https://github.com/polynomeer/peerchive). Document paths remain unchanged; the archived code is the original ProofU implementation.
+Written: 2026-10-18 · Status: consolidated proposal
 
-Written: October 13, 2026 · Status: proposal
+[Product proposal](../PROOFU_EVOLUTION_PLAN.en.md) · [System design](SYSTEM_DESIGN.en.md)
 
-[Product proposal](../PROOFU_EVOLUTION_PLAN.en.md) · [System design](SYSTEM_DESIGN.en.md) · [Concept addendum](CONCEPT_ADDENDUM.en.md)
+Peerchive is the new name of the project that continues from **ProofU**, an undergraduate graduation project built in 2019. The schedules, metrics, and criteria below are proposals to be validated, not a committed plan or the results of research already carried out.
 
-## 1. Time and staffing assumptions
+## 1. Assumptions
 
-This is a **16-week MVP and pilot plan** assuming one developer contributing 25–30 hours per week, one research/operations collaborator contributing 3–5 hours per week, and access to an initial student cohort. It is not a committed schedule or a report of completed research. Cohort recruitment and publication-policy review can be delayed independently of development.
+- We assume one developer contributing 20–30 hours per week, one user-research/operations collaborator contributing 3–5 hours per week, and access to a first student cohort (one school, two or three courses).
+- If actual effort is 10 hours per week, roughly 2.5–3 times more calendar time is needed. In that case, apply the reduced scope in [product proposal §16](../PROOFU_EVOLUTION_PLAN.en.md#16-mvp-scope).
+- The schedule follows the Korean academic calendar: terms start in March and September and end in June and December, and companies run open recruitment seasons in the first and second halves of the year. We expect discovery demand to peak in the first two weeks of a term, case publication right after the term ends, and portfolio sharing during recruitment season.
+- Do not spend time first on making the legacy original runnable. While confirming value through manual experiments, build the smallest vertical flow of the new app.
+- Even when budget or time runs short, do not skip authorization checks, file quarantine, publication withdrawal, or recovery; reduce feature scope instead. Policies, operations, accessibility, and institutional review at commercial-launch level are separate scope after the pilot.
 
-Do not spend all initial time making the legacy service run. Validate demand for the proposed experience manually while building the smallest publication flow on a new application foundation. Technology, file conversion, and consent introduce uncertainty; decide whether to proceed at each stage.
+## 2. Validation experiments before development
 
-At ten hours of development per week, calendar time may need to increase by roughly 2.5–3 times or more. Policies, operations, accessibility, and institutional review for a commercial launch are additional work after the pilot. If budget is tight, reduce functionality rather than omit authorization checks for file sharing and publication.
+Run these with Notion, Discord, static pages, and spreadsheets before writing code. Do not force students to hand over assignment files or make private materials public for research purposes.
 
-## 2. Manual experiments before development
+### 2.1 Interviews
 
-### 2.1 Revisit the original problem
-
-Interview 8–12 students using actual materials to follow their most recent assignment from beginning through completion and later organization. Do not require assignment-file disclosure or make private materials public for research. Ask:
-
-- Which assignment prompted them to seek what help, from whom, and what was useful?
-- Why could they not apply some reference materials, and what submission rules constrained them?
-- Where did they record decisions, failures, and validation? How do they explain their role in the team outcome?
-- If they have created a portfolio, how much time and rework did it require?
-- What would they publish, whose consent is needed, and what makes them reluctant?
-
-Show three student cases to 4–6 people with hiring-review experience for 90 seconds each, then ask them to explain roles, evidence, and possible interview questions. Do not infer a commitment to use the platform from an interview. Ask 2–3 instructors/mentors about actual publication conditions and concerns.
-
-### 2.2 Case-organization experiment
-
-Manually organize 3–5 completed assignments with consent. Compare a “Problem / My contribution / Key decision / Validation / Result / Limitations / Sources” template with simple artifact links. Use the same student materials to compare portfolio preparation time and reader understanding.
-
-Next, run a four-week experiment in which 8–12 students record once or twice per week. Start half with free-form records and half with the three-field prompt. Treat the small sample as a way to discover obstacles rather than establish statistical proof. If attaching evidence takes too long, move links/files to the beginning of the flow.
-
-### 2.3 Initial decision criteria
-
-These are hypothetical thresholds for direction-setting in a small pilot. Fix measurement methods before recruitment and do not silently change thresholds to suit results.
-
-| Hypothesis | Draft condition for proceeding | If unmet |
+| Participants | Number | Key questions |
 |---|---|---|
-| Public cases help students start assignments | At least five of eight students can propose a concrete next action from a reference case | Reduce discovery scope and focus on personal records/portfolios |
-| Short recording is sustainable | At least half record in three of four weeks; median writing time within five minutes | Reduce fields, prioritize files, examine automatic collection |
-| Contribution explanations improve understanding | Four of five reviewers accurately explain the main role and linked evidence | Improve summary ordering and individual/team separation first |
-| Publishable cases can be obtained | At least five cases with explicit consent and checked conditions | Defer that course rollout; pilot with permitted club/personal projects |
+| Current students | 8–12 | In your last team assignment, how did you prove who did what? Have you ever received past materials passed down from seniors, and what was most useful? Where did you record judgments, failures, and validation along the way? What did you have to redo when building a portfolio? How much would you publish, and whose consent is needed? What does your team use for chat? |
+| People with hiring-review experience | 4–6 | View three student cases for 90 seconds each and explain the role, evidence, and possible interview questions. Do not infer from interviews any commitment that companies will use the platform |
+| Professors, teaching assistants, mentors | 2–3 | Actual publication conditions and concerns, acceptability of publishing after the term (embargo), potential use of contribution reports for peer evaluation |
 
-Difficulty publishing actual submissions does not require abandoning the project. Narrow initial supply to work permitted for publication after submission, club projects intended for public use, or personal reimplementations.
+### 2.2 Experiments
 
-## 3. Phased roadmap
+| ID | Experiment | Method | Draft condition for proceeding | If unmet |
+|---|---|---|---|---|
+| E0 | Manual operation | 2–3 teams run an assignment for four weeks with a Notion build log template + a Discord channel; weekly check-ins via form; contribution summaries written manually by the operator | At least half of teams record in three or more of four weeks; median time to write a record within five minutes | Reduce tags, shift to a file- and check-in-centered flow, raise bot priority |
+| E1 | Replacing passed-down materials | Give 8 students about to take the course a manual course hub prototype (senior notes, stuck cards, final-artifact links); after they write a first-week plan, have them rank how useful the information was | At least 5 of 8 propose a concrete next action from the reference material; at least 6 say stuck cards and senior notes are more useful than final artifacts | Shrink the course hub; focus on records and portfolios |
+| E2 | Retrospective writing | 5 graduates retrospectively write up one past assignment as milestones, stuck cards, and decisions | At least 4 finish within 30 minutes; at least 3 consent to publication | Split input units further into senior notes and stuck cards |
+| E3 | Case organization | Organize 3–5 consenting completed assignments in a “Problem / My contribution / Key decisions / How it was verified / Result / Limitations / Sources” format and compare with plain artifact links | Shorter portfolio writing time; better reader understanding | Adjust the order and fields of the format |
+| E4 | Hiring-reviewer comparison | Show 5 reviewers the same student's GitHub link vs. a case card + competency × evidence | At least 4 accurately explain the main role and evidence and write more specific interview questions | Improve summary order and individual/team separation |
+| E5 | Embargo and publication acceptability | Explain publication levels and embargo rules to professors, TAs, and students | Most faculty say “acceptable if published after the term”; secure at least 5 cases with consent and conditions in place | Limit publication scope to concept/summary level; pilot with clubs and personal projects that permit publication |
+| E6 | Graduate supply | Around the end of the 2026 fall term, ask graduates and senior-year students for senior notes and stuck cards | 10 senior notes and 20 stuck cards per course | Narrow target courses; operator interviews and ghostwrites (with author approval) |
 
-| Period | Goal and implementation | Deliverables | Entry criterion for next stage |
-|---|---|---|---|
-| Weeks 1–2 | Interviews, manual cases, core-screen prototype, small Nuxt/database/file experiments | Research summary, cases, hypothesis decisions, technical decision records | Establish recording/portfolio value or a narrower validated value |
-| Weeks 3–4 | New app foundation, authentication, profiles, projects, member authorization | Reproducible local environment/CI and private spaces | Cross-user access-denial tests pass |
-| Weeks 5–7 | Process records/revisions, evidence links, file quarantine, contributions | Private recording flow, scanning worker, contribution evidence | Creation/editing/reconnection preserve data; cross-team access blocked |
-| Weeks 8–10 | Publication candidates, consent, publish/withdraw, public DTOs | Complete publication flow and authorization/withdrawal tests | Disclosure and withdrawal regression tests pass |
-| Weeks 11–12 | Featured cases/profile presentation, minimum discovery/reporting/printing | Shareable portfolio MVP | One student completes assignment → case → portfolio |
-| Weeks 13–16 | Limited pilot with 20–50 students and 5–10 teams; research, fixes, recovery drills | Metrics/interviews, incident records, next-scope decision | Continue, narrow, or pivot based on value, operations, and publication conditions |
+The E0 recording experiment starts with half free-form records and half tagged build logs to find obstacles. Because the sample is small, the goal is discovering obstacles rather than statistical confirmation. Fix measurement methods before recruitment, and do not quietly change criteria to fit the results.
 
-Implement **vertical feature slices**, rather than completing every layer separately. Complete the assignment creation screen, API, database, and authorization tests together, then move on. Do not leave file scanning, authorization, and publication candidates as last-minute pilot patches.
+Even if results show students find it hard to publish actual submissions, that is no reason to abandon the project. Adjust supply scope to projects that may be published after submission, club work intended for publication, personal reimplementations of assignments, and senior notes.
 
-Estimate P1 separately as 6–10 weeks after the pilot passes. Select only one or two features resolving the largest observed obstacle: Kanban, reviews, automatic GitHub connection, restricted sharing, or better PDFs. P2 employer/institution features require subsequent interviews and evidence of repeated use.
+## 3. Roadmap
+
+| Stage | Period | Goals and implementation | Deliverables | Gate to next stage |
+|---|---|---|---|---|
+| **0. Validation** | 2026-10-19 ~ 11-29 (6 weeks) | Interviews, E0–E5, core-screen prototype, Nuxt/DB/file/bot technical experiments, preparation of ProofU first-case materials | Research summary, manual cases, hypothesis decisions, architecture decision records (ADRs) | **G0** |
+| **0+. Supply campaign** | 2026-12 (around end of term) | E6: collect senior notes and stuck cards from graduates and senior-year students | Initial content for 2–3 courses | – |
+| **1. MVP development** | 2026-12-01 ~ 2027-02-26 (13 weeks, winter break) | §4 backlog T-01–T-16 | private alpha → preparation for limited public | **G1** (week 7), **G2** preparation (week 13) |
+| **2. Pilot** | 2027-03-02 ~ 06-30 (spring term) | Real use by 10–20 teams in one department, public course hubs, end-of-term publication campaign | Metrics, interviews, incident records | **G2** (before publishing public cases), **G3** |
+| **3. Portfolio** | 2027-07 ~ 08 (summer break) | 1–3 P1 items that resolve the biggest obstacle found in experiments (candidates: AI case polishing, competency × evidence, restricted sharing/PDF, interview prep pack) | Portfolios for second-half recruitment season | Scope decided by G3 results |
+| **4. Expansion** | 2027 fall term onward | Multiple departments and schools, Kanban board, GitHub App, stuck-card Q&A, semantic search, class spaces, monetization experiments | – | **G4** |
+
+Detailed implementation proceeds in **vertical feature slices** rather than completing each layer separately (e.g., finish the assignment creation screen, API, DB, and authorization tests together). Do not handle file scanning, the authorization model, or publication candidates as temporary patches right before the pilot.
+
+### 3.1 Allocation of the 13-week MVP development
+
+| Weeks | Work | Check on completion |
+|---|---|---|
+| 1–2 | T-01, T-02, T-03 | Tests blocking private reads between two users pass |
+| 3–5 | T-04, T-05, T-06, T-07 | Logs and snapshots are created, edited, and preserved across reconnection; other teams' access is blocked |
+| 6–7 | T-08, T-09 | Internal use with two teams; bot collection and contribution reports work → **G1** |
+| 8–10 | T-10, T-11, T-12 | Regression tests for public leaks, embargo, and withdrawal pass |
+| 11–12 | T-13, T-14, T-15 | One student goes from assignment → public case → course page → portfolio |
+| 13 | T-16, buffer | Recovery drill, pilot instrumentation, G2 readiness check |
 
 ## 4. Implementation backlog and dependencies
 
 | ID | Work | Dependencies | Completion criterion |
 |---|---|---|---|
-| P-01 | User research and case template | None | Document recording needs, publication obstacles, and hiring-review needs through actual cases |
-| T-01 | Development environment, migrations, CI | None | Pin new runtime, reproduce deployment, run archive verification alongside app checks |
-| T-02 | Sessions and public/private profiles | T-01 | Tests for account state, session expiry, CSRF, and public DTOs |
-| T-03 | Assignments, invitations, project authorization | T-02 | Tests for invitation expiry, departure, ownership transfer, and cross-team access |
-| T-04 | Process records and revisions | T-03 | Author permission, save failure, stale revision conflict handling |
-| T-05 | Upload, quarantine, scanning | T-03 | No access/publication before clean state; limits, errors, duplicate requests handled |
-| T-06 | Personal contributions and teammate confirmation | T-04, T-05 | Changed claims invalidate confirmation; others cannot edit claims |
-| T-07 | Publication candidate, consent, preview | T-04–06 | Only selected versions enter DTO; manifest changes trigger consent review |
-| T-08 | Publish, withdraw, block derivatives | T-07 | Transactional rechecks; anonymous access blocked immediately upon withdrawal |
-| T-09 | Portfolios and personal profiles | T-08 | Select own contributions; withdrawn cases automatically blocked |
-| T-10 | Discovery, reports, administrative actions | T-08 | Search public state only; actions, appeals, audit records |
-| T-11 | Runbooks, recovery, pilot instrumentation | T-01–10 | Database/file recovery, deletion-ledger reapplication, analytics without personal content |
-| P-02 | Pilot evaluation and scope revision | P-01, T-11 | Decide next stage from use, publication, understanding, and operating costs |
+| P-01 | Interview and case template | None | Recording practices, publication obstacles, and hiring-review needs organized through actual cases |
+| P-02 | Manual operation experiments (E0–E5) | P-01 | §2.2 decisions recorded |
+| P-03 | Graduate supply campaign (E6) | P-01 | Initial content per course, author consent |
+| T-01 | Development environment, DB migrations, CI | None | Pinned runtime, reproducible baseline deployment, archive checks run alongside |
+| T-02 | Sessions and public/private profiles | T-01 | Tests for account state, session expiry, CSRF, public DTOs |
+| T-03 | Assignments, invitations, project authorization | T-02 | Tests for invitation expiry, leaving, owner change, cross-team access |
+| T-04 | Build logs, revisions, per-tag payloads | T-03 | Author permission, payload schema validation, 409 on stale versions, content preserved on save failure |
+| T-05 | File upload, quarantine, scanning | T-03 | No viewing or publication before clean; limits, errors, duplicate requests handled |
+| T-06 | Milestones, snapshots, evolution view | T-04, T-05 | Reordering; only clean versions can be designated as snapshots |
+| T-07 | To-dos, completion toggling, retrospective mode | T-04 | Reordering without dragging; `retro_mode` marker preserved through public DTOs |
+| T-08 | Role claims, teammate confirmation, contribution reports | T-04, T-05 | Confirmation invalidated when revision changes; self-confirmation and editing others' claims blocked; reports contain no private data from other teams |
+| T-09 | Discord bot, weekly check-ins | T-04 | Account linking, idempotent collection, 📌 on someone else's message triggers an approval request, separate consent for statistics |
+| T-10 | Schools, courses, concept tags, embargo | T-03 | Merge handling; server rejects publication requests before the term ends |
+| T-11 | Publication candidates, review, preview, consent | T-06–T-10 | DTO built only from selected revisions; consent re-requested on manifest change; materials of non-consenting members excluded |
+| T-12 | Publish, withdraw, block derivatives | T-11 | Transactional recheck; anonymous reads, files, and search blocked immediately after withdrawal |
+| T-13 | Course hub, senior notes, plan fork, search | T-12 | Only public releases exposed; forks copy only plan elements |
+| T-14 | Case template draft, portfolio, public profile | T-08, T-12 | Every sentence has a source; withdrawn cases automatically blocked; private fields absent from HTML, JSON, OG, and printed output |
+| T-15 | Reports and moderation actions | T-12 | Search covers public state only; actions, appeals, and audit records |
+| T-16 | Runbooks, recovery, pilot instrumentation | T-01–T-15 | DB + file recovery, deletion-ledger reapplication, analytics events without personal data |
+| P-04 | Pilot evaluation and scope adjustment | P-02, T-16 | Decide next scope based on usage, publication, understanding, and operating cost |
 
-Implementation order is T-01 → T-02/T-03 → T-04 → T-05/T-06 → T-07/T-08 → T-09/T-10. These are dependencies, not a commitment to parallel agents or staffing.
+The start order is T-01 → T-02/T-03 → T-04/T-05 → T-06/T-07 → T-08/T-09 → T-10 → T-11/T-12 → T-13/T-14/T-15 → T-16. These are task dependencies, not a committed plan for parallel staffing.
 
-## 5. User scenarios and acceptance tests
+## 5. Acceptance scenarios
 
-### Scenario A: personal assignment without GitHub
+**A. Recording a personal assignment without GitHub**
+A student signs up with email, creates a private assignment, and leaves a PDF and a one-line log. On reconnection the materials and save state persist, and before publication they are invisible to anonymous users, other users, and the search API. There must be no empty screen that demands a GitHub connection.
 
-A student registers with email, creates a private assignment, and leaves a PDF and short entry. Files and save status survive reconnection. Before publication preparation, anonymous users, other users, and search APIs cannot see them. No empty screen requires GitHub connection.
+**B. Recording a stuck point in Discord**
+When a teammate types `/log 막힘 CORS 에러` (“/log stuck CORS error”) in Discord, exactly one 🧱 log is created in that project. Resending the same request does not create a duplicate. When another teammate adds 📌 to someone else's message, an approval request goes to the author, and no log is created before approval.
 
-### Scenario B: teammate confirmation
+**C. Teammates confirm contributions**
+A claims a role based on logs and artifacts, and B confirms it. If A edits the content or evidence, the earlier confirmation is no longer shown as valid for the current claim. Even the owner cannot edit A's claim. Peer-evaluation reports show confirmation states distinctly.
 
-Teammate A claims a role with linked records/artifacts; B confirms it. If A changes the claim or evidence, the earlier confirmation is no longer shown as valid for the current claim. Even the owner cannot arbitrarily edit A's personal claim.
+**D. Embargo and publishing shared materials**
+For an assignment in a course whose term is still in progress, the server rejects publication requests. After the term ends, if the owner prepares a candidate but one person has not consented or a file is still being scanned, publication fails. If someone leaves, withdraws, or content changes right after consent but before publishing, the server recheck blocks it. Other logs in the workspace are not included in the public response.
 
-### Scenario C: publishing shared materials
+**E. Withdrawal and derived data**
+When consent for a published shared file is withdrawn, new public reads and file access are blocked immediately, and the file is excluded from portfolios, cases, search, and course aggregates. Test residual access during short URL TTLs, and explain that copies already downloaded cannot be recalled. Even if a worker fails, public reads must be blocked first.
 
-The owner prepares a candidate, but publication fails if one person has not consented or a file is still being scanned. Only after all conditions pass does a public release exist; other workspace notes are absent from the public response. Server rechecks must also block publication if departure, withdrawal, or edits occur after consent but before publishing.
+**F. Junior students exploring a course and forking a plan**
+A visitor who is not logged in sees public cases, stuck cards, and senior notes on a course page. The workload distribution is not shown if there are fewer than five contributors. When a logged-in junior student forks a plan, only milestones, checklists, time allocation, and reference materials are copied; artifacts, log bodies, and stuck-card resolutions are not.
 
-### Scenario D: withdrawal and derived portfolios
+**G. Retrospective writing**
+When a graduate creates a past assignment in retrospective mode, every item and public screen shows a `Retrospective` label, and self-entered dates are distinguished from recording timestamps.
 
-Withdrawal of consent for a shared public file immediately blocks new public reads/file access. Dependent portfolios, search, and PDF generation exclude it. Explain that already received copies cannot be recalled, and test residual access during short URL TTLs. Public reads must be blocked before worker processing, even when workers fail.
+**H. Beginner recording and accessibility**
+On mobile, a student can upload a file first and complete the description later. On save failure, content is not lost and a retry is shown. Every action can be done by keyboard, and states can be understood through text, not only color or icons. To-do order can be changed without dragging.
 
-### Scenario E: beginner recording and accessibility
-
-On mobile, students attach a file first and return later to explain it. Save errors retain content and offer retry. All actions work by keyboard; states are understandable through text, not just colors/icons. If Kanban is added, ordering works without dragging.
-
-### Scenario F: employment-oriented reading
-
-An anonymous reviewer opens a public profile without login and locates the problem, personal role, and evidence within 90 seconds. Contact details follow student permissions. Private school information, emails, and team feedback never enter HTML, JSON, Open Graph, or printed output.
+**I. Reading for hiring**
+An anonymous reviewer opens a public profile without logging in and finds the problem, personal role, and evidence of the featured assignment within 90 seconds. Only the contact details the student allowed are visible. Private school information, emails, team feedback, and check-ins are not included in page HTML, JSON, Open Graph, or printed output.
 
 ## 6. Measurement plan
 
-The initial core metric is **the number of students who leave meaningful process records during the period and connect contribution evidence to a portfolio**. Validate usefulness rather than increase activity volume alone.
+**North star metric:** among assignments and senior notes published at the end of the term, **the number that junior students forked as a plan or marked “This helped”** (hypothesized pilot-term target: 15).
+
+The key author-side metric is **the number of students who left meaningful logs during the period and connected contribution evidence to a portfolio**. We check the usefulness of records rather than increase activity volume.
 
 | Metric | Definition | Draft pilot interpretation |
 |---|---|---|
-| Activation | Create assignment, first record, and one evidence item within seven days of signup | Hypothesized target of 50% of invited students |
-| Recording retention | Activated students record in at least three of four weeks | Hypothesized 40% target; examine exam-period effects separately |
-| Case conversion | Completed assignments explicitly permitted for publication that become cases | Denominator includes only confirmed eligible assignments; hypothetical 30% target |
-| Portfolio use | Students who connect a public case to a featured contribution and actually share it | Ten or more as an initial usefulness signal |
-| Understanding | Reviewers accurately explain the role, result, and evidence | Hypothesized 80% target in simulated review |
-| Writing burden | Actual time per entry and reasons for abandonment | Hypothesized median within five minutes |
-| Operational safety | Private leaks, incorrect publication, deletion failures | Stop expansion for serious unresolved incidents |
-| Cost | Storage/transfer/worker time/operational labor per active student | Use actual costs to estimate the next scope |
+| Activation | Within 7 days of signup: create an assignment + 3 logs + one piece of evidence | 50–60% of invited students |
+| Recording retention | Share of active students who record in at least 3 of 4 weeks | 40%; examine exam-period effects separately |
+| In-term value | Teams that actually used the contribution report for peer evaluation or presentations | 30% |
+| Case conversion | Share of completed assignments confirmed as publishable that are published (summary or above) | 30–40% |
+| Helped discovery | Share of current students who, after visiting a course page, marked a stuck card or senior note “This helped” or forked a plan | 30% |
+| Supply conversion | Share of helped students who left their own notes or stuck cards at the end of the term | 20% |
+| Portfolio use | Students who connected a public case as a featured contribution and actually shared it | 10 or more (pilot), 20 (stage 3) |
+| Understanding | Share of simulated reviewers who accurately explain role, result, and evidence | 80% |
+| Writing burden | Actual time to write one log and reasons for abandonment | Median 5 minutes or less |
+| Operational safety | Private leaks, incorrect publication, deletion failures | Halt expansion if any serious unresolved case exists |
+| Cost | Storage, transfer, worker, AI cost, and operator hours per active student | Factor into estimating the next scope |
 
-Propose minimal events: `project_created`, `entry_saved`, `evidence_attached`, `candidate_prepared`, `consent_completed`, `publication_published`, `publication_withdrawn`, and `portfolio_shared`. Do not include assignment bodies, file contents, raw search queries, or contact information. Explain pilot consent, retention, and analytics access separately.
+Minimal analytics events: `project_created`, `log_saved` (tag, source), `evidence_attached`, `milestone_snapshot_set`, `checkin_submitted`, `claim_endorsed`, `report_exported`, `candidate_prepared`, `consent_completed`, `publication_published`, `publication_withdrawn`, `plan_forked`, `usefulness_marked`, `senior_note_published`, `portfolio_shared`. Events do not contain assignment bodies, file contents, raw search text, or contact details. Pilot consent, retention periods, and analytics access permissions are explained separately.
 
-Do not turn views, likes, or commit counts into personal capability scores. Combine metrics with interviews and case-quality review; do not generalize small-sample ratios to all university students. Employment-rate improvement cannot be established by the initial pilot. It is a separate research question requiring longer-term tracking/comparison and participant consent.
+Public view counts, likes, and commit counts are not used as personal capability scores. Ratios from small samples are not generalized to the entire university student market, and improving employment rates is a separate long-term research question that an early pilot cannot prove.
 
 ## 7. Release and expansion gates
 
 | Gate | Required checks | If failed |
 |---|---|---|
-| G0: direction | Validate recording/portfolio hypotheses using actual student materials | Revise product scope and reduce development |
-| G1: private alpha | Authorization, persistence, file quarantine, account-state tests | Do not enable external publication |
-| G2: limited public pilot | Consent, withdrawal, derivative blocking, reports, recovery | Disable public features; fix and verify again |
-| G3: next cohort | Writing burden, student value, publication policy, operating cost | Adjust purpose or recruitment scope |
-| G4: employer/institution expansion | Supply of consenting users, repeated review demand, contact/data policies | Remain at public profile-link sharing |
+| **G0: Direction** | Use E0–E5 to judge the hypotheses for in-term recording, contribution ledger, course hub, and portfolio | Adjust product scope, then reduce development |
+| **G1: private alpha** | Authorization, persistence, file quarantine, account state, and bot collection tests; use by two internal teams | Do not accept external users |
+| **G2: limited public** | Publication consent, embargo, withdrawal, derivative blocking, reports, and recovery work; report handler, response time, and deletion procedure designated | Block public features; re-verify after fixing |
+| **G3: Next cohort** | Review recording burden, student value, publication policy, operating cost | Adjust purpose of use or recruitment scope |
+| **G4: Employer and institution expansion** | Supply of consenting users, repeated review demand, contact and data policies confirmed | Stay at the public profile link level |
 
-Separate feature completion from operational readiness. Before public launch, confirm report ownership, access permissions, response time, account/material deletion procedures, file backups, and recovery order. Writing down legal or school-policy review is not completion of that review.
+Separate feature completion from operational readiness. Writing down a legal or school-policy review in a document does not make it complete.
 
-## 8. Risks and responses
+## 8. Cold start and growth
+
+Split supply units smaller than full cases to gather initial content quickly.
+
+| Supply unit | Writing-time hypothesis | Initial target (per course) |
+|---|---|---|
+| Senior note | 10 minutes | 10 |
+| Stuck card (retrospective) | 5 minutes each | 20 |
+| Retrospective case | 30 minutes | 3–5 |
+| In-progress case | Throughout the term | 5–10 pilot teams |
+
+- **Sequence:** 2026-12 graduate campaign → course pages opened at the start of the 2027-03 term (bringing in current students) → in-term recording → publication after the 2027-06 term ends → portfolio sharing during the second-half recruitment season → new visitors via shared links.
+- **Channels:** department student councils, development and design clubs, capstone presentations, graduation project exhibitions. University email verification is not required as a condition of entry.
+- **Density:** Focus on 2–3 courses rather than a whole school. When search results are sparse, show collections by course and type instead of a popularity feed, and supplement with “At other schools” (concept tags).
+- Include cases with failures and constraints in the initial public content, so the structure does not benefit only students who showcase well.
+- **ProofU as the first case:** The owner publishes ProofU itself as the first public case in retrospective mode (marking that the 2019 commits are a reconstructed record).
+
+## 9. Risks and responses
 
 | Risk | Early signal | Response |
 |---|---|---|
-| Perceived as an answer collection | Finding problem numbers and answer files becomes the dominant use | Center self-written context, approach, validation; operate publication policies and reporting |
-| Recording fatigue | Dropout or missing evidence after one or two entries | Short input, files first, fewer required types |
-| Portfolio exaggeration | Claims/evidence mismatch or team disputes | Distinct contribution states, revisions, withdrawal, appeals |
-| Team consent obstacles | Prepared cases cannot be published because of nonresponse | Agree scope early, exclude shared materials where possible, use personally permitted materials |
-| Only experienced students participate | Cases concentrate among polished contributors | Failure/small-assignment templates, optional sensitive fields, mentor feedback |
-| Legacy code consumes time | Installation/dependency fixes displace product experiments | Preserve originals and independently build the new core flow |
-| Operating costs rise | Files, conversion, and report handling grow | Quotas, narrow formats, queues, measurement, defined support scope |
-| External API dependence | Connection errors, repositories become private, quotas increase | Links first, adapters/retry, usable without automatic collection |
-| Weak employer demand | Student introduction links are not actually read | Retain student organization value and defer employer search |
+| Recording fatigue | Sharp drop in logs after 2–3 weeks, missing attachments | Increase the share of bot, check-ins, and AI interviews; reduce tags; files first |
+| Becoming an answer collection | Many artifact downloads but few log views; searches for problem numbers and answers | Encourage summary publication, embargo, make assignment context/approach/validation the basic unit, operate reporting |
+| Contribution ledger used as a conflict tool | Claim disputes, blaming comments | No scores or rankings, factual-recording guide, appeals, separation of personal claims and confirmations |
+| Portfolio exaggeration | Mismatch between role claims and evidence | Distinct confirmation states, revisions, withdrawal and appeals, mandatory citations |
+| Team consent obstacles | Publication delayed by nonresponse | Agree on publication scope early in the term, exclude non-consenting members' materials, use personally permitted materials |
+| Cold start | Course pages are empty | Graduate campaign, course focus, retrospective writing, operator interview ghostwriting (with approval) |
+| Only accomplished students participate | Cases concentrate among skilled students | Templates for failures and small assignments, senior notes, optional sensitive fields |
+| Messenger mismatch | Target students don't use Discord | Shift to web/PWA quick log, KakaoTalk notifications |
+| AI cost and hallucination | Cost spikes, sentences without evidence | Template drafts first, per-task model separation, caching and limits, mandatory citations, evaluation set |
+| Solo developer delays | Exceeding 13 weeks | Boldly defer P1 and below, apply the reduced scope. Do not cut publication or authorization tests |
+| Time sunk into legacy code | Experiments delayed while only fixing installation and dependency issues | Preserve originals; time-box running the original for exhibition to 2–3 days |
+| Pushback from schools or professors | Opposition to publishing specific courses | Embargo, summary publication, faculty request channel (P2), per-class policies |
+| External API dependence | Connection failures, switch to private, quotas | Links first, adapters and retry, usable without integrations |
+| Weak employer demand | Shared links are not actually read | Keep the value of student recording and organization; defer employer features |
 
-## 9. Operating cost and budget estimation
+## 10. Operating cost estimation approach
 
-Providers, regions, storage, and pricing have not been selected, so do not present an unverified fixed monthly cost. Recalculate these categories against current official prices when choosing providers:
+Because the hosting provider, region, capacity, and pricing have not been chosen, monthly costs are not presented as fixed numbers. Recalculate against official prices at the time a provider is selected.
 
-- Fixed costs: web/worker runtime, PostgreSQL, monitoring, authentication/email services.
-- Variable costs: storage, download transfer, scanning/previews/PDFs, external API calls.
-- Human costs: publication guidance, reports/disputes, student interviews, database/file recovery, deployment management.
+- Fixed: web, worker, and bot runtime, PostgreSQL, monitoring, authentication and email
+- Variable: storage, download transfer, scanning/thumbnail/PDF jobs, AI tokens, external API calls
+- People: publication guidance, reports and disputes, interviews, file and DB recovery, deployment management
 
-Fifty initial students at a 500MB storage limit imply up to roughly 25GB of original data. Derivatives, versions, backups, and transfer are additional; this is not actual usage. Prefer external video links and configure per-student limits and overall budget alerts.
+An initial 50 students × 500MB assumes up to roughly 25GB of original data; derivative files, versions, backups, and transfer are additional. Prefer external links for video, and set per-student limits and overall budget alerts. If budget is short, cut AI, automatic GitHub connection, sophisticated PDFs, and semantic search first, while keeping private authorization, file quarantine, publication withdrawal, and recovery.
 
-If budget is constrained, reduce automatic GitHub integration, sophisticated PDFs, search recommendations, and chat first. Private authorization, file quarantine, publication withdrawal, and recovery remain pilot requirements.
+## 11. Git, archive, and documentation practices
 
-## 10. Git, archive, and documentation practices
+- Preserve the original `frontend/`, `backend/`, `docs/history-map.json`, and `docs/archive-cleanup.json`. If a separate request requires modifying originals, record the change and verification criteria explicitly.
+- Carry out new implementation on feature branches (e.g., `peerchive/<feature>`), and keep tests, migrations, and operational documentation inside the new `apps/` and `packages/`. Do not rewrite master history or change the backup branch.
+- For each implementation unit, record the problem, user behavior, completion criteria, authorization impact, and tests in the PR. The README labels features as “proposed / in development / available.”
+- Update this document according to experiment results, and record major decisions as ADRs.
+- The 18 commits dated 2019 are a reconstruction of code uploaded in 2020, not actual development logs from that time. The new service does not present that record as real-time development evidence or contribution certification. Retain the [original history backup](https://github.com/polynomeer/peerchive/tree/backup/pre-reconstruction-20261013).
 
-The planning work adds documentation to the current repository. Propose subsequent implementation commits on branches such as `codex/peerchive-evolution-<feature>`. There is no reason to rewrite existing master history or change the backup branch.
+## 12. Immediate next steps (two weeks from 2026-10-19)
 
-Preserve `frontend/`, `backend/`, `docs/history-map.json`, and `docs/archive-cleanup.json` during modernization. If a separate request requires changing originals, record the change and verification criteria explicitly. New `apps/` and `packages/` contain their own tests, migrations, and operational documentation.
+1. Finalize the interview questionnaire (§2.1) and recruit candidate current students, hiring reviewers, and faculty.
+2. Build the Notion build log template (tags, milestones, check-in form) and the Discord channel structure, and recruit 2–3 E0 pilot teams.
+3. Choose the first 2–3 courses and ask 5 graduates for senior notes, stuck cards, and retrospective write-ups (E2).
+4. Create static mockups of the course page, public case, and public profile for use in E1 and E4.
+5. Prepare the 2019 milestone snapshots for the first case using screenshots of the original ProofU screens and history materials.
+6. Set up a Nuxt + PostgreSQL + Drizzle + pg-boss skeleton and CI (including original-preservation checks) as a technical experiment, and record ADRs.
 
-For each implementation unit, describe the problem, user behavior, completion criteria, authorization impact, and tests in the PR. README statuses distinguish “proposed,” “in development,” and “available.” Update this design with ADRs and reasons as research/experiments produce evidence.
-
-The 18 commits dated 2019 reconstruct code uploaded in 2020; they are not actual development logs from that period. Do not present them in the new service as contemporaneous development evidence or certified personal contribution. Retain the [original history backup](https://github.com/polynomeer/peerchive/tree/backup/pre-reconstruction-20261013).
-
-## 11. Next steps
-
-Begin with a smaller validation unit rather than implementing the entire service:
-
-1. Select three to five recent assignments and completed projects suitable for publication, first checking use/publication consent.
-2. Manually edit one representative case using the proposed template and have students/hiring reviewers read it.
-3. Test short-record entry, personal contribution display, and publication preview flows.
-4. Implement the technical foundation, a private assignment, and its first record as one vertical slice aligned with validated needs.
-5. Start the limited pilot after authorization, publication, and withdrawal gates pass.
-
-This sequence tests what records are actually useful to students before building an attractive site. Prototyping/application implementation, student recruitment/contact, external service registration, and deployment are outside this documentation work.
+This order is meant to confirm which records are actually useful to students, rather than building a “nice-looking site” first. Recruiting and contacting students, signing up for external services, and deployment are not part of this documentation work.

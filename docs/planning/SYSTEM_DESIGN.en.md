@@ -1,278 +1,458 @@
-# Peerchive evolution system design
+# Peerchive system design
 
 [한국어](SYSTEM_DESIGN.md) | **English**
 
-Peerchive is the new name for the project originating from **ProofU**, an undergraduate graduation project developed in 2019. Combining *Peer + Archive*, the name expresses a public archive where students learn from one another’s assignment and project experiences. It distinguishes this project from the separate career command center project named `proofu`. The GitHub repository name and address have also changed from `proofu-univ` to [`peerchive`](https://github.com/polynomeer/peerchive). Document paths remain unchanged; the archived code is the original ProofU implementation.
+Written: 2026-10-18 · Status: integrated proposal before implementation
 
-Written: October 13, 2026 · Status: proposal before implementation
+[Product proposal](../PROOFU_EVOLUTION_PLAN.en.md) · [Delivery plan](DELIVERY_PLAN.en.md)
 
-[Product proposal](../PROOFU_EVOLUTION_PLAN.en.md) · [Delivery plan](DELIVERY_PLAN.en.md) · [Concept addendum](CONCEPT_ADDENDUM.en.md)
+Peerchive is the new name for the project that continues from **ProofU**, an undergraduate graduation project developed in 2019. The preserved code is the original ProofU implementation; the structure below is a design proposal for a new app that has not yet been created.
 
-## 1. Design goals and principles
+## 1. Design goals and invariants
 
-Preserve students' work records, turn them into publishable learning cases, and explain individual contributions within those cases. Begin as a single service a small team can operate, with modular responsibilities for identity, records, publication, and file processing.
+Without losing students' work records, the system must let them reuse those records as in-semester collaboration records → public learning cases → personal portfolios. It starts as a single service that one developer can operate, but separates the responsibilities of authentication, records, contribution, publication, archive, files, and AI into modules.
 
-The most important invariants are:
+**Invariants**
 
-1. Private workspace records never enter public APIs, search, previews, or PDFs.
-2. Publication uses an approved snapshot containing only selected record versions and files.
-3. Changes to consent for shared artifacts also block public cases and portfolios using those materials.
-4. Separate authors' role claims, third-party confirmations, and platform timestamps.
-5. Editing a public release creates a new version, but deletion/withdrawal requests can remove actual content under retention policies.
-6. Do not mix the original archive history and new service data as evidence of each other's authenticity.
+1. Private work records never reach public APIs, search, course aggregates, previews, OG images, PDFs, or AI recruiter Q&A. Public paths read **only approved public release snapshots**.
+2. A publication is a snapshot containing only selected log revisions, artifact versions, and displayed names, and consent is bound to the hash of that snapshot's manifest.
+3. The server rejects publish requests for projects under embargo (disabling the client button is only supplementary).
+4. When consent to shared material changes or is withdrawn, the public cases, portfolios, search, aggregates, and embeddings that use that material are also blocked. Read paths check state first, so nothing is exposed even if cleanup of derived data is delayed.
+5. Distinguish the author's role claim, third-party confirmation, platform recording time, and self-reported work date from one another.
+6. AI jobs receive only data the requesting user has permission to access. AI-generated output is labeled and remains a draft until the student approves it.
+7. Editing a public version is handled by creating a new version, but when deletion/withdrawal is requested, the actual content can also be removed under the retention policy. "Change history is kept" is not implemented as "permanent deletion is impossible."
+8. The original ProofU history and new service data are not used interchangeably as evidence of each other's authenticity.
 
-Keeping revision history must not mean permanent inability to delete. Audit events retain only necessary minimal information, while personal data and file contents remain removable under policy.
+## 2. Using the original ProofU
 
-## 2. How to use the existing code
+### 2.1 Why build the new app alongside it
 
-Live service data and a compatible runtime have not been established for this repository. Recommend **preserving the existing directories and building the new application alongside them**. This continues the project's purpose, assets, and domain knowledge without carrying its runtime limitations into the new foundation.
+Leave the original `frontend/` and `backend/` untouched as preserved records and add the new app to the same repository. The reasons for not incrementally upgrading the original (Vue 2 → 3, Sequelize cleanup) are:
 
-| Existing element | What carries forward | Changes in the new implementation |
+- Because of a missing file (`backend/api/user.js`), an outdated build chain (Webpack 3, Babel 6), and native modules, merely restoring it to a runnable state takes considerable time.
+- The cost of fixing the security structure — plaintext password comparison and logging, hardcoded DB credentials and JWT key, mutation APIs without ownership checks, long-lived tokens in localStorage — is comparable to the cost of building anew.
+- The core of v2 (build log, contribution ledger, public snapshots, course hub) consists of domains that do not exist in the original.
+
+Use the original's user flows, component purposes, and models as design references. Do not carry direct DOM manipulation, Vue 2 lifecycles, plaintext passwords, exposed file paths, or Sequelize sync-based schema changes into new code. Separate the DB, upload paths, secrets, and deployment of any research environment for running the original from those of the new service.
+
+### 2.2 Concept inheritance mapping
+
+| Original (2019) | What carries forward | Peerchive |
 |---|---|---|
-| User, Profile, MyPage | Bring personal experience into one place | Profile visibility controls, featured contributions, portfolio editions |
-| Team, Member, Join | Relationships between teams and participants | Project-specific roles, shared-material consent, invitation/departure status |
-| Board | A project workspace | Assignment/Project goals, constraints, period, publication policy |
-| List, Card | Tasks and ordering | Optional Task feature; completion does not automatically constitute a learning record |
-| BoardFile, CardFile | Materials linked as evidence | Scan status, file versions, license/publication permissions, withdrawal |
-| Chat, Message | Need for feedback and discussion | Record-level feedback for the MVP; defer real-time chat |
-| Calendar | Time context | Simple deadlines/periods first; defer a separate calendar engine |
-| Images and logos | Reference for the original ProofU identity | Create separate Peerchive brand assets; check rights/origins before reusing existing assets and retain third-party usage conditions |
-| Notice collection | University context | Exclude from the new MVP because it is separate from the core flow |
+| `User` (email, name, git) | Purpose of gathering personal experience in one place | User + Profile (visibility controls), git → GitHub integration |
+| `Team` + `Member` (field ENUM, part) | Relationship between teams and participants | Project + ProjectMember (part_label). field ENUM → competency/interest tags |
+| `Join` (join request) | Participation requests | Invitation links (expiring, single-use) + questions to public case authors (P1) |
+| `Board` (title, description, language) | Project space | Project (assignment summary, goal, constraints, period, course, technology tags) |
+| `List` / `Card` (Todo/Doing/Done, pos) | Units of work and ordering | Task (to-do view) + conversion to LogEntry on completion. Card completion is not treated as a learning record |
+| `BoardFile` / `CardFile` | Linking materials as evidence | Artifact / ArtifactVersion (scan status, version, usage terms) + milestone snapshot |
+| `Message` + Socket.IO chat | Team discussion | No built-in chat → Discord bot + 🗣️ meeting log + per-log feedback |
+| Calendar (DaySpan) | Schedule context | Milestones and deadlines, `.ics` export |
+| YUnotice (school notice crawling) | University context | Course archive structured as School → Course (no crawling) |
+| MyPage timeline and language/field charts | Overview of personal activity | Four-year assignment timeline + competency × evidence matrix |
+| Search (LIKE, sorted by view count) | Public discovery | Search by course, stuck point, and concept; sorted by fork and usefulness signals |
+| Images and logos | ProofU identity | Create separate Peerchive brand assets. Use existing assets only after checking rights and origin |
 
-Use existing frontend flows, component purposes, and models as design references. Do not copy global DOM manipulation, Vue 2 lifecycles, plaintext passwords, long-lived localStorage tokens, exposed file paths, or Sequelize sync-based schema changes into new code.
+### 2.3 Running exhibit of the original (optional, time-boxed to 2–3 days)
 
-Separate any research environment for running the original from the new service's database, upload paths, secrets, and deployment. Do not automatically import SQLite or sample uploads as production data.
+Without modifying the original files, place a pinned-Node-version container configuration and an **explicitly labeled reimplementation overlay** (the missing `user.js`, etc.) in a separate directory (e.g., `legacy-runtime/`) to bring up the original screens as a read-only demo. The purpose is to provide snapshot evidence for the first ProofU case and a portfolio demonstration. If it fails within the time box, substitute screen captures. It is not included in the MVP schedule and must not break the preservation rules in AGENTS.md or `scripts/check_archive.py`.
 
-## 3. Recommended technology and alternatives
-
-| Component | Proposal | Reason and limitation |
-|---|---|---|
-| Web | Vue 3 + Nuxt + TypeScript | Retain Vue experience while combining server-rendered public cases and editing screens |
-| Server | Nuxt/Nitro APIs with domain service modules | Reduce initial API deployment, CORS, and authentication boundaries |
-| Database | PostgreSQL with explicit migrations; Drizzle as a candidate typed ORM | Manage relationships, versions, consent, and policy states transactionally; settle ORM choice in the initial technical experiment |
-| Files | Private S3-compatible object storage | Separate file contents from the database, quarantine before scanning, manage backups/deletion |
-| Background jobs | Node worker in the same repository with a PostgreSQL job table | Process scanning, publication, withdrawal, and PDFs without an initial Redis dependency |
-| Authentication | Established session/OAuth implementation with HttpOnly cookies | Do not invent cryptographic protocols; GitHub login is optional and an email method is available |
-| Search | PostgreSQL structured filters and normalized search columns first | Avoid a separate initial search cluster; test n-grams/dedicated search if Korean quality is inadequate |
-| Testing | Vitest, integration tests against actual PostgreSQL, Playwright | Verify authorization, consent, disclosure risks, and core user flows |
-| Deployment | One web service, one worker, managed database/storage | Reproduce with containers; select providers after reviewing region, cost, backup, and processing conditions |
-
-Nuxt's server capabilities use Nitro. [Official Nuxt server documentation source](https://github.com/nuxt/nuxt/blob/main/docs/1.getting-started/13.server.md)
-
-These technology choices are proposals; this document does not pin current version numbers. At implementation start, verify a supported Node LTS/library combination and pin the lockfile, runtime, and CI together. Use explicit server/form state instead of ad hoc fetching and global DOM manipulation in Vue components. Reserve Pinia for necessary shared UI state.
-
-An alternative is a Vue 3 SPA with a separate TypeScript Express API. This requires additional public-page rendering and separate deployments but suits strong demand from independent API clients. With no current mobile app or external API consumers, prioritize a single Nuxt application. PostgreSQL applies to the new app; it does not imply deleting the existing MySQL implementation.
-
-## 4. Proposed repository structure
-
-These directories are not being created now. They describe a future implementation layout.
-
-```text
-frontend/                     # Preserve existing archive
-backend/                      # Preserve existing archive
-apps/
-  web/
-    app/pages/                # Discovery, workspace, public cases, portfolios
-    app/components/           # Domain-specific UI
-    server/api/v1/            # Input validation, policy checks, response mapping
-    server/modules/           # identity, projects, evidence, publication, portfolio
-  worker/                     # Scanning, publication, withdrawal, conversion
-packages/
-  domain/                     # Rules, state transitions, publication policy
-  db/                         # Schema, migrations, repositories
-  contracts/                  # Input/response schemas and error codes
-  integrations/               # Storage and GitHub adapters
-  test-fixtures/              # Scenario data without personal information
-ops/                          # Local setup, deployment, backup/recovery guides
-```
-
-API handlers call domain services rather than updating the ORM in scattered locations. Separate database schemas from external responses so private emails and internal storage keys cannot enter public DTOs. Microservices, Kafka, and a generic plugin framework are unnecessary at the outset.
+## 3. Architecture
 
 ```mermaid
 flowchart TD
-    U[Student and team editing screens] --> A[Nuxt API / session and policy checks]
-    P[Public cases and portfolios] --> R[Public-release-only reads]
-    A --> D[(PostgreSQL)]
-    R --> D
-    A --> Q[Job table / outbox]
-    Q --> W[Worker]
-    W --> D
-    W --> S[Private file storage / scans and derivatives]
-    R --> G[Check publication status before short file access]
-    G --> S
-    W --> X[Optional GitHub integration]
+    subgraph Client
+      W[Nuxt web app<br/>Public page SSR + editing screens]
+      PWA[Mobile PWA<br/>Quick log and push]
+    end
+    subgraph Integrations
+      DC[Discord bot]
+      GH[GitHub App - P1]
+    end
+    W --> API[Nuxt Server API<br/>Sessions, policy checks, domain services]
+    PWA --> API
+    DC --> API
+    GH -->|Signature-verified webhook| API
+    P[Public cases, courses, profiles] --> R[Public-release-only reads]
+    API --> DB[(PostgreSQL<br/>pg_trgm · pgvector)]
+    R --> DB
+    API --> Q[Job table / outbox<br/>pg-boss]
+    Q --> WK[Worker]
+    WK --> DB
+    WK --> S3[(Private object storage<br/>Originals, snapshots, derivatives)]
+    WK --> AI[LLM API adapter]
+    R --> G[Check publication status, then<br/>short-lived signed URL]
+    G --> S3
 ```
 
-## 5. Domain model
+Do not build microservices, Kafka, or a generic plugin system from the start. Begin with one web service + one worker + one bot + managed DB and storage.
 
-| Entity | Main fields | Relationships and rules |
+## 4. Technology stack
+
+| Component | Proposal | Reason and constraints |
 |---|---|---|
-| User | id, display_name, private_email, status | Separate authentication identifiers from public information |
-| Profile | user_id, headline, interests, contact_policy | Contact publication requires permission; school information is optional |
-| Project | id, owner_id, title, context, goal, constraints, lifecycle | Personal/team assignment; owner has operational responsibility, not exclusive shared-material rights |
-| ProjectMember | project_id, user_id, role, status | owner/editor/reviewer/viewer; name display requires separate consent |
-| CourseContext | school_label, course_label, term, policy_note, policy_status | Optional context, not official school certification or instructor approval |
-| ProcessEntry | id, project_id, author_id, type, stage | Record identity referencing the current revision |
-| EntryRevision | entry_id, revision_no, work, learning, claimed_date, recorded_at | Content version; actual work date is labeled self-reported |
-| Artifact | id, project_id, uploader_id, kind | file/link/demo with ownership and use conditions |
-| ArtifactVersion | artifact_id, sha256, object_key, scan_status, media_type, bytes | New version for changed contents; upload SHA-256 identifies content |
-| EvidenceLink | entry_revision_id, artifact_version_id or source_ref_id | Evidence attached to a particular version |
-| ContributionClaim | id, user_id, project_id, text, revision | Personal role claim and evidence; no mandatory percentage totals |
-| ClaimEvidence | claim_revision, entry_revision or artifact_version | Connect contribution claims to materials |
-| ContributionConfirmation | claim_revision, confirmer_id, status, note | Confirmation does not carry over when the claim changes |
-| Reference | owner_scope, url, citation, license_note | Sources of cases/materials; show if the original is deleted |
-| Publication | id, project_id, slug, current_release_id, status | Stable public-case URL and withdrawal status |
-| PublicationRelease | publication_id, version, snapshot, manifest_hash, status | Only selected public data and referenced files |
-| Consent | release_manifest_hash, subject_id, scope, status | Consent to the contents of a specific publication candidate |
+| Web | **Vue 3 + Nuxt + TypeScript** | Carries forward the original's Vue experience. Combines SSR for public pages (search visibility, OG) with editing screens |
+| UI | Tailwind CSS + headless components | Document-style UI, accessibility |
+| State | Centered on server state and form state; Pinia only for shared UI state | No ad hoc fetching inside components or global DOM manipulation |
+| Server | Nuxt/Nitro server API + domain service modules | A single deployment narrows CORS and authentication boundaries. Handlers do not modify the ORM directly in scattered places |
+| DB | **PostgreSQL** + explicit migrations, Drizzle as ORM candidate | Handle relationships, revisions, consent, and policy states transactionally. Settle the ORM in the initial technical experiment |
+| Extensions | `pg_trgm`, `pgvector` | Korean partial matching and error-message search; semantic search for similar stuck points (P1) |
+| Async | pg-boss (PostgreSQL job table) + outbox | Scanning, publication, withdrawal, AI, and PDF jobs without Redis |
+| Files | Private S3-compatible storage (e.g., Cloudflare R2) | Separate contents from the DB, quarantine before scanning, signed URLs |
+| Authentication | Established session/OAuth library, HttpOnly cookies. Email magic link + Google, GitHub, Kakao | No home-grown cryptographic protocols. Sign-up possible without GitHub. School email verification is an optional badge |
+| AI | Provider-swappable LLM adapter. Higher-tier model for summaries, case drafts, and interviews (e.g., Claude Sonnet family); lightweight model for tag classification and sensitive-information checks (e.g., Claude Haiku family) | Control cost by separating models per job. API terms that exclude training on data |
+| Bot | Separate process based on discord.js | Slash commands and emoji reaction collection |
+| Verification | Vitest, integration tests against real PostgreSQL, Playwright, AI evaluation sets | Preventing regressions in authorization, consent, and public leakage is the top priority |
+| Deployment | Containers (web, worker, bot) + managed Postgres | Choose a provider after comparing region, cost, backup, and processing terms |
+| Observability | Sentry + structured logs | Do not log assignment content, tokens, or email addresses |
+
+[Nuxt's server capabilities are built on Nitro](https://github.com/nuxt/nuxt/blob/main/docs/1.getting-started/13.server.md). This document does not pin version numbers; at implementation start, verify a supported Node LTS and library combination and pin the lockfile, runtime version, and CI together.
+
+The alternative is a Vue 3 SPA + a standalone TypeScript API. It requires separate public-page rendering and split deployments, but becomes appropriate if demand grows for external clients or mobile apps to use the API. For now, prioritize a single Nuxt app. The move to PostgreSQL applies to the new app and does not mean deleting the original MySQL code.
+
+## 5. Repository structure (proposed)
+
+```text
+peerchive/
+├── frontend/                 # 2019 original (preserved)
+├── backend/                  # 2019 original (preserved)
+├── apps/
+│   ├── web/
+│   │   ├── app/pages/        # Discovery, assignment space, public cases, courses, portfolio
+│   │   ├── app/components/   # Domain-specific UI
+│   │   ├── server/api/v1/    # Request validation, policy checks, response mapping
+│   │   └── server/modules/   # identity, projects, logs, contribution,
+│   │                         # publication, archive, portfolio
+│   ├── worker/               # Scanning, publication, withdrawal, aggregation, AI, PDF jobs
+│   └── bot/                  # Discord bot
+├── packages/
+│   ├── domain/               # Rules, state transitions, publication and embargo policy
+│   ├── db/                   # Schema, migrations, repositories
+│   ├── contracts/            # Input/response schemas, error codes
+│   ├── ai/                   # Prompts, LLM adapter, evaluation sets
+│   ├── integrations/         # storage, GitHub, Discord adapters
+│   └── test-fixtures/        # Scenario data without personal information
+├── ops/                      # Local setup, deployment, backup/recovery runbooks
+├── docs/
+└── scripts/check_archive.py  # Original preservation check (keeps running in CI)
+```
+
+Separate the DB schema from external responses so that emails, internal file keys, and the like never end up in public DTOs.
+
+## 6. Domain model
+
+```mermaid
+erDiagram
+    User ||--|| Profile : has
+    User ||--o{ ProjectMember : joins
+    School ||--o{ Course : offers
+    Course ||--o{ CourseTerm : "opened in"
+    Course }o--o{ ConceptTag : tagged
+    Course ||--o{ AssignmentBrief : describes
+    Course ||--o{ SeniorNote : collects
+    CourseTerm ||--o{ Project : contains
+    AssignmentBrief ||--o{ Project : "referenced by"
+    Project ||--o{ ProjectMember : has
+    Project ||--o{ Milestone : has
+    Project ||--o{ LogEntry : has
+    Project ||--o{ Task : has
+    Project ||--o{ Artifact : has
+    Project ||--o{ WeeklyCheckin : logs
+    LogEntry ||--o{ LogRevision : versions
+    LogRevision }o--o{ ArtifactVersion : "evidence"
+    Artifact ||--o{ ArtifactVersion : versions
+    Milestone ||--o{ MilestoneSnapshot : captures
+    MilestoneSnapshot }o--|| ArtifactVersion : uses
+    Task |o--o| LogEntry : "converted to"
+    ProjectMember ||--o{ RoleClaim : declares
+    RoleClaim ||--o{ ClaimRevision : versions
+    ClaimRevision }o--o{ LogRevision : evidences
+    ClaimRevision ||--o{ Endorsement : "confirmed by"
+    Project ||--o{ Publication : publishes
+    Publication ||--o{ PublicationRelease : versions
+    PublicationRelease ||--o{ Consent : requires
+    Project ||--o{ PlanFork : "forked from"
+    LogEntry ||--o{ UsefulnessSignal : receives
+    User ||--o{ CaseStudy : writes
+    CaseStudy }o--|| PublicationRelease : "based on"
+    CaseStudy ||--o{ CaseSentence : contains
+    User ||--o{ PortfolioEdition : owns
+    PortfolioEdition ||--o{ PortfolioItem : features
+```
+
+### 6.1 Identity and profile
+
+| Entity | Main fields | Rules |
+|---|---|---|
+| User | id, display_name, private_email, status | Separate login identifiers from public information |
+| Profile | user_id, handle, headline, job_targets[], school_label?, grad_term?, contact_policy, open_to_work | School and expected graduation are optional. Public contact requires separate permission |
+| Integration | user_id, provider(discord/github), external_id, scopes, status | Tokens stored encrypted, revocable |
+
+### 6.2 Course archive
+
+| Entity | Main fields | Rules |
+|---|---|---|
+| School | id, name, verified_label | Student input + operator merging. Carries no meaning of official certification |
+| Course | id, school_id, code?, title, merged_into? | Unit of the course hub. Normalization via merging |
+| CourseTerm | course_id, year, semester, ends_at | `ends_at` is the embargo reference |
+| AssignmentBrief | id, course_id, term_id?, title, summary_by_student | Not the original assignment text. Only groups projects; does not treat them as the same assignment |
+| ConceptTag | id, slug, label, parent_id? | Cross-school links between courses, stuck points, and cases |
+| SeniorNote | id, course_id, author_id, display_mode(real/display/anonymous), answers(JSON), status | Publication flow follows Publication rules |
+| PlanFork | source_release_id, target_project_id, copied_parts | Copies only milestones, checklists, time allocation, and references |
+| UsefulnessSignal | target_log_entry_id, user_id, kind(me_too/helped) | Once per user. No summing into personal scores |
+| Question / Answer (P1) | target_log_entry_id, author_id, body, status | Only when the author allows it |
+
+### 6.3 Assignment space
+
+| Entity | Main fields | Rules |
+|---|---|---|
+| Project | id, owner_id, title, summary_by_student, goal, constraints, kind(individual/team), lifecycle, course_term_id?, assignment_brief_id?, retro_mode | Private by default. The owner holds operational responsibility, not exclusive rights over shared material |
+| ProjectMember | project_id, user_id, role(owner/editor/reviewer/viewer), part_label, status | `(project_id, user_id)` unique. Public display of names requires separate consent |
+| Invitation | project_id, token_hash, role, expires_at, used_at | Expiring, single-use |
+| Milestone | id, project_id, order, title, due_at?, claimed_at? | Reorderable; not a completion gate |
+| MilestoneSnapshot | milestone_id, artifact_version_id, note | Unit of the evolution view |
+| LogEntry | id, project_id, author_id, current_revision_id, source(web/discord/ai/task/retro) | Log identity |
+| LogRevision | log_entry_id, revision_no, tag, body, payload(JSON), resolves_entry_id?, claimed_date?, recorded_at, ai_generated, approved_at? | `(log_entry_id, revision_no)` unique. Per-tag payload validated with JSON Schema |
+| Task | id, project_id, title, assignee_id?, due_at?, status, position | Carries forward the original Card |
+| Artifact | id, project_id, uploader_id, kind(file/link/repo/demo), usage_terms | Ownership and usage terms stated explicitly |
+| ArtifactVersion | artifact_id, sha256, object_key, scan_status, media_type, bytes | New version when contents change. Paths are not built from original filenames |
+| Reference | owner_scope, url, citation, license_note | Source of references. Shows when the original has been deleted |
+| WeeklyCheckin | project_id, user_id, week, time_bucket, difficulty, note?, share_for_stats | Private by default; consent for statistics is separate |
+
+`LogRevision.payload` examples:
+- `stuck`: `{symptom, keywords[], error_text?, attempts[], time_bucket}`
+- `solution`: `{method, time_bucket}` + `resolves_entry_id`
+- `decision`: `{options[], criteria, choice, hindsight?}`
+- `validation`: `{target, conditions, result, open_questions}`
+- `meeting`: `{attendees[], decisions[], follow_ups[]}`
+
+### 6.4 Contribution
+
+| Entity | Main fields | Rules |
+|---|---|---|
+| RoleClaim | id, project_id, user_id, current_revision_id | Personal role claim. No enforced percentage totals |
+| ClaimRevision | claim_id, revision_no, text, evidence_refs | Evidence is a specific LogRevision or ArtifactVersion |
+| Endorsement | claim_revision_id, endorser_id, status, note | Members of the same project only. No self-endorsement. Does not carry over when the revision changes |
+| ContributionReport | project_id, period, generated_at, object_key | Weekly summary and peer-evaluation PDF. Private to the team |
+
+### 6.5 Publication and portfolio
+
+| Entity | Main fields | Rules |
+|---|---|---|
+| Publication | id, project_id, slug, level(summary/full), current_release_id, status | Stable URL and withdrawal status. slug unique |
+| PublicationRelease | publication_id, version, snapshot(JSON), manifest_hash, status, access_epoch | Contains only selected revisions and files. `(publication_id, version)` unique |
+| Consent | release_manifest_hash, subject_id, scope, status | Consent to the contents of a specific candidate |
+| Embargo | scope(course_term/project), until, reason, requested_by | Enforced on publishing and public reads |
+| CaseStudy | id, user_id, release_id, job_target, generator(template/ai), status | Private until the student approves |
+| CaseSentence | case_study_id, order, text, citations[] | Sentences without citations block publication |
 | PortfolioEdition | id, user_id, version, visibility, status | Snapshot of profile, selected cases, and contributions |
-| PortfolioItem | edition_id, release_id, claim_revision, order | Only materials that pass publication authorization |
-| ShareGrant | edition_id, token_hash, expires_at, revoked_at | P1 restricted sharing; do not store raw tokens |
-| Review | target_revision, author_id, visibility, content | Public reviews also require publication consent |
+| PortfolioItem | edition_id, case_study_id, claim_revision_id, order | Only materials that pass publication authorization |
+| CompetencyEvidence | edition_id, competency, evidence_ref | No score field |
+| InterviewPrep (P1) | claim_revision_id, question, answer_note, expose_to_reader | Private by default |
+| ShareGrant (P1) | edition_id, token_hash, expires_at, revoked_at | Raw tokens are not stored |
+
+### 6.6 Operations
+
+| Entity | Main fields | Rules |
+|---|---|---|
+| Review | target_revision, author_id, visibility, content | Per-log feedback. Publication requires separate consent |
 | Report | target_type, target_id, reason, status | Reports, actions, and appeals |
-| AuditEvent | actor_id, action, target_id, at, minimal_metadata | Do not log record bodies, tokens, or sensitive file contents |
+| AuditEvent | actor_id, action, target_id, at, minimal_metadata | Does not store bodies, tokens, or sensitive file contents |
+| DeletionLedger | target, requested_at, purged_at | Reapply deletions on backup restore |
 
-A User participates in multiple Projects, each of which contains records, artifacts, and contributions. Public releases reference specific revisions only. PortfolioItem references PublicationRelease rather than live Project state, so editing a workspace does not immediately change public content.
+DB deletions do not cascade unconditionally; first calculate the ripple effects on shared records, consent, and withdrawal.
 
-Key constraints include unique `(project_id, user_id)` memberships, unique `(entry_id, revision_no)` and `(publication_id, version)`, unique public slugs, and verification of SHA-256/file length. Do not apply unconditional cascading deletion; calculate impacts on shared records, consent, and withdrawal first.
+## 7. State transitions and publication flow
 
-## 6. State transitions and publication flow
+### 7.1 Project work state
 
-Project work state and publication state are separate axes. Work uses `planning → active → completed → archived`, with transitions that allow further changes. Publication state follows:
+`planning → active → completed → archived`. Reverse transitions are allowed. Work state and publication state are separate axes.
+
+### 7.2 Publication state
 
 ```mermaid
 stateDiagram-v2
     [*] --> draft
-    draft --> awaiting_consent: Prepare publication candidate
-    awaiting_consent --> ready: Required consent and file checks pass
-    awaiting_consent --> draft: Edit content / create new candidate
-    ready --> published: Recheck permissions and explicitly publish
-    published --> withdrawn: Withdrawal, rights issue, or material becomes private
+    draft --> embargoed: Course term in progress
+    embargoed --> draft: Term ends (notification only, not automatic publication)
+    draft --> awaiting_consent: Create publication candidate
+    awaiting_consent --> ready: Required consent, file scans, and checks pass
+    awaiting_consent --> draft: Edit content / new candidate
+    ready --> published: Explicit publish after rechecking permissions and embargo
+    published --> withdrawn: Withdrawal, consent withdrawal, or rights issue
     published --> restricted: Administrative action
     withdrawn --> draft: Prepare new candidate
-    restricted --> draft: Reconsider after restriction is lifted
+    restricted --> draft: Re-review after action is lifted
 ```
 
-Build a candidate manifest from selected versions, displayed names, attachments, sources, and review items. Consent is tied to its hash. Changes to contents, visibility, or materials create a new candidate and require affected consent to be obtained again.
+- **Candidate creation:** Build a manifest from the selected log revisions, milestone snapshots, artifact versions, displayed names, and sources, and compute its hash. Names, logs, and shared materials of teammates who have not consented are excluded from the manifest or put on hold.
+- **Pre-publication check:** The worker uses rules and a lightweight model to check for personal information, files suspected to be original assignment text, and other people's real names, and attaches warnings. These are warnings, not blocks.
+- **Publish transaction:** Recheck publishing permission, membership status, consent validity, file `clean` status, embargo, hold/report status, and revision existence. Stale candidates return `409 Conflict` so the user previews again.
+- Personal projects are published by the author's explicit publish; team projects are published with the consent of the people whose names, statements, or shared artifacts fall within the publication scope.
+- Scheduled publication is P1, and all conditions are rechecked at execution.
 
-In the final publication transaction, recheck publishing permission, membership status, consent validity, file `clean` status, holds/reports, and revision existence. An enabled client-side button is not authorization. Return `409 Conflict` for stale versions and request another preview.
+### 7.3 Contribution confirmation state
 
-Scheduled publication is a P1 candidate. The date is only one condition; all conditions must be checked again at execution. An assignment deadline or semester ending does not establish permission under school policy.
+Each `ClaimRevision` goes `unconfirmed → confirmed | disputed`. When a new revision is created, previous confirmations remain only on their revision, and the current claim starts as `unconfirmed`.
 
-A personal project can begin with explicit publication by its author. Team projects require consent from people whose names, statements, or shared artifacts are included. If a teammate does not respond, exclude the relevant shared materials or defer publication. A teammate's departure does not automatically remove existing use restrictions.
+## 8. Authorization and access scope
 
-## 7. Authorization and access scope
+The MVP implements `private` and `public(summary/full)`. `private` allows only approved members and invited reviewers; `public` allows anonymous reading of published releases only. P1's `restricted-share` is an expiring, revocable token link, distinct from `unlisted`, which anyone who knows the link can view.
 
-Implement `private` and `public` in the MVP. `private` permits approved project members and invited reviewers. `public` permits anonymous reading of reviewed releases only. Add `restricted-share` in P1, distinct from an `unlisted` link readable by anyone who possesses it. Decide separately whether sensitive sharing should also require recipient authentication.
-
-| Action | Visitor | Project viewer/reviewer | editor | owner | Administrator |
+| Action | Visitor | viewer/reviewer | editor | owner | Administrator |
 |---|---|---|---|---|---|
-| Read public release | Allowed | Allowed | Allowed | Allowed | Allowed |
-| Read private workspace | Denied | Own project only | Own project only | Own project only | Denied by default |
-| Create/edit records | Denied | Reviewer feedback only | Own records; shared materials require separate permission | Within permission scope | Denied by default |
-| Edit another person's contribution | Denied | Denied | Denied | Denied | Dispute actions only |
+| Read public releases and course pages | Allowed | Allowed | Allowed | Allowed | Allowed |
+| Read private assignment space | Denied | That project only | That project only | That project only | Denied in principle |
+| Create/edit logs | Denied | Reviewer: feedback only | Own logs | Own logs | Denied |
+| Edit another person's role claim | Denied | Denied | Denied | Denied | Dispute actions only |
+| Endorse a role claim | Denied | Members of the same project | Allowed (except own) | Allowed (except own) | Denied |
 | Manage team members | Denied | Denied | Denied | Allowed | Operational actions only |
-| Consent to publication involving oneself | Denied | Own scope only | Own scope only | Own scope only | No proxy consent |
-| Request publication | Denied | Denied | Prepare draft | Execute if conditions pass | No arbitrary publication on others' behalf |
-| Withdraw publication | Report | Withdraw own consent/report | Withdraw own consent/report | Withdraw entire publication | Restrict/withdraw under policy |
+| Publication consent involving oneself | Denied | Own scope only | Own scope only | Own scope only | No proxy consent |
+| Prepare / publish publication candidate | Denied | Denied | Prepare candidate | Publish when conditions are met | No proxy publishing |
+| Withdraw publication | Report | Withdraw own consent / report | Withdraw own consent / report | Withdraw entirely | Restrict/withdraw under policy |
+| Plan fork / write senior notes | Login required | Allowed | Allowed | Allowed | – |
 
-Administrator access to private content for dispute investigation is an exception requiring reason, duration, scope, and an audit record. An administrator account must not automatically permit unrestricted database content browsing. Distinguish permission to delete a record from permission to block publication.
+- Administrator access to private content for dispute investigation is an exception requiring a reason, duration, scope, and audit record. Separate deletion permission from permission to block publication.
+- Apply the same policy functions to APIs, repositories, file access, search indexing, aggregates, PDFs, and AI jobs. PostgreSQL RLS is only a candidate defense layer and does not replace application policy ([PostgreSQL Row Security](https://www.postgresql.org/docs/current/ddl-rowsecurity.html)).
+- To avoid exposing the existence of private objects, handle unauthorized lookups consistently with 404.
 
-Apply the same authorization rules in APIs, database repositories, file access, search indexing, and PDF jobs. PostgreSQL RLS is a possible defense layer, not a replacement for application policy, because owners or privileged roles can bypass it. Test using actual service database roles if adopted. [Official PostgreSQL row security documentation](https://www.postgresql.org/docs/current/ddl-rowsecurity.html)
-
-## 8. Draft API contracts
+## 9. Draft API contracts (`/api/v1`)
 
 | Method and path | Purpose | Main conditions |
 |---|---|---|
-| `POST /api/v1/projects` | Create assignment | Authenticated; private by default |
-| `POST /api/v1/projects/:id/invitations` | Invite member | owner; expiry and single-use acceptance |
-| `POST /api/v1/projects/:id/entries` | Create process record | editor; input validation |
-| `POST /api/v1/entries/:id/revisions` | Create record revision | Author permission; expectedRevision |
-| `POST /api/v1/projects/:id/artifacts/upload-intents` | Prepare file upload | Size/type limits; quarantine object key |
-| `POST /api/v1/artifacts/:id/complete` | Confirm upload completion | Actual length/hash/ownership verified; awaiting scan |
-| `POST /api/v1/projects/:id/contributions` | Claim personal contribution | Author is a member of that project |
-| `POST /api/v1/contributions/:id/confirmations` | Teammate confirmation | Same project; no self-confirmation |
-| `POST /api/v1/projects/:id/publication-candidates` | Prepare publication snapshot | Selected revisions; owner/editor |
-| `POST /api/v1/candidates/:id/consents` | Give consent | Own scope; current manifest |
-| `POST /api/v1/candidates/:id/publish` | Publish | owner; recheck all states |
-| `POST /api/v1/publications/:id/withdraw` | Withdraw | owner or authorized operational role |
-| `GET /api/v1/publications/:slug` | Read public DTO | Published only; no private fields |
-| `GET /api/v1/publications/:id/artifacts/:versionId` | Read file | Included in current release; status checks |
-| `POST /api/v1/portfolio-editions` | Create portfolio | Link own public contributions only |
-| `GET /api/v1/profiles/:handle` | Read public profile | Permitted fields and active edition only |
-| `GET /api/v1/discover` | Discover cases | Active public releases only |
-| `POST /api/v1/reports` | Submit report | Verify target, rate limit, manage reason/status |
+| `POST /projects` | Create assignment | Logged in, private by default |
+| `POST /projects/:id/invitations` | Invite member | owner, expiring and single-use |
+| `POST /projects/:id/fork-from/:releaseId` | Plan fork | Public release; copies plan elements only |
+| `POST /projects/:id/logs` | Create log | editor, per-tag payload validation |
+| `POST /logs/:id/revisions` | New log version | Author, `expectedRevision` |
+| `POST /logs/:id/resolve` | Link a solution to a stuck point | Same project |
+| `POST /projects/:id/tasks`, `POST /tasks/:id/complete` | Tasks, completion | Completion response includes a log-conversion prompt |
+| `POST /projects/:id/milestones`, `POST /milestones/:id/snapshots` | Milestones and snapshots | Clean versions from the same project |
+| `POST /projects/:id/checkins` | Weekly check-in | Self, one per week |
+| `POST /projects/:id/artifacts/upload-intents` | Prepare upload | Size/type limits, quarantine key |
+| `POST /artifacts/:id/complete` | Complete upload | Verify actual length, hash, and ownership; awaiting scan |
+| `POST /projects/:id/claims`, `POST /claims/:id/revisions` | Role claim | Self |
+| `POST /claim-revisions/:id/endorsements` | Teammate endorsement | Same project, no self-endorsement |
+| `GET /projects/:id/contribution-report` | Contribution report | Members |
+| `POST /projects/:id/publication-candidates` | Publication candidate | owner/editor, embargo check |
+| `POST /candidates/:id/consents` | Consent | Own scope, current manifest |
+| `POST /candidates/:id/publish` | Publish | owner, full recheck |
+| `POST /publications/:id/withdraw` | Withdraw | owner or policy authority |
+| `GET /publications/:slug` | Public DTO | published only, no private fields |
+| `GET /publications/:id/artifacts/:versionId` | View file | Included in current release, status checks |
+| `GET /schools/:id/courses`, `GET /courses/:id` | Course hub | Public releases and aggregate views only |
+| `POST /courses/:id/senior-notes` | Senior notes | Logged in |
+| `GET /search?q=&type=stuck` | Search | Active public releases only |
+| `POST /case-studies/draft` | Case draft | Release that includes one's own contribution |
+| `POST /portfolio-editions` | Create portfolio | Own public contributions only |
+| `GET /profiles/:handle` | Public profile | Public fields and active edition only |
+| `POST /ai/checkin-interview` (P1) | AI retrospective | Streaming, only data the user can access |
+| `POST /integrations/discord/link`, `POST /webhooks/github` | Integrations | Verify signatures and delivery IDs |
+| `POST /reports` | Report | Rate limit, reason and status |
 
-Example input follows. Actual evidence IDs must belong to the same project.
+Log creation example (evidence IDs must belong to the same project):
 
 ```json
 {
-  "type": "decision",
-  "stage": "implementation",
-  "work": "Adjusted scope to use manual entry instead of real-time sensors.",
-  "learning": "Accuracy and operating costs needed to be evaluated together.",
+  "tag": "decision",
+  "body": "Adjusted the scope to use manual entry instead of real-time sensors.",
+  "payload": {
+    "options": ["Real-time sensors", "Manual entry"],
+    "criteria": "Feasibility within one semester and operating cost",
+    "choice": "Manual entry"
+  },
   "evidenceVersionIds": ["artifact-version-id"],
   "claimedDate": "2026-10-13",
   "expectedRevision": 2
 }
 ```
 
-Responses distinguish `recordedAt` from `claimedDate` and return a revision number. Pagination uses cursors and maximum item limits. Publication, upload completion, and synchronization use idempotency keys. Propose field-level form error codes, 409 for conflicts, and 422 for invalid input. Use 404 consistently where lookup policy must not expose the existence of private objects.
+Responses distinguish `recordedAt` from `claimedDate` and return the revision number. Pagination uses cursors and a maximum item limit; publishing, file completion, bot collection, and webhooks use idempotency keys. Form errors use per-field codes, conflicts return 409, and invalid input returns 422.
 
-## 9. Files and external links
+## 10. Files and external links
 
-Files use `pending → scanning → clean/quarantined/failed`. Narrow MVP formats to materials that can be displayed safely, such as images/PDFs, and links to code repositories. Propose excluding executables, archives, and arbitrary HTML/SVG execution. Check allowed MIME types, extensions, actual signatures, and size together.
+- States: `pending → scanning → clean / quarantined / failed`. Check allowed MIME types, extensions, actual signatures, and size together.
+- Narrow MVP-allowed formats to materials that can be displayed safely, such as images and PDFs, plus repository and video links. Executables, archives, and arbitrary HTML/SVG execution are not allowed. For video, external links come first.
+- All buckets are private and paths are not built from original filenames. Even public files have no permanent URLs; a short-lived (e.g., 60 seconds or less) signed URL is issued after checking that the release is active.
+- The server does not directly connect to URLs users attach. Link previews are collected only in a worker with allowed domains, redirect limits, private-IP blocking, and timeouts.
+- PDF and image thumbnails are generated in an isolated conversion environment without executing active content. Derived files are subject to the same withdrawal rules as the originals.
+- Draft limits: 500MB per student, 20MB per file. Adjust after observing usage.
 
-Keep all buckets private and avoid paths constructed from original filenames. Upload to quarantine keys, validating permission, quotas, and actual results. Do not immediately fetch arbitrary user-submitted URLs on the server. Initially offer external navigation; preview collection belongs in a worker with allowed domains, redirect checks, private-IP blocking, and timeouts.
+## 11. Consistency of withdrawal, search, aggregates, and derived data
 
-Do not create permanent public object URLs even for published files. Access them through a route checking active release status; if direct download URLs are needed, use a short validity period, such as 60 seconds or less. Withdrawal blocks new access immediately, but explain that existing URLs are bounded by TTL and downloaded copies remain with recipients.
+- On a withdrawal request, first update the Publication state and the related releases' `access_epoch` in the DB. Store an outbox event in the same transaction, and the worker cleans up search indexes, caches, portfolio dependencies, case studies, embeddings, derived files, and course aggregates.
+- Public pages do not query private tables. Include version and `access_epoch` in cache keys so withdrawal takes priority over content changes. Do not cache sensitive snapshots statically for long periods.
+- Portfolio items that include a withdrawn case are automatically marked unavailable and stop serving the original sentences and files. Milestones and checklists already copied via a plan fork are the forker's data and remain, but the link to the source is severed.
+- Explain that complete recall from external search engine caches and already-downloaded PDFs is not guaranteed.
+- Deleted materials may remain briefly in backups. Maintain the DeletionLedger, and on restore, do not open external traffic until the latest withdrawals and deletions have been reapplied.
 
-Generate PDF/image previews in an isolated conversion environment. Do not execute active content in user documents. Link derivatives to original versions and apply the same withdrawal rules to public derivatives.
+### 11.1 Search
 
-## 10. Consistency across withdrawal, search, and PDFs
+Stage 1 is PostgreSQL full-text search + `pg_trgm` (course names, Korean partial matching, error messages) with structured filters (school, course, concept tags, log type). Stage 2 (P1) uses `pgvector` for "similar stuck points" semantic search, and **embeds only public release text**. A separate search cluster will be reconsidered when public cases exceed tens of thousands.
 
-On withdrawal, first update Publication state and the relevant materials' `access_epoch` in the database. Read paths check state immediately, blocking new access even if workers are slow. Store an outbox event in the same transaction; a worker removes or blocks search indexes, caches, portfolio dependencies, and derivatives.
+### 11.2 Course aggregates and anonymity
 
-Public pages do not query private workspace data. Initially avoid long-lived static caching of sensitive snapshots; use state checks and short cache policies. Include version and access_epoch in cache keys so withdrawal takes priority over content updates. Do not guarantee complete recall from external search caches or already downloaded PDFs.
+Workload distribution and common stuck points are a separate materialized view computed only from public releases and check-ins with `share_for_stats=true`. If a group (same course and assignment type) is smaller than the threshold (draft: 5), no result is returned. Public aggregate paths never read private workspace tables directly.
 
-When a case is withdrawn, dependent portfolio items become unavailable and stop serving the original text/files. Decide through user testing whether to leave gaps or show an explanation until a new edition is published. Shared links also check current dependency status on access.
+## 12. Integrations
 
-Deleted materials may remain briefly in backups. Keep a separate deletion ledger and reapply the latest withdrawals/deletions during recovery before opening external traffic. Establish retention periods and purge intervals before launch, documenting them in user guidance and operational runbooks.
+### 12.1 Discord bot
 
-## 11. GitHub, AI, and learning-record integration
+- Users link their Discord account on the web and map server channels to Peerchive projects.
+- Collect `/log <tag> <content>` slash commands and 📌 reactions. Reaction collection is saved **only as a log of the message's own author**; pinning 📌 on someone else's message sends an approval request to its author.
+- Meeting summaries (P1) are read only in channels where all teammates have consented, and only messages up to the time of the request. Original message text is not stored after the summary is generated.
+- The bot sends weekly check-in reminders, weekly contribution summaries, and end-of-term publication notifications.
 
-The MVP lets students manually attach repository, PR, and commit links. Reports/design assignments without GitHub accounts or code should be equally usable. For P1 automatic integration, consider a GitHub App and request minimum permissions for selected repositories only. GitHub's official guidance describes granular permissions and selected-repository access. [GitHub App selection guide](https://docs.github.com/en/apps/creating-github-apps/about-creating-github-apps/deciding-when-to-build-a-github-app)
+### 12.2 GitHub
 
-Verify webhook signatures and delivery IDs; handle duplicate/out-of-order events. If a repository becomes private or access is revoked, reassess connection status and publication conditions rather than leaving collected content publicly copied. Do not automatically collect private repository contents in the MVP. Commit author email alone does not establish a Peerchive user's contribution.
+- In the MVP, students link repositories, PRs, and commits manually. Report and design assignments without GitHub must be equally usable.
+- P1 automatic linking uses a GitHub App, requesting only minimum permissions on repositories the user selects ([GitHub App selection guide](https://docs.github.com/en/apps/creating-github-apps/about-creating-github-apps/deciding-when-to-build-a-github-app)).
+- Webhooks verify signatures and delivery IDs and handle duplicates and out-of-order delivery. If a repository becomes private or permission is revoked, do not leave a public copy; re-review the connection status and publication conditions. Private repository contents are not collected automatically, and commit author email alone does not establish a contribution.
 
-After P1, consider AI as an optional assistant for summarizing/translating records selected by students. Prevent claims unsupported by a publication candidate, teammates' statements becoming personal claims, and private materials being automatically sent to models. Require source attribution, editing, consent, final student approval, and a record of AI-generated scope. Core functionality remains usable without AI.
+### 12.3 Learning record standards
 
-Longer term, connect achievement/evidence/learner-controlled exports with CLR/Open Badges. Standards compliance and institutional issuance require separate business/technical validation. Do not issue a credential based merely on teammate confirmation. [Official 1EdTech CLR description](https://www.1edtech.org/standards/clr)
+In the long term, consider CLR/Open Badges export, but standards compliance and institutional issuance require separate business and technical validation, and simple teammate endorsement is not issued as a credential ([1EdTech CLR](https://www.1edtech.org/standards/clr)).
 
-## 12. Operational, performance, and security targets
+## 13. AI pipeline
 
-An initial constrained pilot might contain 50 students and 20 assignments. These are design targets to validate, not guaranteed SLAs.
+| Job | Input | Output | Safeguards | Phase |
+|---|---|---|---|---|
+| Tag suggestion | Quick log body | Tag candidates | Suggestions only; student confirms | MVP (optional) |
+| Pre-publication check | Publication candidate snapshot | Warnings for personal information, original assignment text, others' real names | Warnings only | MVP (rules) / P1 (model) |
+| Case draft | Public release | Template-assembled sentences + citations | No model used | MVP |
+| Case polishing | Public release scope chosen by the student | Sentences + cited log IDs | Highlight and block publication of uncited sentences | P1 |
+| Weekly retrospective interview | Own logs and tasks for this week | Questions → answers → log draft | Student approval required | P1 |
+| Meeting summary | Messages from consented channels | 🗣️ meeting log draft | Draft until teammates approve; original text not stored | P1 |
+| Interview question generation | Own decision and stuck logs | Anticipated questions | Private by default | P1 |
+| Similar stuck point search | Public stuck-point embeddings | Similar cases | Public data only | P1 |
+| Portfolio Q&A | Recruiter question + public snapshot | Answer citing evidence | "No record" when no evidence; active only when the student enables it | P2 |
 
-| Area | Draft target | Validation |
+**Principles**
+- Do not generate content outside the evidence of the publication candidate, turn teammates' statements into one's own claims, or automatically send private materials to a model.
+- Every AI result records `ai_generated` along with the model used and prompt version.
+- Keep per-job evaluation sets in `packages/ai` (citation accuracy, rate of claims outside the evidence, sensitive-information detection recall) and run regression evaluations whenever prompts or models change.
+- Control cost through monthly usage limits per user and team, response caching, and per-job model separation.
+- All core features must be usable manually without AI.
+
+## 14. Operational, performance, and security targets
+
+The initial target is a constrained pilot of about 50 students and 20 assignments. The values below are design targets to validate, not SLAs.
+
+| Item | Draft target | Validation |
 |---|---|---|
-| Public pages | Quickly readable summaries in representative mobile conditions; initial LCP target within 2.5 seconds | Measure with actual networks and images |
-| APIs | p95 within 500ms for ordinary reads/writes, excluding file conversion | Test database and pilot metrics |
-| File storage | Draft limits of 500MB per student and 20MB per file | Adjust from usage and disclose limits before uploads |
-| Authorization | Zero private-content exposure to anonymous users or other teams | Integration/E2E tests and operational investigation |
-| Withdrawal | Block new access immediately after database state changes; derivative index cleanup target within five minutes | State propagation and worker failure experiments |
-| Recovery | Pilot targets of RPO 24 hours and RTO four hours | Database/file recovery and deletion-ledger reapplication drills |
+| Public pages | LCP within 2.5 seconds in representative mobile conditions | Measure with actual networks and images |
+| API | p95 within 500ms for ordinary reads/writes (excluding files and AI) | Test DB, pilot metrics |
+| Bot collection | `/log` response within 3 seconds, zero missed collections | Retry and idempotency tests |
+| Authorization | Zero exposures of private content to anonymous users or other teams | Integration/E2E tests, operational investigation |
+| Withdrawal | Block new access immediately upon DB state change; derived cleanup target of 5 minutes | State propagation and worker failure experiments |
+| Recovery | RPO 24 hours, RTO 4 hours | DB/file recovery + deletion ledger reapplication drills |
 
-Include rate limiting, CSRF/session protection, OAuth state validation, output escaping, file access checks, secret management, and structured audit logs from the start. Separate service data from pilot test materials. Do not indiscriminately log assignment contents, tokens, or email addresses.
+- From the start, include rate limiting, CSRF/session protection, OAuth state validation, output escaping, file access checks, secret management, and structured audit logs. Separate service data from pilot test materials.
+- Job tables have retry counts, backoff, and dead-letter states, and repeated execution must not create duplicate data. There is no fallback in which a worker failure causes private materials to become public.
+- Observability: authentication errors, unusual access, publication failures, consent withdrawals, quarantined files, worker backlog, deletion failures, AI cost and error rates. Provide an operational switch to temporarily block all public reads in case of authorization leaks or file disclosure errors.
 
-Job tables include retry counts, backoff, and dead-letter states. Outbox processing, file conversion, and PDF generation must remain safe to retry without creating duplicates. Worker failure never falls back to automatic publication of private materials.
+## 15. Data migration and archive verification
 
-Observe authentication errors, unusual access, publication failures, consent withdrawal, quarantined files, worker backlog, and deletion failures. Provide an operational switch to temporarily block all public reads following authorization leaks or file disclosure errors. Assign notification, response, and recovery responsibility before launch.
-
-## 13. Data migration and archive verification
-
-Before importing existing materials into the new app, determine whether they are actual production data. SQLite and uploads may be samples; do not fabricate user accounts or consent from them. A one-off importer reads originals without modifying them, records import run ID, source ID, checksums, and warnings, and starts with a dry-run report.
-
-Boards can become assignment drafts, Lists/Cards optional tasks, and files quarantined materials. Do not import chat before reviewing personal information and publication consent. Do not migrate plaintext passwords; require reauthentication/reset. Import everything privately and label past dates as `imported`. Do not invent absent process records or personal contributions.
-
-The [archive verification script](../../scripts/check_archive.py) verifies original materials, reconstructed 2019 history, and approved comment cleanup. New tests verify the new application. Avoid repeatedly expanding archive exceptions while modernizing original files. With the existing directories retained and a new app added, CI can run both verification paths separately.
-
-The 2019 commits are reconstructed records, not actual development logs from that time. Any use as evidence examples in the new service must disclose this. Retain the [original history backup](https://github.com/polynomeer/peerchive/tree/backup/pre-reconstruction-20261013).
+- The original SQLite and upload samples may be examples, so do not create user accounts or consent from them. If actual production data is confirmed, a one-off importer reads the originals read-only, records the import run ID, source IDs, checksums, and warnings, and starts with a dry-run report.
+- Boards can be migrated to assignment drafts, Lists/Cards to Tasks, and files to quarantined Artifacts. Chat is not migrated before personal information and consent are checked. Plaintext passwords are not migrated; users reauthenticate. Everything is imported as private, past creation dates are labeled `imported`, and no nonexistent logs or contributions are fabricated.
+- The [archive verification script](../../scripts/check_archive.py) verifies the originals, the reconstructed 2019 history, and approved cleanup, while new tests verify the new app's behavior. Run the two verifications separately in CI. Avoid expanding the verification exception list while modernizing original files.
+- The 2019 commits are reconstructed records, not actual development logs from that time, and this fact is disclosed whenever they are used in the new service, such as in the first ProofU case. The [original history backup](https://github.com/polynomeer/peerchive/tree/backup/pre-reconstruction-20261013) is retained.

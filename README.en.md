@@ -10,11 +10,7 @@ This repository preserves the project's source code, sample data, and distributi
 
 ## Proposed evolution
 
-The [detailed product, system, and delivery proposal](docs/PROOFU_EVOLUTION_PLAN.en.md) centers on records of attempts, decisions, and validation that become public learning cases and personal portfolios. Kanban remains an optional task view, while individual contributions, evidence, and publication consent become central. The [concept addendum](docs/planning/CONCEPT_ADDENDUM.en.md) reframes jokbo as “a senior's map, not answers,” adding checkpoints, stuck cards, course hubs, and senior notes. These are proposed features and are not implemented yet.
-
-- [Product planning and proposed user experience](docs/PROOFU_EVOLUTION_PLAN.en.md)
-- [System, data, authorization, and API design](docs/planning/SYSTEM_DESIGN.en.md)
-- [Delivery roadmap, experiments, and release criteria](docs/planning/DELIVERY_PLAN.en.md)
+A [consolidated product plan](docs/PROOFU_EVOLUTION_PLAN.en.md), [system design](docs/planning/SYSTEM_DESIGN.en.md), and [delivery plan](docs/planning/DELIVERY_PLAN.en.md) build on the original purpose under the concept **“The assignment ends; the process remains.”** During the semester, teams work through build logs, milestones, and a contribution ledger. After the term, with an embargo and team consent, the process is published to a course archive where juniors fork the plan rather than the answers, and the same records assemble into an evidence-linked portfolio. Kanban remains an optional task view. These are proposed features and are not implemented yet.
 
 ## Main features
 
