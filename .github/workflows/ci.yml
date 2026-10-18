@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  archive:
+    name: archive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # check_archive.py는 로컬 브랜치 이름으로 기존 이력 백업을 찾습니다.
+      - name: Fetch backup branch
+        run: git fetch --no-tags origin +refs/heads/backup/pre-reconstruction-20261013:refs/heads/backup/pre-reconstruction-20261013
+      - name: Verify archive
+        run: python3 scripts/check_archive.py
+
+  app:
+    name: app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4 # 버전은 package.json의 packageManager를 따릅니다.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm --filter web build
+
+  db:
+    name: db integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.10-alpine
+        env:
+          POSTGRES_USER: peerchive
+          POSTGRES_PASSWORD: peerchive
+          POSTGRES_DB: peerchive
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U peerchive -d peerchive"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      # CI 전용 일회성 컨테이너 자격 증명입니다(비밀값 아님).
+      DATABASE_URL: postgres://peerchive:peerchive@localhost:5432/peerchive
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Schema and migrations are in sync
+        run: |
+          pnpm db:generate
+          test -z "$(git status --porcelain packages/db/migrations)" || { git status --porcelain packages/db/migrations; echo "::error::schema.ts 변경에 맞는 migration을 생성하세요 (pnpm db:generate)"; exit 1; }
+      - run: pnpm db:migrate
+      - run: pnpm --filter @peerchive/db test

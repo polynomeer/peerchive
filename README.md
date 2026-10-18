@@ -12,6 +12,10 @@ ProofU는 대학교 학부 졸업작품으로 개발한 **과제 과정·산출�
 
 최초 목적을 바탕으로 한 [통합 기획](docs/PROOFU_EVOLUTION_PLAN.md)·[시스템 설계](docs/planning/SYSTEM_DESIGN.md)·[실행 계획](docs/planning/DELIVERY_PLAN.md)을 작성했습니다. 컨셉은 **“과제는 끝나도, 과정은 남는다”**입니다. 학기 중에는 빌드 로그·마일스톤·기여 장부로 조별과제를 진행하고, 학기 후에는 엠바고와 팀 동의를 거쳐 과정을 강의 아카이브에 공개해 후배가 정답이 아닌 계획을 포크하게 하며, 같은 기록을 근거가 연결된 포트폴리오로 조립합니다. 칸반은 선택적 ‘할 일’ 보기로 유지합니다. 아직 구현된 기능은 아닙니다.
 
+## 신규 앱 (개발 중)
+
+`apps/`·`packages/`에 Peerchive 신규 앱의 기술 스켈레톤(Nuxt 4 + PostgreSQL + Drizzle, 도메인 규칙 테스트, CI)이 있습니다. 원본 `frontend/`·`backend/`와는 별개이며 아직 사용자 기능은 없습니다. 실행 방법은 [apps/README.md](apps/README.md), 기술 결정은 [ADR](docs/adr/README.md), 단계 0 검증 준비물은 [검증 키트](docs/research/README.md)를 참고하세요.
+
 ## 주요 기능
 
 아래는 보존된 코드에 포함된 기능입니다. 현재 실행 검증을 마친 기능 목록을 의미하지는 않습니다.

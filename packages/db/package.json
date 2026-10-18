@@ -1,0 +1,27 @@
+{
+  "name": "@peerchive/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Peerchive PostgreSQL 스키마(Drizzle), migration, DB 클라이언트.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "generate": "drizzle-kit generate",
+    "migrate": "drizzle-kit migrate"
+  },
+  "dependencies": {
+    "drizzle-orm": "0.45.3",
+    "postgres": "3.4.9"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "drizzle-kit": "0.31.11",
+    "typescript": "5.9.3",
+    "vitest": "5.0.3"
+  }
+}

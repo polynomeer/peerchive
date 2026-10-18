@@ -1,0 +1,25 @@
+# Peerchive 로컬 개발용 PostgreSQL. 운영 환경 설정이 아닙니다.
+# 사용: docker compose -f ops/docker-compose.yml up -d
+# 값은 저장소 루트 .env(.env.example 복사본) 또는 아래 기본값(로컬 전용)을 씁니다.
+name: peerchive
+
+services:
+  postgres:
+    image: postgres:16.10-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-peerchive}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-peerchive}
+      POSTGRES_DB: ${POSTGRES_DB:-peerchive}
+    ports:
+      # 로컬 루프백에만 바인딩합니다.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - peerchive-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  peerchive-pg-data:

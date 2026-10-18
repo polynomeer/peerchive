@@ -1,0 +1,24 @@
+{
+  "name": "web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Peerchive 웹앱 (Nuxt 4 / Vue 3). 공개 페이지 SSR + 편집 화면 + /api/v1.",
+  "scripts": {
+    "dev": "nuxt dev --dotenv ../../.env",
+    "build": "nuxt build",
+    "preview": "nuxt preview --dotenv ../../.env",
+    "postinstall": "nuxt prepare",
+    "typecheck": "nuxt typecheck"
+  },
+  "dependencies": {
+    "@peerchive/db": "workspace:*",
+    "@peerchive/domain": "workspace:*",
+    "nuxt": "4.5.2",
+    "vue": "3.5.43"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vue-tsc": "3.3.12"
+  }
+}

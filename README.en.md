@@ -12,6 +12,10 @@ This repository preserves the project's source code, sample data, and distributi
 
 A [consolidated product plan](docs/PROOFU_EVOLUTION_PLAN.en.md), [system design](docs/planning/SYSTEM_DESIGN.en.md), and [delivery plan](docs/planning/DELIVERY_PLAN.en.md) build on the original purpose under the concept **“The assignment ends; the process remains.”** During the semester, teams work through build logs, milestones, and a contribution ledger. After the term, with an embargo and team consent, the process is published to a course archive where juniors fork the plan rather than the answers, and the same records assemble into an evidence-linked portfolio. Kanban remains an optional task view. These are proposed features and are not implemented yet.
 
+## New app (in development)
+
+`apps/` and `packages/` hold the technical skeleton of the new Peerchive app (Nuxt 4 + PostgreSQL + Drizzle, domain-rule tests, CI). It is separate from the original `frontend/` and `backend/` and has no user features yet. See [apps/README.md](apps/README.md) for running it, the [ADRs](docs/adr/README.md) for technical decisions, and the [validation kit](docs/research/README.md) (Korean) for phase-0 research materials.
+
 ## Main features
 
 These features are represented in the archived code; this list does not indicate that they have passed current runtime verification.

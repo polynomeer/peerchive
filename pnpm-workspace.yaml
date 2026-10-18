@@ -1,0 +1,12 @@
+# 신규 Peerchive 앱만 워크스페이스에 포함합니다.
+# 2019 원본 frontend/, backend/ 는 기록 보존 대상이므로 포함하지 않습니다.
+packages:
+  - apps/*
+  - packages/*
+
+# 공개된 지 14일(20160분) 미만인 버전은 설치하지 않습니다(전이 의존성 포함).
+minimumReleaseAge: 20160
+
+# 설치 스크립트 실행을 허용할 의존성(명시적 허용 목록).
+allowBuilds:
+  esbuild: true
