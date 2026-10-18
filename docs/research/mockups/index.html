@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Peerchive 실험용 목업</title>
+<style>
+/* 공통 스타일: 네 파일에 같은 블록을 복제해 각 파일이 단독으로 열리도록 함 */
+/* Peerchive 실험용 정적 목업 공통 스타일 (E1·E4). 가상 데이터 전용. */
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f5f7fa;
+  --surface: #ffffff;
+  --text: #1a1d23;
+  --text-muted: #4f5866;
+  --border: #d6dbe3;
+  --primary: #1d5fd1;
+  --primary-hover: #154aa6;
+  --primary-text: #ffffff;
+  --primary-soft: #e8f0fd;
+  --focus: #f0a400;
+  --ok-bg: #e6f4ea;
+  --ok-text: #1b5e2f;
+  --warn-bg: #fdf3e1;
+  --warn-text: #7a4b00;
+  --neutral-bg: #eef0f4;
+  --neutral-text: #3a4250;
+  --banner-bg: #fff4cc;
+  --banner-text: #4a3800;
+  --bar: #5b8def;
+  --bar-track: #e4e8ef;
+  --radius: 8px;
+  --font: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Segoe UI", sans-serif;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171c;
+    --bg-soft: #1b1f26;
+    --surface: #1e232b;
+    --text: #e8ebf0;
+    --text-muted: #a9b2bf;
+    --border: #353c47;
+    --primary: #6ea1ff;
+    --primary-hover: #94baff;
+    --primary-text: #0b1220;
+    --primary-soft: #1d2a42;
+    --focus: #ffc94a;
+    --ok-bg: #173323;
+    --ok-text: #9fe0b2;
+    --warn-bg: #3a2c12;
+    --warn-text: #f4cf8a;
+    --neutral-bg: #2a303a;
+    --neutral-text: #cfd5de;
+    --banner-bg: #3a3214;
+    --banner-text: #f6e7a8;
+    --bar: #6ea1ff;
+    --bar-track: #2c333e;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 1rem; /* 16px */
+  line-height: 1.6;
+  overflow-wrap: break-word;
+  word-break: keep-all;
+}
+
+a { color: var(--primary); }
+a:hover { color: var(--primary-hover); }
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -48px;
+  background: var(--primary);
+  color: var(--primary-text);
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  z-index: 100;
+}
+.skip-link:focus { top: 8px; }
+
+/* 실험 배너 */
+.mock-banner {
+  background: var(--banner-bg);
+  color: var(--banner-text);
+  text-align: center;
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* 상단 헤더 */
+.site-header {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.site-header .inner {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 24px;
+}
+.brand {
+  font-weight: 800;
+  font-size: 1.125rem;
+  color: var(--text);
+  text-decoration: none;
+}
+.site-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.site-nav a {
+  display: inline-block;
+  padding: 6px 2px;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.site-nav a[aria-current="page"] {
+  color: var(--text);
+  font-weight: 700;
+  border-bottom: 2px solid var(--primary);
+}
+
+/* 본문 */
+main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+}
+main p, main li, .prose { max-width: 75ch; }
+
+h1, h2, h3, h4 { line-height: 1.35; }
+h1 { font-size: 1.75rem; margin: 0.5rem 0 0.5rem; }
+h2 {
+  font-size: 1.3rem;
+  margin: 2.75rem 0 0.75rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+h3 { font-size: 1.075rem; margin: 1.5rem 0 0.5rem; }
+h4 { font-size: 1rem; margin: 1rem 0 0.25rem; }
+
+.muted { color: var(--text-muted); }
+.small { font-size: 0.875rem; }
+.breadcrumb { font-size: 0.875rem; color: var(--text-muted); margin: 0; }
+.breadcrumb ol { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.breadcrumb li + li::before { content: "›"; margin-right: 4px; }
+
+/* 안내 상자 */
+.notice {
+  border: 2px solid var(--warn-text);
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  font-weight: 700;
+}
+.note {
+  background: var(--bg-soft);
+  border-left: 4px solid var(--border);
+  padding: 10px 14px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 0.9375rem;
+  color: var(--text-muted);
+}
+
+/* 태그·배지 */
+.tags { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-soft);
+  font-size: 0.875rem;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.badge-public { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
+.badge-ok { background: var(--ok-bg); color: var(--ok-text); border-color: var(--ok-text); }
+.badge-warn { background: var(--warn-bg); color: var(--warn-text); border-color: var(--warn-text); border-style: dashed; }
+.badge-neutral { background: var(--neutral-bg); color: var(--neutral-text); border-color: var(--border); }
+
+/* 버튼 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 8px 18px;
+  border-radius: var(--radius);
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: var(--primary-text);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn:hover { background: var(--primary-hover); border-color: var(--primary-hover); color: var(--primary-text); }
+.btn-secondary { background: transparent; color: var(--primary); }
+.btn-secondary:hover { background: var(--primary-soft); color: var(--primary-hover); }
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+
+/* 카드·그리드 */
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.card h3, .card h4 { margin-top: 0; }
+.card > :last-child { margin-bottom: 0; }
+
+/* 목록 */
+.plain { list-style: none; padding: 0; margin: 0; }
+.plain > li { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.plain > li:last-child { border-bottom: 0; }
+
+/* 막대 분포 */
+.dist { margin: 12px 0; display: grid; gap: 8px; max-width: 640px; }
+.dist-row { display: grid; grid-template-columns: 6.5em 1fr 3.5em; align-items: center; gap: 8px; font-size: 0.9375rem; }
+.dist-track { height: 16px; background: var(--bar-track); border-radius: 4px; overflow: hidden; }
+.dist-track, .dist-fill { display: block; }
+.dist-fill { height: 100%; background: var(--bar); }
+.dist-val { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* 스냅샷 썸네일 (CSS 자리표시) */
+.thumb {
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-soft);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: hidden;
+}
+.thumb i { display: block; height: 6px; border-radius: 3px; background: var(--border); }
+.thumb i.w30 { width: 30%; } .thumb i.w50 { width: 50%; } .thumb i.w70 { width: 70%; } .thumb i.w90 { width: 90%; }
+.thumb i.acc { background: var(--bar); }
+.thumb .term {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+  white-space: pre;
+}
+
+/* 표 */
+.table-wrap { overflow-x: auto; max-width: 100%; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9375rem; }
+th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+thead th { background: var(--bg-soft); }
+caption { text-align: left; font-weight: 700; padding-bottom: 6px; }
+
+/* 푸터 */
+.site-footer {
+  border-top: 1px solid var(--border);
+  background: var(--bg-soft);
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+.site-footer .inner { max-width: 960px; margin: 0 auto; padding: 16px; }
+
+dl.meta { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 8px 0; }
+dl.meta dt { font-weight: 600; color: var(--text-muted); }
+dl.meta dd { margin: 0; }
+
+@media (max-width: 480px) {
+  h1 { font-size: 1.45rem; }
+  dl.meta { grid-template-columns: 1fr; }
+  dl.meta dd { margin-bottom: 6px; }
+  .dist-row { grid-template-columns: 5.5em 1fr 3em; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">본문으로 건너뛰기</a>
+<div class="mock-banner" role="note">실험용 목업 · 가상 데이터</div>
+<header class="site-header">
+  <div class="inner">
+    <a class="brand" href="index.html">Peerchive</a>
+    <nav class="site-nav" aria-label="목업 페이지">
+      <ul>
+        <li><a href="index.html" aria-current="page">목업 목록</a></li>
+        <li><a href="course.html">과목 페이지</a></li>
+        <li><a href="case.html">공개 사례</a></li>
+        <li><a href="profile.html">공개 프로필</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <h1>사용자 조사용 정적 목업</h1>
+  <p class="notice" role="note">모든 인물·과제·수치는 실험용 가상 예시입니다. 실제 서비스가 아닙니다.</p>
+  <p>Peerchive 개발 전 검증 실험(<code>docs/planning/DELIVERY_PLAN.md</code> §2.2)에 쓰는 화면 3개입니다. 기능은 동작하지 않으며, 참여자가 정보 구조와 내용을 읽고 판단하도록 돕는 것이 목적입니다.</p>
+
+  <h2>목업 목록</h2>
+  <ul class="plain">
+    <li>
+      <h3><a href="course.html">1. 과목 페이지 — 운영체제 (가상대학교 컴퓨터공학과)</a></h3>
+      <p><span class="badge badge-neutral">E1 족보 대체 테스트</span></p>
+      <p>수강 예정 학생이 선배 노트, 자주 막히는 지점, 워크로드 분포, 공개 사례 스냅샷을 보고 첫 주 계획을 세웁니다. 최종물보다 막힘·선배 노트가 더 유용한지 확인합니다.</p>
+    </li>
+    <li>
+      <h3><a href="case.html">2. 공개 사례 — 셸 구현 과제</a></h3>
+      <p><span class="badge badge-neutral">E1 족보 대체 테스트</span> <span class="badge badge-neutral">E4 채용자 비교</span></p>
+      <p>진화 보기, 전환점 중심 빌드 로그, 기여 선언과 확인 상태를 보여 줍니다. “학습용 상세 보기”와 “포트폴리오 요약 보기”를 전환해 같은 기록이 두 독자에게 어떻게 읽히는지 봅니다.</p>
+    </li>
+    <li>
+      <h3><a href="profile.html">3. 공개 프로필 — 김지민 (가상 학생)</a></h3>
+      <p><span class="badge badge-neutral">E4 채용자 비교</span></p>
+      <p>채용 검토자가 GitHub 링크와 비교해 케이스 카드, 역량 × 근거 매트릭스를 보고 주요 역할과 근거를 설명하고 면접 질문을 작성합니다.</p>
+    </li>
+  </ul>
+
+  <h2>진행 시 유의 사항</h2>
+  <ul>
+    <li>참여자에게 화면이 가상 예시임을 먼저 알립니다.</li>
+    <li>버튼·링크 일부는 동작하지 않습니다. 눌러 보려는 시도 자체를 관찰 기록으로 남깁니다.</li>
+    <li>측정 기준은 모집 전에 고정하고 결과에 맞춰 바꾸지 않습니다.</li>
+  </ul>
+</main>
+
+<footer class="site-footer">
+  <div class="inner">Peerchive 실험용 목업 · 가상 데이터 · 실제 서비스가 아닙니다.</div>
+</footer>
+</body>
+</html>

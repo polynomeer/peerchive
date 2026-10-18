@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>김지민 · 공개 프로필 — Peerchive 목업</title>
+<style>
+/* 공통 스타일: 네 파일에 같은 블록을 복제해 각 파일이 단독으로 열리도록 함 */
+/* Peerchive 실험용 정적 목업 공통 스타일 (E1·E4). 가상 데이터 전용. */
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f5f7fa;
+  --surface: #ffffff;
+  --text: #1a1d23;
+  --text-muted: #4f5866;
+  --border: #d6dbe3;
+  --primary: #1d5fd1;
+  --primary-hover: #154aa6;
+  --primary-text: #ffffff;
+  --primary-soft: #e8f0fd;
+  --focus: #f0a400;
+  --ok-bg: #e6f4ea;
+  --ok-text: #1b5e2f;
+  --warn-bg: #fdf3e1;
+  --warn-text: #7a4b00;
+  --neutral-bg: #eef0f4;
+  --neutral-text: #3a4250;
+  --banner-bg: #fff4cc;
+  --banner-text: #4a3800;
+  --bar: #5b8def;
+  --bar-track: #e4e8ef;
+  --radius: 8px;
+  --font: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Segoe UI", sans-serif;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171c;
+    --bg-soft: #1b1f26;
+    --surface: #1e232b;
+    --text: #e8ebf0;
+    --text-muted: #a9b2bf;
+    --border: #353c47;
+    --primary: #6ea1ff;
+    --primary-hover: #94baff;
+    --primary-text: #0b1220;
+    --primary-soft: #1d2a42;
+    --focus: #ffc94a;
+    --ok-bg: #173323;
+    --ok-text: #9fe0b2;
+    --warn-bg: #3a2c12;
+    --warn-text: #f4cf8a;
+    --neutral-bg: #2a303a;
+    --neutral-text: #cfd5de;
+    --banner-bg: #3a3214;
+    --banner-text: #f6e7a8;
+    --bar: #6ea1ff;
+    --bar-track: #2c333e;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 1rem; /* 16px */
+  line-height: 1.6;
+  overflow-wrap: break-word;
+  word-break: keep-all;
+}
+
+a { color: var(--primary); }
+a:hover { color: var(--primary-hover); }
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -48px;
+  background: var(--primary);
+  color: var(--primary-text);
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  z-index: 100;
+}
+.skip-link:focus { top: 8px; }
+
+/* 실험 배너 */
+.mock-banner {
+  background: var(--banner-bg);
+  color: var(--banner-text);
+  text-align: center;
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* 상단 헤더 */
+.site-header {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.site-header .inner {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 24px;
+}
+.brand {
+  font-weight: 800;
+  font-size: 1.125rem;
+  color: var(--text);
+  text-decoration: none;
+}
+.site-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.site-nav a {
+  display: inline-block;
+  padding: 6px 2px;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.site-nav a[aria-current="page"] {
+  color: var(--text);
+  font-weight: 700;
+  border-bottom: 2px solid var(--primary);
+}
+
+/* 본문 */
+main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+}
+main p, main li, .prose { max-width: 75ch; }
+
+h1, h2, h3, h4 { line-height: 1.35; }
+h1 { font-size: 1.75rem; margin: 0.5rem 0 0.5rem; }
+h2 {
+  font-size: 1.3rem;
+  margin: 2.75rem 0 0.75rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+h3 { font-size: 1.075rem; margin: 1.5rem 0 0.5rem; }
+h4 { font-size: 1rem; margin: 1rem 0 0.25rem; }
+
+.muted { color: var(--text-muted); }
+.small { font-size: 0.875rem; }
+.breadcrumb { font-size: 0.875rem; color: var(--text-muted); margin: 0; }
+.breadcrumb ol { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.breadcrumb li + li::before { content: "›"; margin-right: 4px; }
+
+/* 안내 상자 */
+.notice {
+  border: 2px solid var(--warn-text);
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  font-weight: 700;
+}
+.note {
+  background: var(--bg-soft);
+  border-left: 4px solid var(--border);
+  padding: 10px 14px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 0.9375rem;
+  color: var(--text-muted);
+}
+
+/* 태그·배지 */
+.tags { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-soft);
+  font-size: 0.875rem;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.badge-public { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
+.badge-ok { background: var(--ok-bg); color: var(--ok-text); border-color: var(--ok-text); }
+.badge-warn { background: var(--warn-bg); color: var(--warn-text); border-color: var(--warn-text); border-style: dashed; }
+.badge-neutral { background: var(--neutral-bg); color: var(--neutral-text); border-color: var(--border); }
+
+/* 버튼 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 8px 18px;
+  border-radius: var(--radius);
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: var(--primary-text);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn:hover { background: var(--primary-hover); border-color: var(--primary-hover); color: var(--primary-text); }
+.btn-secondary { background: transparent; color: var(--primary); }
+.btn-secondary:hover { background: var(--primary-soft); color: var(--primary-hover); }
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+
+/* 카드·그리드 */
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.card h3, .card h4 { margin-top: 0; }
+.card > :last-child { margin-bottom: 0; }
+
+/* 목록 */
+.plain { list-style: none; padding: 0; margin: 0; }
+.plain > li { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.plain > li:last-child { border-bottom: 0; }
+
+/* 막대 분포 */
+.dist { margin: 12px 0; display: grid; gap: 8px; max-width: 640px; }
+.dist-row { display: grid; grid-template-columns: 6.5em 1fr 3.5em; align-items: center; gap: 8px; font-size: 0.9375rem; }
+.dist-track { height: 16px; background: var(--bar-track); border-radius: 4px; overflow: hidden; }
+.dist-track, .dist-fill { display: block; }
+.dist-fill { height: 100%; background: var(--bar); }
+.dist-val { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* 스냅샷 썸네일 (CSS 자리표시) */
+.thumb {
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-soft);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: hidden;
+}
+.thumb i { display: block; height: 6px; border-radius: 3px; background: var(--border); }
+.thumb i.w30 { width: 30%; } .thumb i.w50 { width: 50%; } .thumb i.w70 { width: 70%; } .thumb i.w90 { width: 90%; }
+.thumb i.acc { background: var(--bar); }
+.thumb .term {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+  white-space: pre;
+}
+
+/* 표 */
+.table-wrap { overflow-x: auto; max-width: 100%; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9375rem; }
+th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+thead th { background: var(--bg-soft); }
+caption { text-align: left; font-weight: 700; padding-bottom: 6px; }
+
+/* 푸터 */
+.site-footer {
+  border-top: 1px solid var(--border);
+  background: var(--bg-soft);
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+.site-footer .inner { max-width: 960px; margin: 0 auto; padding: 16px; }
+
+dl.meta { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 8px 0; }
+dl.meta dt { font-weight: 600; color: var(--text-muted); }
+dl.meta dd { margin: 0; }
+
+@media (max-width: 480px) {
+  h1 { font-size: 1.45rem; }
+  dl.meta { grid-template-columns: 1fr; }
+  dl.meta dd { margin-bottom: 6px; }
+  .dist-row { grid-template-columns: 5.5em 1fr 3em; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+</style>
+<style>
+  .profile-head { padding-bottom: 8px; }
+  .headline { font-size: 1.125rem; margin: 4px 0 8px; }
+  .contact-note { font-size: 0.875rem; color: var(--text-muted); margin: 0; }
+
+  .cases { display: grid; gap: 20px; }
+  .case-card { padding: 20px; }
+  .case-card .steps { margin: 12px 0 0; }
+  .case-card .steps dt {
+    font-size: 0.8125rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    margin-top: 10px;
+  }
+  .case-card .steps dt:first-child { margin-top: 0; }
+  .case-card .steps dd { margin: 2px 0 0; }
+  .cite {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 0.75rem;
+    line-height: 1.6;
+    color: var(--primary);
+    background: var(--bg-soft);
+    text-decoration: none;
+    white-space: nowrap;
+    vertical-align: 1px;
+  }
+  a.cite:hover { border-color: var(--primary); }
+  span.cite { color: var(--text-muted); border-style: dashed; }
+
+  .matrix th[scope="row"] { white-space: nowrap; }
+  .matrix td a { text-decoration: underline; }
+  .matrix .none { color: var(--text-muted); }
+
+  .stats { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr)); margin: 12px 0; }
+  .stat { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
+  .stat .num { font-size: 1.5rem; font-weight: 800; display: block; font-variant-numeric: tabular-nums; }
+  .stat .lbl { font-size: 0.875rem; color: var(--text-muted); }
+
+  .years { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; grid-template-columns: repeat(4, 1fr); }
+  .years > li { border-top: 3px solid var(--border); padding-top: 8px; }
+  .years h3 { margin: 0 0 6px; font-size: 1rem; }
+  .years ul { list-style: none; padding: 0; margin: 0; }
+  .years ul li { font-size: 0.9375rem; padding: 4px 0 4px 14px; position: relative; }
+  .years ul li::before { content: "●"; position: absolute; left: 0; top: 4px; font-size: 0.6rem; color: var(--text-muted); }
+  .years ul li.featured::before { color: var(--primary); }
+  .years .sem { color: var(--text-muted); font-size: 0.8125rem; display: block; }
+  @media (max-width: 720px) { .years { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 420px) { .years { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">본문으로 건너뛰기</a>
+<div class="mock-banner" role="note">실험용 목업 · 가상 데이터</div>
+<header class="site-header">
+  <div class="inner">
+    <a class="brand" href="index.html">Peerchive</a>
+    <nav class="site-nav" aria-label="목업 페이지">
+      <ul>
+        <li><a href="index.html">목업 목록</a></li>
+        <li><a href="course.html">과목 페이지</a></li>
+        <li><a href="case.html">공개 사례</a></li>
+        <li><a href="profile.html" aria-current="page">공개 프로필</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="profile-head" aria-labelledby="h-name">
+    <h1 id="h-name">김지민</h1>
+    <p class="muted" style="margin:0">백엔드 개발 지망 · 가상대학교 컴퓨터공학과 · 2027.02 졸업 예정 <span class="badge badge-neutral">학교 메일 인증</span></p>
+    <p class="headline">“불완전한 조건에서 범위를 조정하고, 테스트로 확인하는 개발자”</p>
+    <div class="btn-row">
+      <a class="btn" href="#contact" aria-describedby="contact-note">연락하기</a>
+      <a class="btn btn-secondary" href="#">PDF</a>
+      <a class="btn btn-secondary" href="#">GitHub</a>
+    </div>
+    <p class="contact-note" id="contact-note">학생이 허용한 연락만 가능합니다: 플랫폼 메시지(채용·인턴 문의). 이메일·전화번호는 공개하지 않았습니다.</p>
+  </section>
+
+  <section aria-labelledby="h-cases">
+    <h2 id="h-cases">대표 케이스 스터디 (3)</h2>
+    <p class="small muted">모든 문장에 출처 기록이 붙어 있습니다. 칩을 누르면 해당 공개 기록으로 이동합니다. 이 목업에서는 운영체제 셸 사례 페이지만 연결되며, 나머지 사례의 칩(점선)은 열리지 않습니다.</p>
+    <div class="cases">
+
+      <article class="card case-card" aria-labelledby="cs1">
+        <h3 id="cs1"><a href="case.html?view=portfolio">운영체제 셸 구현 — 범위를 줄이고 테스트로 확인</a></h3>
+        <p class="small muted">운영체제 · 2026-1 · 2인 · 약 25시간 · <span class="badge badge-public">🌐 전체 공개</span></p>
+        <dl class="steps">
+          <dt>문제</dt>
+          <dd>파이프·리다이렉션·백그라운드 실행을 지원하는 셸을 C로 5주 안에 만들어야 했습니다.<a class="cite" href="case.html?view=portfolio#summary" aria-label="출처: 사례 요약">요약</a></dd>
+          <dt>역할</dt>
+          <dd>파서 재설계와 좀비 프로세스 문제 해결을 맡았고 두 역할 모두 팀원 확인을 받았습니다.<a class="cite" href="case.html?view=portfolio#contrib" aria-label="출처: 기여 선언, 팀원 확인 2건">기여 · 팀원 확인 2</a></dd>
+          <dt>핵심 결정</dt>
+          <dd>예외 처리를 덧대는 대신 파서를 상태 기계로 재작성해 실행부와 분리했고, 덕분에 2인이 병렬로 작업했습니다.<a class="cite" href="case.html?view=portfolio#decision-parser" aria-label="출처: 결정 로그 4월 8일">⚖️ 결정 4/08</a></dd>
+          <dt>근거</dt>
+          <dd>백그라운드 실행 후 좀비가 쌓이는 원인을 찾아 회수 방식을 바꿨습니다.<a class="cite" href="case.html?view=portfolio#log-zombie" aria-label="출처: 막힘 로그 5월 12일">🧱 막힘 5/12</a></dd>
+          <dt>결과</dt>
+          <dd>직접 만든 테스트 42개를 리눅스에서 모두 통과했고, 잡 컨트롤은 팀 합의로 범위에서 뺐습니다.<a class="cite" href="case.html?view=portfolio#verify-test" aria-label="출처: 검증 로그 6월 3일">✅ 검증 6/03</a><a class="cite" href="case.html?view=portfolio#decision-scope" aria-label="출처: 결정 로그 5월 22일">⚖️ 결정 5/22</a></dd>
+          <dt>한계</dt>
+          <dd>Ctrl+C 시그널 문제는 미해결로 남았고, 테스트 스크립트 기여는 아직 팀원 확인 전입니다.<a class="cite" href="case.html?view=portfolio#limits" aria-label="출처: 회고">🔁 회고</a><a class="cite" href="case.html?view=portfolio#contrib" aria-label="출처: 기여, 본인 설명 미확인">본인 설명 · 미확인</a></dd>
+        </dl>
+      </article>
+
+      <article class="card case-card" aria-labelledby="cs2">
+        <h3 id="cs2">도서관 혼잡도 웹앱 — 실시간 센서 대신 수동 입력</h3>
+        <p class="small muted">웹프로그래밍 · 2025-2 · 4인 · 약 60시간 · <span class="badge badge-public">🌐 전체 공개</span></p>
+        <dl class="steps">
+          <dt>문제</dt>
+          <dd>열람실 자리가 있는지 가 보기 전에는 알 수 없다는 불편을 다뤘습니다.<span class="cite" title="목업에서는 열리지 않음">요약</span></dd>
+          <dt>역할</dt>
+          <dd>혼잡도 입력 API와 입력 검증 모듈을 설계했고 팀원 2명이 확인했습니다.<span class="cite" title="목업에서는 열리지 않음">기여 · 팀원 확인 2</span></dd>
+          <dt>핵심 결정</dt>
+          <dd>센서 연동 승인이 학기 내 어렵다고 보고 사용자가 직접 입력하는 방식으로 범위를 바꿨습니다.<span class="cite" title="목업에서는 열리지 않음">⚖️ 결정 10/14</span></dd>
+          <dt>근거</dt>
+          <dd>허위 입력을 줄이려고 같은 사용자의 연속 입력 간격을 제한하는 규칙을 넣었습니다.<span class="cite" title="목업에서는 열리지 않음">⚖️ 결정 10/30</span></dd>
+          <dt>결과</dt>
+          <dd>사용성 테스트 5명 중 3명이 입력 흐름을 막힘 없이 마쳤고 2명은 버튼 위치를 찾지 못했습니다.<span class="cite" title="목업에서는 열리지 않음">✅ 검증 11/20</span></dd>
+          <dt>한계</dt>
+          <dd>실제 학생 대상 장기 운영은 하지 않아 입력 참여율은 확인하지 못했습니다.<span class="cite" title="목업에서는 열리지 않음">🔁 회고</span></dd>
+        </dl>
+      </article>
+
+      <article class="card case-card" aria-labelledby="cs3">
+        <h3 id="cs3">수강신청 시뮬레이터 — 동시 요청에서 정원 초과 막기</h3>
+        <p class="small muted">데이터베이스 · 2025-1 · 3인 · 약 35시간 · <span class="badge badge-neutral">📄 요약 공개</span> <span class="badge badge-neutral">사후 작성</span></p>
+        <dl class="steps">
+          <dt>문제</dt>
+          <dd>동시에 신청이 몰릴 때 정원보다 많은 신청이 저장되는 문제를 재현하고 막는 과제였습니다.<span class="cite" title="목업에서는 열리지 않음">요약</span></dd>
+          <dt>역할</dt>
+          <dd>부하 테스트 스크립트 작성과 트랜잭션 격리 수준 비교를 맡았습니다.<span class="cite" title="목업에서는 열리지 않음">기여 · 팀원 확인 1</span></dd>
+          <dt>핵심 결정</dt>
+          <dd>격리 수준을 올리는 대신 정원 차감을 조건부 갱신 한 번으로 처리하기로 했습니다.<span class="cite" title="목업에서는 열리지 않음">⚖️ 결정 (사후 작성)</span></dd>
+          <dt>근거</dt>
+          <dd>동시 요청 200건으로 수정 전후를 비교한 측정 기록이 있습니다.<span class="cite" title="목업에서는 열리지 않음">✅ 검증 (사후 작성)</span></dd>
+          <dt>결과</dt>
+          <dd>수정 후 측정에서 정원 초과 저장은 나타나지 않았습니다.<span class="cite" title="목업에서는 열리지 않음">✅ 검증 (사후 작성)</span></dd>
+          <dt>한계</dt>
+          <dd>학기가 끝난 뒤 파일 기록을 보며 작성한 사례라 진행 중 기록보다 근거가 적습니다.<span class="cite" title="목업에서는 열리지 않음">사후 작성 표시</span></dd>
+        </dl>
+      </article>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-matrix">
+    <h2 id="h-matrix">역량 × 근거</h2>
+    <p class="small muted">셀에는 근거의 종류와 개수만 적었습니다. 점수나 수준을 매기지 않습니다. 셸 구현 열의 셀을 누르면 해당 근거로 이동합니다.</p>
+    <div class="table-wrap" role="region" aria-labelledby="h-matrix" tabindex="0">
+      <table class="matrix">
+        <thead>
+          <tr>
+            <th scope="col">역량 \ 사례</th>
+            <th scope="col">도서관 혼잡도 앱</th>
+            <th scope="col">운영체제 셸</th>
+            <th scope="col">수강신청 시뮬레이터</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">API 설계</th>
+            <td>결정 2 · 산출물 1 · 팀원 확인</td>
+            <td class="none">근거 없음</td>
+            <td>결정 1 (사후 작성)</td>
+          </tr>
+          <tr>
+            <th scope="row">디버깅</th>
+            <td>막힘 해결 1</td>
+            <td><a href="case.html?view=portfolio#log-zombie">막힘 해결 2 · 미해결 1</a></td>
+            <td class="none">근거 없음</td>
+          </tr>
+          <tr>
+            <th scope="row">설계 판단</th>
+            <td>결정 1</td>
+            <td><a href="case.html?view=portfolio#decision-parser">결정 2 · 팀원 확인</a></td>
+            <td>결정 1 (사후 작성)</td>
+          </tr>
+          <tr>
+            <th scope="row">테스트·검증</th>
+            <td>사용성 테스트 1</td>
+            <td><a href="case.html?view=portfolio#verify-test">검증 1 · 본인 설명 · 미확인</a></td>
+            <td>측정 기록 1 (사후 작성)</td>
+          </tr>
+          <tr>
+            <th scope="row">협업</th>
+            <td>회의 정리 3 · 역할 확인 2</td>
+            <td><a href="case.html?view=portfolio#contrib">역할 확인 2</a></td>
+            <td>역할 확인 1</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>자기 선언 기술</h3>
+    <p class="small muted">아래는 본인이 썼다고 밝힌 기술이며, 위 표의 경험 근거와 구분됩니다.</p>
+    <ul class="tags" aria-label="자기 선언 기술 태그">
+      <li class="tag">C</li><li class="tag">Node.js</li><li class="tag">Express</li><li class="tag">MySQL</li><li class="tag">리눅스</li><li class="tag">Git</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="h-junior">
+    <h2 id="h-junior">후배 기여</h2>
+    <p class="small muted">다른 학생이 이 학생의 공개 기록을 어떻게 썼는지입니다. 순위나 점수로 합산하지 않습니다.</p>
+    <div class="stats">
+      <div class="stat"><span class="num">12</span><span class="lbl">계획이 포크된 횟수</span></div>
+      <div class="stat"><span class="num">9</span><span class="lbl">막힘 질문에 단 답변</span></div>
+      <div class="stat"><span class="num">2</span><span class="lbl">남긴 선배 노트</span></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-timeline">
+    <h2 id="h-timeline">4년 과제 타임라인</h2>
+    <p class="small muted">공개한 과제만 표시합니다. <span aria-hidden="true" style="color:var(--primary)">●</span> 표시는 대표 케이스 스터디입니다(목록에 “대표” 글자도 함께 적음).</p>
+    <ol class="years">
+      <li>
+        <h3>2023 · 1학년</h3>
+        <ul>
+          <li><span class="sem">2023-1</span>프로그래밍기초 · 성적 계산기</li>
+          <li><span class="sem">2023-2</span>자료구조 · 지하철 경로 탐색</li>
+        </ul>
+      </li>
+      <li>
+        <h3>2024 · 2학년</h3>
+        <ul>
+          <li><span class="sem">2024-1</span>객체지향프로그래밍 · 도서 대여 관리</li>
+          <li><span class="sem">2024-2</span>컴퓨터네트워크 · 채팅 서버 보고서</li>
+        </ul>
+      </li>
+      <li>
+        <h3>2025 · 3학년</h3>
+        <ul>
+          <li class="featured"><span class="sem">2025-1</span>데이터베이스 · 수강신청 시뮬레이터 (대표)</li>
+          <li class="featured"><span class="sem">2025-2</span>웹프로그래밍 · 도서관 혼잡도 웹앱 (대표)</li>
+        </ul>
+      </li>
+      <li>
+        <h3>2026 · 4학년</h3>
+        <ul>
+          <li class="featured"><span class="sem">2026-1</span><a href="case.html">운영체제 · 셸 구현</a> (대표)</li>
+          <li><span class="sem">2026-2</span>캡스톤디자인 · 진행 중 <span class="badge badge-neutral">🔒 비공개</span></li>
+        </ul>
+      </li>
+    </ol>
+  </section>
+
+  <section id="contact" aria-labelledby="h-contact">
+    <h2 id="h-contact">연락</h2>
+    <p>이 학생은 <strong>플랫폼 메시지로 채용·인턴 문의</strong>만 받도록 설정했습니다. 목업에서는 메시지가 전송되지 않습니다.</p>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="inner">
+    <p>‘팀원 확인’은 해당 팀원이 그 주장을 인정했다는 뜻이며 교수 인증·능력 검증이 아닙니다. 학번·성적은 수집하지 않습니다. · <a href="#">이 프로필 신고</a></p>
+    <p>실험용 목업 · 모든 인물·과제·수치는 가상 예시입니다.</p>
+  </div>
+</footer>
+</body>
+</html>

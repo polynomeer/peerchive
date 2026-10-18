@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>운영체제 · 가상대학교 — Peerchive 목업</title>
+<style>
+/* 공통 스타일: 네 파일에 같은 블록을 복제해 각 파일이 단독으로 열리도록 함 */
+/* Peerchive 실험용 정적 목업 공통 스타일 (E1·E4). 가상 데이터 전용. */
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f5f7fa;
+  --surface: #ffffff;
+  --text: #1a1d23;
+  --text-muted: #4f5866;
+  --border: #d6dbe3;
+  --primary: #1d5fd1;
+  --primary-hover: #154aa6;
+  --primary-text: #ffffff;
+  --primary-soft: #e8f0fd;
+  --focus: #f0a400;
+  --ok-bg: #e6f4ea;
+  --ok-text: #1b5e2f;
+  --warn-bg: #fdf3e1;
+  --warn-text: #7a4b00;
+  --neutral-bg: #eef0f4;
+  --neutral-text: #3a4250;
+  --banner-bg: #fff4cc;
+  --banner-text: #4a3800;
+  --bar: #5b8def;
+  --bar-track: #e4e8ef;
+  --radius: 8px;
+  --font: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Segoe UI", sans-serif;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171c;
+    --bg-soft: #1b1f26;
+    --surface: #1e232b;
+    --text: #e8ebf0;
+    --text-muted: #a9b2bf;
+    --border: #353c47;
+    --primary: #6ea1ff;
+    --primary-hover: #94baff;
+    --primary-text: #0b1220;
+    --primary-soft: #1d2a42;
+    --focus: #ffc94a;
+    --ok-bg: #173323;
+    --ok-text: #9fe0b2;
+    --warn-bg: #3a2c12;
+    --warn-text: #f4cf8a;
+    --neutral-bg: #2a303a;
+    --neutral-text: #cfd5de;
+    --banner-bg: #3a3214;
+    --banner-text: #f6e7a8;
+    --bar: #6ea1ff;
+    --bar-track: #2c333e;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 1rem; /* 16px */
+  line-height: 1.6;
+  overflow-wrap: break-word;
+  word-break: keep-all;
+}
+
+a { color: var(--primary); }
+a:hover { color: var(--primary-hover); }
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -48px;
+  background: var(--primary);
+  color: var(--primary-text);
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  z-index: 100;
+}
+.skip-link:focus { top: 8px; }
+
+/* 실험 배너 */
+.mock-banner {
+  background: var(--banner-bg);
+  color: var(--banner-text);
+  text-align: center;
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* 상단 헤더 */
+.site-header {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.site-header .inner {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 24px;
+}
+.brand {
+  font-weight: 800;
+  font-size: 1.125rem;
+  color: var(--text);
+  text-decoration: none;
+}
+.site-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.site-nav a {
+  display: inline-block;
+  padding: 6px 2px;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.site-nav a[aria-current="page"] {
+  color: var(--text);
+  font-weight: 700;
+  border-bottom: 2px solid var(--primary);
+}
+
+/* 본문 */
+main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+}
+main p, main li, .prose { max-width: 75ch; }
+
+h1, h2, h3, h4 { line-height: 1.35; }
+h1 { font-size: 1.75rem; margin: 0.5rem 0 0.5rem; }
+h2 {
+  font-size: 1.3rem;
+  margin: 2.75rem 0 0.75rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+h3 { font-size: 1.075rem; margin: 1.5rem 0 0.5rem; }
+h4 { font-size: 1rem; margin: 1rem 0 0.25rem; }
+
+.muted { color: var(--text-muted); }
+.small { font-size: 0.875rem; }
+.breadcrumb { font-size: 0.875rem; color: var(--text-muted); margin: 0; }
+.breadcrumb ol { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.breadcrumb li + li::before { content: "›"; margin-right: 4px; }
+
+/* 안내 상자 */
+.notice {
+  border: 2px solid var(--warn-text);
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  font-weight: 700;
+}
+.note {
+  background: var(--bg-soft);
+  border-left: 4px solid var(--border);
+  padding: 10px 14px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 0.9375rem;
+  color: var(--text-muted);
+}
+
+/* 태그·배지 */
+.tags { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-soft);
+  font-size: 0.875rem;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.badge-public { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
+.badge-ok { background: var(--ok-bg); color: var(--ok-text); border-color: var(--ok-text); }
+.badge-warn { background: var(--warn-bg); color: var(--warn-text); border-color: var(--warn-text); border-style: dashed; }
+.badge-neutral { background: var(--neutral-bg); color: var(--neutral-text); border-color: var(--border); }
+
+/* 버튼 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 8px 18px;
+  border-radius: var(--radius);
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: var(--primary-text);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn:hover { background: var(--primary-hover); border-color: var(--primary-hover); color: var(--primary-text); }
+.btn-secondary { background: transparent; color: var(--primary); }
+.btn-secondary:hover { background: var(--primary-soft); color: var(--primary-hover); }
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+
+/* 카드·그리드 */
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.card h3, .card h4 { margin-top: 0; }
+.card > :last-child { margin-bottom: 0; }
+
+/* 목록 */
+.plain { list-style: none; padding: 0; margin: 0; }
+.plain > li { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.plain > li:last-child { border-bottom: 0; }
+
+/* 막대 분포 */
+.dist { margin: 12px 0; display: grid; gap: 8px; max-width: 640px; }
+.dist-row { display: grid; grid-template-columns: 6.5em 1fr 3.5em; align-items: center; gap: 8px; font-size: 0.9375rem; }
+.dist-track { height: 16px; background: var(--bar-track); border-radius: 4px; overflow: hidden; }
+.dist-track, .dist-fill { display: block; }
+.dist-fill { height: 100%; background: var(--bar); }
+.dist-val { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* 스냅샷 썸네일 (CSS 자리표시) */
+.thumb {
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-soft);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: hidden;
+}
+.thumb i { display: block; height: 6px; border-radius: 3px; background: var(--border); }
+.thumb i.w30 { width: 30%; } .thumb i.w50 { width: 50%; } .thumb i.w70 { width: 70%; } .thumb i.w90 { width: 90%; }
+.thumb i.acc { background: var(--bar); }
+.thumb .term {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+  white-space: pre;
+}
+
+/* 표 */
+.table-wrap { overflow-x: auto; max-width: 100%; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9375rem; }
+th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+thead th { background: var(--bg-soft); }
+caption { text-align: left; font-weight: 700; padding-bottom: 6px; }
+
+/* 푸터 */
+.site-footer {
+  border-top: 1px solid var(--border);
+  background: var(--bg-soft);
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+.site-footer .inner { max-width: 960px; margin: 0 auto; padding: 16px; }
+
+dl.meta { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 8px 0; }
+dl.meta dt { font-weight: 600; color: var(--text-muted); }
+dl.meta dd { margin: 0; }
+
+@media (max-width: 480px) {
+  h1 { font-size: 1.45rem; }
+  dl.meta { grid-template-columns: 1fr; }
+  dl.meta dd { margin-bottom: 6px; }
+  .dist-row { grid-template-columns: 5.5em 1fr 3em; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+</style>
+<style>
+  .stuck-list { counter-reset: stuck; }
+  .stuck-list > li { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; align-items: start; }
+  .stuck-list h3 { margin: 0; font-size: 1rem; }
+  .stuck-list h3::before { counter-increment: stuck; content: counter(stuck) ". "; color: var(--text-muted); }
+  .metoo { white-space: nowrap; }
+  .metoo .btn { min-height: 36px; padding: 4px 12px; font-size: 0.875rem; }
+  .senior dl { margin: 0; }
+  .senior dt { font-weight: 700; margin-top: 10px; }
+  .senior dt:first-child { margin-top: 0; }
+  .senior dd { margin: 2px 0 0; }
+  .case-thumbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 10px 0; }
+  .case-thumbs figure { margin: 0; }
+  .case-thumbs figcaption { font-size: 0.75rem; color: var(--text-muted); text-align: center; margin-top: 2px; }
+  .fork-box { margin: 24px 0; }
+  .fork-tip {
+    position: relative;
+    margin-top: 10px;
+    max-width: 520px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    font-size: 0.9375rem;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+  }
+  .fork-tip::before {
+    content: "";
+    position: absolute;
+    top: -7px; left: 24px;
+    width: 12px; height: 12px;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    border-top: 1px solid var(--border);
+    transform: rotate(45deg);
+  }
+  .fork-tip ul { margin: 4px 0; padding-left: 1.2em; }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">본문으로 건너뛰기</a>
+<div class="mock-banner" role="note">실험용 목업 · 가상 데이터</div>
+<header class="site-header">
+  <div class="inner">
+    <a class="brand" href="index.html">Peerchive</a>
+    <nav class="site-nav" aria-label="목업 페이지">
+      <ul>
+        <li><a href="index.html">목업 목록</a></li>
+        <li><a href="course.html" aria-current="page">과목 페이지</a></li>
+        <li><a href="case.html">공개 사례</a></li>
+        <li><a href="profile.html">공개 프로필</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <nav class="breadcrumb" aria-label="위치">
+    <ol>
+      <li>탐색</li>
+      <li>가상대학교 컴퓨터공학과</li>
+      <li aria-current="page">운영체제</li>
+    </ol>
+  </nav>
+  <h1>운영체제</h1>
+  <p class="muted">가상대학교 컴퓨터공학과 · 3학년 전공 · 개설 학기 기록 2025-1, 2025-2, 2026-1</p>
+
+  <section aria-labelledby="sec-summary">
+    <h2 id="sec-summary">과목 소개 <span class="badge badge-neutral">학생 작성</span></h2>
+    <p>프로세스, 스레드, 동기화, 메모리 관리, 파일 시스템을 다룹니다. 학기 중 C 언어로 작은 시스템 프로그램을 2~3개 만드는 과제가 있고, 대부분 리눅스 환경에서 직접 시스템 호출을 다루게 됩니다. 이론 시험과 과제의 비중이 비슷하다는 의견이 많았습니다.</p>
+    <h3>선수 개념</h3>
+    <p class="small muted">학생이 붙인 태그를 운영자가 병합했습니다. 태그를 누르면 같은 개념을 다룬 기록으로 이동합니다(목업에서는 동작하지 않음).</p>
+    <ul class="tags" aria-label="선수 개념 태그">
+      <li><a class="tag" href="#">C 포인터</a></li>
+      <li><a class="tag" href="#">리눅스 기본 명령</a></li>
+      <li><a class="tag" href="#">gdb 디버깅</a></li>
+      <li><a class="tag" href="#">fork / exec</a></li>
+      <li><a class="tag" href="#">파일 디스크립터</a></li>
+      <li><a class="tag" href="#">Makefile</a></li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="sec-types">
+    <h2 id="sec-types">과제 유형</h2>
+    <p class="note">과제 원문이 아니라 수강했던 학생이 직접 쓴 요약입니다. 학기마다 세부 요구사항은 다를 수 있습니다.</p>
+    <ul class="plain">
+      <li>
+        <h3>셸 구현 <span class="badge badge-neutral">개인 또는 2인</span></h3>
+        <p>명령어를 읽어 실행하는 작은 셸을 만듭니다. 파이프, 리다이렉션, 백그라운드 실행 같은 기능을 단계적으로 붙이는 형태였습니다. — 2026-1 수강생 요약</p>
+      </li>
+      <li>
+        <h3>동기화 문제 풀이 <span class="badge badge-neutral">개인</span></h3>
+        <p>여러 스레드가 공유 자원을 쓰는 상황을 직접 만들고 락·세마포어로 경쟁 상태를 막는 과제였습니다. 실행 결과와 설명 보고서를 함께 냈습니다. — 2025-2 수강생 요약</p>
+      </li>
+      <li>
+        <h3>메모리 할당기 실험 보고서 <span class="badge badge-neutral">2~3인</span></h3>
+        <p>할당 전략 몇 가지를 비교하고 단편화를 측정해 보고서로 정리했습니다. 코드보다 실험 설계와 해석 비중이 컸습니다. — 2025-1 수강생 요약</p>
+      </li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="sec-workload">
+    <h2 id="sec-workload">체감 소요시간 분포 — 셸 구현 과제</h2>
+    <p class="small muted">주간 체크인에서 통계 공유에 동의한 응답만 익명으로 집계했습니다.</p>
+    <div class="dist" role="img" aria-label="과제 전체 투입 시간 분포. 10시간 미만 1명, 10~20시간 2명, 20~30시간 3명, 30시간 이상 1명.">
+      <div class="dist-row"><span>~10시간</span><span class="dist-track"><span class="dist-fill" style="width:14%"></span></span><span class="dist-val">1명</span></div>
+      <div class="dist-row"><span>10~20시간</span><span class="dist-track"><span class="dist-fill" style="width:29%"></span></span><span class="dist-val">2명</span></div>
+      <div class="dist-row"><span>20~30시간</span><span class="dist-track"><span class="dist-fill" style="width:43%"></span></span><span class="dist-val">3명</span></div>
+      <div class="dist-row"><span>30시간+</span><span class="dist-track"><span class="dist-fill" style="width:14%"></span></span><span class="dist-val">1명</span></div>
+    </div>
+    <p class="small"><strong>응답 7명 · 5명 이상일 때만 표시</strong> · 체감 난이도 중앙값 4 / 5 · 가장 바빴던 주: 마감 직전 2주</p>
+    <p class="small muted">동기화 문제 풀이, 메모리 할당기 실험: 응답 3명 — 아직 데이터가 충분하지 않음</p>
+  </section>
+
+  <section aria-labelledby="sec-stuck">
+    <h2 id="sec-stuck">자주 막히는 지점</h2>
+    <p class="small muted">공개된 🧱 막힘 기록을 “나도 막혔어요” 수로 정렬했습니다. 해결 방법은 정답 코드가 아닌 개념·접근 설명입니다.</p>
+    <ol class="plain stuck-list">
+      <li>
+        <h3>자식 프로세스가 좀비로 남음</h3>
+        <span class="metoo"><button class="btn btn-secondary" type="button" aria-label="나도 막혔어요, 현재 14명">나도 막혔어요 · 14</button></span>
+        <p class="small muted" style="grid-column: 1 / -1; margin:0">맥락: wait, SIGCHLD, 백그라운드 실행 · 해결 기록 3건 · <a href="case.html#log-zombie">사례에서 보기</a></p>
+      </li>
+      <li>
+        <h3>파이프 연결 후 프로그램이 끝나지 않음 (fd 누수)</h3>
+        <span class="metoo"><button class="btn btn-secondary" type="button" aria-label="나도 막혔어요, 현재 11명">나도 막혔어요 · 11</button></span>
+        <p class="small muted" style="grid-column: 1 / -1; margin:0">맥락: pipe, dup2, close 순서 · 해결 기록 2건 · <a href="case.html#log-pipe">사례에서 보기</a></p>
+      </li>
+      <li>
+        <h3>따옴표가 섞인 명령어 파싱이 깨짐</h3>
+        <span class="metoo"><button class="btn btn-secondary" type="button" aria-label="나도 막혔어요, 현재 8명">나도 막혔어요 · 8</button></span>
+        <p class="small muted" style="grid-column: 1 / -1; margin:0">맥락: 토크나이저, 상태 기계 · 해결 기록 2건</p>
+      </li>
+      <li>
+        <h3>Ctrl+C를 누르면 셸 자체가 종료됨</h3>
+        <span class="metoo"><button class="btn btn-secondary" type="button" aria-label="나도 막혔어요, 현재 6명">나도 막혔어요 · 6</button></span>
+        <p class="small muted" style="grid-column: 1 / -1; margin:0">맥락: 시그널 핸들러, 프로세스 그룹 · 해결 기록 1건 · 미해결 1건</p>
+      </li>
+      <li>
+        <h3>과제 서버와 내 노트북에서 결과가 다름</h3>
+        <span class="metoo"><button class="btn btn-secondary" type="button" aria-label="나도 막혔어요, 현재 5명">나도 막혔어요 · 5</button></span>
+        <p class="small muted" style="grid-column: 1 / -1; margin:0">맥락: 컴파일러 버전, macOS와 리눅스 차이 · 해결 기록 2건</p>
+      </li>
+    </ol>
+  </section>
+
+  <section aria-labelledby="sec-senior">
+    <h2 id="sec-senior">선배 노트</h2>
+    <p class="small muted">과목을 마친 학생이 남긴 짧은 회고입니다. 공개 사례 없이도 작성할 수 있습니다.</p>
+    <div class="grid">
+      <article class="card senior" aria-labelledby="sn1">
+        <h3 id="sn1">“파서부터 테스트 붙이세요”</h3>
+        <p class="small muted">표시명 ‘커널초보’ · 2026-1 수강</p>
+        <dl>
+          <dt>첫 주에 할 일</dt>
+          <dd>리눅스 환경부터 맞추고 fork·exec 예제를 직접 돌려 보기.</dd>
+          <dt>가장 시간을 잡아먹은 곳</dt>
+          <dd>파이프 여러 개를 이을 때 닫지 않은 fd 찾기. 이틀 걸렸어요.</dd>
+          <dt>다시 한다면</dt>
+          <dd>파싱과 실행을 처음부터 분리하고, 파서 테스트 케이스를 먼저 20개쯤 만들 것.</dd>
+          <dt>미리 알았으면 좋았을 것</dt>
+          <dd>프로세스 그룹과 시그널 개념. 교재 해당 장을 미리 읽으면 Ctrl+C 처리가 쉬워집니다.</dd>
+        </dl>
+      </article>
+      <article class="card senior" aria-labelledby="sn2">
+        <h3 id="sn2">“마감 2주 전이 진짜 시작”</h3>
+        <p class="small muted">익명 · 2025-2 수강</p>
+        <dl>
+          <dt>첫 주에 할 일</dt>
+          <dd>팀원과 기능을 쪼개기 전에 전체 흐름을 그림 한 장으로 합의하기.</dd>
+          <dt>가장 시간을 잡아먹은 곳</dt>
+          <dd>좀비 프로세스. 증상이 바로 안 보여서 늦게 알아챘어요.</dd>
+          <dt>다시 한다면</dt>
+          <dd><code>ps</code>로 프로세스 상태를 확인하는 습관을 초반부터 들일 것.</dd>
+          <dt>미리 알았으면 좋았을 것</dt>
+          <dd>gdb에서 자식 프로세스를 따라가는 설정.</dd>
+        </dl>
+      </article>
+      <article class="card senior" aria-labelledby="sn3">
+        <h3 id="sn3">“보고서도 과제의 절반”</h3>
+        <p class="small muted">표시명 ‘민트초코’ · 2025-1 수강</p>
+        <dl>
+          <dt>첫 주에 할 일</dt>
+          <dd>평가 기준 공지를 읽고 보고서에 들어갈 항목을 미리 목차로 만들기.</dd>
+          <dt>가장 시간을 잡아먹은 곳</dt>
+          <dd>실험 결과가 매번 달라서 측정 조건을 고정하는 일.</dd>
+          <dt>다시 한다면</dt>
+          <dd>측정 스크립트를 먼저 만들고 실험은 나중에.</dd>
+          <dt>미리 알았으면 좋았을 것</dt>
+          <dd>외부 단편화와 내부 단편화의 차이. 용어를 헷갈려 보고서를 다시 썼어요.</dd>
+        </dl>
+      </article>
+    </div>
+  </section>
+
+  <section aria-labelledby="sec-cases">
+    <h2 id="sec-cases">공개 사례</h2>
+    <p class="small muted">최종물 전문이 아니라 마일스톤 시점의 스냅샷 미리보기입니다. 진행 중인 학기의 사례는 학기 종료 후에 공개됩니다.</p>
+    <div class="grid">
+      <article class="card" aria-labelledby="c1">
+        <h3 id="c1"><a href="case.html">셸 구현 과제</a></h3>
+        <p class="small muted">2026-1 · 2인 · 약 25시간 · <span class="badge badge-public">🌐 전체 공개</span></p>
+        <div class="case-thumbs" aria-label="마일스톤 스냅샷 4개 미리보기">
+          <figure><div class="thumb" aria-hidden="true"><i class="w70 acc"></i><i class="w50"></i><i class="w90"></i><i class="w30"></i></div><figcaption>기획</figcaption></figure>
+          <figure><div class="thumb" aria-hidden="true"><span class="term">$ ls -l
+[ls][-l]</span></div><figcaption>파서</figcaption></figure>
+          <figure><div class="thumb" aria-hidden="true"><span class="term">$ a | b
+ok</span></div><figcaption>파이프</figcaption></figure>
+          <figure><div class="thumb" aria-hidden="true"><span class="term">$ sleep &amp;
+[1] 412</span></div><figcaption>최종</figcaption></figure>
+        </div>
+        <p class="small">⚖️ 결정 2 · 🧱 막힘 5 (해결 4) · ✅ 검증 2</p>
+      </article>
+      <article class="card" aria-labelledby="c2">
+        <h3 id="c2"><a href="#">생산자·소비자 동기화</a></h3>
+        <p class="small muted">2025-2 · 개인 · 약 12시간 · <span class="badge badge-neutral">📄 요약 공개</span></p>
+        <div class="case-thumbs" aria-label="마일스톤 스냅샷 3개 미리보기">
+          <figure><div class="thumb" aria-hidden="true"><i class="w90"></i><i class="w50 acc"></i><i class="w70"></i></div><figcaption>설계</figcaption></figure>
+          <figure><div class="thumb" aria-hidden="true"><span class="term">race!
+count=97</span></div><figcaption>재현</figcaption></figure>
+          <figure><div class="thumb" aria-hidden="true"><span class="term">mutex
+count=100</span></div><figcaption>해결</figcaption></figure>
+          <figure><div class="thumb" aria-hidden="true"><i class="w50"></i><i class="w90"></i><i class="w30"></i></div><figcaption>보고서</figcaption></figure>
+        </div>
+        <p class="small">⚖️ 결정 1 · 🧱 막힘 3 (해결 3) · ✅ 검증 1</p>
+      </article>
+      <article class="card" aria-labelledby="c3">
+        <h3 id="c3"><a href="#">할당 전략 비교 실험</a></h3>
+        <p class="small muted">2025-1 · 3인 · 약 30시간 · <span class="badge badge-neutral">📄 요약 공개</span> <span class="badge badge-neutral">사후 작성</span></p>
+        <div class="case-thumbs" aria-label="마일스톤 스냅샷 4개 미리보기">
+          <figure><div class="thumb" aria-hidden="true"><i class="w70"></i><i class="w90"></i><i class="w30 acc"></i></div><figcaption>계획</figcaption></figure>
+          <figure><div class="thumb" aria-hidden="true"><i class="w30 acc"></i><i class="w50 acc"></i><i class="w90 acc"></i></div><figcaption>측정</figcaption></figure>
+          <figure><div class="thumb" aria-hidden="true"><i class="w90"></i><i class="w70"></i><i class="w50"></i></div><figcaption>초안</figcaption></figure>
+          <figure><div class="thumb" aria-hidden="true"><i class="w90"></i><i class="w90"></i><i class="w70"></i><i class="w50"></i></div><figcaption>최종</figcaption></figure>
+        </div>
+        <p class="small">⚖️ 결정 3 · 🧱 막힘 2 (해결 1) · ✅ 검증 2</p>
+      </article>
+    </div>
+  </section>
+
+  <section aria-labelledby="sec-others">
+    <h2 id="sec-others">다른 학교에서는</h2>
+    <p class="small muted">같은 개념 태그를 가진 다른 학교 과목의 기록입니다. 과목명이 같아도 과제·학기 맥락은 서로 다릅니다.</p>
+    <ul class="plain">
+      <li><strong>가상공과대학교 · 시스템프로그래밍</strong> — 공통 태그: fork / exec, 파일 디스크립터 · 막힘 12건 · 선배 노트 4개</li>
+      <li><strong>가상과학기술원 · 운영체제론</strong> — 공통 태그: 동기화, 시그널 · 막힘 7건 · 공개 사례 2개</li>
+      <li><strong>가상여자대학교 · 컴퓨터시스템</strong> — 공통 태그: C 포인터, gdb 디버깅 · 막힘 5건</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="sec-fork" class="fork-box">
+    <h2 id="sec-fork">이 과목의 계획으로 시작하기</h2>
+    <button class="btn" type="button" aria-describedby="fork-tip">이 계획 포크하기</button>
+    <div class="fork-tip" id="fork-tip" role="note">
+      <strong>복사되는 것:</strong>
+      <ul>
+        <li>마일스톤 구성</li>
+        <li>할 일 체크리스트</li>
+        <li>주차별 시간 배분</li>
+        <li>참고 자료 목록</li>
+      </ul>
+      <span class="muted">코드·보고서 본문과 막힘의 해결 내용은 복사되지 않습니다.</span>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="inner">
+    <p>교수 실명·평가 성향·별점은 다루지 않습니다. · <a href="#">이 페이지 신고</a></p>
+    <p>실험용 목업 · 모든 인물·과제·수치는 가상 예시입니다.</p>
+  </div>
+</footer>
+</body>
+</html>

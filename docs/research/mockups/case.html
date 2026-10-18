@@ -1,0 +1,718 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>셸 구현 과제 · 공개 사례 — Peerchive 목업</title>
+<style>
+/* 공통 스타일: 네 파일에 같은 블록을 복제해 각 파일이 단독으로 열리도록 함 */
+/* Peerchive 실험용 정적 목업 공통 스타일 (E1·E4). 가상 데이터 전용. */
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f5f7fa;
+  --surface: #ffffff;
+  --text: #1a1d23;
+  --text-muted: #4f5866;
+  --border: #d6dbe3;
+  --primary: #1d5fd1;
+  --primary-hover: #154aa6;
+  --primary-text: #ffffff;
+  --primary-soft: #e8f0fd;
+  --focus: #f0a400;
+  --ok-bg: #e6f4ea;
+  --ok-text: #1b5e2f;
+  --warn-bg: #fdf3e1;
+  --warn-text: #7a4b00;
+  --neutral-bg: #eef0f4;
+  --neutral-text: #3a4250;
+  --banner-bg: #fff4cc;
+  --banner-text: #4a3800;
+  --bar: #5b8def;
+  --bar-track: #e4e8ef;
+  --radius: 8px;
+  --font: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Segoe UI", sans-serif;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171c;
+    --bg-soft: #1b1f26;
+    --surface: #1e232b;
+    --text: #e8ebf0;
+    --text-muted: #a9b2bf;
+    --border: #353c47;
+    --primary: #6ea1ff;
+    --primary-hover: #94baff;
+    --primary-text: #0b1220;
+    --primary-soft: #1d2a42;
+    --focus: #ffc94a;
+    --ok-bg: #173323;
+    --ok-text: #9fe0b2;
+    --warn-bg: #3a2c12;
+    --warn-text: #f4cf8a;
+    --neutral-bg: #2a303a;
+    --neutral-text: #cfd5de;
+    --banner-bg: #3a3214;
+    --banner-text: #f6e7a8;
+    --bar: #6ea1ff;
+    --bar-track: #2c333e;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 1rem; /* 16px */
+  line-height: 1.6;
+  overflow-wrap: break-word;
+  word-break: keep-all;
+}
+
+a { color: var(--primary); }
+a:hover { color: var(--primary-hover); }
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -48px;
+  background: var(--primary);
+  color: var(--primary-text);
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  z-index: 100;
+}
+.skip-link:focus { top: 8px; }
+
+/* 실험 배너 */
+.mock-banner {
+  background: var(--banner-bg);
+  color: var(--banner-text);
+  text-align: center;
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* 상단 헤더 */
+.site-header {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.site-header .inner {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 24px;
+}
+.brand {
+  font-weight: 800;
+  font-size: 1.125rem;
+  color: var(--text);
+  text-decoration: none;
+}
+.site-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.site-nav a {
+  display: inline-block;
+  padding: 6px 2px;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.site-nav a[aria-current="page"] {
+  color: var(--text);
+  font-weight: 700;
+  border-bottom: 2px solid var(--primary);
+}
+
+/* 본문 */
+main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+}
+main p, main li, .prose { max-width: 75ch; }
+
+h1, h2, h3, h4 { line-height: 1.35; }
+h1 { font-size: 1.75rem; margin: 0.5rem 0 0.5rem; }
+h2 {
+  font-size: 1.3rem;
+  margin: 2.75rem 0 0.75rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+h3 { font-size: 1.075rem; margin: 1.5rem 0 0.5rem; }
+h4 { font-size: 1rem; margin: 1rem 0 0.25rem; }
+
+.muted { color: var(--text-muted); }
+.small { font-size: 0.875rem; }
+.breadcrumb { font-size: 0.875rem; color: var(--text-muted); margin: 0; }
+.breadcrumb ol { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.breadcrumb li + li::before { content: "›"; margin-right: 4px; }
+
+/* 안내 상자 */
+.notice {
+  border: 2px solid var(--warn-text);
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  font-weight: 700;
+}
+.note {
+  background: var(--bg-soft);
+  border-left: 4px solid var(--border);
+  padding: 10px 14px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 0.9375rem;
+  color: var(--text-muted);
+}
+
+/* 태그·배지 */
+.tags { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-soft);
+  font-size: 0.875rem;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.badge-public { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
+.badge-ok { background: var(--ok-bg); color: var(--ok-text); border-color: var(--ok-text); }
+.badge-warn { background: var(--warn-bg); color: var(--warn-text); border-color: var(--warn-text); border-style: dashed; }
+.badge-neutral { background: var(--neutral-bg); color: var(--neutral-text); border-color: var(--border); }
+
+/* 버튼 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 8px 18px;
+  border-radius: var(--radius);
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: var(--primary-text);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn:hover { background: var(--primary-hover); border-color: var(--primary-hover); color: var(--primary-text); }
+.btn-secondary { background: transparent; color: var(--primary); }
+.btn-secondary:hover { background: var(--primary-soft); color: var(--primary-hover); }
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+
+/* 카드·그리드 */
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.card h3, .card h4 { margin-top: 0; }
+.card > :last-child { margin-bottom: 0; }
+
+/* 목록 */
+.plain { list-style: none; padding: 0; margin: 0; }
+.plain > li { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.plain > li:last-child { border-bottom: 0; }
+
+/* 막대 분포 */
+.dist { margin: 12px 0; display: grid; gap: 8px; max-width: 640px; }
+.dist-row { display: grid; grid-template-columns: 6.5em 1fr 3.5em; align-items: center; gap: 8px; font-size: 0.9375rem; }
+.dist-track { height: 16px; background: var(--bar-track); border-radius: 4px; overflow: hidden; }
+.dist-track, .dist-fill { display: block; }
+.dist-fill { height: 100%; background: var(--bar); }
+.dist-val { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* 스냅샷 썸네일 (CSS 자리표시) */
+.thumb {
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-soft);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: hidden;
+}
+.thumb i { display: block; height: 6px; border-radius: 3px; background: var(--border); }
+.thumb i.w30 { width: 30%; } .thumb i.w50 { width: 50%; } .thumb i.w70 { width: 70%; } .thumb i.w90 { width: 90%; }
+.thumb i.acc { background: var(--bar); }
+.thumb .term {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+  white-space: pre;
+}
+
+/* 표 */
+.table-wrap { overflow-x: auto; max-width: 100%; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9375rem; }
+th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+thead th { background: var(--bg-soft); }
+caption { text-align: left; font-weight: 700; padding-bottom: 6px; }
+
+/* 푸터 */
+.site-footer {
+  border-top: 1px solid var(--border);
+  background: var(--bg-soft);
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+.site-footer .inner { max-width: 960px; margin: 0 auto; padding: 16px; }
+
+dl.meta { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 8px 0; }
+dl.meta dt { font-weight: 600; color: var(--text-muted); }
+dl.meta dd { margin: 0; }
+
+@media (max-width: 480px) {
+  h1 { font-size: 1.45rem; }
+  dl.meta { grid-template-columns: 1fr; }
+  dl.meta dd { margin-bottom: 6px; }
+  .dist-row { grid-template-columns: 5.5em 1fr 3em; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+</style>
+<style>
+  .view-toggle {
+    display: inline-flex;
+    flex-wrap: wrap;
+    border: 1px solid var(--primary);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin: 8px 0 4px;
+  }
+  .view-toggle button {
+    font: inherit;
+    min-height: 44px;
+    padding: 8px 16px;
+    border: 0;
+    background: transparent;
+    color: var(--primary);
+    cursor: pointer;
+  }
+  .view-toggle button[aria-pressed="true"] {
+    background: var(--primary);
+    color: var(--primary-text);
+    font-weight: 700;
+  }
+  .view-toggle button[aria-pressed="true"]::before { content: "✓ "; }
+  .view-toggle button + button { border-left: 1px solid var(--primary); }
+
+  .evo {
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    padding: 4px 4px 12px;
+    scroll-snap-type: x proximity;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-soft);
+  }
+  .evo figure {
+    flex: 0 0 210px;
+    margin: 8px 0;
+    scroll-snap-align: start;
+  }
+  .evo figure:first-child { margin-left: 8px; }
+  .evo figure:last-child { margin-right: 8px; }
+  .evo .thumb { background: var(--surface); }
+  .evo figcaption { font-size: 0.875rem; margin-top: 6px; }
+  .evo figcaption strong { display: block; }
+  .evo .arrow { align-self: center; color: var(--text-muted); flex: 0 0 auto; }
+
+  .turn { border-left: 3px solid var(--border); padding-left: 16px; margin: 20px 0; }
+  .turn > h3 { margin-top: 0; }
+  .log { list-style: none; padding: 0; margin: 0; }
+  .log > li {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    margin: 10px 0;
+  }
+  .log-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+  .log-tag { font-weight: 700; }
+  .log-meta { font-size: 0.8125rem; color: var(--text-muted); }
+  .log p { margin: 6px 0 0; }
+  .fields { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 8px 0 0; font-size: 0.9375rem; }
+  .fields dt { font-weight: 600; color: var(--text-muted); }
+  .fields dd { margin: 0; }
+  .fields code, .log code { font-size: 0.875rem; }
+  @media (max-width: 480px) {
+    .fields { grid-template-columns: 1fr; }
+    .fields dd { margin-bottom: 6px; }
+  }
+  .counts { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 8px 0; }
+
+  .claims > li { display: grid; gap: 4px; }
+  .claim-who { font-size: 0.875rem; color: var(--text-muted); }
+
+  #sections { display: block; }
+  .is-hidden { display: none !important; }
+  :target { scroll-margin-top: 16px; }
+  .log > li:target, section:target { outline: 3px solid var(--focus); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">본문으로 건너뛰기</a>
+<div class="mock-banner" role="note">실험용 목업 · 가상 데이터</div>
+<header class="site-header">
+  <div class="inner">
+    <a class="brand" href="index.html">Peerchive</a>
+    <nav class="site-nav" aria-label="목업 페이지">
+      <ul>
+        <li><a href="index.html">목업 목록</a></li>
+        <li><a href="course.html">과목 페이지</a></li>
+        <li><a href="case.html" aria-current="page">공개 사례</a></li>
+        <li><a href="profile.html">공개 프로필</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <nav class="breadcrumb" aria-label="위치">
+    <ol>
+      <li>가상대학교 컴퓨터공학과</li>
+      <li><a href="course.html">운영체제</a></li>
+      <li aria-current="page">셸 구현 과제</li>
+    </ol>
+  </nav>
+  <h1>셸 구현 과제</h1>
+  <p class="muted">운영체제 · 2026-1 · 2인 · 약 25시간</p>
+  <p><span class="badge badge-public">🌐 전체 공개</span> <span class="small muted">요약·마일스톤·선택한 로그·선택한 산출물 버전·기여가 보입니다.</span></p>
+  <p class="small">작성: <a href="profile.html">김지민</a>, 박서연(표시명) · 팀원 공개 동의 2/2</p>
+
+  <div role="group" aria-labelledby="view-label">
+    <p id="view-label" class="small muted" style="margin-bottom:0">보기 방식 (같은 공개 버전, 순서만 다름)</p>
+    <div class="view-toggle">
+      <button type="button" id="btn-learn" aria-pressed="true" data-view="learn">학습용 상세 보기</button>
+      <button type="button" id="btn-portfolio" aria-pressed="false" data-view="portfolio">포트폴리오 요약 보기</button>
+    </div>
+    <p id="view-desc" class="small muted" aria-live="polite">대안·실패·막힘·참고 자료를 먼저 보여 줍니다.</p>
+  </div>
+
+  <div id="sections">
+
+  <section id="summary" data-section="summary" aria-labelledby="h-summary">
+    <h2 id="h-summary">요약</h2>
+    <p><strong>문제:</strong> 파이프·리다이렉션·백그라운드 실행을 지원하는 작은 셸을 C로 만드는 과제였습니다.</p>
+    <p><strong>결과:</strong> 파이프 3단 연결과 입출력 리다이렉션은 직접 만든 테스트 42개를 통과했습니다. 잡 컨트롤(fg/bg)은 범위에서 뺐습니다.</p>
+    <div class="counts small" aria-label="기록 요약">
+      <span>⚖️ 핵심 결정 2</span><span>🧱 막힘 5 (해결 4)</span><span>✅ 검증 2</span><span>🔁 회고 1</span>
+    </div>
+  </section>
+
+  <section id="evolution" data-section="evolution" aria-labelledby="h-evo">
+    <h2 id="h-evo">진화 보기</h2>
+    <p class="small muted">마일스톤 시점의 스냅샷입니다. 좁은 화면에서는 옆으로 밀어 보세요.</p>
+    <div class="evo" role="region" aria-label="마일스톤 스냅샷 4개, 가로로 스크롤" tabindex="0">
+      <figure>
+        <div class="thumb" aria-hidden="true"><i class="w70 acc"></i><i class="w90"></i><i class="w50"></i><i class="w90"></i><i class="w30"></i></div>
+        <figcaption><strong>1. 기획</strong>4/02 · 구조도 1장, 기능 목록</figcaption>
+      </figure>
+      <span class="arrow" aria-hidden="true">→</span>
+      <figure>
+        <div class="thumb" aria-hidden="true"><span class="term">$ echo "a b" c
+tok[0]=echo
+tok[1]=a b
+tok[2]=c</span></div>
+        <figcaption><strong>2. 파서 완성</strong>4/16 · 토큰 분리 결과 화면</figcaption>
+      </figure>
+      <span class="arrow" aria-hidden="true">→</span>
+      <figure>
+        <div class="thumb" aria-hidden="true"><span class="term">$ cat f | grep x | wc
+      3
+$ ls &gt; out.txt</span></div>
+        <figcaption><strong>3. 파이프 구현</strong>5/07 · 3단 파이프 실행</figcaption>
+      </figure>
+      <span class="arrow" aria-hidden="true">→</span>
+      <figure>
+        <div class="thumb" aria-hidden="true"><span class="term">$ sleep 5 &amp;
+[1] 4127
+$ ./run_tests
+42 / 42 passed</span></div>
+        <figcaption><strong>4. 최종</strong>6/05 · 테스트 결과, 보고서 v2</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="timeline" data-section="timeline" aria-labelledby="h-log">
+    <h2 id="h-log">빌드 로그 — 주요 전환점</h2>
+    <p class="small muted">시간순 전체가 아니라 결정·막힘 해결·검증 중심으로 묶었습니다. 날짜는 작성자가 기입한 수행일이며, 서버 저장 시각은 별도로 표시합니다.</p>
+
+    <div class="turn">
+      <h3>전환점 1 · 파서와 실행부를 나누다 <span class="small muted">(마일스톤 1 → 2)</span></h3>
+      <ul class="log">
+        <li class="learn-only">
+          <div class="log-head"><span class="log-tag">🔨 진행</span><span class="log-meta">4/05 · 김지민</span></div>
+          <p>공백 기준으로만 자르는 첫 파서 완성. 따옴표 들어가면 바로 깨짐.</p>
+        </li>
+        <li id="decision-parser">
+          <div class="log-head"><span class="log-tag">⚖️ 결정</span><span class="log-meta">4/08 · 김지민 · 저장 4/08 21:14</span></div>
+          <p>파서를 상태 기계로 다시 짜고 실행부와 분리하기로 함.</p>
+          <dl class="fields">
+            <dt>선택지</dt><dd>① 기존 파서에 예외 처리 추가 ② 상태 기계 파서로 재작성</dd>
+            <dt>판단 기준</dt><dd>테스트 가능성, 2인 분업 가능 여부, 남은 기간 5주</dd>
+            <dt>선택</dt><dd>② 재작성. 파서 출력 구조를 먼저 합의해 실행부를 박서연이 병렬로 진행</dd>
+            <dt>지나고 보니</dt><dd>재작성에 3일 들었지만 이후 파이프·리다이렉션 추가 때 파서를 거의 건드리지 않았음</dd>
+          </dl>
+        </li>
+      </ul>
+    </div>
+
+    <div class="turn">
+      <h3>전환점 2 · 파이프가 끝나지 않는 문제 <span class="small muted">(마일스톤 3)</span></h3>
+      <ul class="log">
+        <li id="log-pipe">
+          <div class="log-head"><span class="log-tag">🧱 막힘</span><span class="log-meta">4/28 · 박서연</span></div>
+          <p>두 번째 명령이 입력 끝을 받지 못하고 계속 대기함.</p>
+          <dl class="fields">
+            <dt>증상</dt><dd><code>cat f | wc</code> 실행 후 프롬프트가 돌아오지 않음</dd>
+            <dt>맥락 키워드</dt><dd>pipe, dup2, close, EOF</dd>
+            <dt>오류 메시지</dt><dd>없음 (무한 대기)</dd>
+            <dt>시도한 것</dt><dd>버퍼 크기 변경 → 변화 없음 · 자식에서 출력 플러시 → 변화 없음</dd>
+            <dt>걸린 시간</dt><dd>반나절 이상</dd>
+          </dl>
+        </li>
+        <li>
+          <div class="log-head"><span class="log-tag">💡 해결</span><span class="log-meta">4/29 · 박서연 · ↳ 위 막힘과 연결됨</span></div>
+          <p>부모 프로세스가 파이프 쓰기 끝을 열어 둔 채라 EOF가 오지 않았음. 각 프로세스에서 쓰지 않는 끝을 모두 닫는 원칙을 정함. (접근 설명만 공개, 코드 비공개)</p>
+        </li>
+      </ul>
+    </div>
+
+    <div class="turn">
+      <h3>전환점 3 · 좀비 프로세스 <span class="small muted">(마일스톤 3 → 4)</span></h3>
+      <ul class="log">
+        <li id="log-zombie">
+          <div class="log-head"><span class="log-tag">🧱 막힘</span><span class="log-meta">5/12 · 김지민</span></div>
+          <p>백그라운드 실행 후 <code>ps</code>에 <code>&lt;defunct&gt;</code> 프로세스가 쌓임.</p>
+          <dl class="fields">
+            <dt>증상</dt><dd>백그라운드 명령 10번 실행하면 좀비 10개</dd>
+            <dt>맥락 키워드</dt><dd>wait, waitpid, SIGCHLD, 백그라운드</dd>
+            <dt>오류 메시지</dt><dd>없음</dd>
+            <dt>시도한 것</dt><dd>명령마다 <code>wait()</code> 호출 → 백그라운드가 사라짐(블로킹) · gdb로 자식 추적</dd>
+            <dt>걸린 시간</dt><dd>하루 이상</dd>
+          </dl>
+        </li>
+        <li>
+          <div class="log-head"><span class="log-tag">💡 해결</span><span class="log-meta">5/13 · 김지민 · ↳ 위 막힘과 연결됨</span></div>
+          <p>자식 종료 신호를 받을 때 기다리지 않는 방식으로 회수하도록 바꿈. 시그널 핸들러 안에서 할 수 있는 일이 제한된다는 점을 교재 10장에서 확인.</p>
+        </li>
+        <li class="learn-only">
+          <div class="log-head"><span class="log-tag">🧱 막힘</span><span class="log-meta">5/20 · 김지민 · <span class="badge badge-warn">미해결</span></span></div>
+          <p>Ctrl+C가 포그라운드 자식뿐 아니라 셸에도 전달됨. 프로세스 그룹 문제로 추정했지만 기한 내 해결하지 못함.</p>
+        </li>
+      </ul>
+    </div>
+
+    <div class="turn">
+      <h3>전환점 4 · 범위를 줄이고 검증하다 <span class="small muted">(마일스톤 4)</span></h3>
+      <ul class="log">
+        <li id="decision-scope">
+          <div class="log-head"><span class="log-tag">⚖️ 결정</span><span class="log-meta">5/22 · 김지민, 박서연</span></div>
+          <p>잡 컨트롤(fg/bg)을 범위에서 빼고 테스트에 시간을 쓰기로 함.</p>
+          <dl class="fields">
+            <dt>선택지</dt><dd>① 잡 컨트롤까지 구현 ② 기존 기능 안정화와 테스트</dd>
+            <dt>판단 기준</dt><dd>남은 2주, 평가 기준 공지의 필수/선택 구분, 미해결 시그널 문제</dd>
+            <dt>선택</dt><dd>② 안정화. 보고서에 미구현 사유를 명시</dd>
+            <dt>지나고 보니</dt><dd>필수 기능 감점이 없었고, 미구현 이유를 설명할 수 있어 발표 질의가 수월했음</dd>
+          </dl>
+        </li>
+        <li id="verify-test">
+          <div class="log-head"><span class="log-tag">✅ 검증</span><span class="log-meta">6/03 · 김지민</span></div>
+          <dl class="fields">
+            <dt>대상</dt><dd>파서, 파이프, 리다이렉션, 백그라운드 실행</dd>
+            <dt>조건</dt><dd>직접 만든 테스트 스크립트 42개, 과제 서버(리눅스)와 macOS 양쪽</dd>
+            <dt>결과</dt><dd>리눅스 42/42 통과 · macOS 40/42 (출력 형식 차이 2건)</dd>
+            <dt>남은 불확실성</dt><dd>입력이 매우 긴 경우, 시그널 처리 전반은 테스트하지 않음</dd>
+          </dl>
+        </li>
+        <li class="learn-only">
+          <div class="log-head"><span class="log-tag">✅ 검증</span><span class="log-meta">6/04 · 박서연</span></div>
+          <dl class="fields">
+            <dt>대상</dt><dd>fd 누수</dd>
+            <dt>조건</dt><dd>파이프 100회 반복 실행 후 열린 fd 수 확인</dd>
+            <dt>결과</dt><dd>실행 전후 fd 수 동일</dd>
+            <dt>남은 불확실성</dt><dd>리다이렉션과 파이프를 섞은 경우는 10회만 확인</dd>
+          </dl>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="contrib" data-section="contrib" aria-labelledby="h-contrib">
+    <h2 id="h-contrib">기여</h2>
+    <p class="small muted">각자 선언한 역할과 근거입니다. ‘팀원 확인’은 해당 팀원이 그 주장을 인정했다는 뜻이며 교수 인증이나 능력 검증이 아닙니다. 활동량을 점수나 비율로 환산하지 않습니다.</p>
+    <h3>팀 결과</h3>
+    <p>파이프·리다이렉션·백그라운드 실행을 지원하는 셸과 테스트 42개, 보고서 v2.</p>
+    <h3>역할 선언</h3>
+    <ul class="plain claims">
+      <li>
+        <span class="claim-who">김지민</span>
+        <span>파서 재설계(상태 기계)와 파서 테스트 작성</span>
+        <span><span class="badge badge-ok">팀원 확인</span> <span class="small muted">박서연 확인 · 6/10 · 근거: <a href="#decision-parser">결정 4/08</a>, 스냅샷 2</span></span>
+      </li>
+      <li>
+        <span class="claim-who">김지민</span>
+        <span>좀비 프로세스 원인 분석과 회수 방식 변경</span>
+        <span><span class="badge badge-ok">팀원 확인</span> <span class="small muted">박서연 확인 · 6/10 · 근거: <a href="#log-zombie">막힘·해결 5/12~13</a></span></span>
+      </li>
+      <li>
+        <span class="claim-who">김지민</span>
+        <span>테스트 스크립트 42개 구성과 양쪽 환경 실행</span>
+        <span><span class="badge badge-warn">본인 설명 · 미확인</span> <span class="small muted">근거: <a href="#verify-test">검증 6/03</a></span></span>
+      </li>
+      <li>
+        <span class="claim-who">박서연</span>
+        <span>파이프·리다이렉션 실행부 구현과 fd 누수 해결</span>
+        <span><span class="badge badge-ok">팀원 확인</span> <span class="small muted">김지민 확인 · 6/09 · 근거: <a href="#log-pipe">막힘·해결 4/28~29</a></span></span>
+      </li>
+    </ul>
+  </section>
+
+  <section id="references" data-section="references" aria-labelledby="h-ref">
+    <h2 id="h-ref">참고 자료와 사용 조건</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">자료</th><th scope="col">어떻게 썼나</th><th scope="col">사용 조건</th></tr></thead>
+        <tbody>
+          <tr><td>운영체제 교재 8·10장 (가상 출판사)</td><td>프로세스 그룹, 시그널 개념 확인</td><td>출처 표기 · 내용 재게시 안 함</td></tr>
+          <tr><td>리눅스 man 페이지 (pipe, dup2, waitpid)</td><td>함수 동작 확인</td><td>외부 링크의 원래 조건</td></tr>
+          <tr><td>가상 블로그 글 “파이프 EOF 이해하기”</td><td>EOF가 오지 않는 원인 개념 이해</td><td>외부 링크의 원래 조건</td></tr>
+          <tr><td>테스트 스크립트 (이 팀 작성)</td><td>검증 6/03</td><td>명시한 라이선스로 재사용 허용 (MIT)</td></tr>
+          <tr><td>최종 보고서 v2 (이 팀 작성)</td><td>공개 산출물</td><td>열람만 허용 (기본)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="small muted">셸 소스 코드 전문은 공개 대상에서 제외했습니다.</p>
+  </section>
+
+  <section id="limits" data-section="limits" aria-labelledby="h-limits">
+    <h2 id="h-limits">한계와 회고</h2>
+    <ul class="log">
+      <li>
+        <div class="log-head"><span class="log-tag">🔁 회고</span><span class="log-meta">6/20 · 김지민</span></div>
+        <p>잡 컨트롤은 구현하지 않았고 Ctrl+C 문제는 미해결로 남았습니다. 다시 한다면 시그널과 프로세스 그룹을 첫 주에 공부하고, 테스트를 파서 단계부터 자동화하겠습니다.</p>
+      </li>
+    </ul>
+  </section>
+
+  </div>
+
+  <div class="btn-row">
+    <a class="btn" href="course.html#sec-fork">이 계획 포크하기</a>
+    <a class="btn btn-secondary" href="course.html#sec-senior">선배 노트</a>
+    <a class="btn btn-secondary" href="#report">신고</a>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="inner">
+    <dl class="meta">
+      <dt>공개 버전</dt><dd>v2 · 게시 2026-07-03 · 수정 2026-07-10 (오탈자 정정, 정정 이력 표시)</dd>
+      <dt>철회 상태</dt><dd>게시 중 · 철회되지 않음 · 팀원 동의 유효 2/2</dd>
+      <dt>안내</dt><dd>철회하면 즉시 비노출되지만, 이미 내려받은 사본은 회수를 보장할 수 없습니다.</dd>
+    </dl>
+    <p id="report"><a href="#report">이 사례 신고하기</a> (과제 원문·개인정보·답안 유출 등)</p>
+    <p>실험용 목업 · 모든 인물·과제·수치는 가상 예시입니다.</p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var orders = {
+    learn: ["summary", "evolution", "timeline", "references", "contrib", "limits"],
+    portfolio: ["summary", "contrib", "timeline", "evolution", "limits", "references"]
+  };
+  var hiddenInPortfolio = ["references"];
+  var desc = {
+    learn: "대안·실패·막힘·참고 자료를 먼저 보여 줍니다.",
+    portfolio: "문제·기여·결과·근거를 먼저 보여 줍니다. 진행 로그와 참고 자료는 숨깁니다."
+  };
+  var container = document.getElementById("sections");
+  var buttons = document.querySelectorAll(".view-toggle button");
+  var current = "learn";
+
+  function apply(view) {
+    current = view;
+    orders[view].forEach(function (id) {
+      container.appendChild(document.getElementById(id));
+    });
+    document.querySelectorAll("[data-section]").forEach(function (s) {
+      s.classList.toggle("is-hidden", view === "portfolio" && hiddenInPortfolio.indexOf(s.id) !== -1);
+    });
+    document.querySelectorAll(".learn-only").forEach(function (el) {
+      el.classList.toggle("is-hidden", view === "portfolio");
+    });
+    buttons.forEach(function (b) {
+      b.setAttribute("aria-pressed", b.getAttribute("data-view") === view ? "true" : "false");
+    });
+    document.getElementById("view-desc").textContent = desc[view];
+  }
+
+  buttons.forEach(function (b) {
+    b.addEventListener("click", function () { apply(b.getAttribute("data-view")); });
+  });
+
+  function revealTarget() {
+    var id = decodeURIComponent(location.hash.slice(1));
+    var el = id && document.getElementById(id);
+    if (!el) return;
+    if (el.closest(".is-hidden")) apply("learn");
+    el.scrollIntoView();
+  }
+
+  var params = new URLSearchParams(location.search);
+  apply(params.get("view") === "portfolio" ? "portfolio" : "learn");
+  revealTarget();
+  window.addEventListener("hashchange", revealTarget);
+})();
+</script>
+</body>
+</html>
