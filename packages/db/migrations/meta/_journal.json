@@ -8,6 +8,13 @@
       "when": 1792282704459,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792417282833,
+      "tag": "0001_identity_projects",
+      "breakpoints": true
     }
   ]
 }

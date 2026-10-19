@@ -9,16 +9,21 @@
     "build": "nuxt build",
     "preview": "nuxt preview --dotenv ../../.env",
     "postinstall": "nuxt prepare",
-    "typecheck": "nuxt typecheck"
+    "typecheck": "nuxt typecheck && tsc -p test/tsconfig.json",
+    "test": "vitest run"
   },
   "dependencies": {
     "@peerchive/db": "workspace:*",
     "@peerchive/domain": "workspace:*",
+    "h3": "1.15.11",
     "nuxt": "4.5.2",
-    "vue": "3.5.43"
+    "vue": "3.5.43",
+    "zod": "4.6.5"
   },
   "devDependencies": {
+    "@types/node": "24.19.1",
     "typescript": "5.9.3",
+    "vitest": "5.0.3",
     "vue-tsc": "3.3.12"
   }
 }

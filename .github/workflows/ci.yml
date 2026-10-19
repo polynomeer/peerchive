@@ -75,3 +75,5 @@ jobs:
           test -z "$(git status --porcelain packages/db/migrations)" || { git status --porcelain packages/db/migrations; echo "::error::schema.ts 변경에 맞는 migration을 생성하세요 (pnpm db:generate)"; exit 1; }
       - run: pnpm db:migrate
       - run: pnpm --filter @peerchive/db test
+      # T-02/T-03 서비스 통합 테스트(매직링크·세션·프로필·프로젝트·초대·멤버). 단위 테스트도 함께 실행됩니다.
+      - run: pnpm --filter web test

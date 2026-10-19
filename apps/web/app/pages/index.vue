@@ -1,22 +1,25 @@
 <script setup lang="ts">
 useHead({ title: 'Peerchive — 과제는 끝나도, 과정은 남는다' })
+const { me } = useAuth()
 </script>
 
 <template>
-  <main class="home">
+  <div class="home">
     <h1>Peerchive</h1>
     <p class="tagline">과제는 끝나도, 과정은 남는다</p>
     <p class="status" role="status">개발 중</p>
-  </main>
+    <p>
+      <NuxtLink v-if="me" to="/projects">내 과제로 가기</NuxtLink>
+      <NuxtLink v-else to="/login">이메일로 시작하기</NuxtLink>
+    </p>
+  </div>
 </template>
 
 <style scoped>
 .home {
   max-width: 40rem;
   margin: 0 auto;
-  padding: 4rem 1rem;
-  font-family: system-ui, -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
-  line-height: 1.6;
+  padding: 2rem 0;
 }
 .tagline {
   font-size: 1.25rem;

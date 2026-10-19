@@ -2,6 +2,8 @@
  * 첫 vertical slice 스키마 (SYSTEM_DESIGN §6.1–§6.3 일부).
  *
  * 범위: 신원·프로필, 강의 아카이브 골격(학교·과목·학기), 과제 공간·멤버·초대, 빌드 로그(revision).
+ * T-02/T-03(0001 migration): 로그인 계정(auth_accounts)·세션·매직링크·rate limit, 초대 취소,
+ * 프로젝트 version(낙관적 동시성), 감사 이벤트(§6.6 AuditEvent 최소형).
  * 공개(Publication)·동의·기여·파일은 다음 slice에서 추가합니다.
  *
  * 원칙
@@ -23,6 +25,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -42,6 +45,8 @@ export const projectKind = pgEnum('project_kind', ['individual', 'team'])
 export const projectLifecycle = pgEnum('project_lifecycle', ['planning', 'active', 'completed', 'archived'])
 export const projectRole = pgEnum('project_role', ['owner', 'editor', 'reviewer', 'viewer'])
 export const membershipStatus = pgEnum('membership_status', ['invited', 'active', 'left', 'removed'])
+/** 로그인 수단. OAuth 공급자는 아직 구현하지 않았지만 같은 테이블에 추가합니다(ADR 0006). */
+export const authProvider = pgEnum('auth_provider', ['email', 'google', 'github', 'kakao'])
 export const logSource = pgEnum('log_source', ['web', 'discord', 'ai', 'task', 'retro'])
 export const logTag = pgEnum('log_tag', [
   'progress',
@@ -63,27 +68,102 @@ export const users = pgTable(
     /** 로그인·알림용. 공개 DTO에 싣지 않습니다. */
     privateEmail: text('private_email').notNull(),
     status: userStatus('status').notNull().default('active'),
+    /** 탈퇴 요청 시각. 요청 즉시 status='deleted'로 바꾸고, 실제 삭제(purge)는 별도 작업입니다. */
+    deletionRequestedAt: timestamp('deletion_requested_at', { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [uniqueIndex('users_private_email_lower_key').on(sql`lower(${t.privateEmail})`)],
 )
 
-export const profiles = pgTable('profiles', {
-  userId: uuid('user_id')
-    .primaryKey()
-    .references(() => users.id),
-  handle: text('handle').notNull().unique(),
-  headline: text('headline'),
-  jobTargets: text('job_targets').array().notNull().default(sql`'{}'::text[]`),
-  /** 선택 입력. 학교 인증 의미 없음. */
-  schoolLabel: text('school_label'),
-  gradTerm: text('grad_term'),
-  contactPolicy: contactPolicy('contact_policy').notNull().default('closed'),
-  openToWork: boolean('open_to_work').notNull().default(false),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-})
+/**
+ * 로그인 수단과 사용자의 연결. email은 소문자로 정규화한 주소, OAuth는 공급자의 고유 ID를 씁니다.
+ * 한 사용자가 여러 수단을 가질 수 있습니다.
+ */
+export const authAccounts = pgTable(
+  'auth_accounts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    provider: authProvider('provider').notNull(),
+    providerAccountId: text('provider_account_id').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('auth_accounts_provider_account_key').on(t.provider, t.providerAccountId),
+    index('auth_accounts_user_id_idx').on(t.userId),
+  ],
+)
+
+/**
+ * 로그인 세션. 쿠키 값은 `<id>.<secret>`이며 secret은 SHA-256 해시만 저장합니다.
+ * 로그아웃·탈퇴·정지는 행을 지워 즉시 무효화합니다.
+ */
+export const sessions = pgTable(
+  'sessions',
+  {
+    id: text('id').primaryKey(),
+    secretHash: text('secret_hash').notNull(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index('sessions_user_id_idx').on(t.userId)],
+)
+
+/** 이메일 매직링크. 원문 토큰은 저장하지 않고, 한 번 쓰면 used_at을 채웁니다. */
+export const magicLinkTokens = pgTable(
+  'magic_link_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** 소문자로 정규화한 주소. */
+    email: text('email').notNull(),
+    tokenHash: text('token_hash').notNull().unique(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index('magic_link_tokens_email_idx').on(t.email)],
+)
+
+/**
+ * 고정 창(fixed window) rate limit 카운터. key에는 원문 이메일·IP 대신 해시를 넣습니다.
+ * 오래된 행 정리는 작업 큐 도입 후 주기 작업으로 합니다(TODO, ADR 0004).
+ */
+export const rateLimitBuckets = pgTable(
+  'rate_limit_buckets',
+  {
+    key: text('key').notNull(),
+    windowStart: timestamp('window_start', { withTimezone: true }).notNull(),
+    count: integer('count').notNull().default(0),
+  },
+  (t) => [primaryKey({ name: 'rate_limit_buckets_pkey', columns: [t.key, t.windowStart] })],
+)
+
+export const profiles = pgTable(
+  'profiles',
+  {
+    userId: uuid('user_id')
+      .primaryKey()
+      .references(() => users.id),
+    handle: text('handle').notNull().unique(),
+    headline: text('headline'),
+    jobTargets: text('job_targets').array().notNull().default(sql`'{}'::text[]`),
+    /** 선택 입력. 학교 인증 의미 없음. */
+    schoolLabel: text('school_label'),
+    gradTerm: text('grad_term'),
+    contactPolicy: contactPolicy('contact_policy').notNull().default('closed'),
+    openToWork: boolean('open_to_work').notNull().default(false),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  // 세부 규칙(예약어, 앞뒤 하이픈)은 애플리케이션이 검증하고, DB는 문자 집합·길이만 막습니다.
+  (t) => [check('profiles_handle_format_check', sql`${t.handle} ~ '^[a-z0-9-]{3,30}$'`)],
+)
 
 // ── 강의 아카이브 골격 (§6.2) ────────────────────────────────────────────
 
@@ -150,10 +230,16 @@ export const projects = pgTable(
     /** assignment_briefs 테이블은 다음 slice에서 추가하며 그때 외래 키를 겁니다. */
     assignmentBriefId: uuid('assignment_brief_id'),
     retroMode: boolean('retro_mode').notNull().default(false),
+    /** 낙관적 동시성용. 수정할 때마다 1씩 올리고, 요청의 expectedVersion과 다르면 409입니다. */
+    version: integer('version').notNull().default(1),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index('projects_owner_id_idx').on(t.ownerId), index('projects_course_term_id_idx').on(t.courseTermId)],
+  (t) => [
+    index('projects_owner_id_idx').on(t.ownerId),
+    index('projects_course_term_id_idx').on(t.courseTermId),
+    check('projects_version_check', sql`${t.version} >= 1`),
+  ],
 )
 
 export const projectMembers = pgTable(
@@ -194,6 +280,8 @@ export const invitations = pgTable(
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     usedAt: timestamp('used_at', { withTimezone: true }),
     usedBy: uuid('used_by').references(() => users.id),
+    /** owner가 취소한 시각. 취소된 초대는 수락할 수 없습니다. */
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -254,5 +342,29 @@ export const logRevisions = pgTable(
     check('log_revisions_revision_no_check', sql`${t.revisionNo} >= 1`),
     check('log_revisions_payload_object_check', sql`jsonb_typeof(${t.payload}) = 'object'`),
     index('log_revisions_resolves_entry_id_idx').on(t.resolvesEntryId),
+  ],
+)
+
+// ── 운영 (§6.6) ──────────────────────────────────────────────────────────
+
+/**
+ * 감사 이벤트(최소형). 본문·토큰·메일 주소는 넣지 않고, metadata에는 역할 같은 최소 정보만 둡니다.
+ */
+export const auditEvents = pgTable(
+  'audit_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    actorId: uuid('actor_id').references(() => users.id),
+    action: text('action').notNull(),
+    targetType: text('target_type').notNull(),
+    targetId: uuid('target_id'),
+    projectId: uuid('project_id').references(() => projects.id),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('audit_events_project_id_idx').on(t.projectId),
+    index('audit_events_actor_id_idx').on(t.actorId),
+    check('audit_events_metadata_object_check', sql`jsonb_typeof(${t.metadata}) = 'object'`),
   ],
 )

@@ -51,3 +51,94 @@ export function canReadProjectWorkspace(
   if (membership.userId !== viewer.userId) return false
   return membership.status === 'active'
 }
+
+// ── 과제 공간 운영 정책 (§8 "팀 멤버 관리", "로그 작성·수정") ─────────────
+//
+// 공통 원칙
+// - 모든 판정은 "요청자가 해당 프로젝트의 active 멤버"인 것에서 출발합니다(canReadProjectWorkspace).
+// - 관리자(isAdmin)라는 사실만으로는 어떤 권한도 생기지 않습니다. 운영 조치는 별도 경로로 둡니다.
+// - owner는 운영 책임자 1명입니다. owner 역할은 초대·역할 변경으로 줄 수 없고 이전(transfer)으로만 넘깁니다.
+
+/** 대상 멤버십이 같은 프로젝트의 active 멤버인지. */
+function isActiveMemberOf(project: ProjectRef, membership: Membership | null | undefined): membership is Membership {
+  return !!membership && membership.projectId === project.id && membership.status === 'active'
+}
+
+function hasActiveRole(
+  viewer: Viewer,
+  project: ProjectRef,
+  membership: Membership | null | undefined,
+  roles: readonly ProjectRole[],
+): membership is Membership {
+  return canReadProjectWorkspace(viewer, project, membership) && roles.includes(membership!.role)
+}
+
+/** 과제 공간 기본 정보(제목·목표 등) 수정: active owner/editor. */
+export function canEditProject(viewer: Viewer, project: ProjectRef, membership: Membership | null | undefined): boolean {
+  return hasActiveRole(viewer, project, membership, ['owner', 'editor'])
+}
+
+/** 멤버 목록 관리(초대 목록 조회·초대 취소 포함): active owner만. */
+export function canManageMembers(
+  viewer: Viewer,
+  project: ProjectRef,
+  membership: Membership | null | undefined,
+): boolean {
+  return hasActiveRole(viewer, project, membership, ['owner'])
+}
+
+/** 초대 생성: owner가 owner 이외의 역할로만 초대할 수 있습니다. */
+export function canInvite(
+  viewer: Viewer,
+  project: ProjectRef,
+  membership: Membership | null | undefined,
+  role: ProjectRole,
+): boolean {
+  return role !== 'owner' && canManageMembers(viewer, project, membership)
+}
+
+/**
+ * 다른 멤버의 역할 변경: owner가 active 멤버(본인·owner 제외)를 owner 이외의 역할로 바꿉니다.
+ * owner 지정은 canTransferOwnership 경로로만 합니다.
+ */
+export function canChangeRole(
+  viewer: Viewer,
+  project: ProjectRef,
+  actorMembership: Membership | null | undefined,
+  target: Membership | null | undefined,
+  newRole: ProjectRole,
+): boolean {
+  if (newRole === 'owner') return false
+  if (!canManageMembers(viewer, project, actorMembership)) return false
+  if (!isActiveMemberOf(project, target)) return false
+  return target.userId !== viewer.userId && target.role !== 'owner'
+}
+
+/** 멤버 내보내기: owner가 본인이 아닌 active 비-owner 멤버를 내보냅니다. */
+export function canRemoveMember(
+  viewer: Viewer,
+  project: ProjectRef,
+  actorMembership: Membership | null | undefined,
+  target: Membership | null | undefined,
+): boolean {
+  if (!canManageMembers(viewer, project, actorMembership)) return false
+  if (!isActiveMemberOf(project, target)) return false
+  return target.userId !== viewer.userId && target.role !== 'owner'
+}
+
+/** 스스로 나가기: active 멤버. owner는 먼저 소유권을 이전해야 합니다. */
+export function canLeave(viewer: Viewer, project: ProjectRef, membership: Membership | null | undefined): boolean {
+  return hasActiveRole(viewer, project, membership, ['editor', 'reviewer', 'viewer'])
+}
+
+/** 소유권 이전: owner가 본인이 아닌 같은 프로젝트의 active 멤버에게 넘깁니다. */
+export function canTransferOwnership(
+  viewer: Viewer,
+  project: ProjectRef,
+  actorMembership: Membership | null | undefined,
+  target: Membership | null | undefined,
+): boolean {
+  if (!canManageMembers(viewer, project, actorMembership)) return false
+  if (!isActiveMemberOf(project, target)) return false
+  return target.userId !== viewer.userId
+}
