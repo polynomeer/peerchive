@@ -7,7 +7,7 @@
 | 경로 | 내용 |
 |---|---|
 | `apps/web` | Nuxt 4(Vue 3, TypeScript strict). 화면(`app/`), `/api/v1` 라우트(`server/api`), 서비스 모듈(`server/modules`), 공유 DTO 타입(`shared/types`) |
-| `packages/domain` | 런타임 의존성 없는 도메인 규칙: 과제 공간 권한 정책, 공개 상태 전이, 기여 확인 |
+| `packages/domain` | 런타임 의존성 없는 도메인 규칙: 과제 공간 권한 정책, 빌드 로그 작성·수정·해결 연결 규칙, 공개 상태 전이, 기여 확인 |
 | `packages/db` | Drizzle ORM 스키마, SQL migration(`migrations/`), `createDb(url)` |
 | `ops/docker-compose.yml` | 로컬 개발용 PostgreSQL 16 |
 
@@ -20,9 +20,12 @@
 | T-01 개발 환경·DB migration·CI | 완료 | Nuxt 4 골격, PostgreSQL+Drizzle migration, CI(아카이브·앱·DB 통합) |
 | T-02 세션·공개/비공개 프로필 | 완료 | 이메일 매직링크, DB 세션(30일·sliding), CSRF Origin 검사, `/me`·프로필·공개 프로필·탈퇴 요청([ADR 0006](../docs/adr/0006-auth-sessions.md)) |
 | T-03 과제·초대·프로젝트 권한 | 완료 | 과제 생성·목록·수정(version 409), 멤버·초대(7일·일회성·취소)·역할 변경·내보내기·나가기·소유권 이전, 감사 이벤트 |
-| T-04 빌드 로그·revision·태그별 payload | 다음 | |
+| T-04 빌드 로그·revision·태그별 payload | 완료 | 7개 태그별 payload 검증(모르는 키 거부), 수정은 새 revision(낡은 `expectedRevision`은 409 `stale_revision`)·태그 변경 불가(422 `tag: immutable`), 💡해결↔🧱막힘 연결(같은 프로젝트만), 근거 링크(http/https, 서버가 열지 않음), 자기 기입 수행일(최대 내일) vs 기록 시각, `clientId` 재전송 중복 방지, cursor 목록·태그/작성자 필터, 과제 화면의 작성 폼(임시 저장·재시도)·타임라인·수정 이력 |
+| T-05 파일 업로드·격리·검사 | 다음 | |
 
-화면: `/login`, `/onboarding`(프로필 설정 겸용), `/projects`, `/projects/[id]`, `/invite/[token]`, `/u/[handle]`.
+화면: `/login`, `/onboarding`(프로필 설정 겸용), `/projects`, `/projects/[id]`(개요·빌드 로그·멤버), `/invite/[token]`, `/u/[handle]`.
+
+빌드 로그 API: `POST/GET /api/v1/projects/:id/logs`, `GET /api/v1/logs/:id`, `GET/POST /api/v1/logs/:id/revisions`. 읽을 수 없는 프로젝트·로그는 404, reviewer/viewer의 작성·수정은 403입니다.
 
 ## 준비
 

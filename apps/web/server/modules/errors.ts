@@ -16,6 +16,8 @@ export class ServiceError extends Error {
     readonly reason?: string,
     /** VALIDATION일 때 필드별 오류 코드. */
     readonly fields?: Record<string, string>,
+    /** 클라이언트가 복구에 쓰는 추가 값(예: 409의 currentRevision). 민감 정보 금지. */
+    readonly details?: Record<string, string | number>,
   ) {
     super(reason ? `${code}: ${reason}` : code)
     this.name = 'ServiceError'
@@ -24,7 +26,8 @@ export class ServiceError extends Error {
 
 export const notFound = () => new ServiceError('NOT_FOUND')
 export const forbidden = (reason?: string) => new ServiceError('FORBIDDEN', reason)
-export const conflict = (reason: string) => new ServiceError('CONFLICT', reason)
+export const conflict = (reason: string, details?: Record<string, string | number>) =>
+  new ServiceError('CONFLICT', reason, undefined, details)
 export const gone = () => new ServiceError('GONE', 'link_unavailable')
 export const invalid = (fields: Record<string, string>) => new ServiceError('VALIDATION', 'validation_failed', fields)
 

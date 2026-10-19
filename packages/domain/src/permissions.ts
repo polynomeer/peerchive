@@ -142,3 +142,31 @@ export function canTransferOwnership(
   if (!isActiveMemberOf(project, target)) return false
   return target.userId !== viewer.userId
 }
+
+// ── 빌드 로그 정책 (§8 "로그 작성·수정") ────────────────────────────────
+//
+// - 작성: active owner/editor. reviewer는 피드백(별도 기능)만, viewer는 읽기만 합니다.
+// - 수정(새 revision): 그 로그의 작성자 본인이 지금도 active owner/editor일 때만. owner라도 남의 로그는 고칠 수 없습니다.
+
+/** 수정 판정에 필요한 로그 정보. */
+export interface LogRef {
+  projectId: string
+  authorId: string
+}
+
+/** 빌드 로그 작성: active owner/editor. 관리자 우회 없음. */
+export function canWriteLog(viewer: Viewer, project: ProjectRef, membership: Membership | null | undefined): boolean {
+  return hasActiveRole(viewer, project, membership, ['owner', 'editor'])
+}
+
+/** 빌드 로그 수정: 작성자 본인이 같은 프로젝트의 active owner/editor일 때만. */
+export function canReviseLog(
+  viewer: Viewer,
+  project: ProjectRef,
+  membership: Membership | null | undefined,
+  log: LogRef,
+): boolean {
+  if (log.projectId !== project.id) return false
+  if (viewer.userId === null || log.authorId !== viewer.userId) return false
+  return canWriteLog(viewer, project, membership)
+}

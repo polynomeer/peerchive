@@ -4,6 +4,8 @@
  * 범위: 신원·프로필, 강의 아카이브 골격(학교·과목·학기), 과제 공간·멤버·초대, 빌드 로그(revision).
  * T-02/T-03(0001 migration): 로그인 계정(auth_accounts)·세션·매직링크·rate limit, 초대 취소,
  * 프로젝트 version(낙관적 동시성), 감사 이벤트(§6.6 AuditEvent 최소형).
+ * T-04(0002 migration): 로그 태그 고정(log_entries.tag + 복합 외래 키), 재전송 중복 방지(client_id),
+ * 근거 링크(log_revisions.links), 목록 조회 인덱스.
  * 공개(Publication)·동의·기여·파일은 다음 slice에서 추가합니다.
  *
  * 원칙
@@ -16,6 +18,7 @@
 import { sql } from 'drizzle-orm'
 import {
   type AnyPgColumn,
+  type PgTableExtraConfigValue,
   boolean,
   check,
   date,
@@ -300,13 +303,30 @@ export const logEntries = pgTable(
     authorId: uuid('author_id')
       .notNull()
       .references(() => users.id),
+    /**
+     * 로그 태그. 만든 뒤 바꾸지 않습니다. 목록 필터용으로 entry에 두고,
+     * 모든 revision의 tag가 이 값과 같도록 log_revisions에서 (log_entry_id, tag) 복합 외래 키로 강제합니다.
+     */
+    tag: logTag('tag').notNull(),
     /** 첫 revision 저장 전에는 null. log_revisions와 순환 참조이므로 아래 foreignKey로 선언합니다. */
     currentRevisionId: uuid('current_revision_id'),
     source: logSource('source').notNull().default('web'),
+    /**
+     * 클라이언트가 만든 재전송 식별자(선택). 네트워크 오류 뒤 같은 요청을 다시 보내도
+     * (project_id, author_id, client_id)가 같으면 새 로그를 만들지 않습니다. NULL끼리는 겹쳐도 됩니다.
+     */
+    clientId: uuid('client_id'),
     createdAt: createdAt(),
   },
-  (t) => [
-    index('log_entries_project_id_idx').on(t.projectId),
+  // log_revisions와 서로 참조하므로 반환 타입을 명시해 순환 추론을 끊습니다.
+  (t): PgTableExtraConfigValue[] => [
+    // 타임라인: 프로젝트별 최신순(created_at, id) cursor 페이지네이션.
+    index('log_entries_project_created_idx').on(t.projectId, t.createdAt.desc(), t.id.desc()),
+    // 태그 필터(🧱막힘·⚖️결정·✅검증 모아 보기).
+    index('log_entries_project_tag_created_idx').on(t.projectId, t.tag, t.createdAt.desc(), t.id.desc()),
+    uniqueIndex('log_entries_client_id_key').on(t.projectId, t.authorId, t.clientId),
+    // log_revisions의 (log_entry_id, tag) 복합 외래 키 대상.
+    unique('log_entries_id_tag_key').on(t.id, t.tag),
     foreignKey({
       name: 'log_entries_current_revision_id_fk',
       columns: [t.currentRevisionId],
@@ -329,6 +349,13 @@ export const logRevisions = pgTable(
     payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
     /** solution → 해결한 stuck 로그. */
     resolvesEntryId: uuid('resolves_entry_id').references((): AnyPgColumn => logEntries.id),
+    /**
+     * 근거 링크 `[{url, title}]`(최대 10개, http/https만). 서버는 이 URL을 가져오지 않습니다.
+     * 별도 테이블 대신 revision의 jsonb로 둡니다: revision은 추가만 하는 스냅샷이라 링크도 그 revision과
+     * 함께 고정되고, 항상 revision과 같이 읽으며 링크 단위로 조회·참조하지 않습니다.
+     * 출처 삭제 상태를 추적하는 참고 자료(§6.3 Reference)나 파일 근거(ArtifactVersion)는 별도 테이블로 둡니다.
+     */
+    links: jsonb('links').$type<Array<{ url: string; title: string | null }>>().notNull().default([]),
     /** 학생이 기입한 수행일(자기 주장). */
     claimedDate: date('claimed_date'),
     /** 플랫폼 기록 시각. */
@@ -337,11 +364,18 @@ export const logRevisions = pgTable(
     /** AI 생성물은 학생 승인 전까지 초안입니다. */
     approvedAt: timestamp('approved_at', { withTimezone: true }),
   },
-  (t) => [
+  (t): PgTableExtraConfigValue[] => [
     unique('log_revisions_log_entry_id_revision_no_key').on(t.logEntryId, t.revisionNo),
     check('log_revisions_revision_no_check', sql`${t.revisionNo} >= 1`),
     check('log_revisions_payload_object_check', sql`jsonb_typeof(${t.payload}) = 'object'`),
+    check('log_revisions_links_array_check', sql`jsonb_typeof(${t.links}) = 'array'`),
     index('log_revisions_resolves_entry_id_idx').on(t.resolvesEntryId),
+    // 태그 고정: revision의 tag는 entry의 tag와 같아야 합니다.
+    foreignKey({
+      name: 'log_revisions_entry_tag_fk',
+      columns: [t.logEntryId, t.tag],
+      foreignColumns: [logEntries.id, logEntries.tag],
+    }),
   ],
 )
 

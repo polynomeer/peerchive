@@ -9,12 +9,16 @@ const STATUS: Record<ServiceErrorCode, { statusCode: number; statusMessage: stri
   VALIDATION: { statusCode: 422, statusMessage: 'Unprocessable Entity' },
 }
 
-/** 서비스 오류를 HTTP 오류로 바꿉니다. 응답 data에는 짧은 코드와 필드별 코드만 싣습니다. */
+/** 서비스 오류를 HTTP 오류로 바꿉니다. 응답 data에는 짧은 코드·필드별 코드·복구용 추가 값만 싣습니다. */
 export function toHttpError(error: unknown): unknown {
   if (!(error instanceof ServiceError)) return error
   return createError({
     ...STATUS[error.code],
-    data: { code: error.reason ?? error.code.toLowerCase(), ...(error.fields && { fields: error.fields }) },
+    data: {
+      code: error.reason ?? error.code.toLowerCase(),
+      ...error.details,
+      ...(error.fields && { fields: error.fields }),
+    },
   })
 }
 

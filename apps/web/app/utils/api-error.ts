@@ -25,6 +25,16 @@ const FIELD_MESSAGES: Record<string, string> = {
   self: '자기 자신은 선택할 수 없습니다.',
   not_active_member: '현재 멤버가 아닙니다.',
   invalid: '값이 올바르지 않습니다.',
+  too_few: '항목이 더 필요합니다.',
+  unknown_key: '알 수 없는 항목이 있습니다.',
+  invalid_url: 'http 또는 https 주소만 넣을 수 있습니다.',
+  too_far_future: '수행일은 내일 이후로 정할 수 없습니다.',
+  confirm_required: '확인란을 체크해야 저장할 수 있습니다.',
+  not_member: '이 과제의 멤버가 아닌 사람이 있습니다.',
+  not_stuck: '🧱 막힘 로그만 연결할 수 있습니다.',
+  not_allowed: '이 태그에서는 쓸 수 없는 항목입니다.',
+  immutable: '태그는 바꿀 수 없습니다.',
+  no_changes: '바뀐 내용이 없습니다.',
 }
 
 export function fieldMessage(code: string | undefined): string | undefined {
