@@ -16,13 +16,15 @@ export type AuditAction =
   | 'account.deletion_request'
   | 'log.create'
   | 'log.revise'
+  | 'artifact.upload'
+  | 'artifact.rescan'
 
 export async function recordAudit(
   db: DbExecutor,
   event: {
     actorId: string | null
     action: AuditAction
-    targetType: 'project' | 'invitation' | 'member' | 'user' | 'log'
+    targetType: 'project' | 'invitation' | 'member' | 'user' | 'log' | 'artifact'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

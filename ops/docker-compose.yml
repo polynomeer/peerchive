@@ -1,5 +1,7 @@
-# Peerchive 로컬 개발용 PostgreSQL. 운영 환경 설정이 아닙니다.
+# Peerchive 로컬 개발용 PostgreSQL(+ 선택: ClamAV). 운영 환경 설정이 아닙니다.
 # 사용: docker compose -f ops/docker-compose.yml up -d
+#       ClamAV까지: docker compose -f ops/docker-compose.yml --profile clamav up -d
+#       (처음 시작할 때 서명 DB를 내려받느라 몇 분 걸리고 메모리를 1GB 이상 씁니다.)
 # 값은 저장소 루트 .env(.env.example 복사본) 또는 아래 기본값(로컬 전용)을 씁니다.
 name: peerchive
 
@@ -21,5 +23,21 @@ services:
       timeout: 3s
       retries: 30
 
+  # 파일 악성코드 검사(clamd). worker에서 PEERCHIVE_MALWARE_SCANNER=clamav, CLAMAV_PORT로 연결합니다(ADR 0007).
+  clamav:
+    image: clamav/clamav:1.4.3
+    profiles: ["clamav"]
+    ports:
+      - "127.0.0.1:${CLAMAV_PORT:-3310}:3310"
+    volumes:
+      - peerchive-clamav-db:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 120s
+
 volumes:
   peerchive-pg-data:
+  peerchive-clamav-db:

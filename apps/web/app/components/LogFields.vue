@@ -5,6 +5,7 @@
  */
 import type { LogDto, MemberDto, TimeBucket } from '~~/shared/types/api'
 import type { LogForm } from '~/utils/build-log'
+import type { EvidenceOption } from '~/utils/artifacts'
 
 const props = defineProps<{
   form: LogForm
@@ -13,6 +14,8 @@ const props = defineProps<{
   members: MemberDto[]
   /** 💡해결이 연결할 수 있는 이 과제의 🧱막힘 로그. */
   stuckLogs: LogDto[]
+  /** 이 과제의 산출물 버전(파일 근거 후보). */
+  evidenceOptions: EvidenceOption[]
 }>()
 
 const id = (name: string) => `${props.idPrefix}-${name}`
@@ -22,6 +25,20 @@ const describedBy = (name: string, hint = false) =>
   [hint ? id(`${name}-hint`) : '', props.errors[name] ? id(`${name}-error`) : ''].filter(Boolean).join(' ') || undefined
 
 const TIME_BUCKETS = Object.keys(TIME_BUCKET_LABELS) as TimeBucket[]
+
+/**
+ * 근거로 고를 수 있는 버전: 사용 가능·검사 대기·검사 중. 이미 붙어 있던 버전은 상태와 무관하게 보여 줘서 뺄 수 있게 합니다.
+ * 격리·실패 버전은 새로 붙일 수 없습니다(서버도 422).
+ */
+const evidenceChoices = computed(() =>
+  props.evidenceOptions.filter(
+    (option) =>
+      option.scanStatus === 'clean' || isScanInProgress(option.scanStatus) || props.form.evidenceVersionIds.includes(option.versionId),
+  ),
+)
+const evidenceDisabled = (option: EvidenceOption) =>
+  !props.form.evidenceVersionIds.includes(option.versionId) &&
+  (props.form.evidenceVersionIds.length >= 10 || option.scanStatus === 'quarantined' || option.scanStatus === 'failed')
 const bodyRequired = computed(() => props.form.tag === 'progress' || props.form.tag === 'retro')
 const bodyPlaceholder = computed(() =>
   props.form.tag === 'retro'
@@ -156,6 +173,18 @@ const bodyPlaceholder = computed(() =>
       <p :id="id('links-hint')" class="hint">http·https 주소만, 최대 10개. 링크는 저장만 하고 미리 열어 보지 않습니다.</p>
       <p v-if="err('links')" :id="id('links-error')" class="field-error">{{ err('links') }}</p>
     </div>
+
+    <fieldset v-if="evidenceChoices.length" :aria-describedby="[id('evidence-hint'), props.errors.evidenceVersionIds ? id('evidence-error') : ''].filter(Boolean).join(' ')">
+      <legend>파일 근거 (선택, 최대 10개)</legend>
+      <div class="inline-options evidence-options">
+        <label v-for="option in evidenceChoices" :key="option.versionId">
+          <input v-model="form.evidenceVersionIds" type="checkbox" :value="option.versionId" :disabled="evidenceDisabled(option)" />
+          {{ option.label }} — {{ SCAN_STATUS_LABELS[option.scanStatus] }}
+        </label>
+      </div>
+      <p :id="id('evidence-hint')" class="hint">위 산출물에 올린 파일을 고릅니다. 검사 중인 파일도 붙일 수 있으며 "검사 중"으로 표시됩니다.</p>
+      <p v-if="err('evidenceVersionIds')" :id="id('evidence-error')" class="field-error">{{ err('evidenceVersionIds') }}</p>
+    </fieldset>
 
     <div class="field">
       <label :for="id('claimedDate')">실제 수행일 (선택, 자기 기입)</label>

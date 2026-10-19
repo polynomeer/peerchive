@@ -1,7 +1,7 @@
 # 0004. 비동기 작업은 pg-boss + outbox
 
-- 상태: 채택(구현 전)
-- 날짜: 2026-10-18
+- 상태: 채택
+- 날짜: 2026-10-18(구현 2026-10-19, T-05: `apps/worker`, pg-boss 12.36.0, [ADR 0007](0007-file-storage-and-scanning.md))
 
 ## 맥락
 

@@ -22,6 +22,13 @@
       "when": 1792419318703,
       "tag": "0002_build_log",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792420533562,
+      "tag": "0003_artifacts",
+      "breakpoints": true
     }
   ]
 }

@@ -405,3 +405,88 @@ ol.plain {
 .more {
   margin-top: 0.75rem;
 }
+
+/* 산출물(T-05). 상태는 문구로 보여 주고 색은 보조입니다. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+.file-button {
+  display: inline-block;
+  margin-top: 0.5rem;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--accent);
+  cursor: pointer;
+}
+.file-button:focus-within {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+input[type='file'] {
+  max-width: 100%;
+}
+.uploads {
+  margin: 0.75rem 0;
+}
+.upload-task {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+.upload-task progress {
+  width: 100%;
+}
+.artifact-list {
+  margin-top: 0.75rem;
+}
+.artifact-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.artifact-item .badge {
+  white-space: normal;
+}
+.versions {
+  margin-top: 0.5rem;
+}
+.version {
+  display: grid;
+  gap: 0.35rem;
+  justify-items: start;
+}
+.version p {
+  margin: 0;
+}
+.preview {
+  display: block;
+  max-width: min(100%, 20rem);
+  max-height: 12rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.badge.scan-clean {
+  color: var(--ok);
+}
+.badge.scan-quarantined,
+.badge.scan-failed {
+  color: var(--danger);
+}
+.evidence-options {
+  flex-direction: column;
+  align-items: flex-start;
+}

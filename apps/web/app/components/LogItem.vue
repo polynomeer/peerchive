@@ -13,8 +13,9 @@ import type {
   StuckPayload,
   ValidationPayload,
 } from '~~/shared/types/api'
+import type { EvidenceOption } from '~/utils/artifacts'
 
-const props = defineProps<{ log: LogDto; members: MemberDto[]; stuckLogs: LogDto[] }>()
+const props = defineProps<{ log: LogDto; members: MemberDto[]; stuckLogs: LogDto[]; evidenceOptions: EvidenceOption[] }>()
 const emit = defineEmits<{ updated: [log: LogDto] }>()
 
 const headingId = computed(() => `log-${props.log.id}-heading`)
@@ -198,6 +199,15 @@ async function saveEdit() {
       </li>
     </ul>
 
+    <ul v-if="log.evidence.length" class="log-links" aria-label="파일 근거">
+      <li v-for="file in log.evidence" :key="file.versionId">
+        📎
+        <a v-if="file.contentUrl" :href="file.contentUrl" target="_blank" rel="noopener">{{ file.title }} v{{ file.versionNo }}</a>
+        <span v-else>{{ file.title }} v{{ file.versionNo }}</span>
+        <span class="muted"> — {{ SCAN_STATUS_LABELS[file.scanStatus] }}</span>
+      </li>
+    </ul>
+
     <div class="actions">
       <button v-if="log.revisionNo > 1" type="button" class="link-button" :aria-expanded="historyOpen" @click="toggleHistory">
         {{ historyOpen ? '수정 이력 닫기' : `수정 이력 보기 (${log.revisionNo}개)` }}
@@ -218,13 +228,21 @@ async function saveEdit() {
             <li v-for="(line, i) in payloadLines(rev.payload)" :key="i">{{ line }}</li>
           </ul>
           <p v-if="rev.links.length" class="small muted">링크 {{ rev.links.length }}개: {{ rev.links.map((l) => l.url).join(', ') }}</p>
+          <p v-if="rev.evidenceVersionIds.length" class="small muted">파일 근거 {{ rev.evidenceVersionIds.length }}개</p>
         </li>
       </ol>
     </div>
 
     <form v-if="editing" class="stack edit-form" novalidate @submit.prevent="saveEdit">
       <p class="hint">태그({{ LOG_TAG_LABELS[log.tag] }})는 바꿀 수 없습니다. 저장하면 새 버전(r{{ baseRevision + 1 }})이 생기고 이전 내용은 이력에 남습니다.</p>
-      <LogFields :form="form" :id-prefix="`edit-${log.id}`" :errors="errors" :members="members" :stuck-logs="stuckLogs" />
+      <LogFields
+        :form="form"
+        :id-prefix="`edit-${log.id}`"
+        :errors="errors"
+        :members="members"
+        :stuck-logs="stuckLogs"
+        :evidence-options="evidenceOptions"
+      />
       <p v-if="status" :class="['notice', status.kind]" :role="status.kind === 'error' ? 'alert' : 'status'">{{ status.text }}</p>
       <div class="actions">
         <button type="submit" :disabled="saving">{{ saving ? '저장 중…' : '새 버전 저장' }}</button>

@@ -4,10 +4,11 @@
  * - NOT_FOUND(404): 없거나 읽을 권한이 없는 대상. 비공개 객체의 존재를 드러내지 않도록 둘을 구분하지 않습니다(§8).
  * - FORBIDDEN(403): 읽을 수는 있지만 이 행동은 할 수 없음(예: viewer가 수정).
  * - CONFLICT(409): 낡은 version, 이미 멤버, owner 탈퇴 등 현재 상태와 충돌.
- * - GONE(410): 만료·사용·취소된 일회성 토큰. 어떤 경우인지 밝히지 않습니다.
+ * - GONE(410): 만료·사용·취소된 일회성 토큰(업로드 의도 포함). 어떤 경우인지 밝히지 않습니다.
+ * - PAYLOAD_TOO_LARGE(413): 업로드 본문이 선언한 크기·파일 한도를 넘음(받던 내용은 지움).
  * - VALIDATION(422): 필드별 오류 코드.
  */
-export type ServiceErrorCode = 'NOT_FOUND' | 'FORBIDDEN' | 'CONFLICT' | 'GONE' | 'VALIDATION'
+export type ServiceErrorCode = 'NOT_FOUND' | 'FORBIDDEN' | 'CONFLICT' | 'GONE' | 'PAYLOAD_TOO_LARGE' | 'VALIDATION'
 
 export class ServiceError extends Error {
   constructor(
@@ -28,7 +29,8 @@ export const notFound = () => new ServiceError('NOT_FOUND')
 export const forbidden = (reason?: string) => new ServiceError('FORBIDDEN', reason)
 export const conflict = (reason: string, details?: Record<string, string | number>) =>
   new ServiceError('CONFLICT', reason, undefined, details)
-export const gone = () => new ServiceError('GONE', 'link_unavailable')
+export const gone = (reason = 'link_unavailable') => new ServiceError('GONE', reason)
+export const tooLarge = () => new ServiceError('PAYLOAD_TOO_LARGE', 'too_large')
 export const invalid = (fields: Record<string, string>) => new ServiceError('VALIDATION', 'validation_failed', fields)
 
 /** drizzle가 감싼 오류에서 PostgreSQL SQLSTATE를 찾습니다. */

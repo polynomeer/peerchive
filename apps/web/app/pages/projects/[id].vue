@@ -214,6 +214,8 @@ const formatDate = (iso: string) => new Date(iso).toLocaleString('ko-KR', { date
         </form>
       </section>
 
+      <ArtifactsSection :project-id="project.id" :can-write="canEdit" />
+
       <BuildLog :project-id="project.id" :can-write="canEdit" :members="members" :me-id="me?.id ?? null" />
 
       <section class="card" aria-labelledby="members-heading">

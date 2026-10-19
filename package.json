@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "pnpm --filter web dev",
     "build": "pnpm --filter web build",
+    "worker": "pnpm --filter worker dev",
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test",
     "db:generate": "pnpm --filter @peerchive/db run generate",

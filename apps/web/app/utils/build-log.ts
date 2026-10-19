@@ -60,6 +60,8 @@ export interface LogForm {
   attendees: string[]
   decisions: string
   followUps: string
+  /** 파일 근거(산출물 버전 id, 최대 10개). */
+  evidenceVersionIds: string[]
 }
 
 export function emptyLogForm(tag: LogTag = 'progress'): LogForm {
@@ -88,6 +90,7 @@ export function emptyLogForm(tag: LogTag = 'progress'): LogForm {
     attendees: [],
     decisions: '',
     followUps: '',
+    evidenceVersionIds: [],
   }
 }
 
@@ -151,6 +154,7 @@ export function formRequest(form: LogForm) {
     payload: formPayload(form),
     links: parseLinks(form.links),
     claimedDate: form.claimedDate || null,
+    evidenceVersionIds: form.evidenceVersionIds,
     ...(form.tag === 'solution' && { resolvesEntryId: form.resolvesEntryId || null }),
   }
 }
@@ -162,6 +166,7 @@ export function logToForm(log: LogDto): LogForm {
   form.links = formatLinks(log.links)
   form.claimedDate = log.claimedDate ?? ''
   form.resolvesEntryId = log.resolves?.id ?? ''
+  form.evidenceVersionIds = log.evidence.map((e) => e.versionId)
   const p = log.payload
   if (log.tag === 'stuck') {
     const s = p as StuckPayload
@@ -193,7 +198,13 @@ export function logToForm(log: LogDto): LogForm {
 export function formFieldErrors(fields: Record<string, string>): Record<string, string> {
   const result: Record<string, string> = {}
   for (const [key, code] of Object.entries(fields)) {
-    const name = key.startsWith('payload.') ? key.split('.')[1]! : key.startsWith('links') ? 'links' : key
+    const name = key.startsWith('payload.')
+      ? key.split('.')[1]!
+      : key.startsWith('links')
+        ? 'links'
+        : key.startsWith('evidenceVersionIds')
+          ? 'evidenceVersionIds'
+          : key
     result[name] ??= code
   }
   return result

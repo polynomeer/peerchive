@@ -11,6 +11,10 @@ import type { LogDto, LogPageDto, LogTag, MemberDto } from '~~/shared/types/api'
 
 const props = defineProps<{ projectId: string; canWrite: boolean; members: MemberDto[]; meId: string | null }>()
 
+// 파일 근거 후보: 이 과제의 산출물 버전(산출물 섹션과 같은 목록을 씁니다).
+const artifacts = useProjectArtifacts(props.projectId)
+const evidenceChoices = computed(() => evidenceOptions(artifacts.items.value))
+
 // ── 타임라인 ──
 type Filter = 'all' | 'stuck' | 'decision' | 'validation' | 'mine'
 const FILTERS: Array<{ value: Filter; label: string }> = [
@@ -84,6 +88,9 @@ const SAVE_TEXT: Record<SaveState, string> = {
   restored: '저장하지 못한 입력을 불러왔습니다.',
 }
 
+/** 임시 저장용 복사본(배열은 새로 만듦). */
+const snapshot = () => ({ ...form, attendees: [...form.attendees], evidenceVersionIds: [...form.evidenceVersionIds] })
+
 function chooseTag(tag: LogTag) {
   form.tag = tag
   errors.value = {}
@@ -95,7 +102,7 @@ watch(
     if (!composerReady.value) return
     if (saveState.value === 'saved') saveState.value = 'idle'
     if (isLogFormEmpty(form)) clearLogDraft(props.projectId)
-    else saveLogDraft(props.projectId, { form: { ...form, attendees: [...form.attendees] }, clientId: clientId.value })
+    else saveLogDraft(props.projectId, { form: snapshot(), clientId: clientId.value })
   },
   { deep: true },
 )
@@ -105,7 +112,7 @@ async function submit() {
   saveState.value = 'saving'
   errors.value = {}
   // 보내기 전에 한 번 더 저장해 두어, 응답 전에 창이 닫혀도 같은 clientId로 다시 보낼 수 있게 합니다.
-  saveLogDraft(props.projectId, { form: { ...form, attendees: [...form.attendees] }, clientId: clientId.value })
+  saveLogDraft(props.projectId, { form: snapshot(), clientId: clientId.value })
   try {
     const created = await $fetch<LogDto>(`/api/v1/projects/${props.projectId}/logs`, {
       method: 'POST',
@@ -143,6 +150,7 @@ onMounted(() => {
   composerReady.value = true
   void load(true)
   void loadStuckLogs()
+  if (props.canWrite && !artifacts.loaded.value) void artifacts.refresh()
 })
 </script>
 
@@ -163,7 +171,14 @@ onMounted(() => {
       <p v-if="form.tag === 'solution' && stuckLogs.length === 0" class="hint">
         연결할 🧱 막힘 로그가 아직 없습니다. 먼저 막힘을 기록하세요.
       </p>
-      <LogFields :form="form" id-prefix="new-log" :errors="errors" :members="members" :stuck-logs="stuckLogs" />
+      <LogFields
+        :form="form"
+        id-prefix="new-log"
+        :errors="errors"
+        :members="members"
+        :stuck-logs="stuckLogs"
+        :evidence-options="evidenceChoices"
+      />
       <div class="actions">
         <button type="submit" :disabled="saveState === 'saving'">기록하기</button>
         <button v-if="saveState === 'error'" type="button" class="secondary" @click="submit">재시도</button>
@@ -192,7 +207,7 @@ onMounted(() => {
 
     <ol class="plain timeline" aria-label="로그 목록 (최신순)">
       <li v-for="log in items" :key="log.id">
-        <LogItem :log="log" :members="members" :stuck-logs="stuckLogs" @updated="replaceItem" />
+        <LogItem :log="log" :members="members" :stuck-logs="stuckLogs" :evidence-options="evidenceChoices" @updated="replaceItem" />
       </li>
     </ol>
     <p v-if="loading" class="muted" role="status">불러오는 중…</p>

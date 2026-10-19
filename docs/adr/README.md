@@ -9,6 +9,7 @@ Peerchive 신규 앱(`apps/`, `packages/`)의 기술 결정을 짧게 남깁니�
 | [0001](0001-new-app-alongside-archive.md) | 원본 아카이브 옆에 신규 앱을 만든다 | 채택 |
 | [0002](0002-nuxt-monolith.md) | Nuxt 단일 앱(웹 + 서버 API) | 채택 |
 | [0003](0003-postgresql-drizzle.md) | PostgreSQL + Drizzle ORM | 채택 |
-| [0004](0004-pg-boss-jobs.md) | 비동기 작업은 pg-boss + outbox | 채택(구현 전) |
+| [0004](0004-pg-boss-jobs.md) | 비동기 작업은 pg-boss + outbox | 채택 |
 | [0005](0005-node-version.md) | Node.js 런타임 버전 고정 | 채택 |
 | [0006](0006-auth-sessions.md) | 인증: 이메일 매직링크 + 자체 DB 세션(표준 방식) | 채택 |
+| [0007](0007-file-storage-and-scanning.md) | 파일 저장·격리·검사: 저장소 추상화 + 3단계 업로드 + worker 검사 | 채택 |

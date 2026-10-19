@@ -1,0 +1,23 @@
+{
+  "name": "@peerchive/files",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Peerchive 파일 처리: 오브젝트 저장소 추상화(파일시스템 driver), 파일 형식 판별, 악성코드 검사 어댑터, 검사 작업.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@peerchive/db": "workspace:*",
+    "@peerchive/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "typescript": "5.9.3",
+    "vitest": "5.0.3"
+  }
+}

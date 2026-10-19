@@ -1,0 +1,24 @@
+{
+  "name": "worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Peerchive 작업 worker(pg-boss). 지금은 파일 검사 작업만 처리합니다.",
+  "scripts": {
+    "dev": "NODE_ENV=development tsx src/main.ts",
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@peerchive/db": "workspace:*",
+    "@peerchive/files": "workspace:*",
+    "pg-boss": "12.36.0",
+    "tsx": "4.23.15"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "typescript": "5.9.3",
+    "vitest": "5.0.3"
+  }
+}

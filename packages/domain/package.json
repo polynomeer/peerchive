@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Peerchive 도메인 규칙: 권한 정책, 빌드 로그 규칙, 공개 상태 전이, 기여 확인. 런타임 의존성 없음.",
+  "description": "Peerchive 도메인 규칙: 권한 정책, 빌드 로그 규칙, 공개 상태 전이, 기여 확인, 산출물(파일) 규칙. 런타임 의존성 없음.",
   "exports": {
     ".": "./src/index.ts"
   },

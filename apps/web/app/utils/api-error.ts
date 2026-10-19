@@ -35,6 +35,7 @@ const FIELD_MESSAGES: Record<string, string> = {
   not_allowed: '이 태그에서는 쓸 수 없는 항목입니다.',
   immutable: '태그는 바꿀 수 없습니다.',
   no_changes: '바뀐 내용이 없습니다.',
+  not_attachable: '격리되었거나 검사에 실패한 파일은 근거로 붙일 수 없습니다.',
 }
 
 export function fieldMessage(code: string | undefined): string | undefined {

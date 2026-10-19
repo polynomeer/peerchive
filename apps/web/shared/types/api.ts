@@ -177,6 +177,8 @@ export interface LogDto {
   resolves: LogRefDto | null
   /** 이 막힘을 해결한 solution들(오래된 순). */
   resolvedBy: LogRefDto[]
+  /** 이 revision에 붙인 파일 근거(첨부 순서). */
+  evidence: EvidenceDto[]
   /** 요청자가 새 revision을 만들 수 있는지(작성자 본인 + owner/editor). */
   canRevise: boolean
 }
@@ -196,7 +198,82 @@ export interface LogRevisionDto {
   links: LogLinkDto[]
   claimedDate: string | null
   resolvesEntryId: string | null
+  /** 이 revision의 파일 근거(artifact version id, 첨부 순서). */
+  evidenceVersionIds: string[]
   recordedAt: string
+}
+
+// ── 산출물·파일 (T-05) ──────────────────────────────────────────────────
+
+export type ScanStatus = 'pending' | 'scanning' | 'clean' | 'quarantined' | 'failed'
+export type ArtifactKind = 'file' | 'link' | 'repo' | 'demo'
+
+/** 산출물 버전(파일 하나). 같은 프로젝트 멤버에게만 줍니다. 저장 위치(object key)는 싣지 않습니다. */
+export interface ArtifactVersionDto {
+  id: string
+  artifactId: string
+  versionNo: number
+  /** 올릴 때의 파일 이름(표시용). */
+  fileName: string
+  declaredType: string
+  /** 서버가 내용으로 판별한 형식. 판별 전이거나 허용 형식이 아니면 null. */
+  mediaType: string | null
+  bytes: number
+  scanStatus: ScanStatus
+  /** 격리·실패 사유 코드(예: type_mismatch, malware). */
+  scanReason: string | null
+  scannedAt: string | null
+  createdAt: string
+  uploader: LogAuthorDto
+  /** clean일 때만 내용 주소. 그 밖에는 null(내용을 내려주지 않음). */
+  contentUrl: string | null
+}
+
+export interface ArtifactDto {
+  id: string
+  projectId: string
+  kind: ArtifactKind
+  title: string
+  createdAt: string
+  updatedAt: string
+  latestVersion: ArtifactVersionDto | null
+  /** 모든 버전(최신순). */
+  versions: ArtifactVersionDto[]
+  /** 요청자가 새 버전을 올릴 수 있는지(owner/editor). */
+  canUpload: boolean
+}
+
+/** 업로드 의도. uploadUrl로 내용을 PUT한 뒤 completeUrl로 완료합니다. */
+export interface UploadIntentDto {
+  intentId: string
+  /** 지금은 이 서버의 PUT 주소. S3 호환 저장소를 쓰면 짧은 서명 URL로 바뀝니다. */
+  uploadUrl: string
+  completeUrl: string
+  /** 정확히 이 크기의 본문만 받습니다. */
+  byteSize: number
+  expiresAt: string
+  uploaded: boolean
+  completed: boolean
+}
+
+/** 업로드 완료 응답. */
+export interface UploadCompleteDto {
+  artifact: ArtifactDto
+  version: ArtifactVersionDto
+}
+
+/** 로그에 붙인 파일 근거 한 건. */
+export interface EvidenceDto {
+  versionId: string
+  artifactId: string
+  /** 산출물 이름. */
+  title: string
+  fileName: string
+  versionNo: number
+  mediaType: string | null
+  scanStatus: ScanStatus
+  /** clean일 때만. */
+  contentUrl: string | null
 }
 
 /** API 오류 응답의 data 부분. */

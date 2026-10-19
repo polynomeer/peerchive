@@ -8,6 +8,8 @@
  * - 태그는 바꿀 수 없습니다: 수정 요청의 tag가 다르면 422 `{tag: 'immutable'}`(DB는 복합 외래 키로 한 번 더 막음).
  * - 낡은 expectedRevision은 409 `stale_revision` + `currentRevision`.
  * - 해결(solution)의 대상이 없거나 다른 프로젝트 로그면 422 `{resolvesEntryId: 'not_found'}`(존재를 구분하지 않음).
+ * - 파일 근거(evidenceVersionIds, T-05)는 같은 프로젝트의 산출물 버전만 revision별로 붙입니다(artifacts/evidence.ts).
+ *   수정 때 생략하면 이전 revision의 근거를 이어받습니다.
  * - 감사 이벤트에는 태그·revision 번호만 남기고 본문은 넣지 않습니다(§6.6).
  */
 import { canReviseLog, canWriteLog, checkResolveTarget, isTagChangeAllowed, type Membership } from '@peerchive/domain'
@@ -27,6 +29,7 @@ import {
   type DbExecutor,
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
+import { checkEvidence, evidenceByRevision, evidenceIdsByRevision, insertEvidence } from '../artifacts/evidence'
 import { type Actor, conflict, forbidden, invalid, notFound } from '../errors'
 import { parseInput } from '../validation'
 import { type ProjectRow, isUuid, loadReadableProject } from '../projects/access'
@@ -130,7 +133,7 @@ async function toLogDtos(
   ]
   const stuckIds = logs.filter((log) => log.entry.tag === 'stuck').map((log) => log.entry.id)
 
-  const [targets, solutions] = await Promise.all([
+  const [targets, solutions, evidence] = await Promise.all([
     resolvesIds.length > 0
       ? selectLogs(db).where(and(eq(logEntries.projectId, project.id), inArray(logEntries.id, resolvesIds)))
       : Promise.resolve([]),
@@ -139,6 +142,10 @@ async function toLogDtos(
           .where(and(eq(logEntries.projectId, project.id), inArray(logRevisions.resolvesEntryId, stuckIds)))
           .orderBy(asc(logEntries.createdAt), asc(logEntries.id))
       : Promise.resolve([]),
+    evidenceByRevision(
+      db,
+      logs.map((log) => log.revision.id),
+    ),
   ])
   const targetById = new Map(targets.map((row) => [row.entry.id, toRef(toLoaded(row))]))
   const solutionsByStuck = new Map<string, LogRefDto[]>()
@@ -163,6 +170,7 @@ async function toLogDtos(
     recordedAt: log.revision.recordedAt.toISOString(),
     resolves: log.revision.resolvesEntryId ? (targetById.get(log.revision.resolvesEntryId) ?? null) : null,
     resolvedBy: solutionsByStuck.get(log.entry.id) ?? [],
+    evidence: evidence.get(log.revision.id) ?? [],
     canRevise: canReviseLog({ userId: actor.userId }, project, membership, log.entry),
   }))
 }
@@ -285,6 +293,7 @@ export async function createLog(
   )
   if (!checked.content) throw invalid(checked.fields)
   const content = checked.content
+  const evidenceIds = input.evidenceVersionIds ?? []
 
   return db.transaction(async (tx) => {
     const { project, membership } = await loadReadableProject(tx, actor, projectId)
@@ -299,6 +308,7 @@ export async function createLog(
     if (earlier) return earlier
 
     await checkRelations(tx, project.id, input.tag, content)
+    await checkEvidence(tx, project.id, evidenceIds)
 
     // 동시에 같은 clientId가 들어오면 한쪽은 아무것도 넣지 않고 먼저 만든 로그를 돌려줍니다.
     const [entry] = await tx
@@ -323,6 +333,7 @@ export async function createLog(
       .values({ logEntryId: entry.id, revisionNo: 1, tag: input.tag, ...revisionValues(content), recordedAt: now })
       .returning({ id: logRevisions.id })
     if (!revision) throw new Error('log revision insert failed')
+    await insertEvidence(tx, revision.id, evidenceIds)
     await tx.update(logEntries).set({ currentRevisionId: revision.id }).where(eq(logEntries.id, entry.id))
     await recordAudit(tx, {
       actorId: actor.userId,
@@ -396,8 +407,14 @@ export async function reviseLog(
     )
     if (!checked.content) throw invalid(checked.fields)
     const content = checked.content
-    if (contentKey(content) === contentKey(previous)) throw invalid({ _: 'no_changes' })
+    const previousEvidence = (await evidenceIdsByRevision(tx, [current.id])).get(current.id) ?? []
+    const evidenceIds =
+      input.evidenceVersionIds === undefined ? previousEvidence : (input.evidenceVersionIds ?? [])
+    if (contentKey(content) === contentKey(previous) && stableJson(evidenceIds) === stableJson(previousEvidence)) {
+      throw invalid({ _: 'no_changes' })
+    }
     await checkRelations(tx, project.id, tag, content, log.entry.id)
+    await checkEvidence(tx, project.id, evidenceIds, previousEvidence)
 
     const revisionNo = current.revisionNo + 1
     const [revision] = await tx
@@ -405,6 +422,7 @@ export async function reviseLog(
       .values({ logEntryId: log.entry.id, revisionNo, tag, ...revisionValues(content), recordedAt: now })
       .returning({ id: logRevisions.id })
     if (!revision) throw new Error('log revision insert failed')
+    await insertEvidence(tx, revision.id, evidenceIds)
     await tx.update(logEntries).set({ currentRevisionId: revision.id }).where(eq(logEntries.id, log.entry.id))
     await recordAudit(tx, {
       actorId: actor.userId,
@@ -483,6 +501,10 @@ export async function listLogRevisions(db: DbExecutor, actor: Actor, logId: unkn
     .from(logRevisions)
     .where(eq(logRevisions.logEntryId, log.entry.id))
     .orderBy(asc(logRevisions.revisionNo))
+  const evidence = await evidenceIdsByRevision(
+    db,
+    rows.map((row) => row.id),
+  )
   return rows.map((row) => ({
     revisionNo: row.revisionNo,
     tag: row.tag,
@@ -491,6 +513,7 @@ export async function listLogRevisions(db: DbExecutor, actor: Actor, logId: unkn
     links: row.links,
     claimedDate: row.claimedDate,
     resolvesEntryId: row.resolvesEntryId,
+    evidenceVersionIds: evidence.get(row.id) ?? [],
     recordedAt: row.recordedAt.toISOString(),
   }))
 }

@@ -6,6 +6,7 @@ const STATUS: Record<ServiceErrorCode, { statusCode: number; statusMessage: stri
   FORBIDDEN: { statusCode: 403, statusMessage: 'Forbidden' },
   CONFLICT: { statusCode: 409, statusMessage: 'Conflict' },
   GONE: { statusCode: 410, statusMessage: 'Gone' },
+  PAYLOAD_TOO_LARGE: { statusCode: 413, statusMessage: 'Payload Too Large' },
   VALIDATION: { statusCode: 422, statusMessage: 'Unprocessable Entity' },
 }
 

@@ -145,6 +145,13 @@ const claimedDateSchema = z
     return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
   }, { error: 'invalid_format' })
 
+/** 파일 근거(같은 프로젝트의 산출물 버전 id, 최대 10개). 중복은 하나로 합치고 순서를 유지합니다. */
+export const EVIDENCE_MAX = 10
+const evidenceVersionIdsSchema = z
+  .array(z.uuid({ error: 'invalid' }), { error: 'invalid' })
+  .max(EVIDENCE_MAX, { error: 'too_many' })
+  .transform((ids) => [...new Set(ids.map((id) => id.toLowerCase()))])
+
 const expectedRevision = z
   .number({ error: requiredOr('invalid') })
   .int({ error: 'invalid' })
@@ -158,6 +165,7 @@ export const createLogSchema = z.object({
   links: linksSchema.nullish(),
   claimedDate: claimedDateSchema.nullish(),
   resolvesEntryId: z.uuid({ error: 'invalid' }).nullish(),
+  evidenceVersionIds: evidenceVersionIdsSchema.nullish(),
   /** 재전송 중복 방지용 클라이언트 생성 UUID(선택). */
   clientId: z.uuid({ error: 'invalid' }).optional(),
 })
@@ -174,6 +182,7 @@ export const reviseLogSchema = z.object({
   links: linksSchema.nullish(),
   claimedDate: claimedDateSchema.nullish(),
   resolvesEntryId: z.uuid({ error: 'invalid' }).nullish(),
+  evidenceVersionIds: evidenceVersionIdsSchema.nullish(),
 })
 
 /** 목록 조회 쿼리. */
