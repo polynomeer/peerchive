@@ -2,7 +2,7 @@
 
 **한국어** | [English](SYSTEM_DESIGN.en.md)
 
-작성일: 2026-10-18 · 상태: 구현 전 통합 제안
+작성일: 2026-10-18 · 갱신: 2026-10-20 (캠퍼스 커뮤니티 §6.7·§8.1·§8.2·§9.1 반영) · 상태: 구현 전 통합 제안
 
 [제품 기획](../PROOFU_EVOLUTION_PLAN.md) · [실행 계획](DELIVERY_PLAN.md)
 
@@ -22,6 +22,8 @@ Peerchive(피어카이브)는 2019년 대학교 학부 졸업작품 **ProofU**�
 6. AI 작업에는 요청 사용자가 접근 권한을 가진 데이터만 입력합니다. AI 생성물은 표시되고, 학생이 승인하기 전에는 초안입니다.
 7. 공개 버전 수정은 새 버전 생성으로 처리하되, 삭제·철회 요구가 있으면 보존 정책에 따라 실제 내용도 제거할 수 있습니다. ‘변경 이력이 남는다’를 영구 삭제 불가로 구현하지 않습니다.
 8. 원본 ProofU 이력과 신규 서비스 데이터는 서로의 진위를 입증하는 자료로 혼용하지 않습니다.
+9. 커뮤니티 글은 공개 아카이브와 분리합니다. 작성자가 명시적으로 옮기지 않는 한 공개 release·과목 집계·공개 검색·검색엔진·프로필·포트폴리오로 전달되지 않습니다(§6.7, §8.2).
+10. 익명 글·댓글의 실제 작성자는 운영자만 사유와 감사 기록을 남기고 확인할 수 있습니다. 방장·모더레이터·다른 사용자에게 가는 응답에는 작성자를 추정할 식별자가 실리지 않습니다(§8.1).
 
 ## 2. 기존 ProofU의 활용
 
@@ -121,7 +123,8 @@ peerchive/
 │   │   ├── app/components/   # 도메인별 UI
 │   │   ├── server/api/v1/    # 요청 검증·정책 확인·응답 변환
 │   │   └── server/modules/   # identity, projects, logs, contribution,
-│   │                         # publication, archive, portfolio
+│   │                         # publication, archive, portfolio,
+│   │                         # community (P1)
 │   ├── worker/               # 검사·공개·철회·집계·AI·PDF 작업
 │   └── bot/                  # 디스코드 봇
 ├── packages/
@@ -261,6 +264,58 @@ erDiagram
 
 DB 삭제는 무조건 cascade하지 않고 공동 기록·동의·철회의 파급을 먼저 계산합니다.
 
+### 6.7 캠퍼스 커뮤니티 (P1)
+
+[제품 기획 §8.9](../PROOFU_EVOLUTION_PLAN.md#89-캠퍼스-커뮤니티-방과-페이지-p1)의 공식 학교·학과 페이지와 사용자 방을 하나의 `CommunitySpace` 모델로 다룹니다. 게시판 구조는 같고 종류(`kind`)에 따라 권한·이름 표시 기본값·열람 범위만 달라집니다. 커뮤니티 테이블은 공개 release 조회 경로(§11)와 섞지 않는 별도 모듈(`server/modules/community`)이 소유합니다.
+
+```mermaid
+erDiagram
+    User ||--o{ SchoolAffiliation : verifies
+    School ||--o{ Department : has
+    School ||--o{ CommunitySpace : "official pages"
+    User ||--o{ SpaceOpeningRequest : requests
+    CommunitySpace ||--o{ SpaceMembership : has
+    CommunitySpace ||--o{ NameModeChange : "mode history"
+    CommunitySpace ||--o{ Board : has
+    Board ||--o{ Post : contains
+    Post ||--o{ Comment : has
+    Post ||--o{ ThreadAlias : "anon numbers"
+    Post ||--o{ Reaction : receives
+    Post |o--o| Recruitment : announces
+    Recruitment ||--o{ Application : receives
+    Recruitment |o--o| CommunitySpace : "creates study room"
+    CommunitySpace |o--o| Project : "study record"
+    Post ||--o{ ArchiveTransfer : "moved to archive"
+    User ||--o{ CommunitySanction : receives
+    Report }o--|| Post : targets
+```
+
+| 엔티티 | 주요 필드 | 규칙 |
+|---|---|---|
+| SchoolAffiliation | user_id, school_id, email_domain, verified_at, standing(student/alumni), department_id?(자기 신고), status | 학교 메일 인증 결과. 인증 메일 주소는 `private_email`처럼 비공개이며 공개 DTO에 학번·학과를 싣지 않음. 졸업 후 메일이 사라져도 재학 중 인증 이력을 유지하고 `alumni`로 표시. 과목 허브 작성 자격(제품 기획 §8.6)과 같은 레코드를 씀 |
+| Department | id, school_id, name, merged_into? | 운영자 병합. 학과는 메일로 확인할 수 없어 자기 신고로만 연결 |
+| CommunitySpace | id, kind(official_school/official_department/user_room/study_room), school_id?, department_id?, linked_course_id?, name, slug, current_name_mode(real/display/anonymous), discovery(listed/unlisted), join_policy(open/approval/invite), capacity, status(active/archived/restricted) | `official_*`는 운영자만 생성하고 `공식` 배지는 이 종류에만 붙음. `user_room`·`study_room` 이름에 `공식`·`학생회` 등 예약어 금지. 사용자 방 정원 기본 300, 초과는 운영자 검토. `real` 방의 `join_policy` 기본값은 `approval`(초대 전용도 가능). 공식 페이지의 `current_name_mode`는 `anonymous` 고정 |
+| SpaceOpeningRequest | school_id, department_id?, requester_id, source(student/student_council), created_at | `(school_id, department_id, requester_id)` 유일. 같은 학교 인증 학생 요청이 기준 수(초기안 10)에 이르거나 학생회 요청이면 운영자 검토 큐에 올림. 자동 개설하지 않음 |
+| SpaceMembership | space_id, user_id, role(owner/admin/moderator/member), status(pending/active/left/removed), joined_at | `(space_id, user_id)` 유일. 공식 페이지의 열람 자격은 멤버십이 아니라 `SchoolAffiliation`에서 파생하고, 멤버십은 모더레이터 지정·학과 쓰기 제한에만 씀. 방장이 떠나면 가장 오래된 admin → member 순으로 승계, 없으면 공간을 `archived`로 |
+| NameModeChange | space_id, from_mode, to_mode, requested_by, requested_at, effective_at, status(scheduled/applied/cancelled) | append-only 변경 이력. `effective_at = requested_at + 7일`, 예약 시 멤버 전원에게 알림. worker가 `effective_at`에 `current_name_mode`를 바꾸며, 이미 쓴 글에는 소급하지 않음. 한 공간에 `scheduled`는 하나만 |
+| Board | id, space_id, kind(free/freshmen/alumni/question/info/recruiting/notice/general), title, write_role | 공식 페이지는 기본 게시판 세트를 생성. `notice`는 moderator 이상만 씀 |
+| Post | id, board_id, author_id, name_mode, title, body, linked_course_id?, status(visible/auto_hidden/hidden/removed), created_at, edited_at? | `name_mode`는 **작성 시점에 복사해 고정**하고 수정·공간 모드 변경으로 바뀌지 않음. 공식 페이지는 `anonymous` 기본에 글 단위 `display` 선택만 허용(`real` 불가). 사용자 방은 그 시점의 `current_name_mode`를 그대로 씀 |
+| Comment | id, post_id, parent_id?, author_id, name_mode, body, status | Post와 같은 이름 표시·상태 규칙. 답글은 한 단계까지 |
+| ThreadAlias | post_id, user_id, alias_no, created_at | 익명 스레드의 번호 매핑. `(post_id, user_id)`·`(post_id, alias_no)` 유일. 글쓴이는 `alias_no = 0`(`글쓴이` 표시), 댓글 참여자는 처음 쓴 순서대로 1, 2, …를 받고 삭제돼도 번호를 재사용하지 않음. 스레드 사이에 번호·키를 공유하지 않음. 막힘 Q&A의 스레드 익명 표시(제품 기획 §8.5)와 같은 테이블을 씀 |
+| Reaction | target_type(post/comment), target_id, user_id, kind(like) | 사용자당 1회. 비추천 없음. ‘많이 공감한 글’(P2) 정렬에만 쓰고 개인 점수로 합산하지 않음 |
+| Recruitment | id, post_id?, kind(study/team), topic?, course_id?, period, capacity, format, goal, target_name_mode, status(open/closed) | 팀원 찾기(제품 기획 §8.8)와 같은 테이블. 공식 페이지 모집 게시판·사용자 방에서는 `post_id`로, 과목 허브에서는 `course_id`만으로 만듦. study의 `target_name_mode` 기본값은 `display`. 마감 시 study는 `study_room` 공간을, team은 과제 공간과 초대를 생성 |
+| Application | recruitment_id, applicant_id, attached_profile?, attached_release_ids[], status(pending/accepted/declined/withdrawn) | 모집자만 열람. 순위·점수·거절 사유 필드 없음. 익명 게시판의 모집이어도 지원자 정보는 모집자에게만 |
+| StudyRecord | space_id, project_id | 스터디 방이 기록을 켜면 내부 `Project(kind=study)`를 만들어 빌드 로그·마일스톤을 그대로 재사용. 공개는 Publication 규칙(§7.2)과 멤버 동의를 따름. `anonymous` 스터디 방의 기록은 포트폴리오·공개 프로필에 연결할 수 없음 |
+| ArchiveTransfer | source_type(post/comment), source_id, target_type(log_entry/question/senior_note), target_id?, required_consents[], chosen_name_mode, status(awaiting_consent/done/cancelled) | 질문자와 채택된 답변자(조언 글은 작성자)의 동의가 모두 모이면 **복사본**을 아카이브 쪽에 만들고, 원 글은 커뮤니티에 남음. 옮길 때 이름 표시 방식을 다시 고름 |
+| CommunitySanction | user_id, scope(community/space), space_id?, level(warning/write_suspended/permanent), until?, reason, report_id?, issued_by | 커뮤니티 쓰기 정책 함수에서만 검사하고 과제 공간·포트폴리오 권한에는 영향 없음. `space` 범위 제한은 방장에게 대상자의 신원을 알리지 않고 적용 가능 |
+
+- **Report 확장.** §6.6의 `Report.target_type`에 `community_post`·`community_comment`·`community_space`를 추가합니다. 서로 다른 학교 인증 사용자의 열린 신고가 기준 수(초기안: 공식 페이지 5건, 사용자 방 3건)에 이르면 같은 트랜잭션에서 대상을 `auto_hidden`으로 바꾸고 검토 큐에 올립니다. 권리 침해를 주장하는 게시 중단 요청은 별도 절차로 분리합니다.
+- **익명 글과 프로필의 분리.** `anonymous` 글·댓글은 공개 프로필·포트폴리오·기여 장부·활동 집계·분석 이벤트의 사용자 키와 연결하지 않습니다. 익명 활동 점수·등급 필드는 두지 않습니다.
+- **소규모 익명 방.** `anonymous` 공간의 활성 멤버가 10명 미만이면 응답 DTO의 시각을 `today`/`this_week` 버킷으로만 내보냅니다. DB에는 정확한 시각을 유지합니다.
+- **실명.** `real` 모드에 표시하는 이름은 사용자가 계정에 입력한 선택 필드(`User.real_name`)이며 Peerchive가 신분을 검증하지 않습니다. 학교를 연결한 공간에서는 `SchoolAffiliation` 여부만 이름 옆에 표시하고, 학번은 수집하지 않습니다.
+- **엠바고.** `linked_course_id`가 있는 공간·글에도 엠바고(§7.2, 제품 기획 §9.2)를 적용합니다. 커뮤니티 글은 게시를 막지 않지만, 같은 학기 과제의 답안·코드 공유는 신고 사유로 분류합니다. 아카이브로 옮긴 기록이 공개되는 경로는 원래의 공개 절차와 엠바고 검사를 그대로 거칩니다.
+- **만들지 않는 것.** 익명 쪽지, 장터, 실시간 채팅, 비추천, 활동 순위, 교수·강의 평가 테이블은 두지 않습니다(제품 기획 §8.9.7).
+
 ## 7. 상태 전이와 공개 흐름
 
 ### 7.1 프로젝트 작업 상태
@@ -315,6 +370,39 @@ MVP는 `private`, `public(summary/full)`을 구현합니다. `private`는 승인
 - API·repository·파일 접근·검색 색인·집계·PDF·AI 작업에 같은 정책 함수를 적용합니다. PostgreSQL RLS는 방어층 후보일 뿐 애플리케이션 정책을 대신하지 않습니다([PostgreSQL Row Security](https://www.postgresql.org/docs/current/ddl-rowsecurity.html)).
 - 비공개 객체의 존재를 노출하지 않도록 권한 없는 조회는 404로 일관되게 처리합니다.
 
+### 8.1 커뮤니티 권한 (P1)
+
+커뮤니티 역할은 프로젝트 역할과 별개입니다. 같은 사람이 과제 공간의 owner이면서 어떤 방의 일반 멤버일 수 있습니다.
+
+| 행동 | 비로그인·다른 학교 | 학교 인증 구성원 / 방 멤버 | 방장·admin | 모더레이터(공식 페이지) | 운영자 |
+|---|---|---|---|---|---|
+| 공식 학교 페이지 읽기·쓰기 | 불가(404) | 해당 학교 인증 시 가능 | – | 가능 | 가능 |
+| 공식 학과 페이지 읽기 / 쓰기 | 불가(404) | 학교 인증 시 읽기 / 학과 선택 시 쓰기 | – | 가능 / 명백한 외부인의 쓰기 제한 | 가능 |
+| 사용자 방 읽기·쓰기 | 불가(404). listed 방도 이름·소개·멤버 수만 로그인 사용자에게 | active 멤버만 | 가능 | – | 조치 목적만 |
+| 글 단위 이름 표시 선택 | – | 공식 페이지에서 `anonymous`/`display`만. 사용자 방은 공간 모드를 따름 | 같음 | 같음 | – |
+| 공지 작성·고정 | 불가 | 불가 | 가능 | 가능(`notice` 게시판) | 가능 |
+| 글·댓글 숨김 / 숨김 해제 | 불가 | 신고만 | 자기 방 | 자기 페이지 | 가능 |
+| 영구 삭제·게시 중단 처리 | 불가 | 본인 글 삭제 | 불가 | 불가 | 정책 절차에 따라 |
+| 멤버 승인·내보내기 | 불가 | 불가 | 자기 방(실명·표시명 멤버) | 학과 페이지 쓰기 제한만 | 가능 |
+| 이름 표시 방식 변경 | 불가 | 불가 | 사용자 방만, 7일 예약 | 불가(공식 페이지는 고정) | 가능 |
+| **익명 글·댓글의 작성자 확인** | 불가 | 불가 | **불가** | **불가** | **사유·범위·감사 기록을 남긴 경우만** |
+| 경고·쓰기 제한·영구 제한 | 불가 | 불가 | 제재 요청 | 제재 요청 | 결정·이의제기 처리 |
+| 신고 | 불가 | 가능 | 가능 | 가능 | – |
+
+- 방장·모더레이터용 API와 화면도 일반 멤버와 같은 공개 DTO를 씁니다. `anonymous` 글의 응답에는 `author_id`·handle·프로필 링크·`ThreadAlias.user_id`가 없고, 같은 작성자의 다른 스레드를 묶을 수 있는 안정적인 키도 내보내지 않습니다. 숨김·신고 처리 화면 역시 대상 글 ID로만 동작합니다.
+- 익명 작성자에게 제재가 필요하면 방장·모더레이터는 **대상 글을 지정해 요청**하고, 운영자가 작성자를 확인해 `CommunitySanction`을 발급합니다. `space` 범위 제한을 적용해도 방장에게는 “이 방에서 쓰기 제한됨” 상태만 보이고 누구인지는 알리지 않습니다.
+- 운영자의 작성자 확인은 §8의 비공개 접근 예외와 같은 방식입니다. `operator_identity_lookup` AuditEvent(사유·대상·신고 ID·조회자·시각)를 남기고, 조회 권한은 신고 처리 역할에만 줍니다. 이 사실은 글쓰기 화면에 고지합니다.
+- 커뮤니티 정책 함수는 `canReadSpace`·`canWriteBoard`·`canModerate`·`canResolveAuthor`로 나누고, API·알림·worker가 모두 같은 함수를 거칩니다.
+
+### 8.2 커뮤니티 열람 범위와 검색 비노출 (P1)
+
+- **학교 인증.** 공식 학교 페이지와 학교를 연결한 사용자 방은 `SchoolAffiliation.status = active`인 그 학교 계정만 읽습니다. 인증이 만료·취소되거나 탈퇴하면 다음 요청부터 접근을 막고, 이미 쓴 글은 정책에 따라 남기거나 익명화합니다. 학과 페이지 쓰기는 자기 신고 학과로 판단합니다.
+- **로그인 전용.** 커뮤니티 경로(`/c/**`, `/api/v1/community/**`)는 모두 로그인 세션이 필요하고, 권한이 없으면 존재 여부를 숨기기 위해 404를 돌려줍니다. 공식 페이지 글도 비로그인 사용자에게 보이지 않습니다.
+- **검색엔진 비노출.** 커뮤니티 응답에는 `X-Robots-Tag: noindex, nofollow`와 같은 meta를 붙이고, `robots.txt`에서 커뮤니티 경로를 막으며 사이트맵에 넣지 않습니다. robots 규칙은 보조 장치일 뿐이고 로그인·권한 검사가 실제 차단입니다. 링크를 외부에 붙여도 본문이 담긴 Open Graph 미리보기를 만들지 않고 일반 카드만 보여 줍니다.
+- **공개 아카이브와 분리.** 커뮤니티 본문은 공개 검색 색인(§11.1)·`pgvector` 임베딩·과목 집계(§11.2)·공개 release·포트폴리오에 들어가지 않습니다. 커뮤니티 안의 검색은 사용자가 읽을 수 있는 공간으로 범위를 제한한 별도 질의로 처리합니다. P1에서는 커뮤니티 본문을 AI 작업에 보내지 않습니다.
+- **아카이브로 옮길 때.** `ArchiveTransfer`로 만든 복사본만 아카이브 규칙을 따르며, 원 글의 열람 범위는 바뀌지 않습니다.
+- **알림.** 푸시·메일 알림에는 익명 글의 작성자 정보를 넣지 않고, 학교 연결 공간의 본문 미리보기는 기기 잠금 화면에 노출되지 않게 제목만 보냅니다.
+
 ## 9. API 계약 초안 (`/api/v1`)
 
 | 메서드·경로 | 역할 | 주요 조건 |
@@ -368,6 +456,40 @@ MVP는 `private`, `public(summary/full)`을 구현합니다. `private`는 승인
 
 응답은 `recordedAt`과 `claimedDate`를 구분하고 revision 번호를 돌려줍니다. 페이지네이션은 cursor·최대 개수 제한, 게시·파일 완료·봇 수집·webhook에는 idempotency key를 씁니다. 폼 오류는 필드별 코드, 충돌은 409, 입력 오류는 422로 구분합니다.
 
+### 9.1 커뮤니티 API 초안 (P1)
+
+| 메서드·경로 | 역할 | 주요 조건 |
+|---|---|---|
+| `POST /community/affiliations`, `POST /community/affiliations/:id/verify` | 학교 메일 인증 | 인증 코드 만료·재시도 제한, 학과는 자기 신고 |
+| `POST /community/opening-requests` | 공식 페이지 개설 요청 | 해당 학교 인증, 1인 1회 |
+| `POST /community/spaces` | 사용자 방 생성 | 로그인, 예약어 이름 거부, 정원 300 이하 |
+| `GET /community/spaces/:slug` | 공간·게시판 | `canReadSpace`, 실패 시 404, `noindex`. 글쓰기 화면이 항상 표시할 `current_name_mode`와 예약된 변경을 함께 반환 |
+| `POST /community/spaces/:id/memberships`, `POST /memberships/:id/approve` | 가입·승인 | `join_policy`, 학교 연결 방은 인증 확인 |
+| `POST /community/spaces/:id/name-mode-changes` | 이름 표시 방식 변경 예약 | 방장, 사용자 방만, 7일 뒤 적용, 멤버 알림 |
+| `POST /community/boards/:id/posts`, `POST /posts/:id/comments` | 글·댓글 | `canWriteBoard`, 활성 제재 없음, `name_mode` 서버 결정 |
+| `POST /community/posts/:id/reactions` | 공감 | 사용자당 1회 |
+| `POST /community/posts/:id/hide`, `POST /posts/:id/unhide` | 숨김 | 방장·모더레이터·운영자 |
+| `POST /community/recruitments`, `POST /recruitments/:id/applications`, `POST /recruitments/:id/close` | 모집·지원·마감 | 지원 목록은 모집자만, 마감 시 스터디 방·과제 공간 생성 |
+| `POST /community/posts/:id/archive-transfers`, `POST /archive-transfers/:id/consents` | 아카이브로 옮기기 | 질문자·채택 답변자 동의, 이름 표시 방식 재선택 |
+| `POST /reports` (target_type 확장) | 신고 | 학교 인증 사용자, 대상당 1회, 누적 시 자동 숨김 |
+| `POST /admin/community/posts/:id/resolve-author` | 작성자 확인 | 운영자 신고 처리 역할, 사유·신고 ID 필수, 감사 기록 |
+| `POST /admin/community/sanctions` | 이용 제한 | 운영자, 이의제기 경로 안내 |
+
+익명 글 응답 예시(방장·모더레이터에게도 같음):
+
+```json
+{
+  "id": "post-id",
+  "nameMode": "anonymous",
+  "authorLabel": "글쓴이",
+  "comments": [
+    { "id": "c1", "authorLabel": "익명1", "body": "…" },
+    { "id": "c2", "authorLabel": "글쓴이", "body": "…" }
+  ],
+  "createdBucket": "this_week"
+}
+```
+
 ## 10. 파일과 외부 링크
 
 - 상태: `pending → scanning → clean / quarantined / failed`. 허용 MIME·확장자·실제 signature·용량을 함께 검사합니다.
@@ -387,7 +509,7 @@ MVP는 `private`, `public(summary/full)`을 구현합니다. `private`는 승인
 
 ### 11.1 검색
 
-1단계는 PostgreSQL 전문 검색 + `pg_trgm`(과목명·한국어 부분 일치·오류 메시지), 구조화 필터(학교·과목·개념 태그·로그 유형)입니다. 2단계(P1)는 `pgvector`로 “비슷한 막힘” 의미 검색을 하며 **공개 release 텍스트만 임베딩**합니다. 별도 검색 클러스터는 공개 사례가 수만 건을 넘을 때 재검토합니다.
+1단계는 PostgreSQL 전문 검색 + `pg_trgm`(과목명·한국어 부분 일치·오류 메시지), 구조화 필터(학교·과목·개념 태그·로그 유형)입니다. 2단계(P1)는 `pgvector`로 “비슷한 막힘” 의미 검색을 하며 **공개 release 텍스트만 임베딩**합니다. 별도 검색 클러스터는 공개 사례가 수만 건을 넘을 때 재검토합니다. 커뮤니티 본문은 이 색인과 임베딩에 넣지 않습니다(§8.2).
 
 ### 11.2 과목 집계와 익명성
 
@@ -443,6 +565,7 @@ MVP는 `private`, `public(summary/full)`을 구현합니다. `private`는 승인
 | API | 일반 읽기·쓰기 p95 500ms 이내(파일·AI 제외) | 테스트 DB, pilot 지표 |
 | 봇 수집 | `/log` 응답 3초 이내, 수집 누락 0 | 재시도·idempotency 테스트 |
 | 권한 | 익명·다른 팀의 비공개 내용 노출 0건 | 통합·E2E 테스트, 운영 조사 |
+| 커뮤니티 (P1) | 익명 작성자 식별자의 비운영자 응답 노출 0건, 커뮤니티 본문의 비로그인·검색엔진 노출 0건, 신고 누적 시 자동 숨김 즉시 적용 | DTO 스냅샷 테스트, 크롤러 시뮬레이션, 감사 로그 점검 |
 | 철회 | DB 상태 변경 즉시 신규 접근 차단, 파생 정리 5분 목표 | 상태 전파·worker 실패 실험 |
 | 복구 | RPO 24시간, RTO 4시간 | DB·파일 복구 + 삭제 ledger 재적용 연습 |
 

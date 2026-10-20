@@ -2,7 +2,7 @@
 
 [한국어](SYSTEM_DESIGN.md) | **English**
 
-Written: 2026-10-18 · Status: integrated proposal before implementation
+Written: 2026-10-18 · Updated: 2026-10-20 (campus community in §6.7, §8.1, §8.2, §9.1) · Status: integrated proposal before implementation
 
 [Product proposal](../PROOFU_EVOLUTION_PLAN.en.md) · [Delivery plan](DELIVERY_PLAN.en.md)
 
@@ -22,6 +22,8 @@ Without losing students' work records, the system must let them reuse those reco
 6. AI jobs receive only data the requesting user has permission to access. AI-generated output is labeled and remains a draft until the student approves it.
 7. Editing a public version is handled by creating a new version, but when deletion/withdrawal is requested, the actual content can also be removed under the retention policy. "Change history is kept" is not implemented as "permanent deletion is impossible."
 8. The original ProofU history and new service data are not used interchangeably as evidence of each other's authenticity.
+9. Community posts are kept separate from the public archive. Unless the author explicitly moves them, they never reach public releases, course aggregates, public search, search engines, profiles, or portfolios (§6.7, §8.2).
+10. Only operators can identify the actual author of an anonymous post or comment, and only with a recorded reason and audit entry. Responses to room owners, moderators, and other users carry no identifier from which the author could be inferred (§8.1).
 
 ## 2. Using the original ProofU
 
@@ -121,7 +123,8 @@ peerchive/
 │   │   ├── app/components/   # Domain-specific UI
 │   │   ├── server/api/v1/    # Request validation, policy checks, response mapping
 │   │   └── server/modules/   # identity, projects, logs, contribution,
-│   │                         # publication, archive, portfolio
+│   │                         # publication, archive, portfolio,
+│   │                         # community (P1)
 │   ├── worker/               # Scanning, publication, withdrawal, aggregation, AI, PDF jobs
 │   └── bot/                  # Discord bot
 ├── packages/
@@ -261,6 +264,58 @@ erDiagram
 
 DB deletions do not cascade unconditionally; first calculate the ripple effects on shared records, consent, and withdrawal.
 
+### 6.7 Campus community (P1)
+
+The official school and department pages and user rooms from [product plan §8.9](../PROOFU_EVOLUTION_PLAN.en.md#89-campus-community-rooms-and-pages-p1) share a single `CommunitySpace` model. The board structure is the same; only permissions, the default name display mode, and visibility differ by `kind`. Community tables are owned by a separate module (`server/modules/community`) that never mixes with the public release read path (§11).
+
+```mermaid
+erDiagram
+    User ||--o{ SchoolAffiliation : verifies
+    School ||--o{ Department : has
+    School ||--o{ CommunitySpace : "official pages"
+    User ||--o{ SpaceOpeningRequest : requests
+    CommunitySpace ||--o{ SpaceMembership : has
+    CommunitySpace ||--o{ NameModeChange : "mode history"
+    CommunitySpace ||--o{ Board : has
+    Board ||--o{ Post : contains
+    Post ||--o{ Comment : has
+    Post ||--o{ ThreadAlias : "anon numbers"
+    Post ||--o{ Reaction : receives
+    Post |o--o| Recruitment : announces
+    Recruitment ||--o{ Application : receives
+    Recruitment |o--o| CommunitySpace : "creates study room"
+    CommunitySpace |o--o| Project : "study record"
+    Post ||--o{ ArchiveTransfer : "moved to archive"
+    User ||--o{ CommunitySanction : receives
+    Report }o--|| Post : targets
+```
+
+| Entity | Key fields | Rules |
+|---|---|---|
+| SchoolAffiliation | user_id, school_id, email_domain, verified_at, standing(student/alumni), department_id? (self-reported), status | Result of school email verification. The verified address stays private like `private_email`, and public DTOs never carry student ID numbers or departments. Verification history is kept after graduation even if the school mailbox disappears, marked `alumni`. The same record decides course hub writing eligibility (product plan §8.6) |
+| Department | id, school_id, name, merged_into? | Merged by operators. Departments cannot be confirmed by email, so they are linked only by self-report |
+| CommunitySpace | id, kind(official_school/official_department/user_room/study_room), school_id?, department_id?, linked_course_id?, name, slug, current_name_mode(real/display/anonymous), discovery(listed/unlisted), join_policy(open/approval/invite), capacity, status(active/archived/restricted) | Only operators create `official_*` spaces, and only they get the `Official` badge. Reserved words such as `Official` and `Student Council` are rejected in `user_room` and `study_room` names. User room capacity defaults to 300; more requires operator review. `real` rooms default to `join_policy = approval` (invite only is also allowed). `current_name_mode` is fixed to `anonymous` on official pages |
+| SpaceOpeningRequest | school_id, department_id?, requester_id, source(student/student_council), created_at | Unique on `(school_id, department_id, requester_id)`. When requests from verified students of the same school reach the threshold (initial proposal: 10), or a student council asks, the request enters the operator review queue. Pages are never opened automatically |
+| SpaceMembership | space_id, user_id, role(owner/admin/moderator/member), status(pending/active/left/removed), joined_at | Unique on `(space_id, user_id)`. Read access to official pages derives from `SchoolAffiliation`, not membership; membership there is used only for moderator assignment and department write restrictions. When the owner leaves, ownership passes to the longest-standing admin, then member; if none remain, the space becomes `archived` |
+| NameModeChange | space_id, from_mode, to_mode, requested_by, requested_at, effective_at, status(scheduled/applied/cancelled) | Append-only change history. `effective_at = requested_at + 7 days`; all members are notified when it is scheduled. A worker updates `current_name_mode` at `effective_at` and never rewrites existing posts. At most one `scheduled` change per space |
+| Board | id, space_id, kind(free/freshmen/alumni/question/info/recruiting/notice/general), title, write_role | Official pages get the default board set. Only moderators and above write to `notice` |
+| Post | id, board_id, author_id, name_mode, title, body, linked_course_id?, status(visible/auto_hidden/hidden/removed), created_at, edited_at? | `name_mode` is **copied and frozen at write time**; edits and space mode changes never alter it. Official pages default to `anonymous` and allow only a per-post `display` choice (no `real`). User rooms use the space's `current_name_mode` at that moment |
+| Comment | id, post_id, parent_id?, author_id, name_mode, body, status | Same name display and status rules as Post. Replies nest one level only |
+| ThreadAlias | post_id, user_id, alias_no, created_at | Anonymous number mapping per thread. Unique on `(post_id, user_id)` and `(post_id, alias_no)`. The poster is `alias_no = 0` (shown as `Author`); commenters get 1, 2, … in order of first participation, and numbers are never reused after deletion. No numbers or keys are shared across threads. Stuck Q&A per-thread anonymity (product plan §8.5) uses the same table |
+| Reaction | target_type(post/comment), target_id, user_id, kind(like) | Once per user. No downvotes. Used only to sort "Most liked" (P2), never summed into personal scores |
+| Recruitment | id, post_id?, kind(study/team), topic?, course_id?, period, capacity, format, goal, target_name_mode, status(open/closed) | Same table as finding teammates (product plan §8.8). Created with `post_id` from an official page's Recruiting board or a user room, and with `course_id` only from a course hub. For study, `target_name_mode` defaults to `display`. On close, `study` creates a `study_room` space; `team` creates an assignment space and invitations |
+| Application | recruitment_id, applicant_id, attached_profile?, attached_release_ids[], status(pending/accepted/declined/withdrawn) | Visible only to the recruiter. No ranking, score, or rejection reason fields. Even for recruiting on anonymous boards, applicant details go only to the recruiter |
+| StudyRecord | space_id, project_id | When a study room turns on records, an internal `Project(kind=study)` is created so the build log and milestones are reused as is. Publication follows the Publication rules (§7.2) and member consent. Records from `anonymous` study rooms cannot be linked to portfolios or public profiles |
+| ArchiveTransfer | source_type(post/comment), source_id, target_type(log_entry/question/senior_note), target_id?, required_consents[], chosen_name_mode, status(awaiting_consent/done/cancelled) | Once the asker and the accepted answerer (or, for advice posts, the author) all consent, a **copy** is created on the archive side and the original stays in the community. The name display mode is chosen again when moving |
+| CommunitySanction | user_id, scope(community/space), space_id?, level(warning/write_suspended/permanent), until?, reason, report_id?, issued_by | Checked only by community write policy functions; no effect on assignment space or portfolio permissions. A `space`-scoped restriction can be applied without revealing the person's identity to the room owner |
+
+- **Report extension.** `Report.target_type` in §6.6 gains `community_post`, `community_comment`, and `community_space`. When open reports from distinct school-verified users reach the threshold (initial proposal: 5 on official pages, 3 in user rooms), the same transaction sets the target to `auto_hidden` and queues it for review. Takedown requests claiming rights violations follow a separate procedure.
+- **Separating anonymous posts from profiles.** `anonymous` posts and comments are never linked to public profiles, portfolios, contribution ledgers, activity totals, or the user key in analytics events. There are no anonymous activity score or level fields.
+- **Small anonymous rooms.** When an `anonymous` space has fewer than 10 active members, response DTOs expose time only as `today`/`this_week` buckets. The database keeps exact timestamps.
+- **Real names.** The name shown in `real` mode is an optional field the user enters on the account (`User.real_name`); Peerchive does not verify identity. School-linked spaces show only whether a `SchoolAffiliation` exists next to the name, and student ID numbers are not collected.
+- **Embargo.** The embargo (§7.2, product plan §9.2) also applies to spaces and posts with `linked_course_id`. Community posting is not blocked, but sharing answers or code for same-semester assignments is a report reason. Any path that publishes a record moved into the archive still goes through the normal publication process and embargo checks.
+- **What we won't build.** There are no tables for anonymous DMs, marketplaces, real-time chat, downvotes, activity rankings, or professor and course ratings (product plan §8.9.7).
+
 ## 7. State transitions and publication flow
 
 ### 7.1 Project work state
@@ -315,6 +370,39 @@ The MVP implements `private` and `public(summary/full)`. `private` allows only a
 - Apply the same policy functions to APIs, repositories, file access, search indexing, aggregates, PDFs, and AI jobs. PostgreSQL RLS is only a candidate defense layer and does not replace application policy ([PostgreSQL Row Security](https://www.postgresql.org/docs/current/ddl-rowsecurity.html)).
 - To avoid exposing the existence of private objects, handle unauthorized lookups consistently with 404.
 
+### 8.1 Community permissions (P1)
+
+Community roles are separate from project roles. The same person can be the owner of an assignment space and an ordinary member of a room.
+
+| Action | Logged out / other school | School-verified member / room member | Room owner / admin | Moderator (official pages) | Operator |
+|---|---|---|---|---|---|
+| Read and write an official school page | Denied (404) | Allowed when verified with that school | – | Allowed | Allowed |
+| Read / write an official department page | Denied (404) | Read when school-verified / write when the department is selected | – | Allowed / restrict writing by obvious outsiders | Allowed |
+| Read and write a user room | Denied (404). Listed rooms show only name, description, and member count to logged-in users | Active members only | Allowed | – | For moderation only |
+| Choose the name display per post | – | On official pages, `anonymous`/`display` only. User rooms follow the space mode | Same | Same | – |
+| Write and pin notices | Denied | Denied | Allowed | Allowed (`notice` board) | Allowed |
+| Hide / unhide posts and comments | Denied | Report only | Own room | Own page | Allowed |
+| Permanent deletion, takedown handling | Denied | Delete own posts | Denied | Denied | Per policy procedure |
+| Approve and remove members | Denied | Denied | Own room (real-name and display-name members) | Department page write restrictions only | Allowed |
+| Change the name display mode | Denied | Denied | User rooms only, scheduled 7 days ahead | Denied (fixed on official pages) | Allowed |
+| **Identify the author of an anonymous post or comment** | Denied | Denied | **Denied** | **Denied** | **Only with a recorded reason, scope, and audit entry** |
+| Warning, write suspension, permanent restriction | Denied | Denied | Request a sanction | Request a sanction | Decide and handle appeals |
+| Report | Denied | Allowed | Allowed | Allowed | – |
+
+- APIs and screens for room owners and moderators use the same public DTO as ordinary members. Responses for `anonymous` posts contain no `author_id`, handle, profile link, or `ThreadAlias.user_id`, and no stable key that could tie the same author's posts across threads. Hide and report handling screens also operate only on the target post ID.
+- When an anonymous author needs a sanction, the owner or moderator **files a request naming the target post**, and an operator identifies the author and issues the `CommunitySanction`. Even when a `space`-scoped restriction is applied, the owner sees only "restricted from writing in this room", never who it is.
+- Operator author identification works like the private-access exception in §8: it records an `operator_identity_lookup` AuditEvent (reason, target, report ID, operator, time), and only the report-handling role has this permission. The writing screen discloses this.
+- Community policy functions are split into `canReadSpace`, `canWriteBoard`, `canModerate`, and `canResolveAuthor`, and APIs, notifications, and workers all go through the same functions.
+
+### 8.2 Community visibility and search engine exclusion (P1)
+
+- **School verification.** Official school pages and school-linked user rooms are readable only by accounts of that school with `SchoolAffiliation.status = active`. When verification expires or is revoked, or the account is deleted, access is blocked from the next request, and existing posts are kept or anonymized per policy. Department page writing is decided by the self-reported department.
+- **Login only.** All community paths (`/c/**`, `/api/v1/community/**`) require a logged-in session, and unauthorized requests get 404 to hide whether the resource exists. Official page posts are not visible to logged-out users either.
+- **Search engine exclusion.** Community responses carry `X-Robots-Tag: noindex, nofollow` and the equivalent meta tag, `robots.txt` disallows community paths, and they are left out of the sitemap. Robots rules are only a supplement; login and permission checks are the real barrier. Pasting a link elsewhere produces only a generic card, never an Open Graph preview containing the body.
+- **Separation from the public archive.** Community bodies never enter the public search index (§11.1), `pgvector` embeddings, course aggregates (§11.2), public releases, or portfolios. Search inside the community is a separate query scoped to the spaces the user can read. In P1, community bodies are not sent to AI jobs.
+- **When moving into the archive.** Only the copy created by `ArchiveTransfer` follows archive rules; the original post's visibility does not change.
+- **Notifications.** Push and email notifications never include anonymous authors, and for school-linked spaces send only the title so the body preview does not appear on lock screens.
+
 ## 9. Draft API contracts (`/api/v1`)
 
 | Method and path | Purpose | Main conditions |
@@ -368,6 +456,40 @@ Log creation example (evidence IDs must belong to the same project):
 
 Responses distinguish `recordedAt` from `claimedDate` and return the revision number. Pagination uses cursors and a maximum item limit; publishing, file completion, bot collection, and webhooks use idempotency keys. Form errors use per-field codes, conflicts return 409, and invalid input returns 422.
 
+### 9.1 Draft community API (P1)
+
+| Method and path | Purpose | Key conditions |
+|---|---|---|
+| `POST /community/affiliations`, `POST /community/affiliations/:id/verify` | School email verification | Code expiry and retry limits; department is self-reported |
+| `POST /community/opening-requests` | Request an official page | Verified with that school, once per person |
+| `POST /community/spaces` | Create a user room | Logged in, reserved names rejected, capacity ≤ 300 |
+| `GET /community/spaces/:slug` | Space and boards | `canReadSpace`, 404 on failure, `noindex`. Also returns `current_name_mode` and any scheduled change, which the writing screen always shows |
+| `POST /community/spaces/:id/memberships`, `POST /memberships/:id/approve` | Join and approve | `join_policy`; school-linked rooms check verification |
+| `POST /community/spaces/:id/name-mode-changes` | Schedule a name display mode change | Owner, user rooms only, applies 7 days later, members notified |
+| `POST /community/boards/:id/posts`, `POST /posts/:id/comments` | Posts and comments | `canWriteBoard`, no active sanction, `name_mode` decided by the server |
+| `POST /community/posts/:id/reactions` | Like | Once per user |
+| `POST /community/posts/:id/hide`, `POST /posts/:id/unhide` | Hide | Owner, moderator, operator |
+| `POST /community/recruitments`, `POST /recruitments/:id/applications`, `POST /recruitments/:id/close` | Recruit, apply, close | Applicant list visible only to the recruiter; closing creates the study room or assignment space |
+| `POST /community/posts/:id/archive-transfers`, `POST /archive-transfers/:id/consents` | Move into the archive | Consent from asker and accepted answerer, name display mode chosen again |
+| `POST /reports` (extended target_type) | Report | School-verified user, once per target, auto-hide on threshold |
+| `POST /admin/community/posts/:id/resolve-author` | Identify the author | Operator report-handling role, reason and report ID required, audited |
+| `POST /admin/community/sanctions` | Usage restriction | Operator, appeal path shown |
+
+Example anonymous post response (identical for owners and moderators):
+
+```json
+{
+  "id": "post-id",
+  "nameMode": "anonymous",
+  "authorLabel": "Author",
+  "comments": [
+    { "id": "c1", "authorLabel": "Anon 1", "body": "…" },
+    { "id": "c2", "authorLabel": "Author", "body": "…" }
+  ],
+  "createdBucket": "this_week"
+}
+```
+
 ## 10. Files and external links
 
 - States: `pending → scanning → clean / quarantined / failed`. Check allowed MIME types, extensions, actual signatures, and size together.
@@ -387,7 +509,7 @@ Responses distinguish `recordedAt` from `claimedDate` and return the revision nu
 
 ### 11.1 Search
 
-Stage 1 is PostgreSQL full-text search + `pg_trgm` (course names, Korean partial matching, error messages) with structured filters (school, course, concept tags, log type). Stage 2 (P1) uses `pgvector` for "similar stuck points" semantic search, and **embeds only public release text**. A separate search cluster will be reconsidered when public cases exceed tens of thousands.
+Stage 1 is PostgreSQL full-text search + `pg_trgm` (course names, Korean partial matching, error messages) with structured filters (school, course, concept tags, log type). Stage 2 (P1) uses `pgvector` for "similar stuck points" semantic search, and **embeds only public release text**. A separate search cluster will be reconsidered when public cases exceed tens of thousands. Community bodies are never added to this index or to embeddings (§8.2).
 
 ### 11.2 Course aggregates and anonymity
 
@@ -443,6 +565,7 @@ The initial target is a constrained pilot of about 50 students and 20 assignment
 | API | p95 within 500ms for ordinary reads/writes (excluding files and AI) | Test DB, pilot metrics |
 | Bot collection | `/log` response within 3 seconds, zero missed collections | Retry and idempotency tests |
 | Authorization | Zero exposures of private content to anonymous users or other teams | Integration/E2E tests, operational investigation |
+| Community (P1) | Zero exposures of anonymous author identifiers in non-operator responses, zero exposures of community bodies to logged-out users or search engines, auto-hide applied immediately when reports reach the threshold | DTO snapshot tests, crawler simulation, audit log review |
 | Withdrawal | Block new access immediately upon DB state change; derived cleanup target of 5 minutes | State propagation and worker failure experiments |
 | Recovery | RPO 24 hours, RTO 4 hours | DB/file recovery + deletion ledger reapplication drills |
 
