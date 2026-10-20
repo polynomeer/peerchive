@@ -17,7 +17,7 @@
  * - 미동의자 제외(owner만): 거절한 사람의 로그·선언·올린 파일·이름(회의 참석 표시 포함)을 뺀 새 후보. 고정한 revision은 그대로 쓰고,
  *   자기 관련 부분(subjectProjection)이 그대로인 당사자의 동의만 이어받습니다(다르면 다시 요청).
  * - ready 판정: 도메인 transition(mark_ready) — 모든 당사자 granted(현재 해시) + 모든 파일 clean + 열린 보류 없음.
- *   보류(hold) 테이블은 신고·조치(T-15)와 함께 만들며 지금은 항상 없음으로 봅니다. 동의 결정·후보 조회 때마다 다시 계산하고,
+ *   보류(holds, T-15)는 개인정보·저작권 신고가 그 공개에 걸고 신고가 처리되면 풀립니다. 동의 결정·후보 조회·게시 때마다 다시 계산하고,
  *   조건이 깨지면 reopen_candidate로 awaiting_consent로 돌립니다.
  * - 잠금 순서: 프로젝트 → 공개 → 후보(동의 결정도 공개 → 후보 순서).
  */
@@ -49,7 +49,9 @@ import {
   desc,
   endorsements,
   eq,
+  holds,
   inArray,
+  isNull,
   logEntries,
   logRevisionEvidence,
   logRevisions,
@@ -74,6 +76,7 @@ import { HANDLE_PATTERN, RESERVED_HANDLES } from '../identity/profiles'
 import { summarize } from '../logs/logs'
 import { type ProjectRow, findMembership, isUuid, loadReadableProject } from '../projects/access'
 import { parseInput } from '../validation'
+import { publicationNotices } from '../moderation/notices'
 import { buildManifest, canonicalHash, checkItemsFor, publicKeyFor } from './manifest'
 import { listReleases, loadPublicationSummary } from './summary'
 import {
@@ -412,14 +415,24 @@ interface Readiness {
   inactiveSubjectIds: ReadonlySet<string>
 }
 
+/** 공개에 열린 보류(신고 처리 전, T-15)가 있는지. */
+export async function hasOpenHold(db: DbExecutor, publicationId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: holds.id })
+    .from(holds)
+    .where(and(eq(holds.publicationId, publicationId), isNull(holds.releasedAt)))
+    .limit(1)
+  return !!row
+}
+
 /**
- * 후보의 ready 판정 컨텍스트(지금 DB의 동의·파일 상태·당사자 계정 상태). 보류·신고(T-15)는 아직 없으므로 열린 보류도 없습니다.
+ * 후보의 ready 판정 컨텍스트(지금 DB의 동의·파일 상태·당사자 계정 상태·열린 보류).
  * 파일은 스냅샷의 모든 파일(고른 파일 + 마일스톤 스냅샷)이고, 지금 행이 없으면 failed로 봅니다.
  */
 export async function readinessContext(db: DbExecutor, candidate: CandidateRow, now: Date): Promise<Readiness> {
   const snapshot = candidate.snapshot as unknown as PublicSnapshot
   const versionIds = snapshot.artifacts.map((a) => a.artifactVersionId)
-  const [consentRows, fileRows] = await Promise.all([
+  const [consentRows, fileRows, held] = await Promise.all([
     db
       .select({ consent: consents, userStatus: users.status })
       .from(consents)
@@ -436,6 +449,7 @@ export async function readinessContext(db: DbExecutor, candidate: CandidateRow, 
           .from(artifactVersions)
           .where(inArray(artifactVersions.id, versionIds))
       : Promise.resolve([]),
+    hasOpenHold(db, candidate.publicationId),
   ])
   // 메타데이터를 지우기 전(backfill 전) 이미지는 아직 검사가 끝나지 않은 것(pending)으로 봅니다. 이 기능 전에 만든 후보도
   // backfill 전에는 ready·게시가 되지 않고, backfill 뒤 다시 계산하면 clean입니다.
@@ -456,7 +470,7 @@ export async function readinessContext(db: DbExecutor, candidate: CandidateRow, 
         manifestHash: c.manifestHash,
         status: inactive.has(c.subjectUserId) && c.status === 'granted' ? 'pending' : c.status,
       })),
-      hasOpenHold: false,
+      hasOpenHold: held,
     },
     inactiveSubjectIds: inactive,
   }
@@ -982,6 +996,13 @@ export async function getPublicationState(db: DbExecutor, actor: Actor, projectI
     if (shownId) candidate = await getCandidate(db, actor, shownId, now)
   }
   const [current] = publication ? await db.select().from(publications).where(eq(publications.id, publication.id)).limit(1) : []
+  const holdRows = current
+    ? await db
+        .select({ reason: holds.reason, createdAt: holds.createdAt })
+        .from(holds)
+        .where(and(eq(holds.publicationId, current.id), isNull(holds.releasedAt)))
+        .orderBy(asc(holds.createdAt))
+    : []
   return {
     publication: current ? await loadPublicationSummary(db, current) : null,
     candidate,
@@ -990,6 +1011,9 @@ export async function getPublicationState(db: DbExecutor, actor: Actor, projectI
     canPrepare: canPreparePublication({ userId: actor.userId }, project, membership),
     canManage: canManagePublication({ userId: actor.userId }, project, membership),
     releases: current ? await listReleases(db, current.id) : [],
+    // 운영 조치 안내(T-15): 지금 효력이 있는 제한·가린 항목. 당사자용 사유만(내부 메모·신고 내용 없음), 이의제기는 owner만.
+    moderation: current ? await publicationNotices(db, actor, current.id) : [],
+    holds: holdRows.map((h) => ({ reason: h.reason, createdAt: h.createdAt.toISOString() })),
   }
 }
 

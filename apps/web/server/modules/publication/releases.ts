@@ -273,6 +273,59 @@ async function withdrawInTx(tx: DbExecutor, publication: PublicationRow, options
   return updated!
 }
 
+// ── 운영 제한 (T-15) ─────────────────────────────────────────────────────
+
+/**
+ * 운영 조치로 게시 중인 공개를 제한합니다(published → restricted, 공개 행을 잠근 트랜잭션 안에서, ADR 0015). 철회와 같은 방식으로 지금 release를
+ * withdrawn으로, 열린 후보를 superseded로 바꾸고 access_epoch를 올리며 outbox `publication.withdrawn`(cause restricted)을 남깁니다.
+ * 공개 조회는 공개 상태가 published가 아니므로 커밋 즉시 404이고, worker는 파생 데이터만 정리합니다. 감사는 호출자(운영 조치)가 남깁니다.
+ * 해제(lift_restriction)는 restricted → draft이고 release를 되살리지 않습니다: owner가 후보·동의·게시를 다시 합니다.
+ */
+export async function restrictInTx(tx: DbExecutor, publication: PublicationRow, now: Date): Promise<PublicationRow> {
+  const result = transition(publication.status, 'restrict', { now })
+  if (!result.ok) throw conflict('not_published')
+  const accessEpoch = publication.accessEpoch + 1
+  const [updated] = await tx
+    .update(publications)
+    .set({ status: result.state, accessEpoch, updatedAt: now })
+    .where(eq(publications.id, publication.id))
+    .returning()
+  let releaseNo = 0
+  if (publication.currentReleaseId) {
+    const [release] = await tx
+      .update(publicationCandidates)
+      .set({ status: 'withdrawn', withdrawnAt: now })
+      .where(and(eq(publicationCandidates.id, publication.currentReleaseId), eq(publicationCandidates.status, 'published')))
+      .returning()
+    releaseNo = release?.releaseNo ?? 0
+  }
+  await tx
+    .update(publicationCandidates)
+    .set({ status: 'superseded', supersededAt: now, readyAt: null })
+    .where(and(eq(publicationCandidates.publicationId, publication.id), inArray(publicationCandidates.status, [...OPEN_STATUSES])))
+  await tx.insert(outboxEvents).values({
+    topic: PUBLICATION_WITHDRAWN_TOPIC,
+    payload: {
+      publicationId: publication.id,
+      projectId: publication.projectId,
+      releaseId: publication.currentReleaseId!,
+      releaseNo,
+      accessEpoch,
+      cause: 'restricted',
+    } satisfies PublicationOutboxPayload,
+    createdAt: now,
+  })
+  return updated!
+}
+
+/** 제한 해제: restricted → draft(도메인 lift_restriction). 제한 상태가 아니면 409 not_restricted. */
+export async function liftRestrictionInTx(tx: DbExecutor, publication: PublicationRow, now: Date): Promise<PublicationRow> {
+  const result = transition(publication.status, 'lift_restriction', { now })
+  if (!result.ok) throw conflict('not_restricted')
+  const [updated] = await tx.update(publications).set({ status: result.state, updatedAt: now }).where(eq(publications.id, publication.id)).returning()
+  return updated!
+}
+
 /**
  * POST /publications/:id/withdraw {reason?} — owner만. 200 + 공개 요약. 이미 철회됐으면 그대로 200.
  * 404(볼 수 없음), 403(owner 아님), 409 not_published(게시된 적 없음·제한됨 등).

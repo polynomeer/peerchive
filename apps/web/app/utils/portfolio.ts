@@ -48,6 +48,7 @@ export const PORTFOLIO_ERROR_MESSAGES: Record<string, string> = {
   not_found: '찾을 수 없습니다. 공개가 철회되었을 수 있습니다.',
   version_conflict: '그 사이 케이스가 바뀌었습니다. 새로 불러온 뒤 다시 시도하세요.',
   unavailable: '원본 사례를 더 이상 볼 수 없어 고치거나 게시할 수 없습니다. 지금 공개 버전으로 다시 만드세요.',
+  hidden: '운영 조치로 숨겨진 케이스 스터디는 다시 게시할 수 없습니다. 안내의 이의제기를 이용하세요.',
   uncited_sentences: '출처가 없는 문장이 있습니다. 표시된 문장에 출처를 붙이거나 지우세요("본인 회고"는 한계·회고에서만 출처 없이 둘 수 있습니다).',
   checks_unconfirmed: '공개 전 점검 경고가 있습니다. 내용을 확인한 뒤 "확인하고 게시"를 누르세요.',
   empty: '문장이 하나도 없습니다.',

@@ -5,8 +5,10 @@
  * - SSR에서 쿠키를 넘기지 않고(`$fetch`), 레이아웃도 로그인 상태를 읽지 않습니다(HTML·payload에 보는 사람의 정보 없음).
  * - Open Graph는 스냅샷의 제목·요약만 씁니다. 파일럿 동안 기본 noindex(서버 설정으로 바꿈).
  * - T-13: 과목 허브 링크, 계획 포크 수와 "이 계획 포크하기"(로그인 여부는 화면이 뜬 뒤 클라이언트에서만 확인).
+ * - T-15: 운영 조치로 가린 항목은 원래 자리에 "운영 조치로 가려진 항목"으로, 신고(사례 전체 또는 기록·선언·파일 하나, 로그인 후).
  */
 import type { PlanForkResultDto, PublicPublicationDto } from '~~/shared/types/api'
+import type { ReportChoice } from '~/utils/moderation'
 
 definePageMeta({ layout: 'public' })
 
@@ -67,6 +69,28 @@ async function fork() {
   }
 }
 
+const clip = (text: string, n = 40) => (text.length > n ? `${text.slice(0, n - 1)}…` : text)
+const reportTargets = computed<ReportChoice[]>(() => {
+  const d = data.value
+  if (!d) return []
+  const s = d.snapshot
+  return [
+    { id: 'case', label: '이 사례 전체', targetType: 'publication', targetRef: { slug: d.slug } },
+    ...s.logs.map((l) => {
+      const p = l.payload as Record<string, unknown>
+      const text = l.tag === 'stuck' ? String(p.symptom ?? '') : l.body || String(p.method ?? p.choice ?? p.target ?? '')
+      return { id: `log:${l.key}`, label: `${LOG_TAG_LABELS[l.tag]} 기록: ${clip(text)}`, targetType: 'publication_item' as const, targetRef: { slug: d.slug, kind: 'log' as const, key: l.key } }
+    }),
+    ...s.claims.map((c) => ({ id: `claim:${c.key}`, label: `역할 선언: ${clip(c.text)}`, targetType: 'publication_item' as const, targetRef: { slug: d.slug, kind: 'claim' as const, key: c.key } })),
+    ...s.artifacts.map((a) => ({
+      id: `artifact:${a.artifactVersionId}`,
+      label: `파일: ${clip(a.displayName)}`,
+      targetType: 'publication_item' as const,
+      targetRef: { slug: d.slug, kind: 'artifact' as const, key: a.artifactVersionId },
+    })),
+  ]
+})
+
 const fileUrl = (versionId: string) =>
   `/api/v1/public/publications/${encodeURIComponent(slug.value)}/artifacts/${encodeURIComponent(versionId)}`
 </script>
@@ -90,7 +114,12 @@ const fileUrl = (versionId: string) =>
         <span v-if="data.firstPublishedAt !== data.publishedAt">처음 게시 {{ formatDateTime(data.firstPublishedAt) }}</span>
       </p>
       <p v-if="data.courseId" class="small"><NuxtLink :to="`/c/${data.courseId}`">이 과목의 다른 사례·막힘·선배 노트 보기</NuxtLink></p>
-      <PublicSnapshotView :snapshot="data.snapshot" :file-url="data.level === 'full' ? fileUrl : undefined" id-prefix="public" />
+      <PublicSnapshotView
+        :snapshot="data.snapshot"
+        :file-url="data.level === 'full' ? fileUrl : undefined"
+        :hidden-items="data.hiddenItems"
+        id-prefix="public"
+      />
       <section class="fork-box" aria-labelledby="fork-title">
         <h2 id="fork-title">이 계획으로 시작하기</h2>
         <p class="small">
@@ -109,8 +138,8 @@ const fileUrl = (versionId: string) =>
           철회하면 이 페이지와 파일은 바로 닫힙니다. 다만 이미 내려받은 사본이나 외부 검색엔진·다른 사이트에 남은 사본은 회수를 보장할 수 없습니다.
         </p>
         <p>
-          <!-- 신고 기능은 T-15에서 연결합니다. -->
-          <span aria-disabled="true" class="muted">신고하기(준비 중)</span>
+          개인정보 노출·답안 공유·권리 침해 같은 문제가 있으면 알려 주세요.
+          <ReportButton :targets="reportTargets" id-prefix="case" label="이 사례 신고하기" />
         </p>
       </footer>
     </template>

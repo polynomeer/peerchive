@@ -177,6 +177,9 @@ const warningPlace = (w: PublicationCheckDto) =>
         원래 익명으로 나오던 사례를 내 프로필과 연결했습니다. 다른 팀원의 표시는 스냅샷 그대로입니다.
       </p>
 
+      <ModerationNotice v-if="data.moderation" :notice="data.moderation" :id-prefix="`case-${data.id}`" @appealed="refresh()" />
+      <p v-else-if="data.hidden" class="notice error" role="status">운영 조치로 숨겨진 케이스 스터디입니다. 공개 프로필에 나오지 않고 다시 게시할 수 없습니다.</p>
+
       <template v-if="!available">
         <div class="notice error" role="alert">
           <p><strong>원본 사례를 더 이상 볼 수 없습니다.</strong> {{ data.unavailableReason ? CASE_UNAVAILABLE_LABELS[data.unavailableReason] : '' }}</p>

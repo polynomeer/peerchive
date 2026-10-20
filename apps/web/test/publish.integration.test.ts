@@ -188,7 +188,7 @@ describe.skipIf(!databaseUrl)('publish, withdraw and public reads (PostgreSQL)',
 
       // 공개 조회: 저장된 스냅샷 그대로 + 공개 메타데이터만. 내부 id·이메일 없음.
       const pub = await getPublicPublication(tx, candidate.slug, at(14))
-      expect(Object.keys(pub).sort()).toEqual(['courseId', 'firstPublishedAt', 'forkCount', 'level', 'publishedAt', 'slug', 'snapshot', 'version'])
+      expect(Object.keys(pub).sort()).toEqual(['courseId', 'firstPublishedAt', 'forkCount', 'hiddenItems', 'level', 'publishedAt', 'slug', 'snapshot', 'version'])
       // 과목이 없는 과제: 과목 허브 연결 없음, 포크 없음(T-13).
       expect(pub).toMatchObject({ courseId: null, forkCount: 0 })
       expect(pub).toMatchObject({ slug: candidate.slug, level: 'full', version: 1, publishedAt: at(13).toISOString() })

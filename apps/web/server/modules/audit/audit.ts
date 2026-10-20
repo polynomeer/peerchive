@@ -74,6 +74,15 @@ export type AuditAction =
   | 'case_study.publish'
   | 'case_study.unpublish'
   | 'portfolio_edition.create'
+  | 'report.create'
+  | 'report.assign'
+  | 'report.resolve'
+  | 'report.dismiss'
+  | 'moderation.apply'
+  | 'moderation.lift'
+  | 'moderation.reverse'
+  | 'appeal.create'
+  | 'appeal.decide'
 
 export async function recordAudit(
   db: DbExecutor,
@@ -106,6 +115,9 @@ export async function recordAudit(
       | 'senior_note'
       | 'case_study'
       | 'portfolio_edition'
+      | 'report'
+      | 'moderation_action'
+      | 'appeal'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

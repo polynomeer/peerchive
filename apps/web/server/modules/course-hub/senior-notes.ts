@@ -45,6 +45,7 @@ import {
 import { recordAudit } from '../audit/audit'
 import { loadCanonicalCourse } from '../catalog/catalog'
 import { type Actor, ServiceError, conflict, forbidden, invalid, notFound, rateLimited } from '../errors'
+import { seniorNoteNotice } from '../moderation/notices'
 import { isUuid } from '../projects/access'
 import { type RateLimitRule, hitRateLimit } from '../security/rate-limit'
 import { parseInput } from '../validation'
@@ -153,6 +154,8 @@ async function toDto(db: DbExecutor, row: NoteRow): Promise<SeniorNoteDto> {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     warnings: warningsFor(row),
+    // 운영 조치로 숨긴 노트면 그 안내(T-15). 작성자에게만 주는 DTO입니다.
+    moderation: row.status === 'hidden' ? await seniorNoteNotice(db, { userId: row.authorId }, row.id) : null,
   }
 }
 

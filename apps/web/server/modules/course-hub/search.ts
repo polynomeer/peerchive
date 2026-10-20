@@ -27,6 +27,7 @@ import {
 } from '@peerchive/db'
 import { loadCanonicalCourse } from '../catalog/catalog'
 import { ServiceError, invalid } from '../errors'
+import { hiddenStuckSql } from '../moderation/hidden-items'
 import { isUuid } from '../projects/access'
 import { publicCasePath, publicStuckPath } from './hub'
 import { courseScopeSql, servableReleaseSql } from './public-scope'
@@ -104,6 +105,8 @@ async function searchReleases(db: DbExecutor, query: SearchQuery, kinds: Array<'
       and(
         inArray(searchDocuments.kind, kinds),
         servableReleaseSql(now),
+        // 운영 조치로 가린 막힘 카드는 문서가 남아 있어도 나오지 않습니다(T-15, 같은 쿼리에서 확인).
+        sql`not ${hiddenStuckSql()}`,
         matchSql(query.q),
         query.courseId ? sql`${publicationCandidates.courseId} in ${courseScopeSql(query.courseId)}` : undefined,
       ),

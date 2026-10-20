@@ -45,6 +45,7 @@ import {
 import { loadCanonicalCourse } from '../catalog/catalog'
 import { listCourseTags } from '../catalog/tags'
 import { notFound } from '../errors'
+import { loadHiddenItems, redactSnapshot } from '../moderation/hidden-items'
 import { courseScopeSql, servableReleaseSql } from './public-scope'
 import type {
   ConceptTagDto,
@@ -79,7 +80,7 @@ export interface ServableRelease {
   snapshot: PublicSnapshot
 }
 
-/** 이 과목(정본 + 병합된 id)에 연결된, 지금 게시 중인 release들(최근 게시 순). */
+/** 이 과목(정본 + 병합된 id)에 연결된, 지금 게시 중인 release들(최근 게시 순). 스냅샷은 운영 조치로 가린 항목을 뺀 사본입니다(T-15). */
 export async function servableReleasesForCourse(
   db: DbExecutor,
   canonicalCourseId: string,
@@ -102,7 +103,12 @@ export async function servableReleasesForCourse(
     .where(and(servableReleaseSql(now), sql`${publicationCandidates.courseId} in ${courseScopeSql(canonicalCourseId)}`))
     .orderBy(desc(publicationCandidates.publishedAt), desc(publicationCandidates.id))
     .limit(limit)
-  return rows.map((r) => ({ ...r, publishedAt: r.publishedAt!, snapshot: r.snapshot as unknown as PublicSnapshot }))
+  const hidden = await loadHiddenItems(db, rows.map((r) => r.publicationId))
+  return rows.map((r) => ({
+    ...r,
+    publishedAt: r.publishedAt!,
+    snapshot: redactSnapshot(r.snapshot as unknown as PublicSnapshot, hidden.get(r.publicationId) ?? []).snapshot,
+  }))
 }
 
 /** 공개별 포크 수(서로 다른 사용자 수 = 행 수, (공개, 사용자) unique). */

@@ -24,6 +24,10 @@ export interface MeDto {
   displayName: string
   createdAt: string
   profile: ProfileFields | null
+  /** 운영자인지(T-15, 운영 화면 링크용). 본인에게만 보입니다. */
+  operator: boolean
+  /** 운영 조치로 공개 프로필이 숨겨졌는지(T-15). */
+  profileHidden: boolean
 }
 
 /** 누구에게나 주는 공개 프로필 DTO. 이메일·내부 ID·계정 상태 없음. */
@@ -966,6 +970,10 @@ export interface PublicationStateDto {
   canManage: boolean
   /** 게시 이력(최근 것부터). */
   releases: ReleaseSummaryDto[]
+  /** 이 공개에 대한 운영 조치 안내(T-15, 되돌리지 않은 것). 이의제기는 owner만. */
+  moderation: ModerationNoticeDto[]
+  /** 신고 처리 전이라 게시가 보류되어 있는지(T-15, 사유만). */
+  holds: Array<{ reason: ReportReason; createdAt: string }>
 }
 
 /** POST /candidates/:id/publish 응답(T-12). */
@@ -1011,6 +1019,8 @@ export interface PublicPublicationDto {
   courseId: string | null
   /** 이 공개의 계획을 포크한 서로 다른 사용자 수(T-13). */
   forkCount: number
+  /** 운영 조치로 가린 항목의 자리(T-15). 스냅샷에서는 빠져 있고, 화면은 원래 위치에 "운영 조치로 가려진 항목"을 그립니다. */
+  hiddenItems: HiddenItemPlaceholderDto[]
 }
 
 /** GET /me/consent-requests 한 줄. */
@@ -1133,6 +1143,8 @@ export interface SeniorNoteDto {
   updatedAt: string
   /** 공개 전 점검 경고(가린 표본만). 게시하려면 확인해야 합니다. */
   warnings: PublicationCheckDto[]
+  /** 운영 조치로 숨겨졌으면 그 안내(T-15). */
+  moderation: ModerationNoticeDto | null
 }
 
 /** POST /public/publications/:slug/fork 응답. */
@@ -1244,6 +1256,9 @@ export interface CaseStudyDto {
   publishedAt: string | null
   createdAt: string
   updatedAt: string
+  /** 운영 조치로 숨겨졌는지(T-15). 숨김이면 다시 게시할 수 없습니다(409 hidden). */
+  hidden: boolean
+  moderation: ModerationNoticeDto | null
 }
 
 export interface CaseStudySummaryDto {
@@ -1301,6 +1316,8 @@ export interface PublicCaseSentenceDto {
   /** 한계·회고 구역의 출처 없는 본인 회고("본인 회고"로 표시). */
   reflection: boolean
   citations: PublicCitationDto[]
+  /** 운영 조치로 가린 항목을 인용해 글을 가린 문장(T-15). text는 "운영 조치로 가려진 항목"입니다. */
+  moderated?: boolean
 }
 
 /** 공개 프로필의 대표 케이스(포트폴리오 요약 보기). 볼 수 없으면 글 없이 안내만. */
@@ -1365,4 +1382,163 @@ export interface PublicPortfolioProfileDto extends PortfolioViewDto {
   /** 후배 기여: 개수만, 순위 없음. */
   juniorContribution: { planForks: number; seniorNotes: number }
   timeline: PublicTimelineItemDto[]
+}
+
+// ── 신고·운영 조치·이의제기 (T-15, ADR 0015) ─────────────────────────────
+
+export type ReportTargetType = 'publication' | 'publication_item' | 'senior_note' | 'case_study' | 'profile'
+export type ReportReason = 'personal_info' | 'answer_sharing' | 'copyright' | 'harassment' | 'false_claim' | 'spam' | 'other'
+export type ReportStatus = 'open' | 'in_review' | 'resolved' | 'dismissed'
+export type ModerationActionKind = 'none' | 'restrict' | 'hide_item' | 'hide_note' | 'hide_case_study' | 'hide_profile'
+export type HiddenItemKind = 'log' | 'claim' | 'artifact'
+export type AppealStatus = 'open' | 'upheld' | 'reversed'
+
+/** 신고 대상 지정(공개 화면에서 보이는 값만: slug·스냅샷 키·노트 id·handle·대표 케이스 앵커). */
+export type ReportTargetRef =
+  | { slug: string }
+  | { slug: string; kind: HiddenItemKind; key: string }
+  | { noteId: string }
+  | { handle: string; anchor: string }
+  | { handle: string }
+
+export interface HiddenItemPlaceholderDto {
+  kind: HiddenItemKind
+  key: string
+  /** 원래 목록 안의 위치. */
+  index: number
+}
+
+/** POST /reports 응답. 같은 대상의 처리 전 신고가 이미 있으면 그것(created: false, 200). */
+export interface ReportReceiptDto {
+  id: string
+  status: 'received' | 'in_review' | 'resolved' | 'dismissed'
+  created: boolean
+  createdAt: string
+}
+
+/** GET /me/reports 한 줄. 신고자에게는 상태만 보여 주고 어떤 조치를 했는지는 싣지 않습니다. */
+export interface MyReportDto {
+  id: string
+  targetType: ReportTargetType
+  targetLabel: string
+  reason: ReportReason
+  status: 'received' | 'in_review' | 'resolved' | 'dismissed'
+  createdAt: string
+  closedAt: string | null
+}
+
+/** 당사자(공개 owner·작성자·프로필 주인)에게 보여 주는 운영 조치 안내. 내부 메모는 없습니다. */
+export interface ModerationNoticeDto {
+  actionId: string
+  kind: Exclude<ModerationActionKind, 'none'>
+  targetType: ReportTargetType
+  targetLabel: string
+  /** 당사자가 고칠 곳(비공개 화면 경로). */
+  ownerPath: string | null
+  /** hide_item이면 가린 항목(당사자 화면용 짧은 글). */
+  item: { kind: HiddenItemKind; key: string; label: string } | null
+  publicReason: string | null
+  createdAt: string
+  reversedAt: string | null
+  appeal: { status: AppealStatus; createdAt: string; decidedAt: string | null } | null
+  canAppeal: boolean
+}
+
+/** POST /appeals 응답. */
+export interface AppealDto {
+  id: string
+  actionId: string
+  status: AppealStatus
+  createdAt: string
+}
+
+/** 운영자 대기열: 대상별 묶음(같은 대상의 신고들). */
+export interface OperatorReportGroupDto {
+  /** 묶음에서 가장 먼저 들어온 신고(상세 화면 id). */
+  reportId: string
+  targetType: ReportTargetType
+  targetLabel: string
+  count: number
+  reasons: Partial<Record<ReportReason, number>>
+  firstReportedAt: string
+  lastReportedAt: string
+  status: ReportStatus
+  assignee: { userId: string; displayName: string } | null
+  hold: boolean
+}
+
+export interface OperatorReportDto {
+  id: string
+  reason: ReportReason
+  details: string | null
+  status: ReportStatus
+  createdAt: string
+  closedAt: string | null
+}
+
+export interface OperatorActionDto {
+  id: string
+  kind: ModerationActionKind
+  outcome: 'resolved' | 'dismissed'
+  internalNote: string
+  publicReason: string | null
+  notifyOwner: boolean
+  createdAt: string
+  createdBy: string
+  reversedAt: string | null
+  reverseCause: 'lift' | 'appeal' | null
+  reverseNote: string | null
+  appeal: { id: string; status: AppealStatus; message: string; createdAt: string; decisionNote: string | null } | null
+}
+
+/**
+ * 운영자가 보는 신고 대상의 공개 내용. 공개됐던 것만: 신고 때의 release 스냅샷 / 신고 때 버전이 그대로인 게시된(또는 숨긴) 노트·케이스 글 /
+ * 공개 프로필 필드. 비공개 과제 공간·초안은 싣지 않습니다.
+ */
+export type OperatorTargetContentDto =
+  | { kind: 'release'; releaseVersion: number; snapshot: PublicSnapshot; focus: { kind: HiddenItemKind; key: string } | null; hiddenKeys: string[] }
+  | { kind: 'senior_note'; note: PublicSeniorNoteDto }
+  | { kind: 'case_study'; title: string; sections: Array<{ key: string; label: string; sentences: Array<{ text: string; citations: string[] }> }> }
+  | { kind: 'profile'; profile: PublicProfileDto }
+  | { kind: 'unavailable'; message: string }
+
+export interface OperatorReportDetailDto {
+  report: OperatorReportDto
+  targetType: ReportTargetType
+  targetLabel: string
+  /** 지금 공개 경로(공개 중일 때만). */
+  publicPath: string | null
+  /** 지금도 공개로 제공 중인지. */
+  servedNow: boolean
+  /** 공개 사례면 지금 공개 상태(제한 해제 버튼용). */
+  publication: { id: string; status: PublicationStatus } | null
+  content: OperatorTargetContentDto
+  /** 같은 대상의 모든 신고(최근 것부터). 신고자 신원은 싣지 않습니다. */
+  reports: OperatorReportDto[]
+  assignee: { userId: string; displayName: string } | null
+  holds: Array<{ reason: ReportReason; createdAt: string; releasedAt: string | null }>
+  actions: OperatorActionDto[]
+  allowedActions: ModerationActionKind[]
+}
+
+export interface OperatorAppealDto {
+  id: string
+  status: AppealStatus
+  message: string
+  createdAt: string
+  decidedAt: string | null
+  decisionNote: string | null
+  action: { id: string; kind: ModerationActionKind; targetType: ReportTargetType; targetLabel: string; publicReason: string | null; internalNote: string; createdAt: string; reversedAt: string | null }
+  /** 그 조치로 처리한 신고 하나(상세 화면 링크). */
+  reportId: string | null
+}
+
+export interface OperatorAuditEventDto {
+  id: string
+  actorId: string | null
+  action: string
+  targetType: string
+  targetId: string | null
+  metadata: Record<string, unknown>
+  at: string
 }

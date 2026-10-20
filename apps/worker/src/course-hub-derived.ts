@@ -18,6 +18,8 @@ import {
 } from '@peerchive/domain'
 import {
   SENIOR_NOTE_PUBLISHED_TOPIC,
+  isNull,
+  releaseHiddenItems,
   SENIOR_NOTE_WITHDRAWN_TOPIC,
   and,
   eq,
@@ -70,7 +72,16 @@ export const searchIndexHandler: DerivedCleanupHandler = {
         .delete(searchDocuments)
         .where(and(eq(searchDocuments.publicationId, event.publicationId), ne(searchDocuments.releaseId, current.release.id)))
         .returning({ id: searchDocuments.id })
-      const docs = searchDocsFromSnapshot(current.release.snapshot as unknown as HubSnapshot)
+      // 운영 조치로 가린 막힘 카드(T-15)는 색인하지 않습니다(읽기도 같은 조건으로 거르므로 이것은 남은 사본을 줄이는 일).
+      const hiddenLogs = new Set(
+        (
+          await tx
+            .select({ key: releaseHiddenItems.itemKey })
+            .from(releaseHiddenItems)
+            .where(and(eq(releaseHiddenItems.publicationId, event.publicationId), eq(releaseHiddenItems.itemKind, 'log'), isNull(releaseHiddenItems.liftedAt)))
+        ).map((r) => r.key),
+      )
+      const docs = searchDocsFromSnapshot(current.release.snapshot as unknown as HubSnapshot).filter((d) => !d.itemKey || !hiddenLogs.has(d.itemKey))
       let written = 0
       for (const doc of docs) {
         const inserted = await tx

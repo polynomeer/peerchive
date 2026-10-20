@@ -17,6 +17,7 @@ import {
   caseStudies,
   eq,
   inArray,
+  isNull,
   ne,
   planForks,
   profiles,
@@ -40,7 +41,7 @@ export const CONTACT_POLICY_TEXT: Readonly<Record<ContactPolicy, string>> = {
 
 const SEMESTER_ORDER: Readonly<Record<string, number>> = { spring: 1, summer: 2, fall: 3, winter: 4 }
 
-/** 공개 프로필(지금 판 기준). 없는 handle·비활성 사용자는 404. */
+/** 공개 프로필(지금 판 기준). 없는 handle·비활성 사용자·운영 조치로 숨긴 프로필(T-15)은 404. */
 export async function getPublicPortfolioProfile(db: DbExecutor, rawHandle: unknown, now = new Date()): Promise<PublicPortfolioProfileDto> {
   const handle = typeof rawHandle === 'string' ? rawHandle.trim().toLowerCase() : ''
   if (!HANDLE_PATTERN.test(handle) || handle.length > 30) throw notFound()
@@ -48,7 +49,7 @@ export async function getPublicPortfolioProfile(db: DbExecutor, rawHandle: unkno
     .select({ userId: users.id, displayName: users.displayName, profile: profiles })
     .from(profiles)
     .innerJoin(users, eq(users.id, profiles.userId))
-    .where(and(eq(profiles.handle, handle), eq(users.status, 'active')))
+    .where(and(eq(profiles.handle, handle), eq(users.status, 'active'), isNull(profiles.hiddenAt)))
     .limit(1)
   if (!row) throw notFound()
   const base = toPublicProfileDto(row, row.profile)

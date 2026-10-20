@@ -1342,3 +1342,51 @@ a.chip {
   outline: 3px solid var(--focus);
   outline-offset: 4px;
 }
+
+/* ── 신고·운영 조치 (T-15) ── */
+.moderated-item {
+  font-style: italic;
+}
+.radio-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.5rem;
+}
+.radio-row .hint {
+  flex-basis: 100%;
+  margin: 0 0 0.25rem 1.5rem;
+}
+.report-button .confirm-dialog select,
+.report-button .confirm-dialog textarea,
+.moderation-notice textarea,
+.operator-page textarea,
+.operator-page select {
+  width: 100%;
+}
+.moderation-notice p {
+  margin: 0.25rem 0;
+}
+.operator-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.operator-table th,
+.operator-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.35rem 0.25rem;
+  text-align: left;
+  vertical-align: top;
+}
+.operator-list > li {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  margin: 0.5rem 0;
+  overflow-wrap: anywhere;
+}
+.focus-item {
+  outline: 2px solid var(--danger);
+  outline-offset: 2px;
+}

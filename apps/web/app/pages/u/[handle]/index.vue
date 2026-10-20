@@ -6,8 +6,10 @@
  * - 지금 포트폴리오 판만: 한 줄 소개·관심 직무·연락 정책(이메일 없음, 연락 기능은 준비 중)·대표 케이스(요약 보기 + 출처 칩)·역량 × 근거·
  *   후배 기여 개수·4년 타임라인. 원본 사례가 철회·대체된 케이스는 "원본 사례를 더 이상 볼 수 없습니다"만.
  * - Open Graph는 이름과 한 줄 소개만 씁니다. 파일럿 동안 기본 noindex.
+ * - 신고(T-15): 프로필 또는 볼 수 있는 대표 케이스(앵커 case-N로 가리킴, 내부 id 없음). 로그인 후.
  */
 import type { PublicPortfolioProfileDto } from '~~/shared/types/api'
+import type { ReportChoice } from '~/utils/moderation'
 
 definePageMeta({ layout: 'public' })
 
@@ -41,6 +43,22 @@ useSeoMeta({
   ogType: 'profile',
   ogSiteName: 'Peerchive',
   robots: () => (indexable.value ? 'index, follow' : 'noindex, nofollow'),
+})
+
+const reportTargets = computed<ReportChoice[]>(() => {
+  const p = profile.value
+  if (!p) return []
+  return [
+    { id: 'profile', label: `공개 프로필 @${p.handle}`, targetType: 'profile', targetRef: { handle: p.handle } },
+    ...p.featured
+      .filter((f) => f.available)
+      .map((f) => ({
+        id: f.anchor,
+        label: `케이스 스터디: ${f.available ? f.title : ''}`,
+        targetType: 'case_study' as const,
+        targetRef: { handle: p.handle, anchor: f.anchor },
+      })),
+  ]
 })
 
 const years = computed(() => {
@@ -111,6 +129,7 @@ const years = computed(() => {
           원본 사례가 철회되면 그 케이스는 바로 닫힙니다. 팀원 확인은 팀원이 선언을 인정했다는 뜻이며 능력 인증이 아닙니다.
         </p>
         <p v-if="profile.edition" class="muted">포트폴리오 판 v{{ profile.edition.version }} · {{ formatDateTime(profile.edition.createdAt) }}</p>
+        <p>문제가 있는 내용이 있나요? <ReportButton :targets="reportTargets" id-prefix="profile" label="신고하기" /></p>
       </footer>
     </article>
   </div>

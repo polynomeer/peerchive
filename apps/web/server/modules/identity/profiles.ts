@@ -5,7 +5,8 @@
  * private_email, 내부 user id, 계정 상태는 공개 DTO에 들어가지 않습니다.
  */
 import { z } from 'zod'
-import { and, eq, profiles, users, type DbExecutor } from '@peerchive/db'
+import { and, eq, isNull, profiles, users, type DbExecutor } from '@peerchive/db'
+import { isOperator } from '../catalog/operators'
 import { type Actor, invalid, notFound, sqlState } from '../errors'
 import { parseInput } from '../validation'
 import type { MeDto, ProfileFields, PublicProfileDto } from '../../../shared/types/api'
@@ -108,6 +109,8 @@ export async function getMe(db: DbExecutor, actor: Actor): Promise<MeDto> {
     displayName: row.user.displayName,
     createdAt: row.user.createdAt.toISOString(),
     profile: row.profile ? profileFields(row.profile) : null,
+    operator: await isOperator(db, row.user.id),
+    profileHidden: row.profile?.hiddenAt != null,
   }
 }
 
@@ -164,7 +167,7 @@ export async function upsertProfile(db: DbExecutor, actor: Actor, rawInput: unkn
   return getMe(db, actor)
 }
 
-/** 활성 사용자의 공개 프로필. 없거나 비활성이면 404. */
+/** 활성 사용자의 공개 프로필. 없거나 비활성이거나 운영 조치로 숨겼으면(T-15) 404. */
 export async function getPublicProfile(db: DbExecutor, rawHandle: string): Promise<PublicProfileDto> {
   const handle = rawHandle.trim().toLowerCase()
   if (!HANDLE_PATTERN.test(handle) || handle.length > 30) throw notFound()
@@ -172,7 +175,7 @@ export async function getPublicProfile(db: DbExecutor, rawHandle: string): Promi
     .select({ displayName: users.displayName, profile: profiles })
     .from(profiles)
     .innerJoin(users, eq(users.id, profiles.userId))
-    .where(and(eq(profiles.handle, handle), eq(users.status, 'active')))
+    .where(and(eq(profiles.handle, handle), eq(users.status, 'active'), isNull(profiles.hiddenAt)))
     .limit(1)
   if (!row) throw notFound()
   return toPublicProfileDto(row, row.profile)

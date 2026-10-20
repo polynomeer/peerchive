@@ -6,8 +6,10 @@
  * `fileUrl`을 주면(T-12) 파일 이름을 그 주소로 연결합니다.
  * 로그마다 `<idPrefix>-<로그 키>` id를 붙여 과목 허브의 막힘 카드가 `/p/<slug>#public-<키>`로 가리킬 수 있게 합니다(T-13).
  * 케이스 스터디의 출처 칩(T-14)을 위해 역할 선언·마일스톤은 `<idPrefix>-<키>`, 파일은 `<idPrefix>-f-<버전 id>`, 제목은 `<idPrefix>-title` id를 가집니다.
+ * `hiddenItems`(T-15)를 주면 운영 조치로 가린 기록·선언·파일 자리에 "운영 조치로 가려진 항목"을 원래 위치에 그립니다(내용은 서버가 이미 뺌).
  */
-import type { PublicLog, PublicSnapshot } from '~~/shared/types/api'
+import { HIDDEN_ITEM_PLACEHOLDER } from '@peerchive/domain'
+import type { HiddenItemKind, HiddenItemPlaceholderDto, PublicLog, PublicSnapshot } from '~~/shared/types/api'
 
 const props = defineProps<{
   snapshot: PublicSnapshot
@@ -17,7 +19,26 @@ const props = defineProps<{
   fileUrl?: (artifactVersionId: string) => string | null
   /** 같은 화면에 두 번 그릴 때 id 충돌 방지. */
   idPrefix?: string
+  /** 운영 조치로 가린 항목의 원래 자리(T-15). */
+  hiddenItems?: HiddenItemPlaceholderDto[]
 }>()
+
+type Row<T> = { hidden: false; item: T } | { hidden: true; key: string }
+/** 남은 항목 사이에 가린 항목 자리를 원래 위치대로 끼웁니다. */
+function withPlaceholders<T>(items: readonly T[], kind: HiddenItemKind): Row<T>[] {
+  const hidden = (props.hiddenItems ?? []).filter((h) => h.kind === kind).sort((a, b) => a.index - b.index)
+  const out: Row<T>[] = []
+  let next = 0
+  for (const item of items) {
+    while (next < hidden.length && hidden[next]!.index <= out.length) out.push({ hidden: true, key: hidden[next++]!.key })
+    out.push({ hidden: false, item })
+  }
+  while (next < hidden.length) out.push({ hidden: true, key: hidden[next++]!.key })
+  return out
+}
+const logRows = computed(() => withPlaceholders(props.snapshot.logs, 'log'))
+const claimRows = computed(() => withPlaceholders(props.snapshot.claims, 'claim'))
+const artifactRows = computed(() => withPlaceholders(props.snapshot.artifacts, 'artifact'))
 
 const base = computed(() => props.idPrefix ?? 'snap')
 const memberByKey = computed(() => new Map(props.snapshot.members.map((m) => [m.key, m])))
@@ -96,10 +117,13 @@ const CLAIM_STATUS: Record<'unconfirmed' | 'confirmed' | 'disputed', string> = {
       </ol>
     </section>
 
-    <section v-if="snapshot.logs.length" :aria-labelledby="`${base}-logs`">
+    <section v-if="logRows.length" :aria-labelledby="`${base}-logs`">
       <h3 :id="`${base}-logs`">과정 기록</h3>
       <ol class="snapshot-list">
-        <li v-for="log in snapshot.logs" :id="`${base}-${log.key}`" :key="log.key" class="snapshot-log" tabindex="-1">
+        <template v-for="row in logRows" :key="row.hidden ? `h-${row.key}` : row.item.key">
+        <li v-if="row.hidden" :id="`${base}-${row.key}`" class="snapshot-log moderated-item muted" tabindex="-1">{{ HIDDEN_ITEM_PLACEHOLDER }}</li>
+        <li v-else-if="row.item" :id="`${base}-${row.item.key}`" class="snapshot-log" tabindex="-1">
+          <template v-for="log in [row.item]" :key="log.key">
           <p class="log-head">
             <strong>{{ LOG_TAG_LABELS[log.tag] }}</strong>
             <span class="small muted">{{ memberLabel(log.author) }} · 출처 {{ SOURCE_LABELS[log.source] }}</span>
@@ -120,14 +144,19 @@ const CLAIM_STATUS: Record<'unconfirmed' | 'confirmed' | 'disputed', string> = {
           <p class="small muted">
             <template v-if="log.claimedDate">수행일(자기 기입) {{ formatDay(log.claimedDate) }} · </template>기록 {{ formatDateTime(log.recordedAt) }} · 버전 {{ log.revisionNo }}
           </p>
+          </template>
         </li>
+        </template>
       </ol>
     </section>
 
-    <section v-if="snapshot.claims.length" :aria-labelledby="`${base}-claims`">
+    <section v-if="claimRows.length" :aria-labelledby="`${base}-claims`">
       <h3 :id="`${base}-claims`">역할 선언</h3>
       <ul class="snapshot-list">
-        <li v-for="c in snapshot.claims" :id="`${base}-${c.key}`" :key="c.key" class="snapshot-anchor" tabindex="-1">
+        <template v-for="row in claimRows" :key="row.hidden ? `h-${row.key}` : row.item.key">
+        <li v-if="row.hidden" :id="`${base}-${row.key}`" class="snapshot-anchor moderated-item muted" tabindex="-1">{{ HIDDEN_ITEM_PLACEHOLDER }}</li>
+        <li v-else-if="row.item" :id="`${base}-${row.item.key}`" class="snapshot-anchor" tabindex="-1">
+          <template v-for="c in [row.item]" :key="c.key">
           <p>
             <strong>{{ memberLabel(c.member) }}</strong>: “{{ c.text }}”
           </p>
@@ -139,23 +168,28 @@ const CLAIM_STATUS: Record<'unconfirmed' | 'confirmed' | 'disputed', string> = {
             근거:
             {{ c.evidence.map((e) => (e.kind === 'log' ? logLabel(e.log) : fileName(e.artifactVersionId))).join(' / ') }}
           </p>
+          </template>
         </li>
+        </template>
       </ul>
     </section>
 
-    <section v-if="snapshot.artifacts.length" :aria-labelledby="`${base}-files`">
+    <section v-if="artifactRows.length" :aria-labelledby="`${base}-files`">
       <h3 :id="`${base}-files`">파일</h3>
       <ul class="snapshot-list">
-        <li v-for="a in snapshot.artifacts" :id="`${base}-f-${a.artifactVersionId}`" :key="a.artifactVersionId" class="snapshot-anchor" tabindex="-1">
-          <a v-if="fileUrl && fileUrl(a.artifactVersionId)" :href="fileUrl(a.artifactVersionId)!" rel="noopener">{{ a.displayName }}</a>
-          <span v-else>{{ a.displayName }}</span>
-          <span class="small muted"> · {{ formatBytes(a.bytes) }} · {{ usageLabel(a.usage) }}</span>
+        <template v-for="row in artifactRows" :key="row.hidden ? `h-${row.key}` : row.item.artifactVersionId">
+        <li v-if="row.hidden" :id="`${base}-f-${row.key}`" class="snapshot-anchor moderated-item muted" tabindex="-1">{{ HIDDEN_ITEM_PLACEHOLDER }}</li>
+        <li v-else-if="row.item" :id="`${base}-f-${row.item.artifactVersionId}`" class="snapshot-anchor" tabindex="-1">
+          <a v-if="fileUrl && fileUrl(row.item.artifactVersionId)" :href="fileUrl(row.item.artifactVersionId)!" rel="noopener">{{ row.item.displayName }}</a>
+          <span v-else>{{ row.item.displayName }}</span>
+          <span class="small muted"> · {{ formatBytes(row.item.bytes) }} · {{ usageLabel(row.item.usage) }}</span>
         </li>
+        </template>
       </ul>
       <p v-if="!fileUrl" class="hint">파일 내용은 게시 후 공개 페이지에서 열 수 있습니다.</p>
     </section>
 
-    <p v-if="!snapshot.logs.length && !snapshot.milestones.length && !snapshot.claims.length && !snapshot.artifacts.length" class="muted">
+    <p v-if="!logRows.length && !snapshot.milestones.length && !claimRows.length && !artifactRows.length" class="muted">
       제목과 요약만 공개됩니다.
     </p>
     <p class="hint">

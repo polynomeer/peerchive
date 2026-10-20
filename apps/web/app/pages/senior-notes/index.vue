@@ -92,6 +92,7 @@ async function withdraw(note: SeniorNoteDto) {
             · {{ note.course.schoolName }} · <NuxtLink :to="`/c/${note.course.id}`">{{ note.course.title }}</NuxtLink>
             · 표시: {{ note.publicLabel }}
           </p>
+          <ModerationNotice v-if="note.moderation" :notice="note.moderation" :id-prefix="`note-${note.id}`" @appealed="refresh()" />
           <SeniorNoteForm v-if="editingId === note.id" :note="note" @saved="onSaved" @cancel="editingId = null" />
           <template v-else>
             <dl class="note-answers">

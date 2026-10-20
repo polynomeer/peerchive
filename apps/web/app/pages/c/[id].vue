@@ -4,7 +4,7 @@
  * - 공개 API(`/api/v1/public/courses/:id`)만 부릅니다. SSR에서 쿠키를 넘기지 않고, 레이아웃도 로그인 상태를 읽지 않습니다.
  * - 과목·학교·태그·노트는 학생이 쓴 내용입니다("학생 작성"). 교수 실명·평가는 다루지 않습니다.
  * - 병합된 과목 id로 들어오면 정본 주소로 바꿉니다. 파일럿 동안 기본 noindex.
- * - 신호 버튼·선배 노트 쓰기는 화면이 뜬 뒤 클라이언트에서 로그인 여부를 확인합니다.
+ * - 신호 버튼·선배 노트 쓰기·신고(T-15)는 화면이 뜬 뒤 클라이언트에서 로그인 여부를 확인합니다.
  */
 import type { PublicCourseHubDto } from '~~/shared/types/api'
 
@@ -159,6 +159,13 @@ const difficultyText = computed(() => {
               </template>
             </dl>
             <SignalButtons :target="{ kind: 'senior_note', noteId: note.id }" :counts="note.signals" :kinds="['helped']" />
+            <p class="small">
+              <ReportButton
+                :targets="[{ id: 'note', label: `선배 노트(${note.author})`, targetType: 'senior_note', targetRef: { noteId: note.id } }]"
+                :id-prefix="`note-${note.id}`"
+                label="이 노트 신고"
+              />
+            </p>
           </li>
         </ul>
         <p v-else class="muted">아직 선배 노트가 없습니다.</p>

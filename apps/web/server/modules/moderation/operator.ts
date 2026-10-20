@@ -1,0 +1,558 @@
+/**
+ * 운영자 신고 처리 (T-15, SYSTEM_DESIGN §6.6·§8·§14, DELIVERY_PLAN T-15·§7 G2, ADR 0015).
+ *
+ * 모든 함수는 운영자만(아니면 403 `operator_only`, 대상 존재 여부보다 먼저 확인). 화면 `/operator`는 운영자가 아니면 404로 보입니다.
+ * - 대기열 `GET /operator/reports?status=`: 대상별로 묶은 신고(개수·사유별 개수·처음/마지막 신고 시각·담당자·보류 여부). 신고자 신원은 싣지 않습니다.
+ * - 상세 `GET /operator/reports/:id`: 같은 대상의 신고들(사유·설명), **공개됐던 내용만**(신고 때의 release 스냅샷, 신고 때 버전이 그대로인
+ *   게시된·숨긴 노트·케이스 글, 공개 프로필 필드), 보류, 조치·이의제기 이력. 비공개 과제 공간은 운영자에게도 404입니다(§8).
+ * - 담당 `POST .../assign`: 자기에게 배정, 그 대상의 처리 전 신고를 in_review로.
+ * - 처리 `POST .../resolve {action, note, publicReason?, notifyOwner}`·기각 `POST .../dismiss {note}`: 한 트랜잭션에서 조치 적용(actions.ts) +
+ *   같은 대상의 처리 전 신고를 모두 닫음 + 그 신고들이 건 보류를 풂 + 감사. note(내부 메모)는 필수이고, publicReason(당사자에게 보일 사유)은
+ *   별도 필드입니다(조치가 있고 notifyOwner면 필수).
+ * - 제한 해제 `POST /operator/publications/:id/lift-restriction {note}`: restricted → draft(owner가 후보·동의·게시를 다시 함).
+ * - 이의제기 `GET /operator/appeals?status=`·`POST /operator/appeals/:id/decide {decision: uphold|reverse, note}`: 되돌리면 조치를 풉니다.
+ * - 감사 `GET /operator/audit?target=<id>`: 그 대상(또는 조치·신고 id)의 감사 기록. 감사에는 신고 설명·메모 글이 없습니다(id·종류만).
+ */
+import { z } from 'zod'
+import {
+  ACTIONS_BY_TARGET,
+  APPEAL_DECISIONS,
+  CASE_SECTION_LABELS,
+  MODERATION_ACTION_KINDS,
+  MODERATION_NOTE_MAX,
+  MODERATION_PUBLIC_REASON_MAX,
+  REPORT_STATUSES,
+  type ReportStatus,
+  appealTransition,
+  citationLabel,
+  isActionApplicable,
+  isReportOpen,
+} from '@peerchive/domain'
+import {
+  and,
+  appeals,
+  asc,
+  auditEvents,
+  caseStudies,
+  desc,
+  eq,
+  holds,
+  inArray,
+  isNull,
+  moderationActions,
+  or,
+  profiles,
+  publicationCandidates,
+  publications,
+  releaseHiddenItems,
+  reports,
+  seniorNotes,
+  sql,
+  users,
+  type DbExecutor,
+} from '@peerchive/db'
+import { recordAudit } from '../audit/audit'
+import { requireOperator } from '../catalog/operators'
+import { publicNotePath } from '../course-hub/search'
+import { toPublicSeniorNote } from '../course-hub/hub'
+import { type Actor, conflict, invalid, notFound } from '../errors'
+import { toPublicProfileDto } from '../identity/profiles'
+import { asCaseSnapshot, loadCaseStudiesWithRelease, loadSections } from '../portfolio/release-scope'
+import { isPubliclyVisible } from '../portfolio/view'
+import { isUuid } from '../projects/access'
+import { lockPublication } from '../publication/candidates'
+import { loadServedRelease } from '../publication/public-read'
+import { parseInput } from '../validation'
+import { applyModeration, undoModeration } from './actions'
+import { pointerOf, targetLabels, type TargetPointer } from './targets'
+import type {
+  OperatorActionDto,
+  OperatorAppealDto,
+  OperatorAuditEventDto,
+  OperatorReportDetailDto,
+  OperatorReportDto,
+  OperatorReportGroupDto,
+  OperatorTargetContentDto,
+  PublicSnapshot,
+} from '../../../shared/types/api'
+
+type ReportRow = typeof reports.$inferSelect
+
+const requiredOr = (code: string) => (issue: { input?: unknown }) => (issue.input === undefined ? 'required' : code)
+
+const note = z
+  .string({ error: requiredOr('invalid') })
+  .trim()
+  .min(1, { error: 'required' })
+  .max(MODERATION_NOTE_MAX, { error: 'too_long' })
+
+export const resolveSchema = z
+  .object({
+    action: z.enum(MODERATION_ACTION_KINDS, { error: requiredOr('invalid') }),
+    /** 내부 메모(운영자만). */
+    note,
+    /** 당사자에게 보일 사유(내부 메모와 별도). */
+    publicReason: z
+      .string({ error: 'invalid' })
+      .trim()
+      .max(MODERATION_PUBLIC_REASON_MAX, { error: 'too_long' })
+      .nullish()
+      .transform((v) => (v ? v : null)),
+    notifyOwner: z.boolean({ error: 'invalid' }).default(false),
+  })
+  .refine((v) => v.action === 'none' || !v.notifyOwner || v.publicReason !== null, { error: 'required', path: ['publicReason'] })
+
+export const noteOnlySchema = z.object({ note })
+export const decideAppealSchema = z.object({ decision: z.enum(APPEAL_DECISIONS, { error: requiredOr('invalid') }), note })
+
+const statusOf = (raw: unknown, fallback: string) => {
+  const value = typeof raw === 'string' && raw ? raw : fallback
+  return value
+}
+
+// ── 대기열 ───────────────────────────────────────────────────────────────
+
+/** GET /operator/reports?status=open|in_review|resolved|dismissed(기본 open) — 대상별 묶음(처리 전은 오래된 것부터). */
+export async function listReportGroups(db: DbExecutor, actor: Actor, rawQuery: Record<string, unknown>): Promise<OperatorReportGroupDto[]> {
+  await requireOperator(db, actor)
+  const status = statusOf(rawQuery.status, 'open')
+  if (!(REPORT_STATUSES as readonly string[]).includes(status)) throw invalid({ status: 'invalid' })
+  const rows = await db
+    .select({ report: reports, assigneeName: users.displayName })
+    .from(reports)
+    .leftJoin(users, eq(users.id, reports.assignedTo))
+    .where(eq(reports.status, status as ReportStatus))
+    .orderBy(asc(reports.createdAt), asc(reports.id))
+    .limit(1000)
+  const openHolds = rows.length
+    ? await db
+        .select({ reportId: holds.createdByReportId })
+        .from(holds)
+        .where(and(inArray(holds.createdByReportId, rows.map((r) => r.report.id)), isNull(holds.releasedAt)))
+    : []
+  const held = new Set(openHolds.map((h) => h.reportId))
+  const groups = new Map<string, { first: ReportRow; rows: typeof rows }>()
+  for (const r of rows) {
+    const g = groups.get(r.report.targetKey) ?? { first: r.report, rows: [] }
+    g.rows.push(r)
+    groups.set(r.report.targetKey, g)
+  }
+  const labels = await targetLabels(db, [...groups.values()].map((g) => pointerOf(g.first)))
+  const out = [...groups.values()].map(({ first, rows: members }) => {
+    const reasons: OperatorReportGroupDto['reasons'] = {}
+    for (const m of members) reasons[m.report.reason] = (reasons[m.report.reason] ?? 0) + 1
+    const assigned = members.find((m) => m.report.assignedTo)
+    return {
+      reportId: first.id,
+      targetType: first.targetType,
+      targetLabel: labels.get(first.targetKey) ?? '',
+      count: members.length,
+      reasons,
+      firstReportedAt: members[0]!.report.createdAt.toISOString(),
+      lastReportedAt: members[members.length - 1]!.report.createdAt.toISOString(),
+      status: first.status,
+      assignee: assigned ? { userId: assigned.report.assignedTo!, displayName: assigned.assigneeName ?? '' } : null,
+      hold: members.some((m) => held.has(m.report.id)),
+    }
+  })
+  if (!isReportOpen(status as ReportStatus)) out.reverse()
+  return out.slice(0, 100)
+}
+
+// ── 상세 ─────────────────────────────────────────────────────────────────
+
+const toReportDto = (r: ReportRow): OperatorReportDto => ({
+  id: r.id,
+  reason: r.reason,
+  details: r.details,
+  status: r.status,
+  createdAt: r.createdAt.toISOString(),
+  closedAt: r.closedAt?.toISOString() ?? null,
+})
+
+async function contentFor(db: DbExecutor, report: ReportRow, now: Date): Promise<{ content: OperatorTargetContentDto; publicPath: string | null; servedNow: boolean }> {
+  const unavailable = (message: string) => ({ kind: 'unavailable' as const, message })
+  switch (report.targetType) {
+    case 'publication':
+    case 'publication_item': {
+      const [row] = await db
+        .select({ release: publicationCandidates, slug: publications.slug })
+        .from(publicationCandidates)
+        .innerJoin(publications, eq(publications.id, publicationCandidates.publicationId))
+        .where(eq(publicationCandidates.id, report.releaseId!))
+        .limit(1)
+      if (!row) return { content: unavailable('신고한 공개 버전을 찾을 수 없습니다.'), publicPath: null, servedNow: false }
+      const hidden = await db
+        .select({ kind: releaseHiddenItems.itemKind, key: releaseHiddenItems.itemKey })
+        .from(releaseHiddenItems)
+        .where(and(eq(releaseHiddenItems.publicationId, report.publicationId!), isNull(releaseHiddenItems.liftedAt)))
+      const served = await loadServedRelease(db, row.slug, now)
+      const itemVisible =
+        !!served &&
+        (report.targetType === 'publication' ||
+          (report.itemKind === 'log'
+            ? served.snapshot.logs.some((l) => l.key === report.itemKey)
+            : report.itemKind === 'claim'
+              ? served.snapshot.claims.some((c) => c.key === report.itemKey)
+              : served.snapshot.artifacts.some((a) => a.artifactVersionId === report.itemKey)))
+      return {
+        content: {
+          kind: 'release',
+          releaseVersion: row.release.releaseNo ?? 0,
+          // 신고 때 제공하던 release의 저장된 스냅샷(공개됐던 내용) 그대로. 비공개 작업 테이블은 읽지 않습니다.
+          snapshot: row.release.snapshot as unknown as PublicSnapshot,
+          focus: report.itemKind && report.itemKey ? { kind: report.itemKind, key: report.itemKey } : null,
+          hiddenKeys: hidden.map((h) => `${h.kind}:${h.key}`),
+        },
+        publicPath: served ? `/p/${row.slug}` : null,
+        servedNow: itemVisible,
+      }
+    }
+    case 'senior_note': {
+      const [note] = await db.select().from(seniorNotes).where(eq(seniorNotes.id, report.seniorNoteId!)).limit(1)
+      const wasPublic = !!note && (note.status === 'published' || note.status === 'hidden') && note.version === report.noteVersion && !!note.publishedAt
+      return {
+        content: wasPublic
+          ? { kind: 'senior_note', note: toPublicSeniorNote(note!, { meToo: 0, helped: 0 }) }
+          : unavailable('신고 이후 노트가 고쳐지거나 내려가 신고 때 공개된 글을 볼 수 없습니다.'),
+        publicPath: note?.status === 'published' ? publicNotePath(note.courseId, note.id) : null,
+        servedNow: note?.status === 'published',
+      }
+    }
+    case 'case_study': {
+      const [row] = await loadCaseStudiesWithRelease(db, eq(caseStudies.id, report.caseStudyId!), now)
+      const cs = row?.caseStudy
+      const wasPublic = !!row && (cs!.status === 'published' || cs!.hiddenAt !== null) && cs!.version === report.caseStudyVersion && row.servable
+      const [owner] = cs ? await db.select({ handle: profiles.handle }).from(profiles).where(eq(profiles.userId, cs.userId)).limit(1) : []
+      if (!wasPublic) {
+        return { content: unavailable('신고 이후 케이스 스터디가 고쳐지거나 내려가 신고 때 공개된 글을 볼 수 없습니다.'), publicPath: null, servedNow: false }
+      }
+      const sections = (await loadSections(db, [cs!])).get(cs!.id) ?? []
+      const snapshot = asCaseSnapshot(row!.snapshot)
+      return {
+        content: {
+          kind: 'case_study',
+          title: cs!.title,
+          sections: sections
+            .filter((s) => s.sentences.length > 0)
+            .map((s) => ({
+              key: s.key,
+              label: CASE_SECTION_LABELS[s.key],
+              sentences: s.sentences.map((x) => ({ text: x.text, citations: x.citations.map((c) => citationLabel(snapshot, c) ?? `${c.kind}:${c.key}`) })),
+            })),
+        },
+        publicPath: owner && isPubliclyVisible(row!) ? `/u/${owner.handle}` : null,
+        servedNow: isPubliclyVisible(row!),
+      }
+    }
+    case 'profile': {
+      const [row] = await db
+        .select({ displayName: users.displayName, status: users.status, profile: profiles })
+        .from(profiles)
+        .innerJoin(users, eq(users.id, profiles.userId))
+        .where(eq(profiles.userId, report.profileUserId!))
+        .limit(1)
+      if (!row) return { content: unavailable('프로필을 찾을 수 없습니다.'), publicPath: null, servedNow: false }
+      const served = row.status === 'active' && row.profile.hiddenAt === null
+      return {
+        // 공개 프로필 DTO와 같은 허용 목록(이메일·id 없음).
+        content: { kind: 'profile', profile: toPublicProfileDto(row, row.profile) },
+        publicPath: served ? `/u/${row.profile.handle}` : null,
+        servedNow: served,
+      }
+    }
+  }
+}
+
+async function actionsFor(db: DbExecutor, targetKey: string): Promise<OperatorActionDto[]> {
+  const rows = await db
+    .select({ action: moderationActions, appeal: appeals, creator: users.displayName })
+    .from(moderationActions)
+    .leftJoin(appeals, eq(appeals.actionId, moderationActions.id))
+    .innerJoin(users, eq(users.id, moderationActions.createdBy))
+    .where(eq(moderationActions.targetKey, targetKey))
+    .orderBy(desc(moderationActions.createdAt), desc(moderationActions.id))
+  return rows.map(({ action: a, appeal, creator }) => ({
+    id: a.id,
+    kind: a.kind,
+    outcome: a.outcome as OperatorActionDto['outcome'],
+    internalNote: a.internalNote,
+    publicReason: a.publicReason,
+    notifyOwner: a.notifyOwner,
+    createdAt: a.createdAt.toISOString(),
+    createdBy: creator,
+    reversedAt: a.reversedAt?.toISOString() ?? null,
+    reverseCause: (a.reverseCause as OperatorActionDto['reverseCause']) ?? null,
+    reverseNote: a.reverseNote,
+    appeal: appeal
+      ? { id: appeal.id, status: appeal.status, message: appeal.message, createdAt: appeal.createdAt.toISOString(), decisionNote: appeal.decisionNote }
+      : null,
+  }))
+}
+
+async function loadReport(db: DbExecutor, reportId: unknown, lock = false): Promise<ReportRow> {
+  if (!isUuid(reportId)) throw notFound()
+  const query = db.select().from(reports).where(eq(reports.id, reportId.toLowerCase())).limit(1)
+  const [row] = lock ? await query.for('update') : await query
+  if (!row) throw notFound()
+  return row
+}
+
+async function detail(db: DbExecutor, report: ReportRow, now: Date): Promise<OperatorReportDetailDto> {
+  const siblings = await db.select().from(reports).where(eq(reports.targetKey, report.targetKey)).orderBy(desc(reports.createdAt), desc(reports.id)).limit(200)
+  const [labels, { content, publicPath, servedNow }, actions] = await Promise.all([
+    targetLabels(db, [pointerOf(report)]),
+    contentFor(db, report, now),
+    actionsFor(db, report.targetKey),
+  ])
+  const holdRows = await db
+    .select()
+    .from(holds)
+    .where(inArray(holds.createdByReportId, siblings.map((s) => s.id)))
+    .orderBy(desc(holds.createdAt))
+  const assignedRow = siblings.find((s) => isReportOpen(s.status) && s.assignedTo) ?? (report.assignedTo ? report : undefined)
+  const [assignee] = assignedRow?.assignedTo
+    ? await db.select({ userId: users.id, displayName: users.displayName }).from(users).where(eq(users.id, assignedRow.assignedTo)).limit(1)
+    : []
+  const [publication] = report.publicationId
+    ? await db.select({ id: publications.id, status: publications.status }).from(publications).where(eq(publications.id, report.publicationId)).limit(1)
+    : []
+  return {
+    report: toReportDto(report),
+    targetType: report.targetType,
+    targetLabel: labels.get(report.targetKey) ?? '',
+    publicPath,
+    servedNow,
+    publication: publication ?? null,
+    content,
+    reports: siblings.map(toReportDto),
+    assignee: assignee ?? null,
+    holds: holdRows.map((h) => ({ reason: h.reason, createdAt: h.createdAt.toISOString(), releasedAt: h.releasedAt?.toISOString() ?? null })),
+    actions,
+    allowedActions: [...ACTIONS_BY_TARGET[report.targetType]],
+  }
+}
+
+/** GET /operator/reports/:id */
+export async function getReportDetail(db: DbExecutor, actor: Actor, reportId: unknown, now = new Date()): Promise<OperatorReportDetailDto> {
+  await requireOperator(db, actor)
+  return detail(db, await loadReport(db, reportId), now)
+}
+
+// ── 담당·처리·기각 ───────────────────────────────────────────────────────
+
+/** 같은 대상의 처리 전 신고들을 잠가 읽습니다(이 신고 포함). */
+async function lockOpenGroup(tx: DbExecutor, report: ReportRow): Promise<ReportRow[]> {
+  return tx
+    .select()
+    .from(reports)
+    .where(and(eq(reports.targetKey, report.targetKey), inArray(reports.status, ['open', 'in_review'])))
+    .orderBy(asc(reports.createdAt))
+    .for('update')
+}
+
+/** POST /operator/reports/:id/assign — 나에게 배정(같은 대상의 처리 전 신고 모두 in_review). 닫힌 신고 409 already_closed. */
+export async function assignReport(db: DbExecutor, actor: Actor, reportId: unknown, now = new Date()): Promise<OperatorReportDetailDto> {
+  await requireOperator(db, actor)
+  return db.transaction(async (tx) => {
+    const report = await loadReport(tx, reportId, true)
+    if (!isReportOpen(report.status)) throw conflict('already_closed')
+    const group = await lockOpenGroup(tx, report)
+    await tx
+      .update(reports)
+      .set({ status: 'in_review', assignedTo: actor.userId, assignedAt: now })
+      .where(inArray(reports.id, group.map((r) => r.id)))
+    await recordAudit(tx, {
+      actorId: actor.userId,
+      action: 'report.assign',
+      targetType: 'report',
+      targetId: report.id,
+      metadata: { reports: group.length, targetType: report.targetType },
+    })
+    return detail(tx, await loadReport(tx, report.id), now)
+  })
+}
+
+async function closeGroup(
+  tx: DbExecutor,
+  actor: Actor,
+  report: ReportRow,
+  input: { kind: (typeof MODERATION_ACTION_KINDS)[number]; outcome: 'resolved' | 'dismissed'; note: string; publicReason: string | null; notifyOwner: boolean },
+  now: Date,
+): Promise<void> {
+  if (!isReportOpen(report.status)) throw conflict('already_closed')
+  if (!isActionApplicable(report.targetType, input.kind)) throw invalid({ action: 'not_applicable' })
+  const group = await lockOpenGroup(tx, report)
+  const target: TargetPointer = pointerOf(report)
+  const action = await applyModeration(
+    tx,
+    actor.userId,
+    target,
+    { kind: input.kind, outcome: input.outcome, internalNote: input.note, publicReason: input.publicReason, notifyOwner: input.notifyOwner },
+    now,
+  )
+  const ids = group.map((r) => r.id)
+  await tx.update(reports).set({ status: input.outcome, actionId: action.id, closedAt: now }).where(inArray(reports.id, ids))
+  const released = await tx
+    .update(holds)
+    .set({ releasedAt: now, releasedBy: actor.userId })
+    .where(and(inArray(holds.createdByReportId, ids), isNull(holds.releasedAt)))
+    .returning({ id: holds.id })
+  await recordAudit(tx, {
+    actorId: actor.userId,
+    action: input.outcome === 'resolved' ? 'report.resolve' : 'report.dismiss',
+    targetType: 'report',
+    targetId: report.id,
+    metadata: { actionId: action.id, kind: input.kind, reports: ids.length, holdsReleased: released.length, targetType: report.targetType },
+  })
+}
+
+/** POST /operator/reports/:id/resolve {action, note, publicReason?, notifyOwner} — 200 + 상세. 409 already_closed·target_not_public, 422. */
+export async function resolveReport(db: DbExecutor, actor: Actor, reportId: unknown, rawInput: unknown, now = new Date()): Promise<OperatorReportDetailDto> {
+  await requireOperator(db, actor)
+  const input = parseInput(resolveSchema, rawInput)
+  return db.transaction(async (tx) => {
+    const report = await loadReport(tx, reportId, true)
+    await closeGroup(tx, actor, report, { kind: input.action, outcome: 'resolved', note: input.note, publicReason: input.publicReason, notifyOwner: input.notifyOwner }, now)
+    return detail(tx, await loadReport(tx, report.id), now)
+  })
+}
+
+/** POST /operator/reports/:id/dismiss {note} — 기각(조치 없음). 보류를 풉니다. */
+export async function dismissReport(db: DbExecutor, actor: Actor, reportId: unknown, rawInput: unknown, now = new Date()): Promise<OperatorReportDetailDto> {
+  await requireOperator(db, actor)
+  const input = parseInput(noteOnlySchema, rawInput)
+  return db.transaction(async (tx) => {
+    const report = await loadReport(tx, reportId, true)
+    await closeGroup(tx, actor, report, { kind: 'none', outcome: 'dismissed', note: input.note, publicReason: null, notifyOwner: false }, now)
+    return detail(tx, await loadReport(tx, report.id), now)
+  })
+}
+
+/**
+ * POST /operator/publications/:id/lift-restriction {note} — restricted → draft. 제한 조치를 되돌림(lift)으로 기록합니다.
+ * 제한 상태가 아니면 409 not_restricted. owner는 새 후보를 만들고 당사자 동의를 다시 받아 게시해야 합니다.
+ */
+export async function liftRestriction(
+  db: DbExecutor,
+  actor: Actor,
+  publicationId: unknown,
+  rawInput: unknown,
+  now = new Date(),
+): Promise<{ publicationId: string; status: string }> {
+  await requireOperator(db, actor)
+  const input = parseInput(noteOnlySchema, rawInput)
+  if (!isUuid(publicationId)) throw notFound()
+  return db.transaction(async (tx) => {
+    const publication = await lockPublication(tx, publicationId.toLowerCase())
+    if (publication.status !== 'restricted') throw conflict('not_restricted')
+    const [action] = await tx
+      .select({ id: moderationActions.id })
+      .from(moderationActions)
+      .where(and(eq(moderationActions.publicationId, publication.id), eq(moderationActions.kind, 'restrict'), isNull(moderationActions.reversedAt)))
+      .orderBy(desc(moderationActions.createdAt))
+      .limit(1)
+    if (!action) throw conflict('not_restricted')
+    await undoModeration(tx, action.id, actor.userId, input.note, 'lift', now)
+    const [after] = await tx.select({ status: publications.status }).from(publications).where(eq(publications.id, publication.id)).limit(1)
+    return { publicationId: publication.id, status: after!.status }
+  })
+}
+
+// ── 이의제기 ─────────────────────────────────────────────────────────────
+
+async function appealDtos(db: DbExecutor, where: ReturnType<typeof eq> | undefined): Promise<OperatorAppealDto[]> {
+  const rows = await db
+    .select({ appeal: appeals, action: moderationActions })
+    .from(appeals)
+    .innerJoin(moderationActions, eq(moderationActions.id, appeals.actionId))
+    .where(where)
+    .orderBy(asc(appeals.createdAt), asc(appeals.id))
+    .limit(100)
+  const labels = await targetLabels(db, rows.map((r) => pointerOf(r.action)))
+  const reportRows = rows.length
+    ? await db.select({ id: reports.id, actionId: reports.actionId }).from(reports).where(inArray(reports.actionId, rows.map((r) => r.action.id)))
+    : []
+  const reportBy = new Map(reportRows.map((r) => [r.actionId, r.id]))
+  return rows.map(({ appeal, action }) => ({
+    id: appeal.id,
+    status: appeal.status,
+    message: appeal.message,
+    createdAt: appeal.createdAt.toISOString(),
+    decidedAt: appeal.decidedAt?.toISOString() ?? null,
+    decisionNote: appeal.decisionNote,
+    action: {
+      id: action.id,
+      kind: action.kind,
+      targetType: action.targetType,
+      targetLabel: labels.get(action.targetKey) ?? '',
+      publicReason: action.publicReason,
+      internalNote: action.internalNote,
+      createdAt: action.createdAt.toISOString(),
+      reversedAt: action.reversedAt?.toISOString() ?? null,
+    },
+    reportId: reportBy.get(action.id) ?? null,
+  }))
+}
+
+/** GET /operator/appeals?status=open|upheld|reversed(기본 open). */
+export async function listAppeals(db: DbExecutor, actor: Actor, rawQuery: Record<string, unknown>): Promise<OperatorAppealDto[]> {
+  await requireOperator(db, actor)
+  const status = statusOf(rawQuery.status, 'open')
+  if (!['open', 'upheld', 'reversed'].includes(status)) throw invalid({ status: 'invalid' })
+  return appealDtos(db, eq(appeals.status, status as 'open'))
+}
+
+/** POST /operator/appeals/:id/decide {decision, note} — 유지 또는 되돌림(조치를 풂). 이미 결정됨 409 already_decided. */
+export async function decideAppeal(db: DbExecutor, actor: Actor, appealId: unknown, rawInput: unknown, now = new Date()): Promise<OperatorAppealDto> {
+  await requireOperator(db, actor)
+  const input = parseInput(decideAppealSchema, rawInput)
+  if (!isUuid(appealId)) throw notFound()
+  return db.transaction(async (tx) => {
+    const [appeal] = await tx.select().from(appeals).where(eq(appeals.id, appealId.toLowerCase())).limit(1).for('update')
+    if (!appeal) throw notFound()
+    const next = appealTransition(appeal.status, input.decision)
+    if (!next) throw conflict('already_decided')
+    if (input.decision === 'reverse') await undoModeration(tx, appeal.actionId, actor.userId, input.note, 'appeal', now)
+    await tx.update(appeals).set({ status: next, decidedBy: actor.userId, decidedAt: now, decisionNote: input.note }).where(eq(appeals.id, appeal.id))
+    await recordAudit(tx, {
+      actorId: actor.userId,
+      action: 'appeal.decide',
+      targetType: 'appeal',
+      targetId: appeal.id,
+      metadata: { actionId: appeal.actionId, decision: input.decision },
+    })
+    const [dto] = await appealDtos(tx, eq(appeals.id, appeal.id))
+    return dto!
+  })
+}
+
+// ── 감사 ─────────────────────────────────────────────────────────────────
+
+/** GET /operator/audit?target=<uuid> — 그 대상 id(또는 metadata의 actionId·reportId·publicationId)의 감사 기록, 최근 것부터 200개. */
+export async function listAudit(db: DbExecutor, actor: Actor, rawQuery: Record<string, unknown>): Promise<OperatorAuditEventDto[]> {
+  await requireOperator(db, actor)
+  if (!isUuid(rawQuery.target)) throw invalid({ target: rawQuery.target === undefined ? 'required' : 'invalid' })
+  const target = rawQuery.target.toLowerCase()
+  const rows = await db
+    .select()
+    .from(auditEvents)
+    .where(
+      or(
+        eq(auditEvents.targetId, target),
+        sql`${auditEvents.metadata}->>'actionId' = ${target}`,
+        sql`${auditEvents.metadata}->>'publicationId' = ${target}`,
+      ),
+    )
+    .orderBy(desc(auditEvents.at), desc(auditEvents.id))
+    .limit(200)
+  return rows.map((r) => ({
+    id: r.id,
+    actorId: r.actorId,
+    action: r.action,
+    targetType: r.targetType,
+    targetId: r.targetId,
+    metadata: r.metadata,
+    at: r.at.toISOString(),
+  }))
+}

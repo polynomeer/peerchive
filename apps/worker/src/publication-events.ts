@@ -60,14 +60,15 @@ export function parsePublicationPayload(data: unknown): PublicationOutboxPayload
   if (!ids.every((k) => typeof d[k] === 'string' && UUID.test(d[k] as string))) return null
   if (!Number.isInteger(d.accessEpoch) || (d.accessEpoch as number) < 0) return null
   if (!Number.isInteger(d.releaseNo) || (d.releaseNo as number) < 0) return null
-  if (d.cause !== undefined && d.cause !== 'owner' && d.cause !== 'consent_revoked') return null
+  // restricted: 운영 조치로 공개를 제한(T-15). 정리 handler는 철회와 똑같이 동작합니다.
+  if (d.cause !== undefined && d.cause !== 'owner' && d.cause !== 'consent_revoked' && d.cause !== 'restricted') return null
   return {
     publicationId: d.publicationId as string,
     projectId: d.projectId as string,
     releaseId: d.releaseId as string,
     releaseNo: d.releaseNo as number,
     accessEpoch: d.accessEpoch as number,
-    ...(d.cause !== undefined && { cause: d.cause as 'owner' | 'consent_revoked' }),
+    ...(d.cause !== undefined && { cause: d.cause as NonNullable<PublicationOutboxPayload['cause']> }),
   }
 }
 

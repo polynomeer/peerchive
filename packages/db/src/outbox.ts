@@ -17,8 +17,8 @@ export interface PublicationOutboxPayload {
   releaseNo: number
   /** 이 이벤트 뒤의 publications.access_epoch. 정리 handler는 이 값보다 오래된 파생 행을 지웁니다. */
   accessEpoch: number
-  /** 철회 원인(withdrawn만). */
-  cause?: 'owner' | 'consent_revoked'
+  /** 철회 원인(withdrawn만). restricted는 운영 조치로 공개를 제한한 경우(T-15, release도 withdrawn이 됨). */
+  cause?: 'owner' | 'consent_revoked' | 'restricted'
   /** 게시가 대체한 이전 release(published만, 없으면 null). */
   replacedReleaseId?: string | null
 }
@@ -33,4 +33,15 @@ export interface SeniorNoteOutboxPayload {
   courseId: string
   /** 이벤트 시점의 노트 version. 게시 handler는 지금 version이 같고 published일 때만 색인합니다. */
   version: number
+}
+
+/**
+ * 운영 조치 적용·되돌림(T-15). worker가 남은 파생 데이터를 맞춥니다(가린 막힘 카드·숨긴 노트의 검색 문서 삭제, 되돌리면 다시 색인).
+ * 공개 읽기는 이 이벤트를 기다리지 않습니다(요청마다 조치 상태를 확인). 공개 제한(restrict)은 `publication.withdrawn`(cause restricted)도 남깁니다.
+ */
+export const MODERATION_ACTION_TOPIC = 'moderation.action'
+
+export interface ModerationActionOutboxPayload {
+  actionId: string
+  phase: 'applied' | 'reversed'
 }

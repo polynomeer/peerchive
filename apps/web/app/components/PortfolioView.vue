@@ -44,7 +44,7 @@ const titleOf = (ref: string) => props.view.matrix.columns.find((c) => c.ref ===
             <h4>{{ section.label }}</h4>
             <ul class="case-sentences">
               <li v-for="(sentence, i) in section.sentences" :key="i">
-                <p class="case-sentence">
+                <p class="case-sentence" :class="{ 'moderated-item muted': sentence.moderated }">
                   <span v-if="sentence.reflection" class="badge">{{ REFLECTION_LABEL }}</span>
                   {{ sentence.text }}
                 </p>

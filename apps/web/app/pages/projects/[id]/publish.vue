@@ -274,6 +274,14 @@ const bytes = (n: number) => formatBytes(n)
       <p v-if="embargoActive" class="notice error" role="status">
         이 과제는 엠바고 중이라 공개 후보를 만들 수 없습니다. 학기가 끝나도 자동으로 공개되지 않습니다.
       </p>
+      <!-- 운영 조치·보류 안내(T-15): 당사자용 사유만, 이의제기는 owner만 -->
+      <section v-if="state.moderation.length || state.holds.length" aria-label="운영 안내">
+        <ModerationNotice v-for="n in state.moderation" :key="n.actionId" :notice="n" :id-prefix="`pub-${n.actionId}`" @appealed="refresh()" />
+        <p v-if="state.holds.length" class="notice" role="status">
+          신고({{ state.holds.map((h) => REPORT_REASON_LABELS[h.reason]).join(', ') }})를 운영자가 검토하는 중이라 새 게시가 보류되어 있습니다.
+          지금 공개 중인 버전은 그대로 보입니다. 검토가 끝나면 다시 게시할 수 있습니다.
+        </p>
+      </section>
 
       <!-- 공개 상태(게시·철회) -->
       <section v-if="state.publication && (state.publication.firstPublishedAt || state.releases.length)" class="card" aria-labelledby="release-heading">
@@ -287,6 +295,10 @@ const bytes = (n: number) => formatBytes(n)
           <div v-if="state.canManage" class="actions">
             <button type="button" class="danger" @click="withdrawDialog?.showModal()">공개 철회</button>
           </div>
+        </template>
+        <template v-else-if="state.publication.status === 'restricted'">
+          <p><strong>운영 조치로 비공개</strong></p>
+          <p class="hint">공개 페이지와 파일은 열리지 않습니다. 위 안내의 사유를 확인하세요. 조치가 풀리면 새 후보를 만들어 동의를 다시 받고 게시해야 합니다.</p>
         </template>
         <template v-else-if="state.publication.status === 'withdrawn'">
           <p>

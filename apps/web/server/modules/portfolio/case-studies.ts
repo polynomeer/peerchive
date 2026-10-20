@@ -12,6 +12,7 @@
  * - 게시: 출처 없는 문장이 있으면 409 `uncited_sentences`(+위치), 한계·회고 구역의 reflection(본인 회고)만 예외. 공개 전 점검 경고는
  *   `confirmWarnings: true` 없이는 409 `checks_unconfirmed`. 고정한 release를 더 이상 제공하지 않으면 409 `unavailable`.
  * - 읽기 상태: 고정 release가 철회·대체·차단되면 읽는 즉시 unavailable로 봅니다(worker 표시를 기다리지 않음).
+ * - 운영 조치로 숨긴 케이스(hidden_at, T-15)는 공개 경로에 나오지 않고 게시가 409 `hidden`입니다(고치기는 됨, 이의제기로 되돌리면 다시 게시 가능).
  */
 import { z } from 'zod'
 import {
@@ -33,6 +34,7 @@ import { and, caseStudies, desc, eq, ne, projects, publicationCandidates, public
 import { recordAudit } from '../audit/audit'
 import { servableReleaseSql } from '../course-hub/public-scope'
 import { type Actor, ServiceError, conflict, invalid, notFound, rateLimited } from '../errors'
+import { caseStudyNotice } from '../moderation/notices'
 import { isUuid } from '../projects/access'
 import { loadServedRelease } from '../publication/public-read'
 import type { SnapshotRefs } from '../publication/snapshot'
@@ -174,6 +176,8 @@ async function toDto(db: DbExecutor, row: CaseStudyWithRelease, userId: string, 
     publishedAt: cs.publishedAt?.toISOString() ?? null,
     createdAt: cs.createdAt.toISOString(),
     updatedAt: cs.updatedAt.toISOString(),
+    hidden: cs.hiddenAt !== null,
+    moderation: cs.hiddenAt ? await caseStudyNotice(db, { userId }, cs.id) : null,
   }
 }
 
@@ -378,6 +382,7 @@ export async function publishCaseStudy(db: DbExecutor, actor: Actor, caseStudyId
     const cs = row.caseStudy
     assertEditable(row)
     if (cs.version !== input.expectedVersion) throw conflict('version_conflict', { currentVersion: cs.version })
+    if (cs.hiddenAt) throw conflict('hidden')
     if (cs.status === 'published') return toDto(tx, row, actor.userId, now)
     // 자격 재확인: 익명이던 사람은 연결 확인이 저장되어 있어야 합니다(DB check로도 보장).
     if (cs.selfAnonymous && !cs.revealSelf) throw invalid({ revealSelf: 'confirm_required' })

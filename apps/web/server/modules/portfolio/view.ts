@@ -13,9 +13,13 @@ import {
   CASE_SECTION_LABELS,
   type CaseCitation,
   type MatrixColumnInput,
+  HIDDEN_ITEM_PLACEHOLDER,
   citationLabel,
   citationPath,
+  citesHiddenItem,
   computeCompetencyMatrix,
+  hiddenItemSet,
+  isItemHidden,
 } from '@peerchive/domain'
 import { caseStudies, inArray, type DbExecutor } from '@peerchive/db'
 import { asCaseSnapshot, type CaseStudyWithRelease, loadCaseStudiesWithRelease, loadSections } from './release-scope'
@@ -37,8 +41,8 @@ export interface EditionModel {
 
 export const featuredAnchor = (index: number) => `case-${index + 1}`
 
-/** 이 사용자의 케이스 중 공개 경로에 실을 수 있는 것(게시 중 + 고정 release 제공 가능). */
-export const isPubliclyVisible = (row: CaseStudyWithRelease) => row.caseStudy.status === 'published' && row.servable
+/** 이 사용자의 케이스 중 공개 경로에 실을 수 있는 것(게시 중 + 고정 release 제공 가능 + 운영 조치로 숨기지 않음, T-15). */
+export const isPubliclyVisible = (row: CaseStudyWithRelease) => row.caseStudy.status === 'published' && row.servable && row.caseStudy.hiddenAt === null
 
 export async function buildPortfolioView(db: DbExecutor, model: EditionModel, now: Date): Promise<PortfolioViewDto> {
   const rows = model.featured.length
@@ -48,7 +52,12 @@ export async function buildPortfolioView(db: DbExecutor, model: EditionModel, no
   const visible = rows.filter(isPubliclyVisible)
   const sections = await loadSections(db, visible.map((r) => r.caseStudy))
 
+  const hiddenBy = new Map(rows.map((r) => [r.caseStudy.id, hiddenItemSet(r.hidden)]))
+  const isHidden = (row: CaseStudyWithRelease, c: Pick<CaseCitation, 'kind' | 'key'>) =>
+    isItemHidden(hiddenBy.get(row.caseStudy.id) ?? new Set(), c.kind, c.key)
   const citation = (row: CaseStudyWithRelease, c: Pick<CaseCitation, 'kind' | 'key'>): PublicCitationDto | null => {
+    // 운영 조치로 가린 항목은 글·위치를 싣지 않습니다(T-15).
+    if (isHidden(row, c)) return null
     const label = citationLabel(asCaseSnapshot(row.snapshot), c)
     return label ? { label, path: citationPath(row.slug, c) } : null
   }
@@ -75,11 +84,16 @@ export async function buildPortfolioView(db: DbExecutor, model: EditionModel, no
         .map((s) => ({
           key: s.key,
           label: CASE_SECTION_LABELS[s.key],
-          sentences: s.sentences.map((sentence) => ({
-            text: sentence.text,
-            reflection: sentence.kind === 'reflection',
-            citations: sentence.citations.map((c) => citation(row, c)).filter((c): c is PublicCitationDto => c !== null),
-          })),
+          // 가린 항목을 인용한 문장은 글 전체를 자리 표시로 바꿉니다(초안 문장이 스냅샷 글을 담고 있으므로, T-15).
+          sentences: s.sentences.map((sentence) =>
+            citesHiddenItem(sentence.citations, hiddenBy.get(cs.id) ?? new Set())
+              ? { text: HIDDEN_ITEM_PLACEHOLDER, reflection: false, citations: [], moderated: true }
+              : {
+                  text: sentence.text,
+                  reflection: sentence.kind === 'reflection',
+                  citations: sentence.citations.map((c) => citation(row, c)).filter((c): c is PublicCitationDto => c !== null),
+                },
+          ),
         })),
     }
   })
@@ -97,6 +111,10 @@ export async function buildPortfolioView(db: DbExecutor, model: EditionModel, no
       preset: c.preset,
       evidence: model.evidence
         .filter((e) => e.competencyIndex === i && columnOf.has(e.caseStudyId))
+        .filter((e) => {
+          const row = byId.get(e.caseStudyId)
+          return !row || !isHidden(row, e)
+        })
         .map((e) => ({ column: columnOf.get(e.caseStudyId)!, citations: [{ kind: e.kind, key: e.key }] })),
     })),
   )

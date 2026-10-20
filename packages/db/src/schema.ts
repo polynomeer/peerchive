@@ -29,6 +29,8 @@
  * T-14(0013 migration): 케이스 스터디(case_studies, 게시된 release 하나에 고정)·문장(case_sentences, 문장마다 스냅샷 인용),
  * 포트폴리오 판(portfolio_editions, 만든 뒤 바꾸지 않음)·대표 사례(portfolio_items)·역량 근거(competency_evidence, 점수 없음).
  * 결정은 ADR 0014.
+ * T-15(0014 migration): 신고(reports)·운영 조치(moderation_actions)·가린 항목(release_hidden_items)·보류(holds)·이의제기(appeals),
+ * 케이스 스터디·공개 프로필의 운영 숨김(case_studies.hidden_at·profiles.hidden_at). 결정은 ADR 0015.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -146,6 +148,18 @@ export const searchDocKind = pgEnum('search_doc_kind', ['case', 'stuck', 'note']
 export const caseJobTarget = pgEnum('case_job_target', ['backend', 'frontend', 'data', 'pm', 'design', 'general'])
 /** 케이스 스터디 상태(T-14): 초안 → 게시 → (원본 release 철회·대체 시) 이용 불가. 이용 불가는 되돌리지 않습니다. */
 export const caseStudyStatus = pgEnum('case_study_status', ['draft', 'published', 'unavailable'])
+/** 신고 대상(T-15, @peerchive/domain REPORT_TARGET_TYPES). 모두 지금 공개인 것만 신고할 수 있습니다. */
+export const reportTargetType = pgEnum('report_target_type', ['publication', 'publication_item', 'senior_note', 'case_study', 'profile'])
+/** 신고 사유(T-15, REPORT_REASONS). 개인정보·저작권은 공개 사례에 보류를 겁니다. */
+export const reportReason = pgEnum('report_reason', ['personal_info', 'answer_sharing', 'copyright', 'harassment', 'false_claim', 'spam', 'other'])
+/** 신고 상태(T-15): 접수 → 검토 중 → 처리됨/기각. 닫힌 신고는 다시 열지 않습니다. */
+export const reportStatus = pgEnum('report_status', ['open', 'in_review', 'resolved', 'dismissed'])
+/** 운영 조치 종류(T-15, MODERATION_ACTION_KINDS). 모두 공개 차단이며 삭제는 없습니다. */
+export const moderationActionKind = pgEnum('moderation_action_kind', ['none', 'restrict', 'hide_item', 'hide_note', 'hide_case_study', 'hide_profile'])
+/** 공개 사례 안에서 가릴 수 있는 항목(T-15, HIDDEN_ITEM_KINDS). */
+export const hiddenItemKind = pgEnum('hidden_item_kind', ['log', 'claim', 'artifact'])
+/** 이의제기 상태(T-15): 열림 → 유지/되돌림. */
+export const appealStatus = pgEnum('appeal_status', ['open', 'upheld', 'reversed'])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -247,6 +261,8 @@ export const profiles = pgTable(
     gradTerm: text('grad_term'),
     contactPolicy: contactPolicy('contact_policy').notNull().default('closed'),
     openToWork: boolean('open_to_work').notNull().default(false),
+    /** 운영 조치로 공개 프로필을 숨긴 시각(T-15). 숨김이면 /u/:handle·README 카드·이전 공개 프로필 API가 404입니다. 계정·과제 공간은 그대로입니다. */
+    hiddenAt: timestamp('hidden_at', { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -1584,6 +1600,8 @@ export const caseStudies = pgTable(
     unavailableAt: timestamp('unavailable_at', { withTimezone: true }),
     /** withdrawn(원본 공개 철회) / replaced(새 공개 버전으로 대체). */
     unavailableReason: text('unavailable_reason'),
+    /** 운영 조치로 숨긴 시각(T-15). 숨김이면 공개 경로에 나오지 않고 다시 게시할 수 없습니다(이의제기로 되돌리면 null). 상태(status)와 별개입니다. */
+    hiddenAt: timestamp('hidden_at', { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -1711,5 +1729,203 @@ export const competencyEvidence = pgTable(
     check('competency_evidence_index_check', sql`${t.competencyIndex} between 0 and 11`),
     check('competency_evidence_kind_check', sql`${t.evidenceKind} in ('log', 'claim', 'milestone', 'artifact')`),
     check('competency_evidence_key_check', sql`char_length(${t.evidenceKey}) between 1 and 64`),
+  ],
+)
+
+// ── 신고·운영 조치 (§6.6 Report·AuditEvent, §7.2 restricted, §8 운영 예외, T-15, ADR 0015) ─────────────
+
+/**
+ * 운영 조치. 신고를 처리(resolve·dismiss)할 때 하나씩 만들고, 처리한 신고들이 이 행을 가리킵니다(dismiss·조치 없음도 kind 'none'으로 남김).
+ * - internal_note: 운영자 내부 메모(필수, 당사자·신고자에게 보이지 않음). public_reason: 당사자에게 보여 줄 사유(별도 필드).
+ * - 대상 열은 신고 대상과 같은 모양(공개·release·항목 / 노트 / 케이스 / 프로필 사용자). 대상 내용은 복사하지 않습니다.
+ * - 되돌림(reversed_*): 운영자의 제한 해제(lift) 또는 이의제기 되돌림(appeal). 행은 지우지 않습니다.
+ * - 삭제 조치는 없습니다(차단 ≠ 삭제, §8). 비공개 과제 공간을 읽는 권한도 주지 않습니다.
+ */
+export const moderationActions = pgTable(
+  'moderation_actions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    kind: moderationActionKind('kind').notNull(),
+    /** resolved: 처리(조치 포함) / dismissed: 기각. */
+    outcome: text('outcome').notNull(),
+    targetType: reportTargetType('target_type').notNull(),
+    targetKey: text('target_key').notNull(),
+    publicationId: uuid('publication_id').references(() => publications.id),
+    releaseId: uuid('release_id').references(() => publicationCandidates.id),
+    itemKind: hiddenItemKind('item_kind'),
+    itemKey: text('item_key'),
+    seniorNoteId: uuid('senior_note_id').references(() => seniorNotes.id),
+    caseStudyId: uuid('case_study_id').references(() => caseStudies.id),
+    profileUserId: uuid('profile_user_id').references(() => users.id),
+    internalNote: text('internal_note').notNull(),
+    publicReason: text('public_reason'),
+    notifyOwner: boolean('notify_owner').notNull().default(false),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+    reversedAt: timestamp('reversed_at', { withTimezone: true }),
+    reversedBy: uuid('reversed_by').references(() => users.id),
+    reverseNote: text('reverse_note'),
+    /** lift(운영자 제한 해제) / appeal(이의제기 되돌림). */
+    reverseCause: text('reverse_cause'),
+  },
+  (t) => [
+    index('moderation_actions_target_key_idx').on(t.targetKey, t.createdAt),
+    index('moderation_actions_publication_idx').on(t.publicationId),
+    index('moderation_actions_senior_note_idx').on(t.seniorNoteId),
+    index('moderation_actions_case_study_idx').on(t.caseStudyId),
+    index('moderation_actions_profile_user_idx').on(t.profileUserId),
+    check('moderation_actions_outcome_check', sql`${t.outcome} in ('resolved', 'dismissed') and (${t.outcome} = 'resolved' or ${t.kind} = 'none')`),
+    check('moderation_actions_internal_note_check', sql`char_length(${t.internalNote}) between 1 and 1000`),
+    check('moderation_actions_public_reason_check', sql`${t.publicReason} is null or char_length(${t.publicReason}) between 1 and 300`),
+    check('moderation_actions_reverse_note_check', sql`${t.reverseNote} is null or char_length(${t.reverseNote}) between 1 and 1000`),
+    check(
+      'moderation_actions_reversed_check',
+      sql`(${t.reversedAt} is null) = (${t.reverseCause} is null) and (${t.reverseCause} is null or ${t.reverseCause} in ('lift', 'appeal')) and (${t.reversedAt} is null or ${t.kind} <> 'none')`,
+    ),
+    check('moderation_actions_item_check', sql`(${t.kind} <> 'hide_item') or (${t.itemKind} is not null and ${t.itemKey} is not null and ${t.publicationId} is not null)`),
+  ],
+)
+
+/**
+ * 신고. 로그인한 사용자만(파일럿). 대상은 신고 때 지금 공개인 것이어야 하고, 대상 내용은 복사하지 않고 가리키기만 합니다
+ * (공개 사례는 그때의 release, 노트·케이스는 그때의 version을 바꾸지 않는 포인터로 남김).
+ * - target_key: 같은 대상을 묶는 키(@peerchive/domain reportTargetKey). 같은 신고자·대상의 처리 전 신고는 하나(부분 unique).
+ * - details: 신고자가 쓴 설명(1000자, 선택). 운영자만 보고 감사 기록에는 넣지 않습니다.
+ * - action_id: 처리한 운영 조치. 신고자에게는 상태(접수·검토 중·처리됨·기각)만 보여 줍니다.
+ */
+export const reports = pgTable(
+  'reports',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    reporterId: uuid('reporter_id')
+      .notNull()
+      .references(() => users.id),
+    targetType: reportTargetType('target_type').notNull(),
+    targetKey: text('target_key').notNull(),
+    publicationId: uuid('publication_id').references(() => publications.id),
+    /** 신고 때 제공 중이던 release(그 스냅샷이 운영자가 보는 "공개된 내용"). */
+    releaseId: uuid('release_id').references(() => publicationCandidates.id),
+    itemKind: hiddenItemKind('item_kind'),
+    itemKey: text('item_key'),
+    seniorNoteId: uuid('senior_note_id').references(() => seniorNotes.id),
+    noteVersion: integer('note_version'),
+    caseStudyId: uuid('case_study_id').references(() => caseStudies.id),
+    caseStudyVersion: integer('case_study_version'),
+    profileUserId: uuid('profile_user_id').references(() => users.id),
+    reason: reportReason('reason').notNull(),
+    details: text('details'),
+    status: reportStatus('status').notNull().default('open'),
+    assignedTo: uuid('assigned_to').references(() => users.id),
+    assignedAt: timestamp('assigned_at', { withTimezone: true }),
+    actionId: uuid('action_id').references(() => moderationActions.id),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('reports_open_reporter_target_key')
+      .on(t.reporterId, t.targetKey)
+      .where(sql`${t.status} in ('open', 'in_review')`),
+    index('reports_target_key_idx').on(t.targetKey, t.status),
+    index('reports_status_created_idx').on(t.status, t.createdAt),
+    index('reports_reporter_idx').on(t.reporterId, t.createdAt),
+    check('reports_details_check', sql`${t.details} is null or char_length(${t.details}) between 1 and 1000`),
+    check('reports_closed_check', sql`(${t.status} in ('resolved', 'dismissed')) = (${t.closedAt} is not null and ${t.actionId} is not null)`),
+    check('reports_item_key_check', sql`${t.itemKey} is null or char_length(${t.itemKey}) between 1 and 64`),
+    check(
+      'reports_target_check',
+      sql`(${t.targetType} = 'publication' and ${t.publicationId} is not null and ${t.releaseId} is not null and ${t.itemKind} is null)
+        or (${t.targetType} = 'publication_item' and ${t.publicationId} is not null and ${t.releaseId} is not null and ${t.itemKind} is not null and ${t.itemKey} is not null)
+        or (${t.targetType} = 'senior_note' and ${t.seniorNoteId} is not null and ${t.noteVersion} is not null)
+        or (${t.targetType} = 'case_study' and ${t.caseStudyId} is not null and ${t.caseStudyVersion} is not null)
+        or (${t.targetType} = 'profile' and ${t.profileUserId} is not null)`,
+    ),
+  ],
+)
+
+/**
+ * 공개 사례 안의 가린 항목(hide_item). 공개(publication) 전체에 적용합니다: 스냅샷 키는 공개마다 안정되므로 새 버전을 게시해도 같은 항목은
+ * 계속 가려집니다(되돌림·이의제기로만 풂). release_id는 가린 때의 release입니다. 공개 읽기(사례 페이지·파일·과목 허브·검색·신호·포크·
+ * 케이스 스터디 인용)는 요청마다 이 표를 읽어 같은 요청 안에서 거릅니다.
+ */
+export const releaseHiddenItems = pgTable(
+  'release_hidden_items',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    publicationId: uuid('publication_id')
+      .notNull()
+      .references(() => publications.id),
+    releaseId: uuid('release_id')
+      .notNull()
+      .references(() => publicationCandidates.id),
+    itemKind: hiddenItemKind('item_kind').notNull(),
+    itemKey: text('item_key').notNull(),
+    actionId: uuid('action_id')
+      .notNull()
+      .references(() => moderationActions.id),
+    createdAt: createdAt(),
+    liftedAt: timestamp('lifted_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('release_hidden_items_active_key')
+      .on(t.publicationId, t.itemKind, t.itemKey)
+      .where(sql`${t.liftedAt} is null`),
+    index('release_hidden_items_action_idx').on(t.actionId),
+    check('release_hidden_items_key_check', sql`char_length(${t.itemKey}) between 1 and 64`),
+  ],
+)
+
+/**
+ * 보류(hold). 개인정보·저작권 신고가 들어오면 그 공개에 하나 생기고, 그 신고가 처리(resolve·dismiss)되면 풀립니다.
+ * 열린 보류가 있으면 후보가 ready가 되지 않고 게시·새 버전 게시가 409 publish_blocked(hold_open)입니다(도메인 hasOpenHold).
+ * 이미 제공 중인 release를 내리지는 않습니다(내리는 것은 운영 조치 restrict).
+ */
+export const holds = pgTable(
+  'holds',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    publicationId: uuid('publication_id')
+      .notNull()
+      .references(() => publications.id),
+    reason: reportReason('reason').notNull(),
+    createdByReportId: uuid('created_by_report_id')
+      .notNull()
+      .unique()
+      .references(() => reports.id),
+    createdAt: createdAt(),
+    releasedAt: timestamp('released_at', { withTimezone: true }),
+    releasedBy: uuid('released_by').references(() => users.id),
+  },
+  (t) => [
+    index('holds_open_publication_idx').on(t.publicationId).where(sql`${t.releasedAt} is null`),
+    check('holds_reason_check', sql`${t.reason} in ('personal_info', 'copyright')`),
+  ],
+)
+
+/** 이의제기. 조치마다 하나(unique), 조치의 당사자만. 운영자가 유지(upheld) 또는 되돌림(reversed, 조치를 풂)으로 결정합니다. */
+export const appeals = pgTable(
+  'appeals',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    actionId: uuid('action_id')
+      .notNull()
+      .unique()
+      .references(() => moderationActions.id),
+    appellantId: uuid('appellant_id')
+      .notNull()
+      .references(() => users.id),
+    message: text('message').notNull(),
+    status: appealStatus('status').notNull().default('open'),
+    decidedBy: uuid('decided_by').references(() => users.id),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    decisionNote: text('decision_note'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('appeals_status_created_idx').on(t.status, t.createdAt),
+    check('appeals_message_check', sql`char_length(${t.message}) between 1 and 1000`),
+    check('appeals_decision_note_check', sql`${t.decisionNote} is null or char_length(${t.decisionNote}) between 1 and 1000`),
+    check('appeals_decided_check', sql`(${t.status} = 'open') = (${t.decidedAt} is null)`),
   ],
 )

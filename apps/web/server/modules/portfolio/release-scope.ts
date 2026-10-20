@@ -5,7 +5,15 @@
  * 지금 release + 엠바고 없음)로 고정한 release를 확인하므로, 철회·대체가 커밋되는 순간 케이스 내용이 공개 경로에서 사라집니다
  * (worker의 unavailable 표시는 남은 상태를 맞출 뿐입니다).
  */
-import { CASE_SECTIONS, type CaseCitation, type CaseSectionDraft, type CaseSentenceKind, type CaseSnapshot, caseSectionOrder } from '@peerchive/domain'
+import {
+  CASE_SECTIONS,
+  type CaseCitation,
+  type CaseSectionDraft,
+  type CaseSentenceKind,
+  type CaseSnapshot,
+  type HiddenItemRef,
+  caseSectionOrder,
+} from '@peerchive/domain'
 import {
   asc,
   caseSentences,
@@ -20,6 +28,7 @@ import {
   type SQL,
 } from '@peerchive/db'
 import { servableReleaseSql } from '../course-hub/public-scope'
+import { loadHiddenItems } from '../moderation/hidden-items'
 import type { CaseUnavailableReason, PublicSnapshot } from '../../../shared/types/api'
 
 export type CaseStudyRow = typeof caseStudies.$inferSelect
@@ -33,6 +42,8 @@ export interface CaseStudyWithRelease {
   snapshot: PublicSnapshot
   /** 고정한 release를 지금 공개로 내줄 수 있는지(같은 쿼리에서 판정). */
   servable: boolean
+  /** 그 공개에서 운영 조치로 가린 항목(T-15). 공개 보기는 이것을 인용한 문장을 가립니다. */
+  hidden: HiddenItemRef[]
 }
 
 /** 케이스 스터디 + 고정 release(스냅샷·제공 가능 여부). `where`로 고릅니다. */
@@ -56,7 +67,13 @@ export async function loadCaseStudiesWithRelease(
     .innerJoin(publications, eq(publications.id, caseStudies.publicationId))
     .innerJoin(projects, eq(projects.id, publications.projectId))
     .where(where)
-  return rows.map((r) => ({ ...r, snapshot: r.snapshot as unknown as PublicSnapshot, servable: r.servable === true }))
+  const hidden = await loadHiddenItems(db, rows.map((r) => r.caseStudy.publicationId))
+  return rows.map((r) => ({
+    ...r,
+    snapshot: r.snapshot as unknown as PublicSnapshot,
+    servable: r.servable === true,
+    hidden: hidden.get(r.caseStudy.publicationId) ?? [],
+  }))
 }
 
 /** 읽는 지금 기준 상태와 볼 수 없는 이유. 저장된 unavailable은 되돌리지 않습니다. */

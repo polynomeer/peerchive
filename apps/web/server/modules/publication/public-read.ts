@@ -5,6 +5,8 @@
  *   읽지 않고, 스냅샷을 다시 만들지도 않습니다. 정책 판정에 필요한 행(공개·release 상태, 엠바고, 파일 검사 상태)만 읽습니다.
  * - 요청마다 DB에서 상태를 읽습니다(캐시 없음). 철회·대체·엠바고가 커밋되는 순간 다음 요청부터 404입니다. worker가 늦거나 죽어도 같습니다.
  * - 내줄 수 없는 모든 경우는 같은 404입니다(없음·철회·대체·엠바고·준비 중을 구분하지 않음).
+ * - 운영 조치(T-15): 제한(restricted)은 공개 상태가 published가 아니므로 위 판정에서 404이고, 가린 항목(hide_item)은 요청마다
+ *   release_hidden_items를 읽어 스냅샷 사본에서 뺍니다(파일은 404, 페이지는 자리 표시). 저장된 스냅샷은 바꾸지 않습니다.
  */
 import type { Readable } from 'node:stream'
 import {
@@ -29,8 +31,9 @@ import {
 } from '@peerchive/db'
 import { getProjectEmbargo } from '../embargo/embargo'
 import { notFound } from '../errors'
+import { loadHiddenItems, redactSnapshot } from '../moderation/hidden-items'
 import { isUuid } from '../projects/access'
-import type { PublicPublicationDto, PublicSnapshot } from '../../../shared/types/api'
+import type { HiddenItemPlaceholderDto, PublicPublicationDto, PublicSnapshot } from '../../../shared/types/api'
 
 const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/
 
@@ -40,11 +43,17 @@ type CandidateRow = typeof publicationCandidates.$inferSelect
 interface ServedRelease {
   publication: PublicationRow
   release: CandidateRow
+  /** 공개로 내줄 스냅샷: 저장된 스냅샷에서 운영 조치로 가린 항목을 뺀 사본(T-15). */
   snapshot: PublicSnapshot
+  /** 가린 항목의 원래 자리. */
+  hiddenItems: HiddenItemPlaceholderDto[]
   state: PublicReadState
 }
 
-/** slug의 지금 release를 내줄 수 있으면 돌려주고, 아니면 null. 매 요청 DB를 읽습니다. 플랜 포크·신호(T-13)도 이 판정을 씁니다. */
+/**
+ * slug의 지금 release를 내줄 수 있으면 돌려주고, 아니면 null. 매 요청 DB를 읽습니다. 플랜 포크·신호(T-13)·케이스 초안(T-14)·신고(T-15)도
+ * 이 판정을 씁니다. 돌려주는 snapshot은 가린 항목을 뺀 사본입니다(가린 글이 포크·신호·초안으로 새지 않게).
+ */
 export async function loadServedRelease(db: DbExecutor, slug: unknown, now: Date): Promise<ServedRelease | null> {
   if (typeof slug !== 'string' || slug.length < 3 || slug.length > 60 || !SLUG_PATTERN.test(slug)) return null
   const [row] = await db
@@ -62,14 +71,16 @@ export async function loadServedRelease(db: DbExecutor, slug: unknown, now: Date
     embargoActive: embargo.active,
   }
   if (!canServePublicRelease(state) || row.release.releaseNo === null || !row.release.publishedAt) return null
-  return { ...row, snapshot: row.release.snapshot as unknown as PublicSnapshot, state }
+  const hidden = (await loadHiddenItems(db, [row.publication.id])).get(row.publication.id) ?? []
+  const redacted = redactSnapshot(row.release.snapshot as unknown as PublicSnapshot, hidden)
+  return { ...row, snapshot: redacted.snapshot, hiddenItems: redacted.placeholders, state }
 }
 
 /** GET /public/publications/:slug — 지금 release의 저장된 스냅샷 그대로 + 공개 메타데이터. 그 밖에는 404. */
 export async function getPublicPublication(db: DbExecutor, slug: unknown, now = new Date()): Promise<PublicPublicationDto> {
   const served = await loadServedRelease(db, slug, now)
   if (!served) throw notFound()
-  const { publication, release, snapshot } = served
+  const { publication, release, snapshot, hiddenItems } = served
   let courseId: string | null = null
   if (release.courseId) {
     const [course] = await db.select({ id: courses.id, mergedInto: courses.mergedInto }).from(courses).where(eq(courses.id, release.courseId)).limit(1)
@@ -88,6 +99,7 @@ export async function getPublicPublication(db: DbExecutor, slug: unknown, now = 
     snapshot,
     courseId,
     forkCount: forks,
+    hiddenItems,
   }
 }
 
@@ -118,6 +130,7 @@ export async function openPublicArtifact(
   const served = await loadServedRelease(db, slug, now)
   if (!served) throw notFound()
   const { publication, release, snapshot, state } = served
+  // 가린 파일은 사본의 artifacts에 없으므로 같은 404입니다(T-15).
   const entry = snapshot.artifacts.find((a) => a.artifactVersionId === id)
   const [row] = entry
     ? await db
