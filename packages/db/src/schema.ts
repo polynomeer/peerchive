@@ -11,7 +11,8 @@
  * T-06(0004 migration): 마일스톤(milestones)·스냅샷(milestone_snapshots), 로그 revision의 마일스톤(log_revisions.milestone_id).
  * T-07(0005 migration): 할 일(tasks, 원본 Card 계승)과 빌드 로그 전환 연결(tasks.log_entry_id),
  * 사후 작성 표시(log_entries·milestones·milestone_snapshots.retrospective, 만들 때의 projects.retro_mode로 고정).
- * 공개(Publication)·동의·기여는 다음 slice에서 추가합니다.
+ * T-08(0006 migration): 역할 선언(role_claims)·revision(claim_revisions)·근거(claim_evidence)·팀원 확인(endorsements).
+ * 공개(Publication)·동의는 다음 slice에서 추가합니다.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -72,6 +73,8 @@ export const artifactKind = pgEnum('artifact_kind', ['file', 'link', 'repo', 'de
 export const scanStatus = pgEnum('scan_status', ['pending', 'scanning', 'clean', 'quarantined', 'failed'])
 /** 할 일 상태(원본 ProofU List의 Todo/Doing/Done). 전이 규칙은 @peerchive/domain의 statusChange입니다. */
 export const taskStatus = pgEnum('task_status', ['todo', 'doing', 'done'])
+/** 팀원 확인 상태(§7.3). 철회는 행을 지웁니다. 판정 규칙은 @peerchive/domain의 claimStatus입니다. */
+export const endorsementStatus = pgEnum('endorsement_status', ['confirmed', 'disputed'])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -657,6 +660,115 @@ export const tasks = pgTable(
     check('tasks_version_check', sql`${t.version} >= 1`),
     // 완료 상태와 완료 시각은 함께 다닙니다.
     check('tasks_completed_check', sql`(${t.status} = 'done') = (${t.completedAt} is not null)`),
+  ],
+)
+
+// ── 기여 (§6.4, §7.3, T-08) ─────────────────────────────────────────────
+
+/**
+ * 역할 선언(개인 주장). 내용은 revision(claim_revisions)에 쌓고, 수정은 항상 새 revision입니다.
+ * current_revision_id가 최신 revision을 가리킵니다. 비율 합산을 강제하지 않습니다.
+ * 멤버당 최대 10개는 애플리케이션이 프로젝트 행을 잠근 채 확인합니다.
+ */
+export const roleClaims = pgTable(
+  'role_claims',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    /** 선언한 사람. 수정은 이 사람만 합니다(owner 우회 없음). */
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    /** 첫 revision 저장 전에는 null. claim_revisions와 순환 참조이므로 아래 foreignKey로 선언합니다. */
+    currentRevisionId: uuid('current_revision_id'),
+    createdAt: createdAt(),
+  },
+  (t): PgTableExtraConfigValue[] => [
+    index('role_claims_project_user_idx').on(t.projectId, t.userId, t.createdAt),
+    foreignKey({
+      name: 'role_claims_current_revision_id_fk',
+      columns: [t.currentRevisionId],
+      foreignColumns: [claimRevisions.id],
+    }),
+  ],
+)
+
+/** 선언 revision. 추가만 하며, 팀원 확인은 revision에 붙습니다(새 revision에 승계되지 않음). */
+export const claimRevisions = pgTable(
+  'claim_revisions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    claimId: uuid('claim_id')
+      .notNull()
+      .references((): AnyPgColumn => roleClaims.id),
+    revisionNo: integer('revision_no').notNull(),
+    text: text('text').notNull(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t): PgTableExtraConfigValue[] => [
+    unique('claim_revisions_claim_id_revision_no_key').on(t.claimId, t.revisionNo),
+    check('claim_revisions_revision_no_check', sql`${t.revisionNo} >= 1`),
+    check('claim_revisions_text_check', sql`char_length(${t.text}) between 1 and 300`),
+  ],
+)
+
+/**
+ * 선언 revision의 근거: 특정 로그 revision(저장할 때 그 로그의 현재 revision으로 고정) 또는 산출물 버전 중 하나.
+ * revision당 최대 20개, 같은 로그·버전은 한 번만. 같은 프로젝트인지는 애플리케이션이 확인합니다.
+ */
+export const claimEvidence = pgTable(
+  'claim_evidence',
+  {
+    claimRevisionId: uuid('claim_revision_id')
+      .notNull()
+      .references(() => claimRevisions.id),
+    position: integer('position').notNull(),
+    logEntryId: uuid('log_entry_id').references(() => logEntries.id),
+    /** 고정한 로그 revision. 그 로그(log_entry_id)의 revision인지는 애플리케이션이 확인합니다. */
+    logRevisionId: uuid('log_revision_id').references(() => logRevisions.id),
+    artifactVersionId: uuid('artifact_version_id').references(() => artifactVersions.id),
+  },
+  (t) => [
+    primaryKey({ name: 'claim_evidence_pkey', columns: [t.claimRevisionId, t.position] }),
+    unique('claim_evidence_log_entry_key').on(t.claimRevisionId, t.logEntryId),
+    unique('claim_evidence_artifact_version_key').on(t.claimRevisionId, t.artifactVersionId),
+    index('claim_evidence_log_entry_id_idx').on(t.logEntryId),
+    index('claim_evidence_artifact_version_id_idx').on(t.artifactVersionId),
+    check('claim_evidence_position_check', sql`${t.position} between 0 and 19`),
+    // 로그 근거(entry + 그 entry의 revision)와 파일 근거 중 정확히 하나.
+    check(
+      'claim_evidence_kind_check',
+      sql`(${t.logEntryId} is not null and ${t.logRevisionId} is not null and ${t.artifactVersionId} is null)
+        or (${t.logEntryId} is null and ${t.logRevisionId} is null and ${t.artifactVersionId} is not null)`,
+    ),
+  ],
+)
+
+/**
+ * 팀원 확인·이의. 한 사람은 한 revision에 하나만 남기고 바꿀 수 있습니다(철회는 행 삭제).
+ * 자기 확인 금지·같은 프로젝트 멤버·현재 revision만은 애플리케이션이 확인하고, 판정도 자기 확인을 무시합니다.
+ */
+export const endorsements = pgTable(
+  'endorsements',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    claimRevisionId: uuid('claim_revision_id')
+      .notNull()
+      .references(() => claimRevisions.id),
+    endorserId: uuid('endorser_id')
+      .notNull()
+      .references(() => users.id),
+    status: endorsementStatus('status').notNull(),
+    note: text('note'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    unique('endorsements_claim_revision_endorser_key').on(t.claimRevisionId, t.endorserId),
+    index('endorsements_endorser_id_idx').on(t.endorserId),
+    check('endorsements_note_check', sql`${t.note} is null or char_length(${t.note}) between 1 and 500`),
   ],
 )
 

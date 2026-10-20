@@ -32,13 +32,17 @@ export type AuditAction =
   | 'task.complete'
   | 'task.convert'
   | 'task.delete'
+  | 'claim.create'
+  | 'claim.revise'
+  | 'endorsement.set'
+  | 'endorsement.withdraw'
 
 export async function recordAudit(
   db: DbExecutor,
   event: {
     actorId: string | null
     action: AuditAction
-    targetType: 'project' | 'invitation' | 'member' | 'user' | 'log' | 'artifact' | 'milestone' | 'task'
+    targetType: 'project' | 'invitation' | 'member' | 'user' | 'log' | 'artifact' | 'milestone' | 'task' | 'claim'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

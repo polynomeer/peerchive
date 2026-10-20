@@ -111,8 +111,8 @@ function toLoaded(row: {
 
 const SUMMARY_MAX = 80
 
-/** 연결 표시용 한 줄 요약. 막힘은 증상, 그 밖에는 본문(없으면 대표 필드). */
-function summarize(tag: LogTag, body: string, payload: Record<string, unknown>): string {
+/** 연결·근거 표시용 한 줄 요약. 막힘은 증상, 그 밖에는 본문(없으면 대표 필드). 기여 장부(T-08)도 씁니다. */
+export function summarize(tag: LogTag, body: string, payload: Record<string, unknown>): string {
   const pick = (key: string) => (typeof payload[key] === 'string' ? (payload[key] as string) : '')
   const fallback: Partial<Record<LogTag, string>> = {
     solution: pick('method'),

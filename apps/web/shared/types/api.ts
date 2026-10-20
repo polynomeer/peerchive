@@ -388,6 +388,134 @@ export interface TaskConvertDto {
   log: LogDto
 }
 
+// ── 역할 선언·팀원 확인·기여 장부 (T-08) ──────────────────────────────────
+
+/** 선언 상태(§7.3). 화면 문구: 본인 설명 · 미확인 / 팀원 확인 N명 / 이의 있음. */
+export type ClaimStatus = 'unconfirmed' | 'confirmed' | 'disputed'
+export type EndorsementStatus = 'confirmed' | 'disputed'
+
+/** 선언 근거 한 건: 고정한 로그 revision 또는 산출물 버전. */
+export type ClaimEvidenceDto =
+  | {
+      kind: 'log'
+      logId: string
+      tag: LogTag
+      /** 고정한 revision의 한 줄 요약(막힘은 증상). */
+      summary: string
+      /** 선언할 때 고정한 로그 revision 번호. */
+      revisionNo: number
+      /** 그 로그의 지금 revision 번호(고정 뒤 고쳐졌으면 revisionNo보다 큼). */
+      currentRevisionNo: number
+      author: LogAuthorDto
+    }
+  | {
+      kind: 'artifact'
+      versionId: string
+      artifactId: string
+      /** 산출물 이름. */
+      title: string
+      fileName: string
+      versionNo: number
+      scanStatus: ScanStatus
+      /** clean일 때만. */
+      contentUrl: string | null
+    }
+
+/** 확인·이의 한 건. 같은 프로젝트 멤버에게만 줍니다. 이메일 없음. */
+export interface EndorsementDto {
+  endorser: LogAuthorDto
+  status: EndorsementStatus
+  note: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+/** 역할 선언 한 건(현재 revision). */
+export interface ClaimDto {
+  id: string
+  projectId: string
+  author: LogAuthorDto
+  /** 선언한 사람이 지금도 active 멤버인지(나간 멤버의 선언도 남습니다). */
+  authorActive: boolean
+  /** 현재 revision id. 확인 요청(PUT /claim-revisions/:id/endorsement)의 대상입니다. */
+  revisionId: string
+  /** 현재 revision 번호. 수정 요청의 expectedRevision으로 그대로 보냅니다. */
+  revisionNo: number
+  revisionCount: number
+  text: string
+  createdAt: string
+  /** 현재 revision을 저장한 시각. */
+  recordedAt: string
+  evidence: ClaimEvidenceDto[]
+  /** 현재 revision에 남은 확인·이의(이전 revision의 확인은 이력에만 있음). */
+  endorsements: EndorsementDto[]
+  status: ClaimStatus
+  confirmedCount: number
+  disputedCount: number
+  /** 요청자가 새 revision을 만들 수 있는지(작성자 본인만). */
+  canRevise: boolean
+  /** 요청자가 확인·이의를 남길 수 있는지(작성자가 아닌 owner/editor/reviewer). */
+  canEndorse: boolean
+  /** 요청자가 현재 revision에 남긴 확인·이의. */
+  myEndorsement: EndorsementStatus | null
+}
+
+/** 선언 revision 이력 한 건. 확인은 그 revision에 붙은 것만 보여 줍니다. */
+export interface ClaimRevisionDto {
+  id: string
+  revisionNo: number
+  text: string
+  recordedAt: string
+  evidence: ClaimEvidenceDto[]
+  endorsements: EndorsementDto[]
+  /** 이 revision만 놓고 본 상태. */
+  status: ClaimStatus
+  current: boolean
+}
+
+export const CONTRIBUTION_DISCLAIMER = '※ 개수는 참고용이며 기여의 크기를 뜻하지 않습니다.'
+
+/** 장부의 멤버 한 명. 점수·비율·순위 없이 종류별 개수와 선언만 담습니다. */
+export interface LedgerMemberDto {
+  member: LogAuthorDto
+  /** active 멤버인지. 나간·내보낸 멤버는 그 기간 기록이 있을 때만 나옵니다. */
+  active: boolean
+  /** 기간 중 작성한 로그 수(태그별, 처음 기록한 시각 기준). */
+  logCounts: Record<LogTag, number>
+  /** 기간 중 쓴 막힘 가운데 기간이 끝나기 전 해결 로그가 연결된 수. */
+  stuckResolved: number
+  tasksCompleted: number
+  /** 기간 중 올린 검사 통과(clean) 파일 버전 수. */
+  artifactsUploaded: number
+  /** 기간 중 회의 로그에 참석자로 적힌 횟수. */
+  meetingsAttended: number
+  /** 이 멤버의 역할 선언(기간과 무관한 현재 상태). */
+  claims: ClaimDto[]
+}
+
+export interface UnresolvedStuckDto {
+  id: string
+  summary: string
+  author: LogAuthorDto
+  createdAt: string
+  /** 만든 날을 1일째로 센 날수(기간 끝 또는 지금 중 이른 쪽 기준, 서울 날짜). */
+  openDays: number
+}
+
+export interface ContributionDto {
+  project: { id: string; title: string }
+  /** 서울 날짜(양 끝 포함). */
+  period: { from: string; to: string; timeZone: 'Asia/Seoul'; weekNo: number | null }
+  generatedAt: string
+  /** 이름순. 활동량으로 정렬하지 않습니다. */
+  members: LedgerMemberDto[]
+  /** 기간 끝까지 만든 막힘 가운데 아직 해결 로그가 없는 것(오래된 순, 최대 20개). */
+  unresolvedStuck: UnresolvedStuckDto[]
+  /** 기간과 겹치거나 가장 가까운 다음 마일스톤과 그 기간에 등록한 스냅샷 수. */
+  milestone: { title: string; dueAt: string | null; snapshotsInPeriod: number } | null
+  disclaimer: typeof CONTRIBUTION_DISCLAIMER
+}
+
 /** API 오류 응답의 data 부분. */
 export interface ApiErrorData {
   code: string
@@ -400,4 +528,6 @@ export interface ApiErrorData {
   limit?: number
   /** 409 in_use(마일스톤 삭제)일 때 그 마일스톤을 가리키는 로그 수(이전 revision 포함). */
   logCount?: number
+  /** 409 not_current(이전 선언 revision에 확인)일 때 현재 revision id. */
+  currentRevisionId?: string
 }

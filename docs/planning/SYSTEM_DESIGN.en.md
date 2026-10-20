@@ -304,7 +304,7 @@ The MVP implements `private` and `public(summary/full)`. `private` allows only a
 | Read private assignment space | Denied | That project only | That project only | That project only | Denied in principle |
 | Create/edit logs | Denied | Reviewer: feedback only | Own logs | Own logs | Denied |
 | Edit another person's role claim | Denied | Denied | Denied | Denied | Dispute actions only |
-| Endorse a role claim | Denied | Members of the same project | Allowed (except own) | Allowed (except own) | Denied |
+| Endorse a role claim | Denied | Reviewers only (except own); viewers denied | Allowed (except own) | Allowed (except own) | Denied |
 | Manage team members | Denied | Denied | Denied | Allowed | Operational actions only |
 | Publication consent involving oneself | Denied | Own scope only | Own scope only | Own scope only | No proxy consent |
 | Prepare / publish publication candidate | Denied | Denied | Prepare candidate | Publish when conditions are met | No proxy publishing |
