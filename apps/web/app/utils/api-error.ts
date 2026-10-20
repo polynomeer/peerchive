@@ -37,6 +37,7 @@ const FIELD_MESSAGES: Record<string, string> = {
   no_changes: '바뀐 내용이 없습니다.',
   not_attachable: '격리되었거나 검사에 실패한 파일은 근거로 붙일 수 없습니다.',
   not_clean: '검사를 통과한(사용 가능) 파일만 스냅샷으로 지정할 수 있습니다.',
+  metadata_not_stripped: '메타데이터(위치 정보 등)를 아직 지우지 않은 이전 이미지가 있습니다. 정리 작업 뒤 다시 시도하세요.',
   mismatch: '그 사이 마일스톤 목록이 바뀌었습니다. 최신 목록을 확인한 뒤 다시 시도하세요.',
   duplicate: '같은 항목이 두 번 들어 있습니다.',
 }

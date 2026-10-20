@@ -18,6 +18,7 @@ export const PUBLICATION_CHECK_RULES = [
   'answer_file',
   'long_code',
   'anonymous_name',
+  'pdf_metadata',
 ] as const
 export type PublicationCheckRule = (typeof PUBLICATION_CHECK_RULES)[number]
 
@@ -49,6 +50,11 @@ export interface CheckWarning {
 export interface CheckOptions {
   /** 익명으로 고른 팀원의 표시 이름. 공개될 글에 이 이름이 남아 있으면 경고합니다. */
   anonymousNames?: readonly string[]
+  /**
+   * 공개될 PDF 중 문서 속성(Author·dc:creator)에 작성자 정보가 있는 것. 검사 작업이 저장한 가린 표본만 받습니다
+   * (pdfAuthorSample). 파일을 고쳐 쓰지 않으므로 학생이 문서 속성을 지우고 다시 올리도록 경고합니다.
+   */
+  pdfAuthorMetadata?: ReadonlyArray<{ artifactVersionId: string; sample: string }>
 }
 
 /** 긴 코드로 보는 줄 수(이상). 과제 답 코드일 수 있어 저장소 링크 + 핵심 발췌를 권합니다(§15 "코드 전문"). */
@@ -232,6 +238,7 @@ function hostOf(raw: string): string {
  * - text: 전화·메일·주민등록번호·학번·사설 URL·긴 코드·익명 이름
  * - url: 사설 URL(+ 메일·전화가 URL에 박힌 경우)
  * - file_name: 문제지·답안 이름, 익명 이름, 전화·메일·학번
+ * - options.pdfAuthorMetadata: PDF 문서 속성의 작성자 정보(`pdf_metadata`, 위치는 그 파일의 `metadata`)
  */
 export function runPublicationChecks(items: readonly CheckItem[], options: CheckOptions = {}): CheckWarning[] {
   const warnings: CheckWarning[] = []
@@ -260,6 +267,9 @@ export function runPublicationChecks(items: readonly CheckItem[], options: Check
     } else if (kind === 'file_name') {
       if (looksLikeAnswerFile(value)) push('answer_file', location, value)
     }
+  }
+  for (const { artifactVersionId, sample } of options.pdfAuthorMetadata ?? []) {
+    push('pdf_metadata', { kind: 'artifact', key: artifactVersionId, field: 'metadata' }, sample)
   }
   return warnings
 }

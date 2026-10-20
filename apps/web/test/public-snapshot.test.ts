@@ -86,6 +86,10 @@ const version = (id: string, uploaderId: string, fileName: string): typeof artif
   scanEngine: S('SCAN_ENGINE'),
   scanAttempts: 1,
   scannedAt: T,
+  metadataStripped: false,
+  strippedSha256: 'b'.repeat(64),
+  strippedBytes: 1234,
+  metadataFindings: { format: 'pdf', fields: [{ field: 'Author', sample: S('PDF_AUTHOR_SAMPLE') }] },
   createdAt: T,
 })
 const artifact = (v: typeof artifactVersions.$inferSelect): typeof artifacts.$inferSelect => ({

@@ -627,6 +627,16 @@ export const artifactVersions = pgTable(
     scanEngine: text('scan_engine'),
     scanAttempts: integer('scan_attempts').notNull().default(0),
     scannedAt: timestamp('scanned_at', { withTimezone: true }),
+    /**
+     * 이미지 메타데이터(EXIF/GPS/XMP/주석)를 지운 내용이 clean 키에 있는지(ADR 0007 "메타데이터 제거"). PDF는 고쳐 쓰지 않으므로 false.
+     * 이 열이 생기기 전에 clean이 된 이미지는 false이고, backfill(`pnpm --filter worker backfill-strip`) 전까지 공개에 쓰지 않습니다.
+     */
+    metadataStripped: boolean('metadata_stripped').notNull().default(false),
+    /** clean 키에 있는(내려주는) 내용의 SHA-256·크기. 원래 sha256·bytes는 같은 내용 중복 판단과 저장 한도에 그대로 씁니다. */
+    strippedSha256: text('stripped_sha256'),
+    strippedBytes: bigint('stripped_bytes', { mode: 'number' }),
+    /** 메타데이터 처리 결과(@peerchive/domain MetadataFindings). 이미지는 지운 종류, PDF는 속성 이름 + 가린 표본(값 전체 없음). */
+    metadataFindings: jsonb('metadata_findings').$type<Record<string, unknown>>(),
     createdAt: createdAt(),
   },
   (t) => [
@@ -636,6 +646,8 @@ export const artifactVersions = pgTable(
     check('artifact_versions_version_no_check', sql`${t.versionNo} >= 1`),
     check('artifact_versions_bytes_check', sql`${t.bytes} >= 0`),
     check('artifact_versions_sha256_check', sql`${t.sha256} ~ '^[0-9a-f]{64}$'`),
+    check('artifact_versions_stripped_sha256_check', sql`${t.strippedSha256} is null or ${t.strippedSha256} ~ '^[0-9a-f]{64}$'`),
+    check('artifact_versions_stripped_bytes_check', sql`${t.strippedBytes} is null or ${t.strippedBytes} >= 0`),
   ],
 )
 

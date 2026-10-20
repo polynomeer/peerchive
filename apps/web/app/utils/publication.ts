@@ -78,6 +78,7 @@ export const CHECK_RULE_LABELS: Record<PublicationCheckRule, string> = {
   answer_file: '문제지·답안으로 보이는 파일 이름',
   long_code: '긴 코드(과제 답 코드일 수 있음 — 저장소 링크와 핵심 발췌를 권장)',
   anonymous_name: '익명으로 고른 팀원의 이름',
+  pdf_metadata: 'PDF 문서 속성에 작성자 정보가 있습니다 — 공개 전에 문서 속성을 지우고 다시 올리세요',
 }
 
 export const CHECK_LOCATION_LABELS: Record<string, string> = {

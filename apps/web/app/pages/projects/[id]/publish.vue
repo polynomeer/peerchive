@@ -141,6 +141,7 @@ async function submit() {
 const SELECTION_ERRORS: Record<string, string> = {
   not_found: '이 과제에서 찾을 수 없는 항목이 있습니다. 새로고침 후 다시 고르세요.',
   not_clean: '검사를 통과한(사용 가능) 파일만 고를 수 있습니다.',
+  metadata_not_stripped: '메타데이터(위치 정보 등)를 아직 지우지 않은 이전 이미지가 있습니다. 운영자가 정리 작업을 마친 뒤 다시 시도하거나 새 버전으로 다시 올리세요.',
   not_allowed: '요약 공개에는 파일을 넣을 수 없습니다.',
   not_member: '이 과제의 멤버가 아닌 사람이 있습니다.',
   taken: '이미 다른 공개가 쓰는 주소입니다.',

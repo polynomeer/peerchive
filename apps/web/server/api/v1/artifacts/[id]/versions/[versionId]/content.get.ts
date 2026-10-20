@@ -7,6 +7,7 @@ import { openArtifactContent } from '../../../../../../modules/artifacts/artifac
  *
  * 응답 헤더(ADR 0007): 판별한 Content-Type, nosniff, `sandbox; default-src 'none'` CSP(문서로 열려도 스크립트·하위 요청 차단),
  * 이미지는 inline·PDF는 attachment(RFC 5987 파일 이름), 공유 캐시 금지.
+ * 내용은 clean 객체(이미지는 메타데이터를 지운 것)이고 Content-Length·ETag도 그 크기·해시입니다.
  */
 export default defineApiHandler(async (event) => {
   const content = await openArtifactContent(
@@ -24,6 +25,7 @@ export default defineApiHandler(async (event) => {
     'content-disposition': contentDisposition(content.fileName, isInlineMediaType(content.mediaType)),
     'cache-control': 'private, no-store',
     'cross-origin-resource-policy': 'same-origin',
+    etag: `"v-${content.sha256.slice(0, 16)}"`,
   })
   return sendStream(event, content.stream)
 })

@@ -22,6 +22,7 @@ import {
   extensionMatches,
   isAllowedMediaType,
   nextScanStatus,
+  pdfAuthorSample,
   type Membership,
 } from '@peerchive/domain'
 import {
@@ -91,6 +92,8 @@ function toVersionDto(row: VersionRow, uploader: LogAuthorDto): ArtifactVersionD
     createdAt: row.createdAt.toISOString(),
     uploader,
     contentUrl: row.scanStatus === 'clean' ? contentUrlFor(row.artifactId, row.id) : null,
+    metadataStripped: row.metadataStripped,
+    pdfAuthorMetadata: pdfAuthorSample(row.metadataFindings) !== null,
   }
 }
 
@@ -494,13 +497,18 @@ export async function getArtifact(db: DbExecutor, actor: Actor, artifactId: unkn
 export interface ArtifactContent {
   stream: Readable
   mediaType: string
+  /** 내려주는 내용(메타데이터를 지운 clean 객체)의 크기. */
   bytes: number
   fileName: string
+  /** 내려주는 내용의 SHA-256(ETag용). backfill 전 버전은 원래 해시와 같습니다. */
+  sha256: string
 }
 
 /**
  * clean 버전의 내용. 산출물·버전이 없거나, 같은 프로젝트의 active 멤버가 아니거나, clean이 아니면 모두 404입니다
  * (검사 전·격리 상태를 비멤버에게 드러내지 않고, 멤버에게도 내용은 주지 않음).
+ * 내용은 clean 키의 객체(이미지는 메타데이터를 지운 것)이고 크기·해시도 그 값입니다. backfill 전 이미지(metadata_stripped=false)는
+ * 올린 팀의 비공개 작업 공간 안이라 그대로 내려주고, 공개 경로에서만 막습니다.
  */
 export async function openArtifactContent(
   db: DbExecutor,
@@ -536,8 +544,9 @@ export async function openArtifactContent(
   return {
     stream,
     mediaType: version.mediaType,
-    bytes: version.bytes,
+    bytes: version.strippedBytes ?? version.bytes,
     fileName: version.fileName,
+    sha256: version.strippedSha256 ?? version.sha256,
   }
 }
 

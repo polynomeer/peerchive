@@ -94,6 +94,8 @@ async function fileVersion(db: DbExecutor, projectId: string, uploaderId: string
       sha256: crypto.randomUUID().replaceAll('-', '').padEnd(64, '0'),
       objectKey: `clean/${crypto.randomUUID()}`,
       scanStatus: 'clean',
+      // 검사 작업이 메타데이터를 지운 이미지(ADR 0007). 지우기 전 이미지는 metadata.integration.test.ts가 봅니다.
+      metadataStripped: true,
     })
     .returning()
   return version!

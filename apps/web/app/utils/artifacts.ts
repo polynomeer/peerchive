@@ -43,6 +43,7 @@ const SCAN_REASON_LABELS: Record<string, string> = {
   scan_error: '검사기 오류',
   object_missing: '파일을 찾을 수 없음',
   integrity_mismatch: '파일이 손상됨',
+  metadata_strip_failed: '이미지 구조가 손상되어 메타데이터(위치 정보 등)를 지울 수 없음',
 }
 
 export function scanReasonLabel(reason: string | null): string {
@@ -54,6 +55,17 @@ export function scanStatusText(status: ScanStatus, reason: string | null): strin
   if (status === 'quarantined') return `격리됨: ${scanReasonLabel(reason)}`
   if (status === 'failed') return `검사 실패: ${scanReasonLabel(reason)}`
   return SCAN_STATUS_LABELS[status]
+}
+
+/**
+ * 메타데이터 처리 표시(텍스트, 시나리오 H). 지운 이미지는 "메타데이터 제거됨", 작성자 속성이 있는 PDF는 경고 문구, 그 밖에는 null.
+ * 이미지 메타데이터(EXIF 위치 정보 등)는 검사 통과 때 지우고, PDF는 고쳐 쓰지 않으므로 학생이 문서 속성을 지워야 합니다.
+ */
+export function metadataLabel(version: { scanStatus: ScanStatus; metadataStripped: boolean; pdfAuthorMetadata: boolean }): string | null {
+  if (version.scanStatus !== 'clean') return null
+  if (version.metadataStripped) return '메타데이터 제거됨'
+  if (version.pdfAuthorMetadata) return 'PDF 문서 속성에 작성자 정보 있음'
+  return null
 }
 
 export const isScanInProgress = (status: ScanStatus) => status === 'pending' || status === 'scanning'

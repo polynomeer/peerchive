@@ -17,6 +17,7 @@ import {
   resolveMalwareScanner,
   resolveObjectStorage,
   resolveStorageRoot,
+  writeObject,
 } from '../src'
 
 let root: string
@@ -85,6 +86,15 @@ describe('filesystem storage', () => {
     await storage.delete(clean) // 없어도 성공
     await expect(storage.get(clean)).rejects.toBeInstanceOf(ObjectNotFoundError)
     await expect(storage.move(key, clean)).rejects.toBeInstanceOf(ObjectNotFoundError)
+  })
+
+  it('writeObject replaces an existing key atomically via a staging key and leaves nothing else behind', async () => {
+    const clean = cleanKeyFor(crypto.randomUUID())
+    expect(await writeObject(storage, clean, Buffer.from('original'))).toMatchObject({ bytes: 8 })
+    const result = await writeObject(storage, clean, Buffer.from('stripped!'))
+    expect(result.bytes).toBe(9)
+    expect((await readAll(await storage.get(clean))).toString()).toBe('stripped!')
+    expect(await listFiles(root)).toEqual([path.join('clean', clean.slice(6, 8), clean.slice(6))])
   })
 
   it('aborts at maxBytes and leaves no partial file behind', async () => {

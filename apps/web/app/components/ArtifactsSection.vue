@@ -174,6 +174,7 @@ onBeforeUnmount(() => {
                 {{ versionLine(version) }} ·
                 <strong>{{ scanStatusText(version.scanStatus, version.scanReason) }}</strong>
                 <span v-if="isScanInProgress(version.scanStatus)" class="muted"> (자동으로 갱신됩니다)</span>
+                <template v-if="metadataLabel(version)"> · <span class="muted">{{ metadataLabel(version) }}</span></template>
               </p>
               <button
                 v-if="version.scanStatus === 'failed' && artifact.canUpload"

@@ -12,7 +12,10 @@ import {
   isAllowedMediaType,
   isFinalScanStatus,
   isInlineMediaType,
+  isMetadataReady,
   nextScanStatus,
+  pdfAuthorSample,
+  requiresMetadataStrip,
   type Membership,
   type ProjectRole,
   type ScanEvent,
@@ -144,5 +147,34 @@ describe('decideFileType', () => {
     expect(decideFileType('image/png', 'a.png', 'unknown')).toEqual({ ok: false, reason: 'unknown_type' })
     expect(decideFileType('image/png', 'a.png', 'image/gif')).toEqual({ ok: false, reason: 'type_mismatch' })
     expect(decideFileType('image/png', 'a.gif', 'image/png')).toEqual({ ok: false, reason: 'extension_mismatch' })
+  })
+})
+
+describe('metadata stripping', () => {
+  it('requires stripped metadata for images only before public use', () => {
+    expect(['image/png', 'image/jpeg', 'image/webp', 'image/gif'].every(requiresMetadataStrip)).toBe(true)
+    expect(requiresMetadataStrip('application/pdf')).toBe(false)
+    expect(requiresMetadataStrip(null)).toBe(false)
+    expect(isMetadataReady({ mediaType: 'image/jpeg', metadataStripped: false })).toBe(false)
+    expect(isMetadataReady({ mediaType: 'image/jpeg', metadataStripped: true })).toBe(true)
+    expect(isMetadataReady({ mediaType: 'application/pdf', metadataStripped: false })).toBe(true)
+  })
+
+  it('summarizes only author fields of stored PDF findings, ignoring anything malformed', () => {
+    const findings = {
+      format: 'pdf',
+      fields: [
+        { field: 'Author', sample: '홍**' },
+        { field: 'Producer', sample: 'P*******' },
+        { field: 'dc:creator', sample: '홍**' },
+        { field: 'Author', sample: '홍**' },
+        { field: 'Author', sample: 3 },
+      ],
+    }
+    expect(pdfAuthorSample(findings)).toBe('Author: 홍**, dc:creator: 홍**')
+    expect(pdfAuthorSample({ format: 'pdf', fields: [{ field: 'Creator', sample: 'W***' }] })).toBeNull()
+    expect(pdfAuthorSample({ format: 'jpeg', removed: ['exif'], orientation: null })).toBeNull()
+    expect(pdfAuthorSample(null)).toBeNull()
+    expect(pdfAuthorSample('Author')).toBeNull()
   })
 })

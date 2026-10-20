@@ -7,7 +7,7 @@
  * - 지금 구현은 파일시스템 driver(fs-storage.ts)뿐이고, 배포 전에 S3 호환(R2) driver를 같은 인터페이스로 추가합니다.
  *   그때 put은 짧은 서명 URL 업로드 + head 확인으로, get은 서명 URL 또는 프록시 스트림으로 바뀔 수 있습니다.
  */
-import type { Readable } from 'node:stream'
+import { Readable } from 'node:stream'
 
 export type ObjectKey = `quarantine/${string}` | `clean/${string}`
 
@@ -55,7 +55,10 @@ export interface ObjectStorage {
   /** 크기. 없으면 null. */
   head(key: ObjectKey): Promise<{ bytes: number } | null>
   copy(from: ObjectKey, to: ObjectKey): Promise<void>
-  /** 옮기기. 대상이 이미 있으면 원본만 지웁니다(재실행해도 같은 결과). */
+  /**
+   * 옮기기. 대상이 이미 있으면 원자적으로 덮어씁니다(읽는 쪽은 이전 내용 또는 새 내용 중 하나만 봄). 원본이 없고 대상이
+   * 있으면 이미 옮긴 것으로 보고 성공합니다(재실행해도 같은 결과). 메타데이터를 지운 내용으로 clean 키를 바꿀 때 씁니다(writeObject).
+   */
   move(from: ObjectKey, to: ObjectKey): Promise<void>
   /** 지우기. 없어도 오류가 아닙니다. */
   delete(key: ObjectKey): Promise<void>
@@ -84,6 +87,22 @@ export class InvalidObjectKeyError extends Error {
 
 export function assertObjectKey(key: unknown): asserts key is ObjectKey {
   if (!isObjectKey(key)) throw new InvalidObjectKeyError()
+}
+
+/**
+ * 메모리의 내용을 키에 씁니다. 새 격리 키에 먼저 쓴 뒤 move로 옮기므로, 같은 키에 이미 내용이 있어도(검사 재실행·backfill)
+ * 중간 상태(없음·일부만 씀)가 보이지 않습니다. 실패하면 임시 키를 지웁니다. 돌려주는 크기·SHA-256은 쓴 내용의 값입니다.
+ */
+export async function writeObject(storage: ObjectStorage, key: ObjectKey, content: Buffer): Promise<PutResult> {
+  const staging = newQuarantineKey()
+  try {
+    const result = await storage.put(staging, Readable.from([content]), { maxBytes: content.length })
+    await storage.move(staging, key)
+    return result
+  } catch (error) {
+    await storage.delete(staging).catch(() => {})
+    throw error
+  }
 }
 
 /** 스트림을 끝까지 읽어 Buffer로. 검사 작업은 파일당 최대 20MB라 메모리에 올립니다. */

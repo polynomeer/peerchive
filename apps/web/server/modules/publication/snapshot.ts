@@ -283,7 +283,8 @@ export function buildPublicSnapshot(source: SnapshotSource): PublicSnapshot {
     artifactVersionId: version.id,
     displayName: sanitizeFileName(version.fileName, index + 1, anonymousNames),
     mediaType: version.mediaType,
-    bytes: version.bytes,
+    // 공개로 내려주는 내용(메타데이터 제거본)의 크기. backfill 전 버전은 후보에 들어오지 못합니다.
+    bytes: version.strippedBytes ?? version.bytes,
     usage: publicUsage(source.usageTerms[version.id]),
   }))
 

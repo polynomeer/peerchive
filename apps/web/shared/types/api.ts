@@ -311,6 +311,10 @@ export interface ArtifactVersionDto {
   uploader: LogAuthorDto
   /** clean일 때만 내용 주소. 그 밖에는 null(내용을 내려주지 않음). */
   contentUrl: string | null
+  /** 이미지 메타데이터(EXIF/GPS/XMP/주석)를 지운 내용을 내려주는지. PDF·검사 전·backfill 전 이미지는 false. */
+  metadataStripped: boolean
+  /** PDF 문서 속성(Author·dc:creator)에 작성자 정보가 있는지. 값은 싣지 않습니다. */
+  pdfAuthorMetadata: boolean
 }
 
 export interface ArtifactDto {
@@ -802,6 +806,7 @@ export type PublicationCheckRule =
   | 'answer_file'
   | 'long_code'
   | 'anonymous_name'
+  | 'pdf_metadata'
 
 export interface PublicationCheckDto {
   rule: PublicationCheckRule

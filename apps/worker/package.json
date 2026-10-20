@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "NODE_ENV=development tsx src/main.ts",
     "start": "tsx src/main.ts",
+    "backfill-strip": "tsx src/backfill-strip.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },

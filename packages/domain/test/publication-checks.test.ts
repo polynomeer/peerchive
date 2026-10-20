@@ -179,6 +179,18 @@ describe('runPublicationChecks', () => {
     expect(runPublicationChecks([at('text', '')])).toEqual([])
   })
 
+  it('warns pdf_metadata for PDFs with author properties, using only the stored masked sample', () => {
+    const warnings = runPublicationChecks([], {
+      pdfAuthorMetadata: [
+        { artifactVersionId: 'v1', sample: 'Author: 홍**' },
+        { artifactVersionId: 'v1', sample: 'Author: 홍**' },
+      ],
+    })
+    expect(warnings).toEqual([
+      { rule: 'pdf_metadata', location: { kind: 'artifact', key: 'v1', field: 'metadata' }, sample: 'Author: 홍**' },
+    ])
+  })
+
   it('masks short values completely', () => {
     expect(maskSample('abc')).toBe('***')
     expect(maskSample('2019123456', 2, 0)).toBe('20********')

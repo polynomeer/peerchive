@@ -166,3 +166,49 @@ export function decideFileType(declared: string, fileName: string, detected: Det
 export function isInlineMediaType(mediaType: string): boolean {
   return mediaType === 'image/png' || mediaType === 'image/jpeg' || mediaType === 'image/webp' || mediaType === 'image/gif'
 }
+
+// ── 메타데이터 제거 (ADR 0007 "메타데이터 제거") ─────────────────────────────
+
+/**
+ * 메타데이터를 지운 뒤에만 공개 후보·공개 조회에 쓸 수 있는 형식(이미지). 검사 작업이 EXIF/GPS/XMP/주석을 지운
+ * 내용을 clean 키에 씁니다. PDF는 고쳐 쓰지 않고 문서 속성(작성자 등)을 찾아 경고만 합니다.
+ */
+export function requiresMetadataStrip(mediaType: string | null | undefined): boolean {
+  return mediaType != null && isInlineMediaType(mediaType)
+}
+
+/**
+ * 메타데이터 처리가 끝나 공개에 쓸 수 있는지. 이미지는 `metadata_stripped`여야 하고, 그 밖의 형식은 언제나 참입니다.
+ * 이 변경 전에 clean이 된 이미지(backfill 전)는 거짓이라 공개 후보(422 `metadata_not_stripped`)·공개 조회(404)에서 빠집니다.
+ */
+export function isMetadataReady(file: { mediaType: string | null; metadataStripped: boolean }): boolean {
+  return !requiresMetadataStrip(file.mediaType) || file.metadataStripped
+}
+
+/** PDF 문서 속성에서 찾는 항목. 값 전체는 저장하지 않고 가린 표본만 남깁니다. */
+export const PDF_METADATA_FIELDS = ['Author', 'Creator', 'Producer', 'dc:creator'] as const
+export type PdfMetadataField = (typeof PDF_METADATA_FIELDS)[number]
+/** 사람 이름일 가능성이 높아 공개 전 경고하는 항목. Creator·Producer는 대개 프로그램 이름이라 기록만 합니다. */
+export const PDF_AUTHOR_FIELDS: readonly PdfMetadataField[] = ['Author', 'dc:creator']
+
+/** artifact_versions.metadata_findings(jsonb)의 모양. 이미지는 지운 항목 종류, PDF는 찾은 속성 이름 + 가린 표본. */
+export type MetadataFindings =
+  | { format: 'jpeg' | 'png' | 'webp' | 'gif'; removed: string[]; orientation: number | null }
+  | { format: 'pdf'; fields: Array<{ field: PdfMetadataField; sample: string }> }
+
+/**
+ * 저장된 findings(jsonb, 모양을 믿지 않음)에서 PDF 작성자 항목의 가린 표본을 한 줄로. 없으면 null.
+ * 예: `Author: 홍**, dc:creator: 홍**`
+ */
+export function pdfAuthorSample(findings: unknown): string | null {
+  if (!findings || typeof findings !== 'object') return null
+  const { format, fields } = findings as { format?: unknown; fields?: unknown }
+  if (format !== 'pdf' || !Array.isArray(fields)) return null
+  const parts = fields
+    .filter(
+      (f): f is { field: PdfMetadataField; sample: string } =>
+        !!f && typeof f === 'object' && PDF_AUTHOR_FIELDS.includes(f.field) && typeof f.sample === 'string',
+    )
+    .map((f) => `${f.field}: ${f.sample}`)
+  return parts.length ? [...new Set(parts)].join(', ') : null
+}

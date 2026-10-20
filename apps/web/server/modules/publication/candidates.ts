@@ -31,6 +31,8 @@ import {
   canManagePublication,
   canPreparePublication,
   claimStatusSummary,
+  isMetadataReady,
+  pdfAuthorSample,
   runPublicationChecks,
   transition,
 } from '@peerchive/domain'
@@ -278,6 +280,8 @@ async function loadSource(tx: DbExecutor, project: ProjectRow, selection: Select
       : []
   if (snapshotRows.some((s) => s.version.scanStatus !== 'clean' || s.artifact.projectId !== project.id))
     throw invalid({ milestoneIds: 'not_clean' })
+  // 메타데이터를 지우기 전(backfill 전) 이미지는 공개할 수 없습니다(ADR 0007 "메타데이터 제거").
+  if (snapshotRows.some((s) => !isMetadataReady(s.version))) throw invalid({ milestoneIds: 'metadata_not_stripped' })
 
   // 역할 선언(지금 revision 또는 고정 revision) + 확인 + 근거.
   const claimRows = selection.claimIds.length
@@ -316,6 +320,7 @@ async function loadSource(tx: DbExecutor, project: ProjectRow, selection: Select
     : []
   if (artifactRows.length !== selection.artifactVersionIds.length) throw invalid({ artifactVersionIds: 'not_found' })
   if (artifactRows.some((a) => a.version.scanStatus !== 'clean')) throw invalid({ artifactVersionIds: 'not_clean' })
+  if (artifactRows.some((a) => !isMetadataReady(a.version))) throw invalid({ artifactVersionIds: 'metadata_not_stripped' })
 
   // 과목 이름(학기 id는 싣지 않음).
   let course: SnapshotSource['course'] = null
@@ -421,10 +426,22 @@ export async function readinessContext(db: DbExecutor, candidate: CandidateRow, 
       .innerJoin(users, eq(users.id, consents.subjectUserId))
       .where(eq(consents.candidateId, candidate.id)),
     versionIds.length
-      ? db.select({ id: artifactVersions.id, scanStatus: artifactVersions.scanStatus }).from(artifactVersions).where(inArray(artifactVersions.id, versionIds))
+      ? db
+          .select({
+            id: artifactVersions.id,
+            scanStatus: artifactVersions.scanStatus,
+            mediaType: artifactVersions.mediaType,
+            metadataStripped: artifactVersions.metadataStripped,
+          })
+          .from(artifactVersions)
+          .where(inArray(artifactVersions.id, versionIds))
       : Promise.resolve([]),
   ])
-  const statusById = new Map(fileRows.map((f) => [f.id, f.scanStatus]))
+  // 메타데이터를 지우기 전(backfill 전) 이미지는 아직 검사가 끝나지 않은 것(pending)으로 봅니다. 이 기능 전에 만든 후보도
+  // backfill 전에는 ready·게시가 되지 않고, backfill 뒤 다시 계산하면 clean입니다.
+  const statusById = new Map(
+    fileRows.map((f) => [f.id, f.scanStatus === 'clean' && !isMetadataReady(f) ? ('pending' as const) : f.scanStatus]),
+  )
   const inactive = new Set(consentRows.filter((r) => r.userStatus !== 'active').map((r) => r.consent.subjectUserId))
   return {
     ctx: {
@@ -581,11 +598,24 @@ async function createCandidateInTx(
   })
   const manifestHash = canonicalHash(manifest)
 
-  // 점검: 공개될 내용 + 원래 파일 이름(문제지·답안 이름만 봄. 이름·연락처는 공개 이름에서 이미 바꿈).
+  // 점검: 공개될 내용 + 원래 파일 이름(문제지·답안 이름만 봄. 이름·연락처는 공개 이름에서 이미 바꿈)
+  // + 공개될 PDF의 문서 속성 작성자 정보(검사 작업이 저장한 가린 표본).
   const rawFileNames = new Map<string, string>()
-  for (const a of sourceRows.artifacts) rawFileNames.set(a.version.id, a.version.fileName)
-  for (const m of sourceRows.milestones) for (const s of m.snapshots) rawFileNames.set(s.version.id, s.version.fileName)
-  const checks = runPublicationChecks(checkItemsFor(snapshot, rawFileNames), { anonymousNames: anonymousNamesOf(source) }).filter(
+  const authorSamples = new Map<string, string>()
+  const versions = [...sourceRows.artifacts.map((a) => a.version), ...sourceRows.milestones.flatMap((m) => m.snapshots.map((s) => s.version))]
+  for (const version of versions) {
+    rawFileNames.set(version.id, version.fileName)
+    const sample = pdfAuthorSample(version.metadataFindings)
+    if (sample) authorSamples.set(version.id, sample)
+  }
+  const pdfAuthorMetadata = snapshot.artifacts.flatMap((a) => {
+    const sample = authorSamples.get(a.artifactVersionId)
+    return sample ? [{ artifactVersionId: a.artifactVersionId, sample }] : []
+  })
+  const checks = runPublicationChecks(checkItemsFor(snapshot, rawFileNames), {
+    anonymousNames: anonymousNamesOf(source),
+    pdfAuthorMetadata,
+  }).filter(
     (w) => w.location.field !== 'fileName' || w.rule === 'answer_file',
   )
 

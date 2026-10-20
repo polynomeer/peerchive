@@ -4,7 +4,7 @@
  *
  * - 확장자·선언 형식·Content-Type 헤더는 믿지 않고 내용 앞부분만 봅니다.
  * - 판정 규칙(허용 여부, 선언과 일치)은 @peerchive/domain의 decideFileType이 합니다.
- * - 한계: 압축된 PDF 객체 스트림 안의 JavaScript, 이미지 메타데이터(EXIF/GPS)는 보지 않습니다.
+ * - 한계: 압축된 PDF 객체 스트림 안의 JavaScript는 보지 않습니다. 이미지 메타데이터(EXIF/GPS) 제거는 strip-metadata.ts가 합니다.
  */
 import type { AllowedMediaType, DetectedKind, QuarantineReason } from '@peerchive/domain'
 

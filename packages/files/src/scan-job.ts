@@ -5,8 +5,13 @@
  * 1. 버전 행을 잠그고 scanning으로 바꿉니다(시도 횟수 +1). clean·quarantined면 아무것도 하지 않습니다(중복 실행 안전).
  * 2. 격리 키의 내용을 읽어 크기·SHA-256을 확인하고, signature 판별 → 선언 형식·확장자 대조 → 내장 콘텐츠 점검 →
  *    악성코드 검사 순서로 판정합니다.
- * 3. 통과하면 내용을 `clean/<versionId>`로 옮긴 뒤 DB를 clean으로 바꿉니다. 옮긴 뒤 DB 갱신 전에 죽어도
- *    다시 실행하면 clean 키에서 읽어 같은 결과로 끝납니다. 격리된 내용은 격리 키에 그대로 두고 내려주지 않습니다.
+ * 3. 통과하면 메타데이터를 처리합니다(strip-metadata.ts). 이미지는 EXIF/GPS/XMP/주석을 지운 바이트, PDF는 원래 바이트를
+ *    `clean/<versionId>`에 쓰고(writeObject: 임시 키 → move) DB를 clean으로 바꾼 뒤 격리 원본을 지웁니다.
+ *    - 원래 sha256·bytes는 그대로 둡니다(같은 내용 중복 판단·저장 한도). 내려주는 내용의 값은 stripped_sha256·stripped_bytes.
+ *    - clean 키에 쓴 뒤 DB 갱신 전에 죽으면 격리 원본이 남아 있으므로 다시 실행하면 원본에서 같은 결과를 다시 씁니다(결정적).
+ *      DB 갱신 뒤 격리 원본을 지우기 전에 죽으면 원본이 격리 키에 남습니다(내려주지 않음, 오래된 격리 파일 정리 작업 대상).
+ *    - 이미지 구조가 깨져 메타데이터를 지울 수 없으면 `failed`(`metadata_strip_failed`)로 두고 아무것도 내려주지 않습니다.
+ *    격리된 내용은 격리 키에 그대로 두고 내려주지 않습니다.
  * 4. 검사 자체의 오류는 마지막 시도가 아니면 scanning으로 둔 채 예외를 던져 큐의 재시도(backoff)에 맡기고,
  *    마지막 시도면 failed로 바꾼 뒤 던져 dead-letter로 보냅니다.
  */
@@ -16,6 +21,7 @@ import { decideFileType, nextScanStatus, type QuarantineReason, type ScanStatus 
 import { and, artifactVersions, eq, outboxEvents, type DbExecutor } from '@peerchive/db'
 import type { MalwareScanner } from './scanner'
 import { inspectContent, sniff, SNIFF_BYTES } from './sniff'
+import { MetadataStripError, type MetadataProcessing, processMetadata } from './strip-metadata'
 import {
   type ObjectKey,
   type ObjectStorage,
@@ -23,6 +29,7 @@ import {
   cleanKeyFor,
   isObjectKey,
   readAll,
+  writeObject,
 } from './storage'
 
 /** pg-boss 큐 이름. outbox_events.topic에도 같은 값을 씁니다. */
@@ -50,7 +57,7 @@ export type ScanOutcome =
   | { status: 'skipped'; current: ScanStatus | 'missing' }
 
 /** 검사 자체가 실패한 사유(격리 사유와 구분). */
-export type ScanFailureReason = 'scan_error' | 'object_missing' | 'integrity_mismatch'
+export type ScanFailureReason = 'scan_error' | 'object_missing' | 'integrity_mismatch' | 'metadata_strip_failed'
 
 class ScanFailure extends Error {
   constructor(readonly reason: ScanFailureReason, cause?: unknown) {
@@ -141,19 +148,34 @@ export async function scanArtifactVersion(
       return { status: 'quarantined', reason: verdict.reason, ...(verdict.signature && { signature: verdict.signature }) }
     }
 
+    // 메타데이터 제거(이미지)·문서 속성 점검(PDF). 지울 수 없는 이미지는 원본을 내주지 않도록 failed로 둡니다.
+    let processed: MetadataProcessing
+    try {
+      processed = processMetadata(content, verdict.mediaType)
+    } catch (error) {
+      if (!(error instanceof MetadataStripError)) throw error
+      throw new ScanFailure('metadata_strip_failed', error)
+    }
+
     const cleanKey = cleanKeyFor(version.id)
-    if (key !== cleanKey) await deps.storage.move(key, cleanKey)
+    const served = await writeObject(deps.storage, cleanKey, processed.content)
     await finish({
       scanStatus: nextScanStatus('scanning', 'pass')!,
       objectKey: cleanKey,
       mediaType: verdict.mediaType,
       scanEngine: deps.scanner.engine,
       scannedAt: now(),
+      metadataStripped: processed.stripped,
+      strippedSha256: served.sha256,
+      strippedBytes: served.bytes,
+      metadataFindings: processed.findings as unknown as Record<string, unknown>,
     })
+    // 원본(메타데이터 포함)은 DB가 clean으로 바뀐 뒤에 지웁니다. 지우지 못해도 내려주지 않으며 정리 작업 대상입니다.
+    if (key !== cleanKey) await deps.storage.delete(key).catch(() => {})
     return { status: 'clean' }
   } catch (error) {
     const reason: ScanFailureReason = error instanceof ScanFailure ? error.reason : 'scan_error'
-    // 내용이 없거나 해시가 다르면 다시 해도 같으므로 바로 실패로 둡니다.
+    // 내용이 없거나 해시가 다르거나 메타데이터를 지울 수 없으면 다시 해도 같으므로 바로 실패로 둡니다.
     if (options.finalAttempt || reason !== 'scan_error') {
       await finish({ scanStatus: nextScanStatus('scanning', 'error')!, scanReason: reason, scanEngine: deps.scanner.engine })
       if (reason !== 'scan_error') return { status: 'failed', reason }

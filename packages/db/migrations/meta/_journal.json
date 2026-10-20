@@ -78,6 +78,13 @@
       "when": 1792478311030,
       "tag": "0010_publish_withdraw",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792480644441,
+      "tag": "0011_strip_metadata",
+      "breakpoints": true
     }
   ]
 }

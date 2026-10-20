@@ -12,7 +12,7 @@
 | `packages/domain` | 런타임 의존성 없는 도메인 규칙: 과제 공간 권한 정책, 빌드 로그 작성·수정·해결 연결 규칙, 공개 상태 전이(게시 중 새 버전 `republish` 포함)·공개 후보 권한·결정적 JSON(manifest 해시)·공개 전 점검 규칙·공개 조회 판정(`canServePublicRelease`/`canServePublicArtifact`), 역할 선언·팀원 확인·기여 장부 기간 규칙, 산출물 업로드·열람 정책과 검사 상태 전이, 마일스톤·할 일·사후 작성 규칙, 주간 체크인 주(서울 ISO 주)·알림 일정·익명 집계(n≥5), 학교·과목 이름 정규화 키·학기 종료 시각·개념 태그 slug·병합 전제 조건·단조 엠바고·적용 엠바고 계산 |
 | `packages/db` | Drizzle ORM 스키마, SQL migration(`migrations/`), `createDb(url)`, outbox 주제·payload(`src/outbox.ts`), 운영자 부여 CLI(`scripts/grant-operator.ts`) |
 | `packages/bot-protocol` | 웹 ↔ 봇 내부 API 약속: HMAC-SHA256 요청 서명·검증(시각 차이 5분, nonce)과 요청/응답 타입 |
-| `packages/files` | 오브젝트 저장소 추상화(파일시스템 driver), 파일 형식 판별, 악성코드 검사 어댑터(clamd), 검사 작업([ADR 0007](../docs/adr/0007-file-storage-and-scanning.md)) |
+| `packages/files` | 오브젝트 저장소 추상화(파일시스템 driver), 파일 형식 판별, 악성코드 검사 어댑터(clamd), 검사 작업, 이미지 메타데이터 제거(EXIF/GPS/XMP/주석, 무손실)·PDF 문서 속성 점검과 backfill([ADR 0007](../docs/adr/0007-file-storage-and-scanning.md)) |
 | `ops/docker-compose.yml` | 로컬 개발용 PostgreSQL 16, 선택 profile `clamav`(clamd) |
 
 ## 구현 현황
@@ -25,7 +25,7 @@
 | T-02 세션·공개/비공개 프로필 | 완료 | 이메일 매직링크, DB 세션(30일·sliding), CSRF Origin 검사, `/me`·프로필·공개 프로필·탈퇴 요청([ADR 0006](../docs/adr/0006-auth-sessions.md)) |
 | T-03 과제·초대·프로젝트 권한 | 완료 | 과제 생성·목록·수정(version 409), 멤버·초대(7일·일회성·취소)·역할 변경·내보내기·나가기·소유권 이전, 감사 이벤트 |
 | T-04 빌드 로그·revision·태그별 payload | 완료 | 7개 태그별 payload 검증(모르는 키 거부), 수정은 새 revision(낡은 `expectedRevision`은 409 `stale_revision`)·태그 변경 불가(422 `tag: immutable`), 💡해결↔🧱막힘 연결(같은 프로젝트만), 근거 링크(http/https, 서버가 열지 않음), 자기 기입 수행일(최대 내일) vs 기록 시각, `clientId` 재전송 중복 방지, cursor 목록·태그/작성자 필터, 과제 화면의 작성 폼(임시 저장·재시도)·타임라인·수정 이력 |
-| T-05 파일 업로드·격리·검사 | 완료 | 업로드 의도(15분)→PUT(스트림·SHA-256·크기 한도)→완료(idempotent, 같은 내용 중복 방지) 3단계, 파일당 20MB·1인당 500MB, worker 검사(magic-byte 판별·선언 형식/확장자 대조·내장 콘텐츠 점검·ClamAV 또는 개발용 signature-only), `pending→scanning→clean/quarantined/failed`·재시도·dead-letter, clean만 멤버에게 내려줌(그 밖에는 404, nosniff·sandbox CSP), 빌드 로그 파일 근거(같은 프로젝트·최대 10개·revision 이어받기), 과제 화면의 산출물 섹션(진행률·상태 문구·미리보기·새 버전)과 근거 선택([ADR 0007](../docs/adr/0007-file-storage-and-scanning.md)) |
+| T-05 파일 업로드·격리·검사 | 완료 | 업로드 의도(15분)→PUT(스트림·SHA-256·크기 한도)→완료(idempotent, 같은 내용 중복 방지) 3단계, 파일당 20MB·1인당 500MB, worker 검사(magic-byte 판별·선언 형식/확장자 대조·내장 콘텐츠 점검·ClamAV 또는 개발용 signature-only), `pending→scanning→clean/quarantined/failed`·재시도·dead-letter, clean만 멤버에게 내려줌(그 밖에는 404, nosniff·sandbox CSP), 검사 통과 뒤 이미지 메타데이터 제거(JPEG·PNG·WebP·GIF 무손실, JPEG 방향 유지, 깨진 이미지는 `failed`)·PDF 작성자 속성 점검(가린 표본, 공개 전 점검 `pdf_metadata`), 내려주기는 제거본(크기·ETag도 제거본 기준), 빌드 로그 파일 근거(같은 프로젝트·최대 10개·revision 이어받기), 과제 화면의 산출물 섹션(진행률·상태 문구·미리보기·새 버전)과 근거 선택([ADR 0007](../docs/adr/0007-file-storage-and-scanning.md)) |
 | T-06 마일스톤·스냅샷·진화 보기 | 완료 | 마일스톤(프로젝트당 12개, 이름 80자·메모 500자·예정일·자기 기입 도달일, version 409), 기본 단계 템플릿(기획→중간발표→구현→검증→최종제출, 빈 프로젝트만), 순서 변경(전체 순열만, ▲▼ 버튼)·position 빈틈없이 유지, 삭제는 어떤 로그 revision(이전 것 포함)이라도 가리키면 409 `in_use`(스냅샷은 함께 해제), 스냅샷은 같은 프로젝트의 clean 버전만(마일스톤당 6개, 검사 중 422 `not_clean`, 중복 409), 빌드 로그의 마일스톤 연결(revision별·이어받기·같은 프로젝트만)과 `milestone=` 필터, 과제 화면의 마일스톤 섹션·진화 보기(가로 스크롤 영역)·타임라인 구분선 |
 | T-07 할 일·완료 전환·사후 작성 모드 | 완료 | 할 일(원본 Card 계승, 제목 120자·메모 1000자·담당자는 active 멤버·마감일, 열린 할 일 200개·전체 500개, version 409), 상태 메뉴와 ▲▼ 순서 변경(상태별 position 빈틈없이, 상태를 바꾸면 새 목록 맨 뒤, 드래그 없음), 완료 시 "막힌 적 있었나요? 결정할 게 있었나요?" 프롬프트(응답 없이도 완료)와 빌드 로그 전환(source `task`, 할 일당 한 번, 빌드 로그 검증 그대로, 전환한 할 일은 삭제 불가), 사후 작성 모드(만들 때 선택, 이후 owner만 켜고 끔, 그 모드에서 만든 로그(source `retro`)·마일스톤·스냅샷은 `retrospective`로 고정되어 모드를 꺼도 남음), 모든 프로젝트·로그·마일스톤·스냅샷 DTO의 `retrospective`(공개 DTO T-11/T-12로 옮길 대상), 과제 화면의 할 일 섹션·완료 프롬프트·`사후 작성` 배지·기억·파일 기준 날짜 칸·되짚기 안내 |
 | T-08 역할 선언·팀원 확인·기여 리포트 | 완료 | 역할 선언(문장 300자, 멤버당 10개)과 근거(같은 프로젝트의 로그 revision·파일 버전, 최대 20개, 격리·실패 파일 422, 검사 중은 허용), 수정은 작성자만 새 revision(owner도 403, 낡은 `expectedRevision` 409)이고 새 revision은 `본인 설명 · 미확인`부터, 팀원 확인·이의(작성자 아닌 owner/editor/reviewer, 자기 확인 403, 이전 revision 409 `not_current`, 이의는 메모 필수, 이의가 있으면 `이의 있음`), viewer는 읽기만, 기간 장부(서울 월~일, 종류별 개수·할 일 완료·clean 파일·회의 참석·선언 상태, 이름순, 점수·순위 없음, 나간 멤버는 그 기간 기록이 있을 때만), 주간 요약 문장 함수(pilot-kit §4.1), 과제 화면의 기여 섹션(선언 폼·근거 선택·확인 초기화 안내·이력·기간 요약 표)과 인쇄용 동료평가 리포트 `/projects/[id]/report`([ADR 0008](../docs/adr/0008-contribution-report-format.md)) |
@@ -87,7 +87,7 @@ pnpm test
 - 로그인: `/login`에 이메일을 넣으면 `pnpm dev` 콘솔에 `[dev-console mail]` 블록으로 로그인 링크가 출력됩니다(개발 전용, 실제 메일 발송 없음).
 - 5432 포트가 이미 쓰이고 있으면 `.env`의 `POSTGRES_PORT`와 `DATABASE_URL` 포트를 함께 바꾸고 `docker compose --env-file .env -f ops/docker-compose.yml up -d`로 띄우세요(compose는 기본적으로 `ops/.env`를 읽습니다).
 - `pnpm test`는 `DATABASE_URL`이 없으면 DB 통합 테스트(`packages/db`, `apps/web/test/*.integration.test.ts`, `apps/worker/test/*.integration.test.ts`)를 건너뜁니다. 통합 테스트는 트랜잭션 rollback으로 데이터를 남기지 않습니다. 실행하려면 `DATABASE_URL=postgres://peerchive:peerchive@localhost:5432/peerchive pnpm test`.
-- 파일을 올리면 worker가 검사해야 "사용 가능"이 됩니다. `pnpm worker`는 `NODE_ENV=development`로 실행하며 기본 검사기는 개발용 `signature-only`(형식 판별만)입니다. 실제 악성코드 검사를 해 보려면 `docker compose -f ops/docker-compose.yml --profile clamav up -d`(처음엔 서명 DB를 받느라 몇 분 걸림) 뒤 `.env`에 `PEERCHIVE_MALWARE_SCANNER=clamav`.
+- 파일을 올리면 worker가 검사해야 "사용 가능"이 됩니다. 검사를 통과한 이미지는 EXIF/GPS/XMP/주석을 지운 내용이 저장되고("메타데이터 제거됨"), PDF는 그대로 두되 문서 속성에 작성자 정보가 있으면 표시·공개 전 경고합니다. 이 기능 전에 올린 이미지가 DB에 있으면 공개 전에 한 번 `NODE_ENV=development pnpm --filter worker backfill-strip`을 실행하세요. `pnpm worker`는 `NODE_ENV=development`로 실행하며 기본 검사기는 개발용 `signature-only`(형식 판별만)입니다. 실제 악성코드 검사를 해 보려면 `docker compose -f ops/docker-compose.yml --profile clamav up -d`(처음엔 서명 DB를 받느라 몇 분 걸림) 뒤 `.env`에 `PEERCHIVE_MALWARE_SCANNER=clamav`.
 - 올린 파일은 저장소 루트의 `.data/objects/`(gitignore 대상)에 무작위 키로 저장됩니다. 웹 서버는 이 디렉터리를 정적으로 제공하지 않습니다.
 - 끝나면 `docker compose -f ops/docker-compose.yml down`(데이터 볼륨 `peerchive-pg-data`는 유지, 지우려면 `down -v`).
 
@@ -121,6 +121,7 @@ pnpm test
 | `pnpm bot` | 디스코드 봇 개발 실행(`NODE_ENV=development`, 루트 `.env` 읽음). 처음엔 `pnpm --filter bot register-commands`로 슬래시 명령 등록. 배포용은 `pnpm --filter bot start` |
 | `pnpm db:generate` | `packages/db/src/schema.ts` 변경을 SQL migration으로 생성 |
 | `pnpm --filter @peerchive/db grant-operator <email> [--revoke]` | 운영자 부여·회수(로그인한 적 있는 활성 사용자, 감사 이벤트 기록). 운영자 권한은 이 CLI로만 바꿉니다. `DATABASE_URL`(없으면 루트 `.env`) 사용 |
+| `pnpm --filter worker backfill-strip [--dry-run] [--batch=100]` | 일회성: 메타데이터 제거 기능 전에 clean이 된 이미지의 메타데이터를 지우고 PDF 문서 속성 점검 결과를 채웁니다([ADR 0007](../docs/adr/0007-file-storage-and-scanning.md) "메타데이터 제거"). 멱등이며 웹·worker와 같은 `DATABASE_URL`·`PEERCHIVE_STORAGE_*`를 읽습니다(로컬은 `NODE_ENV=development`를 앞에 붙임). 처리 전 이미지는 공개 후보(422 `metadata_not_stripped`)·공개 조회(404)에서 빠집니다. 실패가 있으면 종료 코드 1 |
 | `pnpm check:archive` | 원본 아카이브 보존 검증(`python3 scripts/check_archive.py`) |
 
 스키마는 migration으로만 바꿉니다. `schema.ts`를 고쳤다면 `pnpm db:generate`로 생성한 SQL을 함께 커밋하세요(CI가 불일치를 검사합니다).
