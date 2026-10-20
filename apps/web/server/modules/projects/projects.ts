@@ -5,17 +5,24 @@
  * 사후 작성 모드(retroMode, T-07): 만들 때 고르거나("지난 과제 되짚기") 나중에 owner만 켜고 끕니다.
  * editor가 다른 필드와 함께 retroMode를 바꾸려 하면 전체 요청을 403으로 거부합니다(같은 값이면 무시).
  * 모드는 이후 만드는 로그·마일스톤·스냅샷의 `사후 작성` 표시를 정하며, 이미 만든 항목의 표시는 바꾸지 않습니다.
+ *
+ * 개설 학기(courseTermId, T-10): 만들 때와 수정할 때(owner/editor) 정합니다. 병합된 학기를 고르면 정본 학기로 연결합니다.
+ * 학기를 연결·변경할 때마다 embargo_until을 단조 규칙으로 올리며(embargo.ts nextEmbargoUntil), 떼거나 옛 학기로 바꿔도 줄지 않습니다.
+ * 단건 조회·수정 응답은 적용 엠바고와 과목 정보를 함께 싣습니다(ProjectDetailDto).
  */
 import { z } from 'zod'
 import { canChangeRetroMode, canEditProject, type ProjectRole } from '@peerchive/domain'
-import { and, desc, eq, sql, courseTerms, projectMembers, projects, type DbExecutor } from '@peerchive/db'
+import { and, desc, eq, sql, courses, projectMembers, projects, schools, type DbExecutor } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
+import { loadCanonicalTerm, toCourseDto, toCourseTermDto, toSchoolDto } from '../catalog/catalog'
+import { listCourseTags } from '../catalog/tags'
+import { getProjectEmbargo, nextEmbargoUntil, toEmbargoDto } from '../embargo/embargo'
 import { type Actor, conflict, forbidden, invalid } from '../errors'
 import { parseInput } from '../validation'
 import { type ProjectRow, loadReadableProject } from './access'
-import type { ProjectDto } from '../../../shared/types/api'
+import type { CourseContextDto, ProjectDetailDto, ProjectDto } from '../../../shared/types/api'
 
-export type { ProjectDto }
+export type { ProjectDetailDto, ProjectDto }
 
 const longText = z
   .string({ error: 'invalid' })
@@ -49,6 +56,8 @@ export const updateProjectSchema = z.object({
   constraints: longText.optional(),
   /** owner만 바꿀 수 있습니다. */
   retroMode: z.boolean({ error: 'invalid' }).optional(),
+  /** 개설 학기. null이면 연결 해제(엠바고는 줄지 않음). */
+  courseTermId: z.uuid({ error: 'invalid' }).transform((id) => id.toLowerCase()).nullable().optional(),
 })
 
 /**
@@ -75,25 +84,61 @@ export function toProjectDto(row: ProjectRow, myRole: ProjectRole): ProjectDto {
   }
 }
 
-/** 생성자는 같은 트랜잭션에서 active owner 멤버가 됩니다. */
-export async function createProject(db: DbExecutor, actor: Actor, rawInput: unknown): Promise<ProjectDto> {
+/** 과목 정보 패널(학교·과목·학기·태그). 모든 이름은 학생 작성입니다. */
+export async function getCourseContext(db: DbExecutor, courseTermId: string | null): Promise<CourseContextDto | null> {
+  if (!courseTermId) return null
+  const term = await loadCanonicalTerm(db, courseTermId)
+  if (!term) return null
+  const [row] = await db
+    .select({ course: courses, school: schools })
+    .from(courses)
+    .innerJoin(schools, eq(schools.id, courses.schoolId))
+    .where(eq(courses.id, term.courseId))
+    .limit(1)
+  if (!row) return null
+  return {
+    school: toSchoolDto(row.school),
+    course: toCourseDto(row.course),
+    term: toCourseTermDto(term),
+    tags: await listCourseTags(db, row.course.id),
+  }
+}
+
+/** 단건 DTO: 프로젝트 + 적용 엠바고 + 과목 정보. */
+export async function toProjectDetailDto(
+  db: DbExecutor,
+  row: ProjectRow,
+  myRole: ProjectRole,
+  now: Date,
+): Promise<ProjectDetailDto> {
+  return {
+    ...toProjectDto(row, myRole),
+    embargo: toEmbargoDto(await getProjectEmbargo(db, row.id, now)),
+    courseContext: await getCourseContext(db, row.courseTermId),
+  }
+}
+
+/** 고른 학기의 정본 id. 없으면 422 `{courseTermId: 'not_found'}`. */
+async function resolveTermId(db: DbExecutor, termId: string): Promise<string> {
+  const term = await loadCanonicalTerm(db, termId)
+  if (!term) throw invalid({ courseTermId: 'not_found' })
+  return term.id
+}
+
+/** 생성자는 같은 트랜잭션에서 active owner 멤버가 됩니다. 학기를 고르면 그 학기 종료까지 엠바고가 걸립니다. */
+export async function createProject(db: DbExecutor, actor: Actor, rawInput: unknown, now = new Date()): Promise<ProjectDetailDto> {
   const input = parseInput(createProjectSchema, rawInput)
   return db.transaction(async (tx) => {
-    if (input.courseTermId) {
-      const [term] = await tx
-        .select({ id: courseTerms.id })
-        .from(courseTerms)
-        .where(eq(courseTerms.id, input.courseTermId))
-        .limit(1)
-      if (!term) throw invalid({ courseTermId: 'not_found' })
-    }
+    const courseTermId = input.courseTermId ? await resolveTermId(tx, input.courseTermId.toLowerCase()) : null
+    const embargoUntil = await nextEmbargoUntil(tx, null, null, courseTermId)
     const [project] = await tx
       .insert(projects)
       .values({
         ownerId: actor.userId,
         title: input.title,
         kind: input.kind,
-        courseTermId: input.courseTermId ?? null,
+        courseTermId,
+        embargoUntil,
         summaryByStudent: input.summaryByStudent,
         goal: input.goal,
         constraints: input.constraints,
@@ -108,9 +153,9 @@ export async function createProject(db: DbExecutor, actor: Actor, rawInput: unkn
       targetType: 'project',
       targetId: project.id,
       projectId: project.id,
-      metadata: { retroMode: project.retroMode },
+      metadata: { retroMode: project.retroMode, courseTermId, embargoUntil: embargoUntil?.toISOString() ?? null },
     })
-    return toProjectDto(project, 'owner')
+    return toProjectDetailDto(tx, project, 'owner', now)
   })
 }
 
@@ -126,21 +171,23 @@ export async function listMyProjects(db: DbExecutor, actor: Actor): Promise<Proj
   return rows.map((row) => toProjectDto(row.project, row.role))
 }
 
-export async function getProject(db: DbExecutor, actor: Actor, projectId: unknown): Promise<ProjectDto> {
+export async function getProject(db: DbExecutor, actor: Actor, projectId: unknown, now = new Date()): Promise<ProjectDetailDto> {
   const { project, membership } = await loadReadableProject(db, actor, projectId)
-  return toProjectDto(project, membership.role)
+  return toProjectDetailDto(db, project, membership.role, now)
 }
 
 /**
  * owner/editor만. expectedVersion이 현재 version과 다르면 409(version_conflict).
  * retroMode를 지금과 다른 값으로 바꾸는 것은 owner만(아니면 403).
+ * courseTermId를 바꾸면 embargo_until은 단조 규칙으로만 바뀝니다(줄지 않음).
  */
 export async function updateProject(
   db: DbExecutor,
   actor: Actor,
   projectId: unknown,
   rawInput: unknown,
-): Promise<ProjectDto> {
+  now = new Date(),
+): Promise<ProjectDetailDto> {
   const input = parseInput(updateProjectSchema, rawInput)
   return db.transaction(async (tx) => {
     const { project, membership } = await loadReadableProject(tx, actor, projectId, { lock: true })
@@ -149,10 +196,21 @@ export async function updateProject(
     if (retroChange && !canChangeRetroMode({ userId: actor.userId }, project, membership)) throw forbidden()
     if (project.version !== input.expectedVersion) throw conflict('version_conflict')
 
-    const { expectedVersion, ...changes } = input
+    const { expectedVersion, courseTermId: requestedTermId, ...changes } = input
+    const nextTermId =
+      requestedTermId === undefined ? project.courseTermId : requestedTermId && (await resolveTermId(tx, requestedTermId))
+    const termChange = nextTermId !== project.courseTermId
+    const embargoUntil = termChange
+      ? await nextEmbargoUntil(tx, project.embargoUntil, project.courseTermId, nextTermId)
+      : project.embargoUntil
     const [updated] = await tx
       .update(projects)
-      .set({ ...changes, version: sql`${projects.version} + 1`, updatedAt: new Date() })
+      .set({
+        ...changes,
+        ...(termChange && { courseTermId: nextTermId, embargoUntil }),
+        version: sql`${projects.version} + 1`,
+        updatedAt: new Date(),
+      })
       .where(and(eq(projects.id, project.id), eq(projects.version, expectedVersion)))
       .returning()
     if (!updated) throw conflict('version_conflict')
@@ -166,6 +224,20 @@ export async function updateProject(
         metadata: { retroMode: updated.retroMode },
       })
     }
-    return toProjectDto(updated, membership.role)
+    if (termChange) {
+      await recordAudit(tx, {
+        actorId: actor.userId,
+        action: 'project.course_term',
+        targetType: 'project',
+        targetId: project.id,
+        projectId: project.id,
+        metadata: {
+          from: project.courseTermId,
+          to: updated.courseTermId,
+          embargoUntil: updated.embargoUntil?.toISOString() ?? null,
+        },
+      })
+    }
+    return toProjectDetailDto(tx, updated, membership.role, now)
   })
 }

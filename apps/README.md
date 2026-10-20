@@ -9,8 +9,8 @@
 | `apps/web` | Nuxt 4(Vue 3, TypeScript strict). 화면(`app/`), `/api/v1` 라우트(`server/api`), 서비스 모듈(`server/modules`), 공유 DTO 타입(`shared/types`) |
 | `apps/worker` | 작업 worker(pg-boss, [ADR 0004](../docs/adr/0004-pg-boss-jobs.md)). outbox 전달과 파일 검사 작업 |
 | `apps/bot` | 디스코드 봇(discord.js gateway, [ADR 0009](../docs/adr/0009-discord-bot-and-checkins.md)). `/log`·📌 수집, 승인 요청 DM, 체크인 알림·주간 요약 게시. 규칙은 웹 서버 내부 API에 있음([설정 안내](bot/README.md)) |
-| `packages/domain` | 런타임 의존성 없는 도메인 규칙: 과제 공간 권한 정책, 빌드 로그 작성·수정·해결 연결 규칙, 공개 상태 전이, 역할 선언·팀원 확인·기여 장부 기간 규칙, 산출물 업로드·열람 정책과 검사 상태 전이, 마일스톤·할 일·사후 작성 규칙, 주간 체크인 주(서울 ISO 주)·알림 일정·익명 집계(n≥5) |
-| `packages/db` | Drizzle ORM 스키마, SQL migration(`migrations/`), `createDb(url)` |
+| `packages/domain` | 런타임 의존성 없는 도메인 규칙: 과제 공간 권한 정책, 빌드 로그 작성·수정·해결 연결 규칙, 공개 상태 전이, 역할 선언·팀원 확인·기여 장부 기간 규칙, 산출물 업로드·열람 정책과 검사 상태 전이, 마일스톤·할 일·사후 작성 규칙, 주간 체크인 주(서울 ISO 주)·알림 일정·익명 집계(n≥5), 학교·과목 이름 정규화 키·학기 종료 시각·개념 태그 slug·병합 전제 조건·단조 엠바고·적용 엠바고 계산 |
+| `packages/db` | Drizzle ORM 스키마, SQL migration(`migrations/`), `createDb(url)`, 운영자 부여 CLI(`scripts/grant-operator.ts`) |
 | `packages/bot-protocol` | 웹 ↔ 봇 내부 API 약속: HMAC-SHA256 요청 서명·검증(시각 차이 5분, nonce)과 요청/응답 타입 |
 | `packages/files` | 오브젝트 저장소 추상화(파일시스템 driver), 파일 형식 판별, 악성코드 검사 어댑터(clamd), 검사 작업([ADR 0007](../docs/adr/0007-file-storage-and-scanning.md)) |
 | `ops/docker-compose.yml` | 로컬 개발용 PostgreSQL 16, 선택 profile `clamav`(clamd) |
@@ -30,9 +30,10 @@
 | T-07 할 일·완료 전환·사후 작성 모드 | 완료 | 할 일(원본 Card 계승, 제목 120자·메모 1000자·담당자는 active 멤버·마감일, 열린 할 일 200개·전체 500개, version 409), 상태 메뉴와 ▲▼ 순서 변경(상태별 position 빈틈없이, 상태를 바꾸면 새 목록 맨 뒤, 드래그 없음), 완료 시 "막힌 적 있었나요? 결정할 게 있었나요?" 프롬프트(응답 없이도 완료)와 빌드 로그 전환(source `task`, 할 일당 한 번, 빌드 로그 검증 그대로, 전환한 할 일은 삭제 불가), 사후 작성 모드(만들 때 선택, 이후 owner만 켜고 끔, 그 모드에서 만든 로그(source `retro`)·마일스톤·스냅샷은 `retrospective`로 고정되어 모드를 꺼도 남음), 모든 프로젝트·로그·마일스톤·스냅샷 DTO의 `retrospective`(공개 DTO T-11/T-12로 옮길 대상), 과제 화면의 할 일 섹션·완료 프롬프트·`사후 작성` 배지·기억·파일 기준 날짜 칸·되짚기 안내 |
 | T-08 역할 선언·팀원 확인·기여 리포트 | 완료 | 역할 선언(문장 300자, 멤버당 10개)과 근거(같은 프로젝트의 로그 revision·파일 버전, 최대 20개, 격리·실패 파일 422, 검사 중은 허용), 수정은 작성자만 새 revision(owner도 403, 낡은 `expectedRevision` 409)이고 새 revision은 `본인 설명 · 미확인`부터, 팀원 확인·이의(작성자 아닌 owner/editor/reviewer, 자기 확인 403, 이전 revision 409 `not_current`, 이의는 메모 필수, 이의가 있으면 `이의 있음`), viewer는 읽기만, 기간 장부(서울 월~일, 종류별 개수·할 일 완료·clean 파일·회의 참석·선언 상태, 이름순, 점수·순위 없음, 나간 멤버는 그 기간 기록이 있을 때만), 주간 요약 문장 함수(pilot-kit §4.1), 과제 화면의 기여 섹션(선언 폼·근거 선택·확인 초기화 안내·이력·기간 요약 표)과 인쇄용 동료평가 리포트 `/projects/[id]/report`([ADR 0008](../docs/adr/0008-contribution-report-format.md)) |
 | T-09 디스코드 봇·주간 체크인 | 완료(실제 디스코드 연동은 미검증) | 디스코드 계정 연결(웹에서 10분·일회용 코드 → `/peerchive link`, 해시 저장, 계정당 하나·해제), owner의 채널 연결(`/peerchive bind`, 한 채널 한 과제, 주간 요약은 채널별 선택), `/log 태그 내용`(진행·회고·회의는 본문, 막힘은 증상+선택 시간, 결정·검증은 모달, 해결은 웹 안내, 빌드 로그 검증 그대로)·📌(내 메시지는 바로 🔨진행, 남의 메시지는 작성자 승인 DM 48시간 — 승인 전 로그 없음, 결정·만료 때 저장한 내용 삭제), 디스코드 id 기반 clientId(UUID v5)로 재전송해도 로그 하나, 출처 `디스코드` 표시, 연결 안 된 사용자·비멤버는 안내만(저장 없음), 봇↔웹 HMAC 서명 내부 API(`/api/internal/discord/*`, 쿠키로는 호출 불가), 주간 체크인(60초 폼: 시간·난이도·한 줄·못 한 이유·통계 동의(기본 꺼짐), 주마다 upsert, 이번 주·지난주만, 팀 안 공개, 한 줄 → 🔨진행/🧱막힘 로그 1회), 대시보드 "이번 주 체크인", 체크인 알림(일 20시)·주간 요약(화 10시, `formatWeeklySummary`) 예약 게시(채널·종류·주마다 한 번), 익명 집계 함수(n≥5)([ADR 0009](../docs/adr/0009-discord-bot-and-checkins.md)) |
-| T-10 학교·과목·개념 태그·엠바고 | 다음 | [실행 계획 §4](../docs/planning/DELIVERY_PLAN.md) |
+| T-10 학교·과목·개념 태그·엠바고 | 완료 | 학생 작성 학교·과목(정규화 키 + pg_trgm 검색, 최대 20개, 병합된 행은 정본으로), 같은 이름 409 `already_exists`·비슷한 이름/같은 과목 코드 409 `similar_exists`(`confirmNew`), 사용자별 생성 한도(시간당 20회, 429), 개설 학기(과목·연도·학기마다 하나, 종료 시각은 서버 계산: 1학기 6/30·여름 8/31·2학기 12/31·겨울 다음 해 2월 말일, 서울 하루 끝, 사용자는 못 정함), 개념 태그(slug 정규화, 과목당 12개), 운영자(`operators` 테이블, CLI로만 부여, 비공개 과제 열람 권한 없음)의 학교·과목·태그 병합(한 트랜잭션에서 학기·프로젝트·학기 엠바고·태그 연결을 정본으로 옮김, 평탄화로 순환·사슬 없음, 과목은 같은 학교끼리)·학기 종료 조정·엠바고 낮추기(감사), 단조 엠바고(`projects.embargo_until`은 학기를 바꾸거나 떼도 줄지 않음)·명시적 엠바고(`embargoes`)·적용 엠바고 계산, 게시 판정 `assertPublishable`(T-11/T-12가 부름, 엠바고 중 409 `embargo_active`), 과제 만들기·과목 정보 패널의 과목 고르기(학교 → 과목 → 학기, 비슷한 이름 확인), 헤더 엠바고 배지, 개념 태그 추가([ADR 0010](../docs/adr/0010-catalog-merge-and-embargo.md)) |
+| T-11 공개 후보·점검·미리보기·동의 | 다음 | [실행 계획 §4](../docs/planning/DELIVERY_PLAN.md) |
 
-화면: `/login`, `/onboarding`(프로필 설정 겸용, 디스코드 연결), `/projects`(새 과제의 "지난 과제 되짚기" 선택, "이번 주 체크인" 카드 포함), `/projects/[id]`(개요·주간 체크인·할 일·산출물·마일스톤·빌드 로그·기여·디스코드 연결·멤버), `/projects/[id]/report?from=&to=`(인쇄용 동료평가 리포트), `/invite/[token]`, `/u/[handle]`.
+화면: `/login`, `/onboarding`(프로필 설정 겸용, 디스코드 연결), `/projects`(새 과제의 과목 고르기·"지난 과제 되짚기" 선택, "이번 주 체크인" 카드 포함), `/projects/[id]`(엠바고 배지, 개요·과목 정보·주간 체크인·할 일·산출물·마일스톤·빌드 로그·기여·디스코드 연결·멤버), `/projects/[id]/report?from=&to=`(인쇄용 동료평가 리포트), `/invite/[token]`, `/u/[handle]`.
 
 빌드 로그 API: `POST/GET /api/v1/projects/:id/logs`(목록은 `tag=`·`author=`·`milestone=` 필터), `GET /api/v1/logs/:id`, `GET/POST /api/v1/logs/:id/revisions`(본문에 `evidenceVersionIds[]`, `milestoneId`). 읽을 수 없는 프로젝트·로그는 404, reviewer/viewer의 작성·수정은 403입니다.
 
@@ -49,6 +50,12 @@
 내부 API(봇 전용, `POST`, HMAC 서명 필수): `/api/internal/discord/link`·`bind`·`logs`·`pins`·`pin-decisions`·`notices/claim`·`notices/ack`. 업무 결과는 200 `{status}`(`created`/`duplicate`/`not_bound`/`not_linked`/`not_writer`/`invalid`/`web_only`/`approval_requested` 등, 이유를 자세히 밝히지 않음), 서명·시각·nonce 실패는 401 `invalid_signature`, 형식 오류 422, 비밀 미설정 503 `internal_api_disabled`. 세션 쿠키만으로는 부를 수 없습니다([ADR 0009](../docs/adr/0009-discord-bot-and-checkins.md)).
 
 체크인 API: `GET /api/v1/projects/:id/checkins/me?week=YYYY-Www`(본인, 없으면 `checkin: null`), `PUT /api/v1/projects/:id/checkins/me`(`{week?, timeBucket, difficulty, note?, shareForStats?, skipReasons?, promote?: {tag: 'progress'|'stuck'}}`, 처음 201·다시 200, 이번 주·지난주 밖이면 422 `{week: 'out_of_range'}`, promote에 한 줄이 없으면 422 `{note: 'required'}`, 쓰기 권한 없이 promote면 403), `GET /api/v1/projects/:id/checkins?week=`(멤버, 이름순 팀 현황, 통계 동의·이유는 싣지 않음), `GET /api/v1/me/checkins`(대시보드). 읽을 수 없는 프로젝트는 404.
+
+학교·과목 API(로그인): `GET /api/v1/schools?q=`, `POST /api/v1/schools`(`{name, confirmNew?}`, 201), `GET /api/v1/schools/:id/courses?q=`, `POST /api/v1/schools/:id/courses`(`{title, code?, confirmNew?}`, 201, 없는 학교 404), `GET /api/v1/courses/:id/terms`, `POST /api/v1/courses/:id/terms`(`{year, semester}`, 새로 만들면 201·있으면 200 `created: false`, `endsAt`을 보내면 422 `{endsAt: 'not_allowed'}`, 범위 밖 연도 422 `{year: 'out_of_range'}`), `GET /api/v1/concept-tags?q=`, `GET/POST /api/v1/courses/:id/concept-tags`(`{tagId}` 또는 `{label}`, 새로 붙이면 201·이미 있으면 200, 12개 초과 409 `limit_reached`). 만들기에서 같은 이름은 409 `already_exists`, 비슷한 이름·같은 과목 코드는 409 `similar_exists`(둘 다 `candidates[]`), 생성 한도 초과 429 `rate_limited`. 병합된 학교·과목 id로 불러도 정본으로 처리합니다.
+
+엠바고 API: `GET /api/v1/projects/:id`·`PATCH`의 `embargo: {until, active, source}`(`source`: `course_term_end`·`course_term_embargo`·`project_embargo`)와 `courseContext`, `PATCH /api/v1/projects/:id`의 `courseTermId`(owner/editor, null이면 연결 해제, 없는 학기 422 `{courseTermId: 'not_found'}`, 엠바고는 줄지 않음), `POST /api/v1/projects/:id/embargoes`(`{until, reason}`, owner만·아니면 403, 201). 게시 API(T-11/T-12)는 `server/modules/embargo/embargo.ts`의 `assertPublishable`을 게시 트랜잭션 안에서 불러야 합니다(엠바고 중 409 `embargo_active` + `until`).
+
+운영자 API(운영자가 아니면 403 `operator_only`): `POST /api/v1/operator/schools/:id/merge`·`/operator/courses/:id/merge`·`/operator/concept-tags/:id/merge`(`{into}`, 200 + 정본, 자기 자신 422 `{into: 'self'}`, 없는 대상 422 `{into: 'not_found'}`, 이미 병합 409 `already_merged`, 대상이 병합됨 409 `target_merged`, 다른 학교 과목 409 `different_school`), `PATCH /api/v1/course-terms/:id`(`{endsAt, reason}`, 늘리면 연결된 프로젝트 엠바고도 올림), `POST /api/v1/operator/course-terms/:id/embargoes`(`{until, reason}`, 201), `PATCH /api/v1/operator/projects/:id/embargo`(`{until|null, reason}`, 낮추기만·높이면 422 `{until: 'not_lower'}`, 응답은 적용 엠바고뿐). 모두 감사 이벤트를 남깁니다. 운영자도 비공개 과제 내용 API는 404입니다.
 
 ## 준비
 
@@ -103,6 +110,9 @@ pnpm test
 | `pnpm worker` | worker 개발 실행(`NODE_ENV=development`, 루트 `.env` 읽음). 배포용은 `pnpm --filter worker start`(production 기본, 실제 검사기 필요). SIGINT/SIGTERM이면 진행 중인 작업을 기다린 뒤(최대 30초) 종료 |
 | `pnpm bot` | 디스코드 봇 개발 실행(`NODE_ENV=development`, 루트 `.env` 읽음). 처음엔 `pnpm --filter bot register-commands`로 슬래시 명령 등록. 배포용은 `pnpm --filter bot start` |
 | `pnpm db:generate` | `packages/db/src/schema.ts` 변경을 SQL migration으로 생성 |
+| `pnpm --filter @peerchive/db grant-operator <email> [--revoke]` | 운영자 부여·회수(로그인한 적 있는 활성 사용자, 감사 이벤트 기록). 운영자 권한은 이 CLI로만 바꿉니다. `DATABASE_URL`(없으면 루트 `.env`) 사용 |
 | `pnpm check:archive` | 원본 아카이브 보존 검증(`python3 scripts/check_archive.py`) |
 
 스키마는 migration으로만 바꿉니다. `schema.ts`를 고쳤다면 `pnpm db:generate`로 생성한 SQL을 함께 커밋하세요(CI가 불일치를 검사합니다).
+
+0008 migration은 `CREATE EXTENSION IF NOT EXISTS pg_trgm`으로 시작합니다. 관리형 PostgreSQL에서는 pg_trgm이 허용되어 있어야 하고 migration 계정에 확장을 만들 권한이 있어야 합니다(없으면 관리자가 미리 만들어 두세요).

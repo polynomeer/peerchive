@@ -66,6 +66,74 @@ export interface ProjectDto extends RetrospectiveMarked {
   updatedAt: string
 }
 
+// ── 학교·과목·개설 학기·개념 태그·엠바고 (T-10) ──
+// 모든 이름은 학생이 입력한 값입니다(화면에 "학생 작성" 표시). 교수 실명·평가 필드는 없습니다(PROOFU_EVOLUTION_PLAN §8.6).
+
+export type Semester = 'spring' | 'summer' | 'fall' | 'winter'
+
+export interface SchoolDto {
+  id: string
+  name: string
+}
+
+export interface CourseDto {
+  id: string
+  schoolId: string
+  title: string
+  code: string | null
+}
+
+export interface CourseTermDto {
+  id: string
+  courseId: string
+  year: number
+  semester: Semester
+  /** 학기 종료 시각(서버 계산, 엠바고 기준). */
+  endsAt: string
+}
+
+export interface ConceptTagDto {
+  id: string
+  slug: string
+  label: string
+}
+
+/** POST /courses/:id/terms 응답. 이미 있던 학기면 created=false(200). */
+export interface CourseTermResultDto {
+  term: CourseTermDto
+  created: boolean
+}
+
+/** 409 similar_exists / already_exists의 후보(오류 응답에 싣는 짧은 레코드라 type alias로 둡니다). */
+export type CatalogCandidateDto = {
+  id: string
+  name: string
+  code?: string | null
+}
+
+/** 프로젝트에 연결된 과목 정보(읽기 전용 패널). */
+export interface CourseContextDto {
+  school: SchoolDto
+  course: CourseDto
+  term: CourseTermDto
+  tags: ConceptTagDto[]
+}
+
+export type EmbargoSource = 'course_term_end' | 'course_term_embargo' | 'project_embargo'
+
+/** 적용 중인 엠바고. active여도 끝나면 자동 공개하지 않습니다(§9.2). */
+export interface EmbargoDto {
+  until: string | null
+  active: boolean
+  source: EmbargoSource | null
+}
+
+/** GET/PATCH /projects/:id 응답: 프로젝트 + 엠바고 + 과목 정보. */
+export interface ProjectDetailDto extends ProjectDto {
+  embargo: EmbargoDto
+  courseContext: CourseContextDto | null
+}
+
 /** 같은 프로젝트 멤버에게만 주는 DTO. 이메일 없음. */
 export interface MemberDto {
   userId: string
@@ -611,4 +679,8 @@ export interface ApiErrorData {
   logCount?: number
   /** 409 not_current(이전 선언 revision에 확인)일 때 현재 revision id. */
   currentRevisionId?: string
+  /** 409 similar_exists / already_exists(학교·과목 만들기)일 때 비슷하거나 같은 기존 항목. */
+  candidates?: CatalogCandidateDto[]
+  /** 409 embargo_active일 때 엠바고 종료 시각. */
+  until?: string
 }

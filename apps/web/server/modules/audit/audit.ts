@@ -44,6 +44,20 @@ export type AuditAction =
   | 'discord.pin_request'
   | 'discord.pin_decision'
   | 'checkin.submit'
+  | 'school.create'
+  | 'school.merge'
+  | 'course.create'
+  | 'course.merge'
+  | 'course_term.create'
+  | 'course_term.adjust_ends_at'
+  | 'concept_tag.create'
+  | 'concept_tag.attach'
+  | 'concept_tag.merge'
+  | 'project.course_term'
+  | 'embargo.create'
+  | 'embargo.lower'
+  | 'operator.grant'
+  | 'operator.revoke'
 
 export async function recordAudit(
   db: DbExecutor,
@@ -64,6 +78,12 @@ export async function recordAudit(
       | 'discord_binding'
       | 'discord_pin_request'
       | 'checkin'
+      | 'school'
+      | 'course'
+      | 'course_term'
+      | 'concept_tag'
+      | 'embargo'
+      | 'operator'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

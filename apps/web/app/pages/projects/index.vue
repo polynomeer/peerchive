@@ -12,7 +12,12 @@ const { data: projects, error: loadError } = await useFetch<ProjectDto[]>('/api/
 const { data: checkins } = await useFetch<MyCheckinStatusDto | null>('/api/v1/me/checkins', { default: () => null })
 const pendingCheckins = computed(() => checkins.value?.projects.filter((p) => !p.submitted) ?? [])
 
-const form = reactive({ title: '', kind: 'individual' as 'individual' | 'team', retroMode: false })
+const form = reactive({
+  title: '',
+  kind: 'individual' as 'individual' | 'team',
+  retroMode: false,
+  courseTermId: null as string | null,
+})
 const errors = ref<Record<string, string>>({})
 const creating = ref(false)
 const failure = ref<string | null>(null)
@@ -96,6 +101,8 @@ const KIND_LABELS = { individual: '개인', team: '팀' } as const
             <label><input v-model="form.kind" type="radio" name="kind" value="team" /> 팀</label>
           </div>
         </fieldset>
+        <CoursePicker v-model="form.courseTermId" id-prefix="new-course" />
+        <p v-if="errors.courseTermId" class="field-error">{{ fieldMessage(errors.courseTermId) }}</p>
         <div class="field">
           <label class="check">
             <input v-model="form.retroMode" type="checkbox" aria-describedby="retro-hint" />

@@ -7,8 +7,19 @@
  * - GONE(410): 만료·사용·취소된 일회성 토큰(업로드 의도 포함). 어떤 경우인지 밝히지 않습니다.
  * - PAYLOAD_TOO_LARGE(413): 업로드 본문이 선언한 크기·파일 한도를 넘음(받던 내용은 지움).
  * - VALIDATION(422): 필드별 오류 코드.
+ * - RATE_LIMITED(429): 사용자별 생성 한도(학교·과목·학기·개념 태그 만들기 등) 초과.
  */
-export type ServiceErrorCode = 'NOT_FOUND' | 'FORBIDDEN' | 'CONFLICT' | 'GONE' | 'PAYLOAD_TOO_LARGE' | 'VALIDATION'
+export type ServiceErrorCode =
+  | 'NOT_FOUND'
+  | 'FORBIDDEN'
+  | 'CONFLICT'
+  | 'GONE'
+  | 'PAYLOAD_TOO_LARGE'
+  | 'VALIDATION'
+  | 'RATE_LIMITED'
+
+/** 오류 응답의 추가 값. 409 similar_exists의 후보 목록처럼 짧은 레코드 배열도 됩니다. 민감 정보 금지. */
+export type ErrorDetailValue = string | number | null | ReadonlyArray<Readonly<Record<string, string | number | null>>>
 
 export class ServiceError extends Error {
   constructor(
@@ -18,7 +29,7 @@ export class ServiceError extends Error {
     /** VALIDATION일 때 필드별 오류 코드. */
     readonly fields?: Record<string, string>,
     /** 클라이언트가 복구에 쓰는 추가 값(예: 409의 currentRevision). 민감 정보 금지. */
-    readonly details?: Record<string, string | number>,
+    readonly details?: Record<string, ErrorDetailValue>,
   ) {
     super(reason ? `${code}: ${reason}` : code)
     this.name = 'ServiceError'
@@ -27,8 +38,9 @@ export class ServiceError extends Error {
 
 export const notFound = () => new ServiceError('NOT_FOUND')
 export const forbidden = (reason?: string) => new ServiceError('FORBIDDEN', reason)
-export const conflict = (reason: string, details?: Record<string, string | number>) =>
+export const conflict = (reason: string, details?: Record<string, ErrorDetailValue>) =>
   new ServiceError('CONFLICT', reason, undefined, details)
+export const rateLimited = () => new ServiceError('RATE_LIMITED', 'rate_limited')
 export const gone = (reason = 'link_unavailable') => new ServiceError('GONE', reason)
 export const tooLarge = () => new ServiceError('PAYLOAD_TOO_LARGE', 'too_large')
 export const invalid = (fields: Record<string, string>) => new ServiceError('VALIDATION', 'validation_failed', fields)

@@ -57,6 +57,13 @@
       "when": 1792468416457,
       "tag": "0007_discord_checkins",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792474876648,
+      "tag": "0008_courses_embargo",
+      "breakpoints": true
     }
   ]
 }

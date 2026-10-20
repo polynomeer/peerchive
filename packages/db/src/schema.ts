@@ -15,6 +15,9 @@
  * T-09(0007 migration): 외부 계정 연결(integrations)·일회용 연결 코드(discord_codes)·채널 연결(discord_channel_bindings)·
  * 📌 승인 요청(discord_pin_requests)·봇 알림 outbox(discord_notices)·내부 API nonce(internal_request_nonces)·
  * 주간 체크인(weekly_checkins). 결정은 ADR 0009.
+ * T-10(0008 migration): pg_trgm 확장, 학교·과목의 정규화 키·병합(merged_into)·작성자, 개념 태그(concept_tags)·과목 연결
+ * (course_concept_tags), 운영자(operators), 프로젝트 엠바고(projects.embargo_until, 단조 증가)·명시적 엠바고(embargoes).
+ * 결정은 ADR 0010.
  * 공개(Publication)·동의는 다음 slice에서 추가합니다.
  *
  * 원칙
@@ -88,6 +91,8 @@ export const pinRequestStatus = pgEnum('pin_request_status', ['pending', 'approv
 export const discordNoticeKind = pgEnum('discord_notice_kind', ['checkin_reminder', 'weekly_summary'])
 /** 주간 체크인 투입 시간(0 / ~2h / ~5h / ~10h / 10h+, PROOFU_EVOLUTION_PLAN §6.4). */
 export const checkinTimeBucket = pgEnum('checkin_time_bucket', ['none', 'lt2h', 'lt5h', 'lt10h', 'ten_plus'])
+/** 명시적 엠바고의 범위(SYSTEM_DESIGN §6.6 Embargo). */
+export const embargoScope = pgEnum('embargo_scope', ['project', 'course_term'])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -196,16 +201,58 @@ export const profiles = pgTable(
   (t) => [check('profiles_handle_format_check', sql`${t.handle} ~ '^[a-z0-9-]{3,30}$'`)],
 )
 
-// ── 강의 아카이브 골격 (§6.2) ────────────────────────────────────────────
+// ── 운영자 (T-10) ────────────────────────────────────────────────────────
 
-export const schools = pgTable('schools', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  name: text('name').notNull(),
-  /** 운영자 병합 표시. 공식 인증 의미 없음. */
-  verifiedLabel: text('verified_label'),
-  createdAt: createdAt(),
+/**
+ * 운영자. 학교·과목·개념 태그 병합, 학기 종료 시각 조정, 엠바고 낮추기만 할 수 있습니다(ADR 0010).
+ * 비공개 과제 공간을 읽을 권한은 없습니다(§8). 부여·회수는 CLI(`pnpm --filter @peerchive/db grant-operator`)로만 하며
+ * API로는 바꿀 수 없습니다. 회수는 revoked_at을 채우고, 다시 부여하면 새 시각으로 덮어씁니다.
+ */
+export const operators = pgTable('operators', {
+  userId: uuid('user_id')
+    .primaryKey()
+    .references(() => users.id),
+  grantedAt: timestamp('granted_at', { withTimezone: true }).notNull().defaultNow(),
+  /** CLI로 부여하면 null(운영 콘솔 사용자). */
+  grantedBy: uuid('granted_by').references(() => users.id),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
 })
 
+// ── 강의 아카이브 골격 (§6.2) ────────────────────────────────────────────
+
+/**
+ * 학교(학생 입력, "학생 작성"). 같은 학교가 여러 이름으로 들어오면 운영자가 병합합니다(merged_into, 삭제 없음).
+ * name_key는 @peerchive/domain의 labelKey(공백·대소문자·구두점 무시)이며 pg_trgm 유사도 검색에 씁니다.
+ * 정본(merged_into가 null)끼리는 name_key가 겹치지 않습니다.
+ * 학교 메일 인증·공식 페이지(PROOFU_EVOLUTION_PLAN §8.6, §8.9.3)는 다음 slice에서 이 행에 붙입니다.
+ */
+export const schools = pgTable(
+  'schools',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: text('name').notNull(),
+    nameKey: text('name_key').notNull(),
+    /** 운영자 병합 표시. 공식 인증 의미 없음. */
+    verifiedLabel: text('verified_label'),
+    /** 병합된 정본 학교. 정본은 항상 merged_into가 null이고(평탄화), 사슬·순환이 없습니다. */
+    mergedInto: uuid('merged_into').references((): AnyPgColumn => schools.id),
+    mergedAt: timestamp('merged_at', { withTimezone: true }),
+    createdBy: uuid('created_by').references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('schools_name_key_canonical_key').on(t.nameKey).where(sql`${t.mergedInto} is null`),
+    index('schools_name_key_trgm_idx').using('gin', t.nameKey.op('gin_trgm_ops')),
+    index('schools_merged_into_idx').on(t.mergedInto),
+    check('schools_not_self_merged_check', sql`${t.mergedInto} is null or ${t.mergedInto} <> ${t.id}`),
+  ],
+)
+
+/**
+ * 과목(학생 입력). 교수 이름·평가 필드는 두지 않습니다(§8.6). title_key·code_key는 중복 판정용 정규화 키입니다.
+ * 같은 학교의 정본끼리 title_key가 겹치지 않게 애플리케이션이 학교별 advisory lock 안에서 확인합니다
+ * (학교 병합으로 같은 이름 과목이 한 학교에 모일 수 있어 DB unique로 두지 않음).
+ */
 export const courses = pgTable(
   'courses',
   {
@@ -214,14 +261,28 @@ export const courses = pgTable(
       .notNull()
       .references(() => schools.id),
     code: text('code'),
+    codeKey: text('code_key'),
     title: text('title').notNull(),
-    /** 정규화는 삭제가 아니라 병합으로 합니다. */
+    titleKey: text('title_key').notNull(),
+    /** 정규화는 삭제가 아니라 병합으로 합니다. 정본은 merged_into가 null(평탄화). */
     mergedInto: uuid('merged_into').references((): AnyPgColumn => courses.id),
+    mergedAt: timestamp('merged_at', { withTimezone: true }),
+    createdBy: uuid('created_by').references(() => users.id),
     createdAt: createdAt(),
   },
-  (t) => [index('courses_school_id_idx').on(t.schoolId)],
+  (t) => [
+    index('courses_school_id_idx').on(t.schoolId),
+    index('courses_school_code_key_idx').on(t.schoolId, t.codeKey),
+    index('courses_title_key_trgm_idx').using('gin', t.titleKey.op('gin_trgm_ops')),
+    index('courses_merged_into_idx').on(t.mergedInto),
+    check('courses_not_self_merged_check', sql`${t.mergedInto} is null or ${t.mergedInto} <> ${t.id}`),
+  ],
 )
 
+/**
+ * 개설 학기. ends_at은 서버가 학기에서 계산하고(@peerchive/domain semesterEndsAt) 운영자만 고칩니다(감사 기록).
+ * 과목 병합 때 대상 과목에 같은 (연도, 학기)가 있으면 이 행은 merged_into로 그쪽을 가리키고 프로젝트를 옮깁니다.
+ */
 export const courseTerms = pgTable(
   'course_terms',
   {
@@ -233,11 +294,58 @@ export const courseTerms = pgTable(
     semester: semester('semester').notNull(),
     /** 엠바고 기준 시각. */
     endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+    mergedInto: uuid('merged_into').references((): AnyPgColumn => courseTerms.id),
+    createdBy: uuid('created_by').references(() => users.id),
     createdAt: createdAt(),
   },
   (t) => [
     unique('course_terms_course_year_semester_key').on(t.courseId, t.year, t.semester),
     check('course_terms_year_check', sql`${t.year} between 1900 and 2200`),
+    check('course_terms_not_self_merged_check', sql`${t.mergedInto} is null or ${t.mergedInto} <> ${t.id}`),
+  ],
+)
+
+/**
+ * 개념 태그(학생 작성, 학교 간 연결). slug는 @peerchive/domain normalizeTagSlug 결과이며 병합된 태그도 slug를 유지합니다
+ * (같은 slug로 다시 추가하면 정본으로 이어짐).
+ */
+export const conceptTags = pgTable(
+  'concept_tags',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    slug: text('slug').notNull().unique(),
+    label: text('label').notNull(),
+    parentId: uuid('parent_id').references((): AnyPgColumn => conceptTags.id),
+    mergedInto: uuid('merged_into').references((): AnyPgColumn => conceptTags.id),
+    mergedAt: timestamp('merged_at', { withTimezone: true }),
+    createdBy: uuid('created_by').references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('concept_tags_slug_trgm_idx').using('gin', t.slug.op('gin_trgm_ops')),
+    index('concept_tags_merged_into_idx').on(t.mergedInto),
+    check('concept_tags_slug_format_check', sql`char_length(${t.slug}) between 1 and 40`),
+    check('concept_tags_not_self_merged_check', sql`${t.mergedInto} is null or ${t.mergedInto} <> ${t.id}`),
+    check('concept_tags_not_self_parent_check', sql`${t.parentId} is null or ${t.parentId} <> ${t.id}`),
+  ],
+)
+
+/** 과목 ↔ 개념 태그(과목당 12개, 정본 태그만). 연결 행은 병합 때 정본으로 옮기고 원본 연결은 지웁니다. */
+export const courseConceptTags = pgTable(
+  'course_concept_tags',
+  {
+    courseId: uuid('course_id')
+      .notNull()
+      .references(() => courses.id),
+    tagId: uuid('tag_id')
+      .notNull()
+      .references(() => conceptTags.id),
+    addedBy: uuid('added_by').references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ name: 'course_concept_tags_pkey', columns: [t.courseId, t.tagId] }),
+    index('course_concept_tags_tag_id_idx').on(t.tagId),
   ],
 )
 
@@ -265,6 +373,12 @@ export const projects = pgTable(
      * 표시가 고정되므로, 나중에 모드를 꺼도 기존 항목의 `사후 작성` 표시는 남습니다. 변경은 owner만(T-07).
      */
     retroMode: boolean('retro_mode').notNull().default(false),
+    /**
+     * 엠바고(§9.2). 학기를 연결하거나 바꿀 때마다 max(지금 값, 학기 종료·학기 엠바고)로만 올라가고,
+     * 학기를 바꾸거나 떼어도 내려가지 않습니다(옛 학기로 바꿔 피하는 우회 방지). 낮추기는 운영자만(감사 기록).
+     * 적용 엠바고는 이 값·지금 학기 종료·명시적 엠바고(embargoes)의 최댓값입니다(@peerchive/domain computeEffectiveEmbargo).
+     */
+    embargoUntil: timestamp('embargo_until', { withTimezone: true }),
     /** 낙관적 동시성용. 수정할 때마다 1씩 올리고, 요청의 expectedVersion과 다르면 409입니다. */
     version: integer('version').notNull().default(1),
     createdAt: createdAt(),
@@ -1017,5 +1131,35 @@ export const auditEvents = pgTable(
     index('audit_events_project_id_idx').on(t.projectId),
     index('audit_events_actor_id_idx').on(t.actorId),
     check('audit_events_metadata_object_check', sql`jsonb_typeof(${t.metadata}) = 'object'`),
+  ],
+)
+
+/**
+ * 명시적 엠바고(SYSTEM_DESIGN §6.6 Embargo). 프로젝트(owner 요청) 또는 개설 학기(운영자) 범위입니다.
+ * 게시·공개 조회에서 강제하며(T-11/T-12의 assertPublishable), 끝나도 자동 공개하지 않습니다.
+ * 해제는 revoked_at(운영자)이며 행을 지우지 않습니다.
+ */
+export const embargoes = pgTable(
+  'embargoes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    scope: embargoScope('scope').notNull(),
+    projectId: uuid('project_id').references(() => projects.id),
+    courseTermId: uuid('course_term_id').references(() => courseTerms.id),
+    until: timestamp('until', { withTimezone: true }).notNull(),
+    reason: text('reason').notNull(),
+    requestedBy: uuid('requested_by').references(() => users.id),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    revokedBy: uuid('revoked_by').references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('embargoes_project_id_idx').on(t.projectId),
+    index('embargoes_course_term_id_idx').on(t.courseTermId),
+    check(
+      'embargoes_scope_target_check',
+      sql`(${t.scope} = 'project' and ${t.projectId} is not null and ${t.courseTermId} is null) or (${t.scope} = 'course_term' and ${t.courseTermId} is not null and ${t.projectId} is null)`,
+    ),
+    check('embargoes_reason_length_check', sql`char_length(${t.reason}) between 1 and 500`),
   ],
 )

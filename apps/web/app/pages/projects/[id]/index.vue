@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { AssignableRole, InvitationDto, MemberDto, ProjectDto } from '~~/shared/types/api'
+import type { AssignableRole, InvitationDto, MemberDto, ProjectDetailDto } from '~~/shared/types/api'
 
 definePageMeta({ middleware: 'auth' })
 
@@ -7,7 +7,7 @@ const route = useRoute()
 const id = computed(() => String(route.params.id))
 const { me } = useAuth()
 
-const { data: project, error: projectError, refresh: refreshProject } = await useFetch<ProjectDto>(
+const { data: project, error: projectError, refresh: refreshProject } = await useFetch<ProjectDetailDto>(
   () => `/api/v1/projects/${id.value}`,
 )
 const { data: members, refresh: refreshMembers } = await useFetch<MemberDto[]>(
@@ -47,7 +47,7 @@ async function saveEdit() {
   if (!project.value) return
   editErrors.value = {}
   try {
-    project.value = await $fetch<ProjectDto>(`/api/v1/projects/${id.value}`, {
+    project.value = await $fetch<ProjectDetailDto>(`/api/v1/projects/${id.value}`, {
       method: 'PATCH',
       body: { ...edit, expectedVersion: project.value.version },
     })
@@ -63,6 +63,27 @@ async function saveEdit() {
   }
 }
 
+// ── 과목·엠바고 (T-10) ──
+const embargoText = computed(() => embargoBadge(project.value?.embargo))
+const savingCourse = ref(false)
+async function saveCourseTerm(courseTermId: string | null) {
+  if (!project.value) return
+  savingCourse.value = true
+  try {
+    project.value = await $fetch<ProjectDetailDto>(`/api/v1/projects/${id.value}`, {
+      method: 'PATCH',
+      body: { expectedVersion: project.value.version, courseTermId },
+    })
+    say('ok', courseTermId ? '과목을 연결했습니다.' : '과목 연결을 끊었습니다.')
+  } catch (e) {
+    const err = apiError(e)
+    say('error', err.status === 409 ? '다른 멤버가 먼저 수정했습니다. 최신 내용을 불러왔으니 다시 시도하세요.' : '과목을 저장하지 못했습니다.')
+    await refreshProject()
+  } finally {
+    savingCourse.value = false
+  }
+}
+
 // ── 사후 작성 모드 (T-07) ──
 // 켜고 끄는 것은 owner만. 이미 만든 로그·마일스톤의 ‘사후 작성’ 표시는 모드를 꺼도 남습니다.
 const retro = computed(() => project.value?.retrospective ?? false)
@@ -74,7 +95,7 @@ async function toggleRetro() {
     : '사후 작성 모드를 끌까요? 이미 쓴 항목의 ‘사후 작성’ 표시는 그대로 남고, 지금부터 쓰는 기록만 진행 중 기록이 됩니다.'
   if (!confirm(question)) return
   try {
-    project.value = await $fetch<ProjectDto>(`/api/v1/projects/${id.value}`, {
+    project.value = await $fetch<ProjectDetailDto>(`/api/v1/projects/${id.value}`, {
       method: 'PATCH',
       body: { expectedVersion: project.value.version, retroMode: next },
     })
@@ -217,6 +238,7 @@ const formatDate = (iso: string) => new Date(iso).toLocaleString('ko-KR', { date
       <p class="actions">
         <span class="badge private">🔒 팀만 보기</span>
         <span v-if="retro" class="badge retro">사후 작성</span>
+        <span v-if="embargoText" class="badge embargo">{{ embargoText }}</span>
         <span class="muted">{{ project.kind === 'team' ? '팀 과제' : '개인 과제' }} · 내 역할: {{ ROLE_LABELS[project.myRole] }}</span>
       </p>
 
@@ -271,6 +293,14 @@ const formatDate = (iso: string) => new Date(iso).toLocaleString('ko-KR', { date
           </div>
         </form>
       </section>
+
+      <CourseInfoPanel
+        :context="project.courseContext"
+        :embargo="project.embargo"
+        :can-edit="canEdit"
+        :saving="savingCourse"
+        @save="saveCourseTerm"
+      />
 
       <CheckinSection :project-id="project.id" :can-write="canEdit" :me-id="me?.id ?? null" />
 

@@ -15,3 +15,4 @@ Peerchive 신규 앱(`apps/`, `packages/`)의 기술 결정을 짧게 남깁니�
 | [0007](0007-file-storage-and-scanning.md) | 파일 저장·격리·검사: 저장소 추상화 + 3단계 업로드 + worker 검사 | 채택 |
 | [0008](0008-contribution-report-format.md) | 동료평가 리포트 형식: 인쇄용 HTML 페이지(브라우저 "PDF로 저장") | 채택 |
 | [0009](0009-discord-bot-and-checkins.md) | 디스코드 봇과 주간 체크인: 별도 봇 프로세스 + 서명된 내부 API | 채택 |
+| [0010](0010-catalog-merge-and-embargo.md) | 학교·과목·개념 태그 정규화와 엠바고: 운영자 테이블 + 즉시 다시 가리키는 병합 + 단조 엠바고 | 채택 |

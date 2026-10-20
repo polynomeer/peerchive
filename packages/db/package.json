@@ -12,7 +12,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "generate": "drizzle-kit generate",
-    "migrate": "drizzle-kit migrate"
+    "migrate": "drizzle-kit migrate",
+    "grant-operator": "node --disable-warning=ExperimentalWarning scripts/grant-operator.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.45.3",

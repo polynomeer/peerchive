@@ -26,6 +26,7 @@ const row = (retroMode: boolean): Parameters<typeof toProjectDto>[0] => ({
   courseTermId: null,
   assignmentBriefId: null,
   retroMode,
+  embargoUntil: null,
   version: 1,
   createdAt: new Date('2026-10-01T00:00:00Z'),
   updatedAt: new Date('2026-10-01T00:00:00Z'),
