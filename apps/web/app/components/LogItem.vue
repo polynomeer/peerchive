@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 타임라인의 로그 한 건: 태그(텍스트 라벨)·작성자·수행일(자기 기입)/기록 시각·구조화 필드·링크·막힘↔해결 연결,
- * 수정 이력(rN)과 작성자용 수정 폼. 수정은 expectedRevision을 보내고 409면 최신 내용을 다시 불러옵니다.
+ * 사후 작성 표시·출처 할 일(T-07), 수정 이력(rN)과 작성자용 수정 폼. 수정은 expectedRevision을 보내고 409면 최신 내용을 다시 불러옵니다.
  */
 import type {
   DecisionPayload,
@@ -109,16 +109,18 @@ async function saveEdit() {
 </script>
 
 <template>
-  <article class="log-item" :aria-labelledby="headingId">
+  <article :id="`log-${log.id}`" class="log-item" tabindex="-1" :aria-labelledby="headingId">
     <header class="log-head">
       <h3 :id="headingId" class="log-tag">{{ LOG_TAG_LABELS[log.tag] }}</h3>
       <span>{{ log.author.displayName || log.author.handle || '이름 미설정' }}</span>
       <span class="muted">
         기록 <time :datetime="log.createdAt">{{ formatDateTime(log.createdAt) }}</time>
-        <template v-if="log.claimedDate"> · 수행일(자기 기입) <time :datetime="log.claimedDate">{{ log.claimedDate }}</time></template>
+        <template v-if="log.claimedDate"> · {{ log.retrospective ? '기억·파일 기준 날짜' : '수행일' }}(자기 기입) <time :datetime="log.claimedDate">{{ log.claimedDate }}</time></template>
       </span>
+      <span v-if="log.retrospective" class="badge retro">사후 작성</span>
       <span v-if="log.revisionNo > 1" class="badge">수정됨 (r{{ log.revisionNo }})</span>
     </header>
+    <p v-if="log.task" class="relation small">↳ 할 일에서 남김: {{ log.task.title }}</p>
 
     <p v-if="log.tag === 'solution' && log.resolves" class="relation">
       ↳ 막힘 연결됨: {{ log.resolves.summary || '증상 없음' }} <span class="muted">({{ log.resolves.author.displayName }})</span>
@@ -250,6 +252,7 @@ async function saveEdit() {
         :stuck-logs="stuckLogs"
         :evidence-options="evidenceOptions"
         :milestones="milestones"
+        :retro="log.retrospective"
       />
       <p v-if="status" :class="['notice', status.kind]" :role="status.kind === 'error' ? 'alert' : 'status'">{{ status.text }}</p>
       <div class="actions">

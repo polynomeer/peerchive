@@ -8,7 +8,7 @@
 |---|---|
 | `apps/web` | Nuxt 4(Vue 3, TypeScript strict). 화면(`app/`), `/api/v1` 라우트(`server/api`), 서비스 모듈(`server/modules`), 공유 DTO 타입(`shared/types`) |
 | `apps/worker` | 작업 worker(pg-boss, [ADR 0004](../docs/adr/0004-pg-boss-jobs.md)). outbox 전달과 파일 검사 작업 |
-| `packages/domain` | 런타임 의존성 없는 도메인 규칙: 과제 공간 권한 정책, 빌드 로그 작성·수정·해결 연결 규칙, 공개 상태 전이, 기여 확인, 산출물 업로드·열람 정책과 검사 상태 전이 |
+| `packages/domain` | 런타임 의존성 없는 도메인 규칙: 과제 공간 권한 정책, 빌드 로그 작성·수정·해결 연결 규칙, 공개 상태 전이, 기여 확인, 산출물 업로드·열람 정책과 검사 상태 전이, 마일스톤·할 일·사후 작성 규칙 |
 | `packages/db` | Drizzle ORM 스키마, SQL migration(`migrations/`), `createDb(url)` |
 | `packages/files` | 오브젝트 저장소 추상화(파일시스템 driver), 파일 형식 판별, 악성코드 검사 어댑터(clamd), 검사 작업([ADR 0007](../docs/adr/0007-file-storage-and-scanning.md)) |
 | `ops/docker-compose.yml` | 로컬 개발용 PostgreSQL 16, 선택 profile `clamav`(clamd) |
@@ -25,15 +25,18 @@
 | T-04 빌드 로그·revision·태그별 payload | 완료 | 7개 태그별 payload 검증(모르는 키 거부), 수정은 새 revision(낡은 `expectedRevision`은 409 `stale_revision`)·태그 변경 불가(422 `tag: immutable`), 💡해결↔🧱막힘 연결(같은 프로젝트만), 근거 링크(http/https, 서버가 열지 않음), 자기 기입 수행일(최대 내일) vs 기록 시각, `clientId` 재전송 중복 방지, cursor 목록·태그/작성자 필터, 과제 화면의 작성 폼(임시 저장·재시도)·타임라인·수정 이력 |
 | T-05 파일 업로드·격리·검사 | 완료 | 업로드 의도(15분)→PUT(스트림·SHA-256·크기 한도)→완료(idempotent, 같은 내용 중복 방지) 3단계, 파일당 20MB·1인당 500MB, worker 검사(magic-byte 판별·선언 형식/확장자 대조·내장 콘텐츠 점검·ClamAV 또는 개발용 signature-only), `pending→scanning→clean/quarantined/failed`·재시도·dead-letter, clean만 멤버에게 내려줌(그 밖에는 404, nosniff·sandbox CSP), 빌드 로그 파일 근거(같은 프로젝트·최대 10개·revision 이어받기), 과제 화면의 산출물 섹션(진행률·상태 문구·미리보기·새 버전)과 근거 선택([ADR 0007](../docs/adr/0007-file-storage-and-scanning.md)) |
 | T-06 마일스톤·스냅샷·진화 보기 | 완료 | 마일스톤(프로젝트당 12개, 이름 80자·메모 500자·예정일·자기 기입 도달일, version 409), 기본 단계 템플릿(기획→중간발표→구현→검증→최종제출, 빈 프로젝트만), 순서 변경(전체 순열만, ▲▼ 버튼)·position 빈틈없이 유지, 삭제는 어떤 로그 revision(이전 것 포함)이라도 가리키면 409 `in_use`(스냅샷은 함께 해제), 스냅샷은 같은 프로젝트의 clean 버전만(마일스톤당 6개, 검사 중 422 `not_clean`, 중복 409), 빌드 로그의 마일스톤 연결(revision별·이어받기·같은 프로젝트만)과 `milestone=` 필터, 과제 화면의 마일스톤 섹션·진화 보기(가로 스크롤 영역)·타임라인 구분선 |
-| T-07 | 다음 | [실행 계획 §4](../docs/planning/DELIVERY_PLAN.md) |
+| T-07 할 일·완료 전환·사후 작성 모드 | 완료 | 할 일(원본 Card 계승, 제목 120자·메모 1000자·담당자는 active 멤버·마감일, 열린 할 일 200개·전체 500개, version 409), 상태 메뉴와 ▲▼ 순서 변경(상태별 position 빈틈없이, 상태를 바꾸면 새 목록 맨 뒤, 드래그 없음), 완료 시 "막힌 적 있었나요? 결정할 게 있었나요?" 프롬프트(응답 없이도 완료)와 빌드 로그 전환(source `task`, 할 일당 한 번, 빌드 로그 검증 그대로, 전환한 할 일은 삭제 불가), 사후 작성 모드(만들 때 선택, 이후 owner만 켜고 끔, 그 모드에서 만든 로그(source `retro`)·마일스톤·스냅샷은 `retrospective`로 고정되어 모드를 꺼도 남음), 모든 프로젝트·로그·마일스톤·스냅샷 DTO의 `retrospective`(공개 DTO T-11/T-12로 옮길 대상), 과제 화면의 할 일 섹션·완료 프롬프트·`사후 작성` 배지·기억·파일 기준 날짜 칸·되짚기 안내 |
+| T-08 역할 선언·팀원 확인·기여 리포트 | 다음 | [실행 계획 §4](../docs/planning/DELIVERY_PLAN.md) |
 
-화면: `/login`, `/onboarding`(프로필 설정 겸용), `/projects`, `/projects/[id]`(개요·산출물·마일스톤·빌드 로그·멤버), `/invite/[token]`, `/u/[handle]`.
+화면: `/login`, `/onboarding`(프로필 설정 겸용), `/projects`(새 과제의 "지난 과제 되짚기" 선택 포함), `/projects/[id]`(개요·할 일·산출물·마일스톤·빌드 로그·멤버), `/invite/[token]`, `/u/[handle]`.
 
 빌드 로그 API: `POST/GET /api/v1/projects/:id/logs`(목록은 `tag=`·`author=`·`milestone=` 필터), `GET /api/v1/logs/:id`, `GET/POST /api/v1/logs/:id/revisions`(본문에 `evidenceVersionIds[]`, `milestoneId`). 읽을 수 없는 프로젝트·로그는 404, reviewer/viewer의 작성·수정은 403입니다.
 
 산출물 API: `POST /api/v1/projects/:id/artifacts/upload-intents`, `PUT /api/v1/uploads/:intentId`, `POST /api/v1/uploads/:intentId/complete`, `GET /api/v1/projects/:id/artifacts`, `GET /api/v1/artifacts/:id`, `GET /api/v1/artifacts/:id/versions/:versionId/content`, `POST /api/v1/artifacts/:id/versions/:versionId/rescan`. 상태 코드는 [ADR 0007](../docs/adr/0007-file-storage-and-scanning.md)에 정리했습니다.
 
 마일스톤 API: `GET/POST /api/v1/projects/:id/milestones`, `PUT /api/v1/projects/:id/milestones/order`(`milestoneIds[]` 전체 순열, 아니면 422 `mismatch`/`duplicate`), `POST /api/v1/projects/:id/milestones/apply-template`(마일스톤이 있으면 409 `not_empty`), `PATCH /api/v1/milestones/:id`(`expectedVersion`, 낡으면 409 `version_conflict`), `DELETE /api/v1/milestones/:id`(204, 로그가 가리키면 409 `in_use`), `POST /api/v1/milestones/:id/snapshots`(201, clean 아님 422 `not_clean`, 다른 프로젝트·없음 422 `not_found`, 중복 409 `duplicate`), `DELETE /api/v1/milestones/:id/snapshots/:artifactVersionId`(204). 한도 초과는 409 `limit_reached`. 읽을 수 없으면 404, reviewer/viewer의 쓰기는 403입니다.
+
+할 일 API: `GET /api/v1/projects/:id/tasks?status=`, `POST /api/v1/projects/:id/tasks`(201), `PUT /api/v1/projects/:id/tasks/order`(`{status, taskIds[]}` 그 상태 전체 순열, 아니면 422 `mismatch`/`duplicate`), `PATCH /api/v1/tasks/:id`(`expectedVersion`, 낡으면 409 `version_conflict`, 담당자가 active 멤버가 아니면 422 `not_member`), `POST /api/v1/tasks/:id/complete`(200 `{task, prompt}`, 이미 완료면 그대로 200), `POST /api/v1/tasks/:id/convert`(201 `{task, log}`, 태그 `stuck`/`decision`/`progress`, payload는 빌드 로그 규칙으로 422, 완료 전 409 `not_done`, 두 번째 409 `already_converted`), `DELETE /api/v1/tasks/:id`(204, 전환한 할 일은 409 `converted`). 한도 초과는 409 `limit_reached`. 읽을 수 없으면 404, reviewer/viewer의 쓰기는 403입니다. 사후 작성 모드는 `POST /api/v1/projects`의 `retroMode`, `PATCH /api/v1/projects/:id`의 `retroMode`(지금과 다른 값이면 owner만, 아니면 403)로 정합니다.
 
 ## 준비
 

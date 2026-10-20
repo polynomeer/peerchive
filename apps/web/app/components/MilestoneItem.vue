@@ -3,6 +3,7 @@
  * 마일스톤 한 건(T-06): 이름·예정일·도달일(자기 기입)·메모·로그 수, 스냅샷 목록과 지정/해제,
  * 순서 이동(▲▼ 버튼, 키보드로 조작 가능)·수정(expectedVersion, 409면 최신 내용을 다시 불러옴)·삭제.
  * 순서 이동과 삭제는 목록 전체가 바뀌므로 상위(MilestonesSection)가 처리합니다.
+ * 사후 작성으로 만든 마일스톤·스냅샷은 `사후 작성` 글자 배지로 표시합니다(T-07).
  */
 import type { MilestoneDto } from '~~/shared/types/api'
 import type { SnapshotOption } from '~/utils/milestones'
@@ -16,6 +17,8 @@ const props = defineProps<{
   snapshotChoices: SnapshotOption[]
   /** 순서 변경 요청 중이면 이동 버튼을 잠시 막습니다. */
   busy: boolean
+  /** 사후 작성 모드(T-07): 도달일 칸 이름을 바꿉니다. */
+  retro?: boolean
 }>()
 const emit = defineEmits<{
   move: [delta: -1 | 1]
@@ -151,9 +154,10 @@ async function removeSnapshot(versionId: string, title: string) {
   <article class="milestone-item" :aria-labelledby="`${base}-heading`">
     <header class="log-head">
       <h3 :id="`${base}-heading`" class="log-tag">{{ label }}</h3>
+      <span v-if="milestone.retrospective" class="badge retro">사후 작성</span>
       <span class="muted small">
         <template v-if="milestone.dueAt">예정 <time :datetime="milestone.dueAt">{{ formatDay(milestone.dueAt) }}</time> · </template>
-        <template v-if="milestone.claimedAt">도달 <time :datetime="milestone.claimedAt">{{ formatDay(milestone.claimedAt) }}</time>(자기 기입) · </template>
+        <template v-if="milestone.claimedAt">{{ milestone.retrospective ? '기억·파일 기준 도달' : '도달' }} <time :datetime="milestone.claimedAt">{{ formatDay(milestone.claimedAt) }}</time>(자기 기입) · </template>
         로그 {{ milestone.logCount }}개 · 스냅샷 {{ milestone.snapshots.length }}/{{ SNAPSHOT_MAX }}
       </span>
     </header>
@@ -166,6 +170,7 @@ async function removeSnapshot(versionId: string, title: string) {
           <a v-if="snap.contentUrl" :href="snap.contentUrl" target="_blank" rel="noopener">{{ snap.title }} v{{ snap.versionNo }}</a>
           <span v-else>{{ snap.title }} v{{ snap.versionNo }}</span>
           <span v-if="snap.note" class="muted"> — {{ snap.note }}</span>
+          <span v-if="snap.retrospective && !milestone.retrospective" class="badge retro small">사후 작성</span>
         </span>
         <button
           v-if="canWrite"
@@ -218,7 +223,7 @@ async function removeSnapshot(versionId: string, title: string) {
         <p v-if="errors.dueAt" :id="`${base}-due-error`" class="field-error">{{ fieldMessage(errors.dueAt) }}</p>
       </div>
       <div class="field">
-        <label :for="`${base}-claimed`">도달일 (선택, 자기 기입)</label>
+        <label :for="`${base}-claimed`">{{ retro || milestone.retrospective ? '기억·파일 기준 날짜(자기 기입)' : '도달일 (선택, 자기 기입)' }}</label>
         <input :id="`${base}-claimed`" v-model="form.claimedAt" type="date" :aria-invalid="errors.claimedAt ? 'true' : undefined" :aria-describedby="`${base}-claimed-hint${errors.claimedAt ? ` ${base}-claimed-error` : ''}`" />
         <p :id="`${base}-claimed-hint`" class="hint">실제로 이 단계에 도달했다고 스스로 적는 날짜입니다. 플랫폼이 확인한 값이 아닙니다.</p>
         <p v-if="errors.claimedAt" :id="`${base}-claimed-error`" class="field-error">{{ fieldMessage(errors.claimedAt) }}</p>

@@ -2,6 +2,7 @@
 /**
  * 빌드 로그 입력 필드. 작성 폼과 수정 폼이 함께 씁니다.
  * 고른 태그에 해당하는 구조화 필드만 보여 주며, form 객체(reactive)를 그대로 고칩니다.
+ * 사후 작성 모드에서는 날짜 칸을 맨 위로 올리고 "기억·파일 기준 날짜(자기 기입)"로 부릅니다(T-07, 시나리오 G).
  */
 import type { LogDto, MemberDto, MilestoneDto, TimeBucket } from '~~/shared/types/api'
 import type { LogForm } from '~/utils/build-log'
@@ -18,6 +19,8 @@ const props = defineProps<{
   evidenceOptions: EvidenceOption[]
   /** 이 과제의 마일스톤(순서대로, T-06). */
   milestones: MilestoneDto[]
+  /** 사후 작성 모드(T-07): 수행일을 "기억·파일 기준 날짜"로 이름 붙이고 맨 위에 둡니다. */
+  retro?: boolean
 }>()
 
 const id = (name: string) => `${props.idPrefix}-${name}`
@@ -51,6 +54,15 @@ const bodyPlaceholder = computed(() =>
 
 <template>
   <div class="stack">
+    <div v-if="retro" class="field retro-date">
+      <label :for="id('claimedDate')">기억·파일 기준 날짜(자기 기입)</label>
+      <input :id="id('claimedDate')" v-model="form.claimedDate" type="date" :aria-invalid="invalid('claimedDate')" :aria-describedby="describedBy('claimedDate', true)" />
+      <p :id="id('claimedDate-hint')" class="hint">
+        파일 수정일·커밋 이력·발표 자료 버전을 보고 그 일이 있었던 날을 적으세요. 스스로 적는 날짜이며, 오늘 기록한 시각은 서버가 따로 남깁니다.
+      </p>
+      <p v-if="err('claimedDate')" :id="id('claimedDate-error')" class="field-error">{{ err('claimedDate') }}</p>
+    </div>
+
     <!-- 🧱 막힘 -->
     <template v-if="form.tag === 'stuck'">
       <div class="field">
@@ -197,7 +209,7 @@ const bodyPlaceholder = computed(() =>
       <p v-if="err('milestoneId')" :id="id('milestoneId-error')" class="field-error">{{ err('milestoneId') }}</p>
     </div>
 
-    <div class="field">
+    <div v-if="!retro" class="field">
       <label :for="id('claimedDate')">실제 수행일 (선택, 자기 기입)</label>
       <input :id="id('claimedDate')" v-model="form.claimedDate" type="date" :aria-invalid="invalid('claimedDate')" :aria-describedby="describedBy('claimedDate', true)" />
       <p :id="id('claimedDate-hint')" class="hint">비워 두면 기록 시각만 남습니다. 기록 시각은 서버가 따로 저장합니다.</p>

@@ -8,10 +8,26 @@
  * - 목록은 클라이언트에서 불러옵니다(필터·더 보기 상태를 화면이 가짐).
  * - 마일스톤(T-06): 작성 폼에서 고르고(다음 로그에도 유지), 타임라인은 마일스톤이 바뀌는 곳에 구분선을 넣습니다.
  *   마일스톤 필터는 태그 필터와 함께 쓸 수 있고, 필터 중에는 구분선을 생략합니다.
+ * - 사후 작성 모드(T-07): 작성 폼의 날짜 칸을 "기억·파일 기준 날짜(자기 기입)"로 맨 위에 둡니다.
+ *   할 일 섹션에서 로그를 남기면(useLogsChanged) 목록을 다시 불러옵니다.
  */
 import type { LogDto, LogPageDto, LogTag, MemberDto } from '~~/shared/types/api'
 
-const props = defineProps<{ projectId: string; canWrite: boolean; members: MemberDto[]; meId: string | null }>()
+const props = defineProps<{
+  projectId: string
+  canWrite: boolean
+  members: MemberDto[]
+  meId: string | null
+  /** 사후 작성 모드(T-07). */
+  retro?: boolean
+}>()
+
+// 할 일에서 전환한 로그가 생기면 타임라인과 막힘 후보를 다시 불러옵니다.
+const logsChanged = useLogsChanged(props.projectId)
+watch(logsChanged.tick, () => {
+  void load(true)
+  void loadStuckLogs()
+})
 
 // 파일 근거 후보: 이 과제의 산출물 버전(산출물 섹션과 같은 목록을 씁니다).
 const artifacts = useProjectArtifacts(props.projectId)
@@ -219,6 +235,7 @@ onMounted(() => {
         :stuck-logs="stuckLogs"
         :evidence-options="evidenceChoices"
         :milestones="milestones.items.value"
+        :retro="retro"
       />
       <div class="actions">
         <button type="submit" :disabled="saveState === 'saving'">기록하기</button>

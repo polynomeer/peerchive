@@ -9,6 +9,8 @@
  * T-05(0003 migration): 산출물(artifacts)·버전(artifact_versions)·업로드 의도(upload_intents),
  * 로그 revision의 파일 근거(log_revision_evidence), 작업 outbox(outbox_events, ADR 0004·0007).
  * T-06(0004 migration): 마일스톤(milestones)·스냅샷(milestone_snapshots), 로그 revision의 마일스톤(log_revisions.milestone_id).
+ * T-07(0005 migration): 할 일(tasks, 원본 Card 계승)과 빌드 로그 전환 연결(tasks.log_entry_id),
+ * 사후 작성 표시(log_entries·milestones·milestone_snapshots.retrospective, 만들 때의 projects.retro_mode로 고정).
  * 공개(Publication)·동의·기여는 다음 slice에서 추가합니다.
  *
  * 원칙
@@ -68,6 +70,8 @@ export const logTag = pgEnum('log_tag', [
 export const artifactKind = pgEnum('artifact_kind', ['file', 'link', 'repo', 'demo'])
 /** 파일 검사 상태(§10). 전이 규칙은 @peerchive/domain의 nextScanStatus입니다. */
 export const scanStatus = pgEnum('scan_status', ['pending', 'scanning', 'clean', 'quarantined', 'failed'])
+/** 할 일 상태(원본 ProofU List의 Todo/Doing/Done). 전이 규칙은 @peerchive/domain의 statusChange입니다. */
+export const taskStatus = pgEnum('task_status', ['todo', 'doing', 'done'])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -240,6 +244,10 @@ export const projects = pgTable(
     courseTermId: uuid('course_term_id').references(() => courseTerms.id),
     /** assignment_briefs 테이블은 다음 slice에서 추가하며 그때 외래 키를 겁니다. */
     assignmentBriefId: uuid('assignment_brief_id'),
+    /**
+     * 사후 작성 모드(이미 끝난 과제를 거꾸로 정리). 이 모드에서 만든 로그·마일스톤·스냅샷은 각 행의 retrospective로
+     * 표시가 고정되므로, 나중에 모드를 꺼도 기존 항목의 `사후 작성` 표시는 남습니다. 변경은 owner만(T-07).
+     */
     retroMode: boolean('retro_mode').notNull().default(false),
     /** 낙관적 동시성용. 수정할 때마다 1씩 올리고, 요청의 expectedVersion과 다르면 409입니다. */
     version: integer('version').notNull().default(1),
@@ -319,6 +327,11 @@ export const logEntries = pgTable(
     /** 첫 revision 저장 전에는 null. log_revisions와 순환 참조이므로 아래 foreignKey로 선언합니다. */
     currentRevisionId: uuid('current_revision_id'),
     source: logSource('source').notNull().default('web'),
+    /**
+     * 사후 작성 표시. 만들 때의 projects.retro_mode로 정하고 바꾸지 않습니다(T-07). source가 출처(web/task/retro)라면
+     * 이 값은 신뢰 표시입니다: 사후 작성 과제에서 할 일을 전환한 로그는 source='task'이면서 retrospective=true입니다.
+     */
+    retrospective: boolean('retrospective').notNull().default(false),
     /**
      * 클라이언트가 만든 재전송 식별자(선택). 네트워크 오류 뒤 같은 요청을 다시 보내도
      * (project_id, author_id, client_id)가 같으면 새 로그를 만들지 않습니다. NULL끼리는 겹쳐도 됩니다.
@@ -545,6 +558,8 @@ export const milestones = pgTable(
     dueAt: date('due_at'),
     /** 학생이 기입한 도달일(자기 주장). 플랫폼이 확인한 값이 아닙니다. */
     claimedAt: date('claimed_at'),
+    /** 사후 작성 표시. 만들 때의 projects.retro_mode로 정하고 바꾸지 않습니다(T-07). */
+    retrospective: boolean('retrospective').notNull().default(false),
     createdBy: uuid('created_by')
       .notNull()
       .references(() => users.id),
@@ -578,6 +593,8 @@ export const milestoneSnapshots = pgTable(
       .references(() => artifactVersions.id),
     note: text('note'),
     position: integer('position').notNull(),
+    /** 사후 작성 표시. 지정할 때의 projects.retro_mode로 정하고 바꾸지 않습니다(T-07). */
+    retrospective: boolean('retrospective').notNull().default(false),
     createdBy: uuid('created_by')
       .notNull()
       .references(() => users.id),
@@ -588,6 +605,58 @@ export const milestoneSnapshots = pgTable(
     index('milestone_snapshots_artifact_version_id_idx').on(t.artifactVersionId),
     check('milestone_snapshots_position_check', sql`${t.position} >= 1`),
     check('milestone_snapshots_note_check', sql`${t.note} is null or char_length(${t.note}) <= 300`),
+  ],
+)
+
+// ── 할 일 (§2.2 Card → Task, §6.3, T-07) ─────────────────────────────────
+
+/**
+ * 할 일(원본 ProofU Card 계승). 완료를 학습 기록으로 보지 않으며, 완료할 때 묻는 질문에 답하면 빌드 로그로 전환합니다.
+ * position은 (프로젝트, 상태) 목록마다 1부터 빈틈없이 이어집니다(상태 변경·순서 변경·삭제 때 애플리케이션이 다시 매김).
+ * 한도(열린 할 일 200개, 전체 500개)는 애플리케이션이 프로젝트 행을 잠근 채 확인합니다.
+ */
+export const tasks = pgTable(
+  'tasks',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    title: text('title').notNull(),
+    note: text('note'),
+    /** 담당자(선택). 지정·변경할 때 active 멤버인지 애플리케이션이 확인합니다. 나중에 나가도 지정은 남습니다. */
+    assigneeId: uuid('assignee_id').references(() => users.id),
+    /** 마감일(계획). */
+    dueAt: date('due_at'),
+    status: taskStatus('status').notNull().default('todo'),
+    position: integer('position').notNull(),
+    /** 완료한 시각·사람. 완료를 되돌리면 비웁니다. */
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    completedBy: uuid('completed_by').references(() => users.id),
+    /**
+     * 이 할 일에서 전환한 빌드 로그(한 번만). 로그 쪽이 아니라 할 일 쪽에 두어 로그 스키마를 늘리지 않고,
+     * unique로 한 로그가 두 할 일에 연결되지 않게 합니다. 연결된 할 일은 지우지 않습니다.
+     */
+    logEntryId: uuid('log_entry_id').references(() => logEntries.id),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id),
+    /** 낙관적 동시성용. 내용·상태를 바꿀 때마다 1씩 올립니다. 같은 상태 안의 순서 변경은 올리지 않습니다. */
+    version: integer('version').notNull().default(1),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    // 순서 변경은 한 트랜잭션에서 두 단계(임시로 밀어낸 뒤 다시 매김)로 해 이 제약과 충돌하지 않게 합니다.
+    unique('tasks_project_status_position_key').on(t.projectId, t.status, t.position),
+    unique('tasks_log_entry_id_key').on(t.logEntryId),
+    index('tasks_assignee_id_idx').on(t.assigneeId),
+    check('tasks_position_check', sql`${t.position} >= 1`),
+    check('tasks_title_check', sql`char_length(${t.title}) between 1 and 120`),
+    check('tasks_note_check', sql`${t.note} is null or char_length(${t.note}) <= 1000`),
+    check('tasks_version_check', sql`${t.version} >= 1`),
+    // 완료 상태와 완료 시각은 함께 다닙니다.
+    check('tasks_completed_check', sql`(${t.status} = 'done') = (${t.completedAt} is not null)`),
   ],
 )
 

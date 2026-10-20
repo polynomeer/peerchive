@@ -650,3 +650,98 @@ input[type='file'] {
     scroll-behavior: smooth;
   }
 }
+
+/* 할 일·사후 작성(T-07). 상태·표시는 색만이 아니라 글자로 함께 보여 줍니다. */
+.badge.retro {
+  color: #5b3a8c;
+  background: #f3edfb;
+}
+.badge.overdue {
+  color: var(--danger);
+  background: #fdecea;
+}
+.retro-date {
+  border-left: 4px solid #5b3a8c;
+  padding-left: 0.6rem;
+}
+.retro-guide {
+  border-color: #5b3a8c;
+}
+.retro-steps {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 0.4rem;
+}
+.retro-steps p {
+  margin: 0.15rem 0 0;
+}
+.task-quick-add {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.6rem 0.75rem;
+  align-items: end;
+  margin: 0.75rem 0;
+}
+.task-quick-add .task-quick-title {
+  grid-column: 1 / -1;
+}
+.task-group {
+  margin-top: 1rem;
+}
+.task-group h3 {
+  margin: 0 0 0.4rem;
+  font-size: 1rem;
+}
+.task-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.task-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.6rem;
+}
+.task-title {
+  margin: 0;
+  font-size: 1rem;
+  min-width: 0;
+}
+.task-controls {
+  margin-top: 0.5rem;
+}
+.task-controls select.task-status {
+  width: auto;
+  min-height: 2.75rem;
+}
+.task-prompt {
+  margin-top: 0.4rem;
+  padding: 0.75rem;
+  border: 1px dashed var(--accent);
+  border-radius: 8px;
+  background: var(--surface);
+  min-width: 0;
+}
+.task-prompt-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.task-prompt-question {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.task-prompt-question:focus {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.task-prompt-head h2 {
+  margin: 0;
+}

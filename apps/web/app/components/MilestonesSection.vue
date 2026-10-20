@@ -9,7 +9,12 @@
  */
 import type { MilestoneDto } from '~~/shared/types/api'
 
-const props = defineProps<{ projectId: string; canWrite: boolean }>()
+const props = defineProps<{
+  projectId: string
+  canWrite: boolean
+  /** 사후 작성 모드(T-07): 도달일을 "기억·파일 기준 날짜(자기 기입)"로 부르고 눈에 띄게 표시합니다. */
+  retro?: boolean
+}>()
 const { items, loaded, loadError, refresh, replace } = useProjectMilestones(props.projectId)
 const artifacts = useProjectArtifacts(props.projectId)
 
@@ -138,6 +143,7 @@ onMounted(() => {
           :can-write="canWrite"
           :snapshot-choices="choicesFor(milestone)"
           :busy="reordering"
+          :retro="retro"
           @move="move(milestone, index, $event)"
           @remove="remove(milestone)"
           @updated="replace"
@@ -159,10 +165,12 @@ onMounted(() => {
           <input id="new-ms-due" v-model="form.dueAt" type="date" :aria-invalid="errors.dueAt ? 'true' : undefined" :aria-describedby="errors.dueAt ? 'new-ms-due-error' : undefined" />
           <p v-if="errors.dueAt" id="new-ms-due-error" class="field-error">{{ fieldMessage(errors.dueAt) }}</p>
         </div>
-        <div class="field">
-          <label for="new-ms-claimed">도달일 (선택, 자기 기입)</label>
+        <div :class="['field', { 'retro-date': retro }]">
+          <label for="new-ms-claimed">{{ retro ? '기억·파일 기준 날짜(자기 기입)' : '도달일 (선택, 자기 기입)' }}</label>
           <input id="new-ms-claimed" v-model="form.claimedAt" type="date" :aria-invalid="errors.claimedAt ? 'true' : undefined" :aria-describedby="`new-ms-claimed-hint${errors.claimedAt ? ' new-ms-claimed-error' : ''}`" />
-          <p id="new-ms-claimed-hint" class="hint">이미 지난 단계를 사후에 정리할 때 씁니다. 스스로 적는 날짜입니다.</p>
+          <p id="new-ms-claimed-hint" class="hint">
+            {{ retro ? '파일 수정일·커밋 이력·발표 자료 버전을 보고 이 단계에 도달한 날을 적으세요. 스스로 적는 날짜입니다.' : '이미 지난 단계를 사후에 정리할 때 씁니다. 스스로 적는 날짜입니다.' }}
+          </p>
           <p v-if="errors.claimedAt" id="new-ms-claimed-error" class="field-error">{{ fieldMessage(errors.claimedAt) }}</p>
         </div>
         <div class="field">

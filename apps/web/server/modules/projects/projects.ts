@@ -1,9 +1,13 @@
 /**
  * 과제 공간 생성·조회·수정 (T-03, SYSTEM_DESIGN §6.3, §9).
  * 과제 공간은 항상 비공개입니다. 공개는 별도 release 스냅샷으로만 합니다(불변조건 1).
+ *
+ * 사후 작성 모드(retroMode, T-07): 만들 때 고르거나("지난 과제 되짚기") 나중에 owner만 켜고 끕니다.
+ * editor가 다른 필드와 함께 retroMode를 바꾸려 하면 전체 요청을 403으로 거부합니다(같은 값이면 무시).
+ * 모드는 이후 만드는 로그·마일스톤·스냅샷의 `사후 작성` 표시를 정하며, 이미 만든 항목의 표시는 바꾸지 않습니다.
  */
 import { z } from 'zod'
-import { canEditProject, type ProjectRole } from '@peerchive/domain'
+import { canChangeRetroMode, canEditProject, type ProjectRole } from '@peerchive/domain'
 import { and, desc, eq, sql, courseTerms, projectMembers, projects, type DbExecutor } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, forbidden, invalid } from '../errors'
@@ -28,6 +32,8 @@ export const createProjectSchema = z.object({
   summaryByStudent: longText,
   goal: longText,
   constraints: longText,
+  /** 지난 과제 되짚기(사후 작성). */
+  retroMode: z.boolean({ error: 'invalid' }).default(false),
 })
 
 export const updateProjectSchema = z.object({
@@ -41,8 +47,14 @@ export const updateProjectSchema = z.object({
   summaryByStudent: longText.optional(),
   goal: longText.optional(),
   constraints: longText.optional(),
+  /** owner만 바꿀 수 있습니다. */
+  retroMode: z.boolean({ error: 'invalid' }).optional(),
 })
 
+/**
+ * 프로젝트 DTO. retrospective는 지금의 사후 작성 모드입니다.
+ * TODO(T-11/T-12): 공개 DTO를 만들 때 이 retrospective를 그대로 옮기세요(test/retrospective-dto.test.ts가 지킴).
+ */
 export function toProjectDto(row: ProjectRow, myRole: ProjectRole): ProjectDto {
   return {
     id: row.id,
@@ -54,6 +66,7 @@ export function toProjectDto(row: ProjectRow, myRole: ProjectRole): ProjectDto {
     lifecycle: row.lifecycle,
     courseTermId: row.courseTermId,
     retroMode: row.retroMode,
+    retrospective: row.retroMode,
     visibility: 'private',
     version: row.version,
     myRole,
@@ -84,6 +97,7 @@ export async function createProject(db: DbExecutor, actor: Actor, rawInput: unkn
         summaryByStudent: input.summaryByStudent,
         goal: input.goal,
         constraints: input.constraints,
+        retroMode: input.retroMode,
       })
       .returning()
     if (!project) throw new Error('project insert failed')
@@ -94,6 +108,7 @@ export async function createProject(db: DbExecutor, actor: Actor, rawInput: unkn
       targetType: 'project',
       targetId: project.id,
       projectId: project.id,
+      metadata: { retroMode: project.retroMode },
     })
     return toProjectDto(project, 'owner')
   })
@@ -116,7 +131,10 @@ export async function getProject(db: DbExecutor, actor: Actor, projectId: unknow
   return toProjectDto(project, membership.role)
 }
 
-/** owner/editor만. expectedVersion이 현재 version과 다르면 409(version_conflict). */
+/**
+ * owner/editor만. expectedVersion이 현재 version과 다르면 409(version_conflict).
+ * retroMode를 지금과 다른 값으로 바꾸는 것은 owner만(아니면 403).
+ */
 export async function updateProject(
   db: DbExecutor,
   actor: Actor,
@@ -127,6 +145,8 @@ export async function updateProject(
   return db.transaction(async (tx) => {
     const { project, membership } = await loadReadableProject(tx, actor, projectId, { lock: true })
     if (!canEditProject({ userId: actor.userId }, project, membership)) throw forbidden()
+    const retroChange = input.retroMode !== undefined && input.retroMode !== project.retroMode
+    if (retroChange && !canChangeRetroMode({ userId: actor.userId }, project, membership)) throw forbidden()
     if (project.version !== input.expectedVersion) throw conflict('version_conflict')
 
     const { expectedVersion, ...changes } = input
@@ -136,6 +156,16 @@ export async function updateProject(
       .where(and(eq(projects.id, project.id), eq(projects.version, expectedVersion)))
       .returning()
     if (!updated) throw conflict('version_conflict')
+    if (retroChange) {
+      await recordAudit(tx, {
+        actorId: actor.userId,
+        action: 'project.retro_mode',
+        targetType: 'project',
+        targetId: project.id,
+        projectId: project.id,
+        metadata: { retroMode: updated.retroMode },
+      })
+    }
     return toProjectDto(updated, membership.role)
   })
 }

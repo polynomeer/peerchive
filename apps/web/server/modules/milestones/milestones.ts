@@ -11,6 +11,7 @@
  * - 스냅샷은 같은 프로젝트의 clean 산출물 버전만(다른 프로젝트·없는 버전은 똑같이 422 `not_found`, clean이 아니면
  *   422 `not_clean`), 같은 버전 중복은 409 `duplicate`.
  * - 한도: 프로젝트당 마일스톤 12개, 마일스톤당 스냅샷 6개. 넘으면 409 `limit_reached` + limit(입력은 맞지만 지금 상태와 충돌).
+ * - 사후 작성(T-07): 마일스톤·스냅샷은 만들(지정할) 때 프로젝트가 사후 작성 모드였는지를 retrospective로 고정합니다.
  * - 감사 이벤트에는 순서·개수 같은 최소 정보만 남기고 제목·메모는 넣지 않습니다(§6.6).
  */
 import { z } from 'zod'
@@ -177,6 +178,7 @@ async function toMilestoneDtos(db: DbExecutor, rows: MilestoneRow[]): Promise<Mi
       scanStatus: version.scanStatus,
       contentUrl: version.scanStatus === 'clean' ? contentUrlFor(version.artifactId, version.id) : null,
       note: snapshot.note,
+      retrospective: snapshot.retrospective,
       position: snapshot.position,
       createdAt: snapshot.createdAt.toISOString(),
     }
@@ -191,6 +193,8 @@ async function toMilestoneDtos(db: DbExecutor, rows: MilestoneRow[]): Promise<Mi
     note: row.note,
     dueAt: row.dueAt,
     claimedAt: row.claimedAt,
+    // TODO(T-11/T-12): 공개 마일스톤·스냅샷 DTO도 이 표시를 그대로 옮기세요.
+    retrospective: row.retrospective,
     version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -252,7 +256,15 @@ export async function createMilestone(
     if (count >= MILESTONE_LIMIT) throw conflict('limit_reached', { limit: MILESTONE_LIMIT })
     const [row] = await tx
       .insert(milestones)
-      .values({ projectId: project.id, position: count + 1, createdBy: actor.userId, createdAt: now, updatedAt: now, ...input })
+      .values({
+        projectId: project.id,
+        position: count + 1,
+        retrospective: project.retroMode,
+        createdBy: actor.userId,
+        createdAt: now,
+        updatedAt: now,
+        ...input,
+      })
       .returning()
     if (!row) throw new Error('milestone insert failed')
     await recordAudit(tx, {
@@ -287,6 +299,7 @@ export async function applyMilestoneTemplate(
         projectId: project.id,
         position: index + 1,
         title: templateTitle,
+        retrospective: project.retroMode,
         createdBy: actor.userId,
         createdAt: now,
         updatedAt: now,
@@ -463,6 +476,7 @@ export async function addSnapshot(
       artifactVersionId: input.artifactVersionId,
       note: input.note,
       position: existing.length + 1,
+      retrospective: project.retroMode,
       createdBy: actor.userId,
       createdAt: now,
     })

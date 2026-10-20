@@ -8,7 +8,7 @@ const { data: projects, error: loadError } = await useFetch<ProjectDto[]>('/api/
   default: () => [],
 })
 
-const form = reactive({ title: '', kind: 'individual' as 'individual' | 'team' })
+const form = reactive({ title: '', kind: 'individual' as 'individual' | 'team', retroMode: false })
 const errors = ref<Record<string, string>>({})
 const creating = ref(false)
 const failure = ref<string | null>(null)
@@ -50,7 +50,10 @@ const KIND_LABELS = { individual: '개인', team: '팀' } as const
           <NuxtLink :to="`/projects/${p.id}`">{{ p.title }}</NuxtLink>
           <span class="muted"> · {{ KIND_LABELS[p.kind] }} · {{ ROLE_LABELS[p.myRole] }}</span>
         </span>
-        <span class="badge private">🔒 팀만 보기</span>
+        <span class="actions">
+          <span v-if="p.retrospective" class="badge retro">사후 작성</span>
+          <span class="badge private">🔒 팀만 보기</span>
+        </span>
       </li>
     </ul>
 
@@ -77,6 +80,16 @@ const KIND_LABELS = { individual: '개인', team: '팀' } as const
             <label><input v-model="form.kind" type="radio" name="kind" value="team" /> 팀</label>
           </div>
         </fieldset>
+        <div class="field">
+          <label class="check">
+            <input v-model="form.retroMode" type="checkbox" aria-describedby="retro-hint" />
+            지난 과제 되짚기(사후 작성)
+          </label>
+          <p id="retro-hint" class="hint">
+            이미 끝난 과제를 파일 날짜·커밋 이력·발표 자료를 보며 거꾸로 정리합니다. 이때 쓰는 기록에는 ‘사후 작성’이 표시됩니다.
+            나중에 운영 책임자가 켜고 끌 수 있습니다.
+          </p>
+        </div>
         <div class="actions">
           <button type="submit" :disabled="creating">{{ creating ? '만드는 중…' : '만들기' }}</button>
         </div>

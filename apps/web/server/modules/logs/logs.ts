@@ -12,9 +12,21 @@
  *   수정 때 생략하면 이전 revision의 근거를 이어받습니다.
  * - 마일스톤(milestoneId, T-06)도 revision별 값입니다. 같은 프로젝트의 마일스톤만 가리키며, 없거나 다른 프로젝트 것이면
  *   422 `{milestoneId: 'not_found'}`. 수정 때 생략하면 이어받고 null이면 비웁니다. 목록은 `milestone=`으로 거릅니다.
+ * - 출처·사후 작성(T-07): 사후 작성 모드 과제에서 쓴 로그는 source `retro`, 할 일에서 전환한 로그는 `task`이고,
+ *   만들 때의 모드를 retrospective로 고정합니다. DTO의 retrospective는 isRetrospectiveLog로 정합니다.
+ *   할 일 전환(tasks.ts)은 이 파일의 parseLogInput·insertLog를 그대로 써서 검증·권한 규칙을 나누지 않습니다.
  * - 감사 이벤트에는 태그·revision 번호만 남기고 본문은 넣지 않습니다(§6.6).
  */
-import { canReviseLog, canWriteLog, checkResolveTarget, isTagChangeAllowed, type Membership } from '@peerchive/domain'
+import {
+  type LogOrigin,
+  type Membership,
+  canReviseLog,
+  canWriteLog,
+  checkResolveTarget,
+  isRetrospectiveLog,
+  isTagChangeAllowed,
+  logSourceFor,
+} from '@peerchive/domain'
 import {
   and,
   asc,
@@ -27,6 +39,7 @@ import {
   logRevisions,
   profiles,
   projectMembers,
+  tasks,
   users,
   type DbExecutor,
 } from '@peerchive/db'
@@ -52,6 +65,7 @@ import type {
   LogRefDto,
   LogRevisionDto,
   LogTag,
+  TaskRefDto,
 } from '../../../shared/types/api'
 
 export type { LogDto, LogPageDto, LogRevisionDto }
@@ -138,7 +152,9 @@ async function toLogDtos(
 
   const milestoneIds = logs.map((log) => log.revision.milestoneId).filter((id): id is string => !!id)
 
-  const [targets, solutions, evidence, milestoneRefs] = await Promise.all([
+  const taskSourced = logs.filter((log) => log.entry.source === 'task').map((log) => log.entry.id)
+
+  const [targets, solutions, evidence, milestoneRefs, sourceTasks] = await Promise.all([
     resolvesIds.length > 0
       ? selectLogs(db).where(and(eq(logEntries.projectId, project.id), inArray(logEntries.id, resolvesIds)))
       : Promise.resolve([]),
@@ -152,7 +168,16 @@ async function toLogDtos(
       logs.map((log) => log.revision.id),
     ),
     milestoneRefsById(db, milestoneIds),
+    taskSourced.length > 0
+      ? db
+          .select({ id: tasks.id, title: tasks.title, logEntryId: tasks.logEntryId })
+          .from(tasks)
+          .where(inArray(tasks.logEntryId, taskSourced))
+      : Promise.resolve([]),
   ])
+  const taskByLog = new Map<string, TaskRefDto>(
+    sourceTasks.flatMap((row) => (row.logEntryId ? [[row.logEntryId, { id: row.id, title: row.title }] as const] : [])),
+  )
   const targetById = new Map(targets.map((row) => [row.entry.id, toRef(toLoaded(row))]))
   const solutionsByStuck = new Map<string, LogRefDto[]>()
   for (const row of solutions) {
@@ -178,6 +203,9 @@ async function toLogDtos(
     resolvedBy: solutionsByStuck.get(log.entry.id) ?? [],
     evidence: evidence.get(log.revision.id) ?? [],
     milestone: log.revision.milestoneId ? (milestoneRefs.get(log.revision.milestoneId) ?? null) : null,
+    task: taskByLog.get(log.entry.id) ?? null,
+    // TODO(T-11/T-12): 공개 로그 DTO도 isRetrospectiveLog로 이 표시를 그대로 옮기세요.
+    retrospective: isRetrospectiveLog(log.entry),
     canRevise: canReviseLog({ userId: actor.userId }, project, membership, log.entry),
   }))
 }
@@ -276,17 +304,16 @@ async function findByClientId(db: DbExecutor, projectId: string, authorId: strin
   return row?.id ?? null
 }
 
-/**
- * 로그 작성(active owner/editor). 첫 revision을 같은 트랜잭션에서 만듭니다.
- * clientId가 같은 재전송은 새로 만들지 않고 기존 로그를 돌려줍니다(내용이 달라도 처음 것을 유지).
- */
-export async function createLog(
-  db: DbExecutor,
-  actor: Actor,
-  projectId: unknown,
-  rawInput: unknown,
-  now = new Date(),
-): Promise<CreatedLog> {
+/** 검증을 마친 작성 요청. createLog와 할 일 전환(tasks.ts)이 함께 씁니다. */
+export interface ParsedLogInput {
+  tag: LogTag
+  content: LogContent
+  evidenceIds: string[]
+  clientId: string | null
+}
+
+/** 작성 요청 검증(DB 없이 하는 부분: 태그별 payload·본문·링크·수행일). 실패하면 422. */
+export function parseLogInput(rawInput: unknown, now: Date): ParsedLogInput {
   const input = parseInput(createLogSchema, rawInput)
   const checked = validateLogContent(
     input.tag,
@@ -301,58 +328,90 @@ export async function createLog(
     now,
   )
   if (!checked.content) throw invalid(checked.fields)
-  const content = checked.content
-  const evidenceIds = input.evidenceVersionIds ?? []
+  return {
+    tag: input.tag,
+    content: checked.content,
+    evidenceIds: input.evidenceVersionIds ?? [],
+    clientId: input.clientId ?? null,
+  }
+}
 
+/**
+ * 로그와 첫 revision을 넣습니다(호출자의 트랜잭션 안에서). 권한(owner/editor)·관계·근거를 확인하고,
+ * source·사후 작성 표시는 프로젝트의 지금 모드와 출처(origin)로 정합니다(logSourceFor).
+ * clientId가 같은 재전송은 새로 만들지 않고 기존 로그를 돌려줍니다(내용이 달라도 처음 것을 유지).
+ */
+export async function insertLog(
+  tx: DbExecutor,
+  actor: Actor,
+  project: ProjectRow,
+  membership: Membership,
+  parsed: ParsedLogInput,
+  origin: LogOrigin,
+  now: Date,
+): Promise<CreatedLog> {
+  if (!canWriteLog({ userId: actor.userId }, project, membership)) throw forbidden()
+  const { tag, content, evidenceIds, clientId } = parsed
+
+  const replay = async (): Promise<CreatedLog | null> => {
+    if (!clientId) return null
+    const existingId = await findByClientId(tx, project.id, actor.userId, clientId)
+    return existingId ? { log: await getLogDto(tx, actor, project, membership, existingId), created: false } : null
+  }
+  const earlier = await replay()
+  if (earlier) return earlier
+
+  await checkRelations(tx, project.id, tag, content)
+  await checkEvidence(tx, project.id, evidenceIds)
+
+  // 동시에 같은 clientId가 들어오면 한쪽은 아무것도 넣지 않고 먼저 만든 로그를 돌려줍니다.
+  const [entry] = await tx
+    .insert(logEntries)
+    .values({
+      projectId: project.id,
+      authorId: actor.userId,
+      tag,
+      ...logSourceFor(project.retroMode, origin),
+      clientId,
+      createdAt: now,
+    })
+    .onConflictDoNothing({ target: [logEntries.projectId, logEntries.authorId, logEntries.clientId] })
+    .returning()
+  if (!entry) {
+    const raced = await replay()
+    if (raced) return raced
+    throw new Error('log insert failed')
+  }
+  const [revision] = await tx
+    .insert(logRevisions)
+    .values({ logEntryId: entry.id, revisionNo: 1, tag, ...revisionValues(content), recordedAt: now })
+    .returning({ id: logRevisions.id })
+  if (!revision) throw new Error('log revision insert failed')
+  await insertEvidence(tx, revision.id, evidenceIds)
+  await tx.update(logEntries).set({ currentRevisionId: revision.id }).where(eq(logEntries.id, entry.id))
+  await recordAudit(tx, {
+    actorId: actor.userId,
+    action: 'log.create',
+    targetType: 'log',
+    targetId: entry.id,
+    projectId: project.id,
+    metadata: { tag },
+  })
+  return { log: await getLogDto(tx, actor, project, membership, entry.id), created: true }
+}
+
+/** 로그 작성(active owner/editor). 첫 revision을 같은 트랜잭션에서 만듭니다. */
+export async function createLog(
+  db: DbExecutor,
+  actor: Actor,
+  projectId: unknown,
+  rawInput: unknown,
+  now = new Date(),
+): Promise<CreatedLog> {
+  const parsed = parseLogInput(rawInput, now)
   return db.transaction(async (tx) => {
     const { project, membership } = await loadReadableProject(tx, actor, projectId)
-    if (!canWriteLog({ userId: actor.userId }, project, membership)) throw forbidden()
-
-    const replay = async (): Promise<CreatedLog | null> => {
-      if (!input.clientId) return null
-      const existingId = await findByClientId(tx, project.id, actor.userId, input.clientId)
-      return existingId ? { log: await getLogDto(tx, actor, project, membership, existingId), created: false } : null
-    }
-    const earlier = await replay()
-    if (earlier) return earlier
-
-    await checkRelations(tx, project.id, input.tag, content)
-    await checkEvidence(tx, project.id, evidenceIds)
-
-    // 동시에 같은 clientId가 들어오면 한쪽은 아무것도 넣지 않고 먼저 만든 로그를 돌려줍니다.
-    const [entry] = await tx
-      .insert(logEntries)
-      .values({
-        projectId: project.id,
-        authorId: actor.userId,
-        tag: input.tag,
-        source: 'web',
-        clientId: input.clientId ?? null,
-        createdAt: now,
-      })
-      .onConflictDoNothing({ target: [logEntries.projectId, logEntries.authorId, logEntries.clientId] })
-      .returning()
-    if (!entry) {
-      const raced = await replay()
-      if (raced) return raced
-      throw new Error('log insert failed')
-    }
-    const [revision] = await tx
-      .insert(logRevisions)
-      .values({ logEntryId: entry.id, revisionNo: 1, tag: input.tag, ...revisionValues(content), recordedAt: now })
-      .returning({ id: logRevisions.id })
-    if (!revision) throw new Error('log revision insert failed')
-    await insertEvidence(tx, revision.id, evidenceIds)
-    await tx.update(logEntries).set({ currentRevisionId: revision.id }).where(eq(logEntries.id, entry.id))
-    await recordAudit(tx, {
-      actorId: actor.userId,
-      action: 'log.create',
-      targetType: 'log',
-      targetId: entry.id,
-      projectId: project.id,
-      metadata: { tag: input.tag },
-    })
-    return { log: await getLogDto(tx, actor, project, membership, entry.id), created: true }
+    return insertLog(tx, actor, project, membership, parsed, 'web', now)
   })
 }
 

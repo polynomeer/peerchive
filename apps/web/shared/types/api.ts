@@ -38,7 +38,17 @@ export interface PublicProfileDto {
   openToWork: boolean
 }
 
-export interface ProjectDto {
+/**
+ * 사후 작성 표시(PROOFU_EVOLUTION_PLAN §6.7, DELIVERY_PLAN 시나리오 G). 프로젝트·로그·마일스톤·스냅샷 DTO는 모두 이 필드를 가집니다.
+ * 공개 DTO(T-11/T-12)는 이 DTO들에서 만들어지므로 이 표시를 빼지 말고 그대로 옮겨야 합니다.
+ * 화면은 색이 아니라 `사후 작성` 글자로 보여 줍니다.
+ */
+export interface RetrospectiveMarked {
+  /** 프로젝트는 지금의 retro_mode, 그 밖의 항목은 만들 때(지정할 때) 사후 작성 모드였는지. */
+  retrospective: boolean
+}
+
+export interface ProjectDto extends RetrospectiveMarked {
   id: string
   title: string
   summaryByStudent: string | null
@@ -156,7 +166,7 @@ export interface LogRefDto {
 }
 
 /** 로그 한 건(현재 revision). 같은 프로젝트 멤버에게만 줍니다. */
-export interface LogDto {
+export interface LogDto extends RetrospectiveMarked {
   id: string
   projectId: string
   tag: LogTag
@@ -181,6 +191,8 @@ export interface LogDto {
   evidence: EvidenceDto[]
   /** 이 revision이 속한 마일스톤(T-06). */
   milestone: MilestoneRefDto | null
+  /** 이 로그로 전환된 할 일(source가 task일 때, T-07). */
+  task: TaskRefDto | null
   /** 요청자가 새 revision을 만들 수 있는지(작성자 본인 + owner/editor). */
   canRevise: boolean
 }
@@ -290,7 +302,7 @@ export interface MilestoneRefDto {
 }
 
 /** 마일스톤 스냅샷 한 건(진화 보기 단위). 같은 프로젝트 멤버에게만 줍니다. */
-export interface MilestoneSnapshotDto {
+export interface MilestoneSnapshotDto extends RetrospectiveMarked {
   artifactVersionId: string
   artifactId: string
   /** 산출물 이름. */
@@ -308,7 +320,7 @@ export interface MilestoneSnapshotDto {
 }
 
 /** 마일스톤 한 건. 같은 프로젝트 멤버에게만 줍니다. */
-export interface MilestoneDto {
+export interface MilestoneDto extends RetrospectiveMarked {
   id: string
   projectId: string
   /** 1부터 빈틈없는 순서. */
@@ -329,13 +341,60 @@ export interface MilestoneDto {
   snapshots: MilestoneSnapshotDto[]
 }
 
+// ── 할 일 (T-07) ─────────────────────────────────────────────────────────
+
+export type TaskStatus = 'todo' | 'doing' | 'done'
+
+/** 로그에서 출처 할 일을 가리키는 짧은 참조. */
+export interface TaskRefDto {
+  id: string
+  title: string
+}
+
+/** 할 일 한 건. 같은 프로젝트 멤버에게만 줍니다. */
+export interface TaskDto {
+  id: string
+  projectId: string
+  title: string
+  note: string | null
+  status: TaskStatus
+  /** 같은 상태 목록 안에서 1부터 빈틈없는 순서. */
+  position: number
+  /** 담당자. 나간 멤버여도 지정은 남습니다. */
+  assignee: LogAuthorDto | null
+  /** 마감일(YYYY-MM-DD). */
+  dueAt: string | null
+  completedAt: string | null
+  completedBy: string | null
+  /** 이 할 일에서 전환한 빌드 로그(한 번만). */
+  log: { id: string; tag: LogTag } | null
+  createdBy: string
+  /** 수정 요청의 expectedVersion으로 그대로 보냅니다. */
+  version: number
+  createdAt: string
+  updatedAt: string
+}
+
+/** POST /tasks/:id/complete 응답. prompt가 있으면 화면이 "막힌 적 있었나요? 결정할 게 있었나요?"를 한 번 묻습니다. */
+export interface TaskCompleteDto {
+  task: TaskDto
+  /** 아직 로그로 전환하지 않은 할 일이면 묻고, 이미 전환했으면 null. 응답하지 않아도 완료는 끝났습니다. */
+  prompt: { askStuck: true; askDecision: true } | null
+}
+
+/** POST /tasks/:id/convert 응답. */
+export interface TaskConvertDto {
+  task: TaskDto
+  log: LogDto
+}
+
 /** API 오류 응답의 data 부분. */
 export interface ApiErrorData {
   code: string
   fields?: Record<string, string>
   /** 409 stale_revision일 때 서버의 현재 revision 번호. */
   currentRevision?: number
-  /** 409 version_conflict(마일스톤)일 때 서버의 현재 version. */
+  /** 409 version_conflict(마일스톤·할 일)일 때 서버의 현재 version. */
   currentVersion?: number
   /** 409 limit_reached일 때 한도. */
   limit?: number
