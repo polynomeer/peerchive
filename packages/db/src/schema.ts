@@ -18,7 +18,8 @@
  * T-10(0008 migration): pg_trgm 확장, 학교·과목의 정규화 키·병합(merged_into)·작성자, 개념 태그(concept_tags)·과목 연결
  * (course_concept_tags), 운영자(operators), 프로젝트 엠바고(projects.embargo_until, 단조 증가)·명시적 엠바고(embargoes).
  * 결정은 ADR 0010.
- * 공개(Publication)·동의는 다음 slice에서 추가합니다.
+ * T-11(0009 migration): 공개(publications)·공개 후보(publication_candidates: 공개 스냅샷·manifest·해시·점검 경고)·
+ * 동의(consents, 후보·manifest 해시에 묶임). 결정은 ADR 0011. 게시·철회·공개 조회는 T-12입니다.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -93,6 +94,25 @@ export const discordNoticeKind = pgEnum('discord_notice_kind', ['checkin_reminde
 export const checkinTimeBucket = pgEnum('checkin_time_bucket', ['none', 'lt2h', 'lt5h', 'lt10h', 'ten_plus'])
 /** 명시적 엠바고의 범위(SYSTEM_DESIGN §6.6 Embargo). */
 export const embargoScope = pgEnum('embargo_scope', ['project', 'course_term'])
+/** 공개 상태(SYSTEM_DESIGN §7.2). 전이 규칙은 @peerchive/domain의 transition(PUBLICATION_STATES와 같은 값)입니다. */
+export const publicationStatus = pgEnum('publication_status', [
+  'draft',
+  'embargoed',
+  'awaiting_consent',
+  'ready',
+  'published',
+  'withdrawn',
+  'restricted',
+])
+/** 공개 수준(PROOFU_EVOLUTION_PLAN §9.1): 요약(산출물 본문 제외) / 전체. */
+export const publicationLevel = pgEnum('publication_level', ['summary', 'full'])
+/**
+ * 공개 후보 상태. 열린 후보는 awaiting_consent/ready 중 하나이고, 새 후보를 만들면 이전 후보는 superseded가 됩니다.
+ * published/withdrawn은 T-12(게시·철회)가 씁니다: 게시하면 같은 행이 release가 되고 스냅샷은 바뀌지 않습니다.
+ */
+export const candidateStatus = pgEnum('candidate_status', ['awaiting_consent', 'ready', 'superseded', 'published', 'withdrawn'])
+/** 동의 상태(@peerchive/domain ConsentStatus). revoked는 게시 후 동의 철회(T-12)용입니다. */
+export const consentStatus = pgEnum('consent_status', ['pending', 'granted', 'declined', 'revoked'])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -1161,5 +1181,128 @@ export const embargoes = pgTable(
       sql`(${t.scope} = 'project' and ${t.projectId} is not null and ${t.courseTermId} is null) or (${t.scope} = 'course_term' and ${t.courseTermId} is not null and ${t.projectId} is null)`,
     ),
     check('embargoes_reason_length_check', sql`char_length(${t.reason}) between 1 and 500`),
+  ],
+)
+
+// ── 공개·동의 (§6.5, §7.2, T-11, ADR 0011) ───────────────────────────────
+
+/**
+ * 공개(프로젝트당 하나). 안정된 URL(slug)과 공개 상태를 가집니다. 첫 공개 후보를 만들 때 생깁니다.
+ * slug는 게시 전에는 새 후보마다 바꿀 수 있고(게시 후 규칙은 T-12), 전체에서 유일합니다.
+ * current_release_id는 게시된 후보(T-12)를 가리키며 T-11에서는 항상 null입니다.
+ */
+export const publications = pgTable(
+  'publications',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .unique()
+      .references(() => projects.id),
+    slug: text('slug').notNull().unique(),
+    level: publicationLevel('level').notNull(),
+    status: publicationStatus('status').notNull().default('draft'),
+    /** 게시된 release(publication_candidates 행). 순환 참조라 아래 foreignKey로 선언합니다. */
+    currentReleaseId: uuid('current_release_id'),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t): PgTableExtraConfigValue[] => [
+    check('publications_slug_format_check', sql`${t.slug} ~ '^[a-z0-9]+(-[a-z0-9]+)*$' and char_length(${t.slug}) between 3 and 60`),
+    foreignKey({
+      name: 'publications_current_release_id_fk',
+      columns: [t.currentReleaseId],
+      foreignColumns: [publicationCandidates.id],
+    }),
+  ],
+)
+
+/**
+ * 공개 후보(= 게시되면 release). 만든 뒤 snapshot·manifest·manifest_hash는 바꾸지 않습니다(새 후보를 만듦).
+ * - snapshot: 공개 페이지가 그대로 보여 줄 공개 DTO 전체(buildPublicSnapshot의 결과). 공개 경로(T-12)는 이것만 읽습니다.
+ * - manifest: 고정한 revision·버전·마일스톤 version·노출 이름·사용 조건·제외한 사람 + snapshot 다이제스트.
+ *   manifest_hash = sha256(canonicalJson(manifest)). 동의는 이 해시에 묶입니다.
+ * - selection: 요청을 정규화한 값(비공개, 미동의자 제외 후보·화면 채우기용). refs: 스냅샷 키 → 비공개 id(고치기 링크용).
+ * - checks: 공개 전 점검 경고(가린 표본만). subject_digests: 동의 당사자별 자기 관련 부분의 다이제스트(동의 이어받기 판정).
+ * 열린 후보(awaiting_consent/ready)는 공개마다 하나입니다(부분 unique).
+ */
+export const publicationCandidates = pgTable(
+  'publication_candidates',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    publicationId: uuid('publication_id')
+      .notNull()
+      .references((): AnyPgColumn => publications.id),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    /** 공개 안에서 1부터 늘어나는 번호(release version). */
+    version: integer('version').notNull(),
+    level: publicationLevel('level').notNull(),
+    status: candidateStatus('status').notNull().default('awaiting_consent'),
+    snapshot: jsonb('snapshot').$type<Record<string, unknown>>().notNull(),
+    manifest: jsonb('manifest').$type<Record<string, unknown>>().notNull(),
+    manifestHash: text('manifest_hash').notNull(),
+    selection: jsonb('selection').$type<Record<string, unknown>>().notNull(),
+    refs: jsonb('refs').$type<Record<string, unknown>>().notNull().default({}),
+    checks: jsonb('checks').$type<Array<Record<string, unknown>>>().notNull().default([]),
+    subjectDigests: jsonb('subject_digests').$type<Record<string, string>>().notNull().default({}),
+    /** 미동의자 제외로 만든 후보면 원래 후보. */
+    derivedFromId: uuid('derived_from_id').references((): AnyPgColumn => publicationCandidates.id),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+    readyAt: timestamp('ready_at', { withTimezone: true }),
+    supersededAt: timestamp('superseded_at', { withTimezone: true }),
+  },
+  (t) => [
+    unique('publication_candidates_publication_version_key').on(t.publicationId, t.version),
+    uniqueIndex('publication_candidates_open_key')
+      .on(t.publicationId)
+      .where(sql`${t.status} in ('awaiting_consent', 'ready')`),
+    index('publication_candidates_project_id_idx').on(t.projectId),
+    check('publication_candidates_version_check', sql`${t.version} >= 1`),
+    check('publication_candidates_manifest_hash_check', sql`${t.manifestHash} ~ '^[0-9a-f]{64}$'`),
+    check('publication_candidates_snapshot_object_check', sql`jsonb_typeof(${t.snapshot}) = 'object'`),
+    check('publication_candidates_manifest_object_check', sql`jsonb_typeof(${t.manifest}) = 'object'`),
+    check('publication_candidates_superseded_check', sql`(${t.status} = 'superseded') = (${t.supersededAt} is not null)`),
+  ],
+)
+
+/**
+ * 동의(후보·당사자마다 하나). manifest_hash는 만들 때 후보의 해시를 복사하며, 결정 요청의 해시가 다르면 거부합니다.
+ * 당사자는 이름·로그·역할 선언·회의 참석·올린 파일이 공개 범위에 든 사람(나간 멤버 포함)과 후보를 만든 사람입니다.
+ * scope는 그 사람과 관련해 포함된 것(name, logs, meetings, claims, artifacts, title_summary).
+ * 후보를 만든 사람의 동의는 요청에서 명시적으로 체크했을 때만 granted로 만듭니다(조용한 자기 동의 없음).
+ * carried_from_candidate_id: 미동의자 제외 후보에서 자기 관련 부분이 그대로라 이어받은 동의의 원래 후보.
+ */
+export const consents = pgTable(
+  'consents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    candidateId: uuid('candidate_id')
+      .notNull()
+      .references(() => publicationCandidates.id),
+    manifestHash: text('manifest_hash').notNull(),
+    subjectUserId: uuid('subject_user_id')
+      .notNull()
+      .references(() => users.id),
+    scope: text('scope').array().notNull().default(sql`'{}'::text[]`),
+    status: consentStatus('status').notNull().default('pending'),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    note: text('note'),
+    carriedFromCandidateId: uuid('carried_from_candidate_id').references(() => publicationCandidates.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('consents_candidate_subject_key').on(t.candidateId, t.subjectUserId),
+    index('consents_subject_status_idx').on(t.subjectUserId, t.status),
+    check('consents_manifest_hash_check', sql`${t.manifestHash} ~ '^[0-9a-f]{64}$'`),
+    check('consents_note_check', sql`${t.note} is null or char_length(${t.note}) between 1 and 300`),
+    check('consents_decided_check', sql`(${t.status} = 'pending') = (${t.decidedAt} is null)`),
   ],
 )

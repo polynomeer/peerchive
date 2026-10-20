@@ -683,4 +683,247 @@ export interface ApiErrorData {
   candidates?: CatalogCandidateDto[]
   /** 409 embargo_active일 때 엠바고 종료 시각. */
   until?: string
+  /** 409 stale_manifest일 때 후보의 현재 manifest 해시. */
+  currentManifestHash?: string
+  /** 409 superseded일 때 지금 열린 후보 id(없으면 null). */
+  currentCandidateId?: string | null
+}
+
+// ── 공개 스냅샷 (T-11, ADR 0011) ─────────────────────────────────────────
+//
+// 공개 페이지(T-12)·포트폴리오가 그대로 보여 줄 데이터입니다. 서버의 buildPublicSnapshot만 이 값을 만들며,
+// 후보에 저장된 값을 바꾸지 않고 그대로 내려줍니다. 이메일·사용자 id·체크인·비공개 메모·확인 메모·감사 정보·
+// 저장소 키·비공개 경로 링크·학기 id·다른 프로젝트 자료는 들어가지 않습니다(허용 목록으로만 만듦).
+
+export type PublicationLevel = 'summary' | 'full'
+export type PublicationStatus = 'draft' | 'embargoed' | 'awaiting_consent' | 'ready' | 'published' | 'withdrawn' | 'restricted'
+export type CandidateStatus = 'awaiting_consent' | 'ready' | 'superseded' | 'published' | 'withdrawn'
+export type ConsentStatus = 'pending' | 'granted' | 'declined' | 'revoked'
+export type ExposureMode = 'name' | 'anonymous'
+
+/** 산출물 사용 조건(§9.5): 열람만(기본) / 명시한 라이선스 / 외부 자료의 원래 조건. */
+export type UsageTerms =
+  | { kind: 'view_only' }
+  | { kind: 'license'; spdx: string }
+  | { kind: 'external'; source: string }
+
+/** 공개 스냅샷의 팀원. key는 공개마다 안정된 가명 키(사용자 id 아님). */
+export interface PublicMember {
+  key: string
+  /** 표시 이름 또는 "팀원 A". */
+  label: string
+  anonymous: boolean
+}
+
+export interface PublicLog extends RetrospectiveMarked {
+  key: string
+  tag: LogTag
+  /** 출처(web/discord/task/retro/ai). 화면은 글자로 보여 줍니다. */
+  source: LogSource
+  /** 작성자 가명 키. 익명으로 고른 팀원의 로그는 null(작성자 표시 없음). */
+  author: string | null
+  body: string
+  /** 태그별 허용 필드만. 회의 참석자는 가명 키. */
+  payload: Record<string, unknown>
+  links: LogLinkDto[]
+  /** 자기 기입 수행일(YYYY-MM-DD). */
+  claimedDate: string | null
+  /** 이 revision을 저장한 플랫폼 시각. */
+  recordedAt: string
+  revisionNo: number
+  /** 같은 공개에 포함된 마일스톤·막힘 로그·파일만 가리킵니다. */
+  milestone: string | null
+  resolves: string | null
+  evidence: string[]
+}
+
+export interface PublicMilestoneSnapshot extends RetrospectiveMarked {
+  /** 공개 파일(artifacts[])의 versionId. */
+  artifactVersionId: string
+}
+
+export interface PublicMilestone extends RetrospectiveMarked {
+  key: string
+  position: number
+  title: string
+  dueAt: string | null
+  /** 자기 기입 도달일. */
+  claimedAt: string | null
+  /** 요약 공개에서는 항상 빈 목록. */
+  snapshots: PublicMilestoneSnapshot[]
+}
+
+export interface PublicClaim {
+  key: string
+  member: string
+  text: string
+  revisionNo: number
+  /** 그 revision의 팀원 확인 상태(확인 메모·확인한 사람은 싣지 않음). */
+  status: 'unconfirmed' | 'confirmed' | 'disputed'
+  confirmedCount: number
+  disputedCount: number
+  evidence: Array<{ kind: 'log'; log: string } | { kind: 'artifact'; artifactVersionId: string }>
+}
+
+export interface PublicArtifact {
+  /** 내용은 T-12의 release 확인 경로로만 내려줍니다. */
+  artifactVersionId: string
+  displayName: string
+  mediaType: string | null
+  bytes: number
+  usage: UsageTerms
+}
+
+export interface PublicSnapshot extends RetrospectiveMarked {
+  format: 'peerchive.public-snapshot'
+  schemaVersion: 1
+  level: PublicationLevel
+  slug: string
+  title: string
+  summary: string
+  kind: 'individual' | 'team'
+  course: { school: string; course: string; code: string | null; year: number; semester: Semester } | null
+  members: PublicMember[]
+  milestones: PublicMilestone[]
+  logs: PublicLog[]
+  claims: PublicClaim[]
+  /** 요약 공개에서는 항상 빈 목록. */
+  artifacts: PublicArtifact[]
+}
+
+// ── 공개 후보·동의 DTO (멤버·당사자에게만) ──────────────────────────────
+
+export type PublicationCheckRule =
+  | 'phone'
+  | 'email'
+  | 'resident_id'
+  | 'student_id'
+  | 'private_url'
+  | 'answer_file'
+  | 'long_code'
+  | 'anonymous_name'
+
+export interface PublicationCheckDto {
+  rule: PublicationCheckRule
+  location: { kind: 'title' | 'summary' | 'log' | 'claim' | 'milestone' | 'artifact'; key?: string; field: string }
+  /** 가린 표본. */
+  sample: string
+  /** 고칠 곳(과제 화면 링크). 제목·요약은 null(이 화면에서 고침). */
+  fixUrl: string | null
+}
+
+export type PublicationBlockerDto =
+  | { kind: 'consent_missing'; userId: string; status: ConsentStatus }
+  | { kind: 'consent_stale'; userId: string }
+  | { kind: 'file_not_clean'; artifactVersionId: string; scanStatus: ScanStatus }
+  | { kind: 'hold_open' }
+  | { kind: 'embargo_active'; until: string }
+  | { kind: 'superseded' }
+
+export interface ConsentSubjectDto {
+  userId: string
+  displayName: string
+  /** 지금 이 과제의 active 멤버인지(나간 멤버도 당사자일 수 있음). */
+  active: boolean
+  /** 스냅샷의 가명 키(제목·요약만 쓴 사람은 null). */
+  memberKey: string | null
+  exposure: ExposureMode | null
+  scope: string[]
+  status: ConsentStatus
+  decidedAt: string | null
+  note: string | null
+  /** 미동의자 제외 후보에서 이전 동의를 이어받았는지. */
+  carried: boolean
+}
+
+export interface CandidateSelectionDto {
+  level: PublicationLevel
+  title: string
+  summary: string
+  slug: string
+  logIds: string[]
+  milestoneIds: string[]
+  artifactVersionIds: string[]
+  claimIds: string[]
+  exposure: Record<string, ExposureMode>
+  usageTerms: Record<string, UsageTerms>
+  excludedUserIds: string[]
+}
+
+export interface PublicationCandidateDto {
+  id: string
+  projectId: string
+  publicationId: string
+  version: number
+  level: PublicationLevel
+  status: CandidateStatus
+  slug: string
+  title: string
+  manifestHash: string
+  createdAt: string
+  createdBy: { userId: string; displayName: string }
+  readyAt: string | null
+  supersededAt: string | null
+  derivedFromId: string | null
+  publicationStatus: PublicationStatus
+  checks: PublicationCheckDto[]
+  subjects: ConsentSubjectDto[]
+  blockers: PublicationBlockerDto[]
+  selection: CandidateSelectionDto
+  /** 내 동의(당사자가 아니면 null). */
+  myConsent: ConsentStatus | null
+  canDecide: boolean
+  canExcludeDeclined: boolean
+  counts: { logs: number; milestones: number; claims: number; artifacts: number; members: number }
+}
+
+/** GET /candidates/:id/preview — 저장된 스냅샷 그대로. */
+export interface CandidatePreviewDto {
+  candidateId: string
+  status: CandidateStatus
+  manifestHash: string
+  snapshot: PublicSnapshot
+}
+
+/** 공개 준비 화면의 선택지(멤버에게만). */
+export interface PublicationOptionsDto {
+  logs: Array<{ id: string; tag: LogTag; summary: string; author: LogAuthorDto; revisionNo: number; createdAt: string; retrospective: boolean }>
+  milestones: Array<{ id: string; title: string; position: number; snapshotCount: number; retrospective: boolean }>
+  claims: Array<{ id: string; text: string; author: LogAuthorDto; revisionNo: number; status: 'unconfirmed' | 'confirmed' | 'disputed' }>
+  artifactVersions: Array<{
+    versionId: string
+    artifactId: string
+    title: string
+    fileName: string
+    versionNo: number
+    mediaType: string | null
+    bytes: number
+    scanStatus: ScanStatus
+    uploader: LogAuthorDto
+  }>
+  members: Array<{ userId: string; displayName: string; status: 'invited' | 'active' | 'left' | 'removed' }>
+  licenses: string[]
+}
+
+/** GET /projects/:id/publication */
+export interface PublicationStateDto {
+  publication: { id: string; slug: string; level: PublicationLevel; status: PublicationStatus } | null
+  candidate: PublicationCandidateDto | null
+  options: PublicationOptionsDto
+  embargo: EmbargoDto
+  canPrepare: boolean
+}
+
+/** GET /me/consent-requests 한 줄. */
+export interface ConsentRequestDto {
+  candidateId: string
+  projectId: string
+  projectTitle: string
+  publicTitle: string
+  level: PublicationLevel
+  manifestHash: string
+  scope: string[]
+  requestedAt: string
+  requestedBy: string
+  previewUrl: string
 }

@@ -11,6 +11,7 @@ const { me, logout } = useAuth()
         <ul class="nav-list">
           <template v-if="me">
             <li><NuxtLink to="/projects">내 과제</NuxtLink></li>
+            <li><NuxtLink to="/consents">동의 요청</NuxtLink></li>
             <li v-if="me.profile"><NuxtLink :to="`/u/${me.profile.handle}`">공개 프로필</NuxtLink></li>
             <li><NuxtLink to="/onboarding">프로필 설정</NuxtLink></li>
             <li>

@@ -1004,3 +1004,72 @@ ul.chips {
     page-break-inside: avoid;
   }
 }
+
+/* ── 공개 준비·동의·공개 스냅샷 (T-11) ── */
+dl.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 0.75rem;
+  margin: 0;
+}
+dl.kv dt {
+  color: var(--muted);
+}
+dl.kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 30rem) {
+  dl.kv {
+    grid-template-columns: 1fr;
+  }
+  dl.kv dd {
+    margin-bottom: 0.4rem;
+  }
+}
+.check-item {
+  overflow-wrap: anywhere;
+}
+.file-choice {
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--surface);
+}
+.file-choice .usage {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.25rem 0 0.5rem 1.6rem;
+}
+.public-snapshot {
+  overflow-wrap: anywhere;
+}
+.public-snapshot h3 {
+  font-size: 1rem;
+  margin: 1.25rem 0 0.5rem;
+}
+.snapshot-title {
+  margin-top: 0.5rem;
+}
+.snapshot-list {
+  display: grid;
+  gap: 0.75rem;
+  padding-left: 1.25rem;
+  margin: 0;
+}
+.snapshot-log .log-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  align-items: baseline;
+  margin: 0;
+}
+.log-fields-list {
+  margin: 0.25rem 0;
+  padding-left: 1.1rem;
+}
+.preview-badge {
+  color: #6b4e00;
+  background: #fff6db;
+}
+.chip.static {
+  cursor: default;
+}

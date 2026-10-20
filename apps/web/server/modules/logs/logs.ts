@@ -204,7 +204,7 @@ async function toLogDtos(
     evidence: evidence.get(log.revision.id) ?? [],
     milestone: log.revision.milestoneId ? (milestoneRefs.get(log.revision.milestoneId) ?? null) : null,
     task: taskByLog.get(log.entry.id) ?? null,
-    // TODO(T-11/T-12): 공개 로그 DTO도 isRetrospectiveLog로 이 표시를 그대로 옮기세요.
+    // 공개 스냅샷(publication/snapshot.ts, T-11)도 isRetrospectiveLog로 이 표시를 그대로 옮깁니다.
     retrospective: isRetrospectiveLog(log.entry),
     canRevise: canReviseLog({ userId: actor.userId }, project, membership, log.entry),
   }))

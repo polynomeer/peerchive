@@ -11,6 +11,10 @@ import type {
   MilestoneDto,
   MilestoneSnapshotDto,
   ProjectDto,
+  PublicLog,
+  PublicMilestone,
+  PublicMilestoneSnapshot,
+  PublicSnapshot,
   RetrospectiveMarked,
 } from '../shared/types/api'
 
@@ -38,6 +42,13 @@ describe('retrospective flag on DTOs', () => {
     expectTypeOf<LogDto>().toExtend<RetrospectiveMarked>()
     expectTypeOf<MilestoneDto>().toExtend<RetrospectiveMarked>()
     expectTypeOf<MilestoneSnapshotDto>().toExtend<RetrospectiveMarked>()
+  })
+
+  it('public snapshot types (T-11) carry `retrospective` too', () => {
+    expectTypeOf<PublicSnapshot>().toExtend<RetrospectiveMarked>()
+    expectTypeOf<PublicLog>().toExtend<RetrospectiveMarked>()
+    expectTypeOf<PublicMilestone>().toExtend<RetrospectiveMarked>()
+    expectTypeOf<PublicMilestoneSnapshot>().toExtend<RetrospectiveMarked>()
   })
 
   it('project mapper exposes the current retro mode as `retrospective`', () => {

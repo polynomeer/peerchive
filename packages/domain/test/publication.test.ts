@@ -197,3 +197,13 @@ describe('publication transition: other edges', () => {
     expect(transition('restricted', 'publish', ctx).ok).toBe(false)
   })
 })
+
+describe('publication transition: reopening a ready candidate (T-11)', () => {
+  it('ready → awaiting_consent without preconditions, only from ready', () => {
+    expect(transition('ready', 'reopen_candidate', readyCtx({ consents: [] }))).toEqual({ ok: true, state: 'awaiting_consent' })
+    expect(allowedEvents('ready')).toEqual(['reopen_candidate', 'publish'])
+    for (const state of PUBLICATION_STATES.filter((s) => s !== 'ready')) {
+      expect(transition(state, 'reopen_candidate', readyCtx()).ok).toBe(false)
+    }
+  })
+})

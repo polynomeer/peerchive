@@ -241,6 +241,9 @@ const formatDate = (iso: string) => new Date(iso).toLocaleString('ko-KR', { date
         <span v-if="embargoText" class="badge embargo">{{ embargoText }}</span>
         <span class="muted">{{ project.kind === 'team' ? '팀 과제' : '개인 과제' }} · 내 역할: {{ ROLE_LABELS[project.myRole] }}</span>
       </p>
+      <p class="actions">
+        <NuxtLink :to="`/projects/${project.id}/publish`">공개 준비(후보·점검·미리보기·동의)</NuxtLink>
+      </p>
 
       <p v-if="notice" :class="['notice', notice.kind]" :role="notice.kind === 'error' ? 'alert' : 'status'">
         {{ notice.text }}

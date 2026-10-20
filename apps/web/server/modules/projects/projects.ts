@@ -62,7 +62,7 @@ export const updateProjectSchema = z.object({
 
 /**
  * 프로젝트 DTO. retrospective는 지금의 사후 작성 모드입니다.
- * TODO(T-11/T-12): 공개 DTO를 만들 때 이 retrospective를 그대로 옮기세요(test/retrospective-dto.test.ts가 지킴).
+ * 공개 스냅샷(publication/snapshot.ts, T-11)은 projects.retro_mode를 retrospective로 옮깁니다(test/retrospective-dto.test.ts가 지킴).
  */
 export function toProjectDto(row: ProjectRow, myRole: ProjectRole): ProjectDto {
   return {

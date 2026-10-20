@@ -193,7 +193,7 @@ async function toMilestoneDtos(db: DbExecutor, rows: MilestoneRow[]): Promise<Mi
     note: row.note,
     dueAt: row.dueAt,
     claimedAt: row.claimedAt,
-    // TODO(T-11/T-12): 공개 마일스톤·스냅샷 DTO도 이 표시를 그대로 옮기세요.
+    // 공개 스냅샷(publication/snapshot.ts, T-11)도 마일스톤·스냅샷의 이 표시를 그대로 옮깁니다.
     retrospective: row.retrospective,
     version: row.version,
     createdAt: row.createdAt.toISOString(),

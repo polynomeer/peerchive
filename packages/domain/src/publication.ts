@@ -4,6 +4,7 @@
  * 서버가 게시 트랜잭션 안에서 다시 호출하는 것을 전제로 합니다.
  * 클라이언트 버튼 비활성은 보조 수단일 뿐이며, 이 함수의 결과가 최종 판정입니다.
  */
+import { type Membership, type ProjectRef, type Viewer, canReadProjectWorkspace } from './permissions'
 
 export const PUBLICATION_STATES = [
   'draft',
@@ -25,6 +26,11 @@ export const PUBLICATION_EVENTS = [
   'create_candidate',
   /** 동의·파일 검사·점검 통과: awaiting_consent → ready */
   'mark_ready',
+  /**
+   * 게시 전 ready 조건이 다시 깨짐(동의 거절·철회, 파일 상태 변화, 보류) 또는 새 후보를 만들기 전: ready → awaiting_consent (T-11).
+   * 게시(T-12)가 어차피 모든 조건을 다시 검사하지만, 저장된 상태가 현재 조건과 어긋나지 않게 합니다.
+   */
+  'reopen_candidate',
   /** 내용 수정 / 새 후보: awaiting_consent → draft */
   'revise_candidate',
   /** 권한·엠바고 재검사 후 명시적 게시: ready → published */
@@ -97,12 +103,34 @@ const TRANSITIONS: Readonly<Record<PublicationEvent, { from: PublicationState; t
   end_embargo: { from: 'embargoed', to: 'draft' },
   create_candidate: { from: 'draft', to: 'awaiting_consent' },
   mark_ready: { from: 'awaiting_consent', to: 'ready' },
+  reopen_candidate: { from: 'ready', to: 'awaiting_consent' },
   revise_candidate: { from: 'awaiting_consent', to: 'draft' },
   publish: { from: 'ready', to: 'published' },
   withdraw: { from: 'published', to: 'withdrawn' },
   restrict: { from: 'published', to: 'restricted' },
   start_new_candidate: { from: 'withdrawn', to: 'draft' },
   lift_restriction: { from: 'restricted', to: 'draft' },
+}
+
+/**
+ * 공개 후보 준비(만들기·미리보기 전 선택): active owner/editor(§8 "공개 후보 준비 / 게시": editor는 후보 준비까지).
+ * reviewer/viewer는 후보를 읽고 자기 관련 동의만 합니다.
+ */
+export function canPreparePublication(
+  viewer: Viewer,
+  project: ProjectRef,
+  membership: Membership | null | undefined,
+): boolean {
+  return canReadProjectWorkspace(viewer, project, membership) && (membership!.role === 'owner' || membership!.role === 'editor')
+}
+
+/** 미동의자 제외 후보 만들기 등 공개 운영 결정: active owner만. 게시(T-12)도 owner입니다. */
+export function canManagePublication(
+  viewer: Viewer,
+  project: ProjectRef,
+  membership: Membership | null | undefined,
+): boolean {
+  return canReadProjectWorkspace(viewer, project, membership) && membership!.role === 'owner'
 }
 
 export function isEmbargoActive(ctx: Pick<PublicationContext, 'now' | 'embargoUntil'>): boolean {
@@ -169,6 +197,7 @@ function preconditions(event: PublicationEvent, ctx: PublicationContext): Public
       // 철회된 release를 되살리지 않고, 새 후보 작성을 위해 draft로만 돌아갑니다.
       return []
     case 'revise_candidate':
+    case 'reopen_candidate':
     case 'withdraw':
     case 'restrict':
     case 'lift_restriction':
