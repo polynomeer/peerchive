@@ -9,13 +9,20 @@ import type {
   LogRevisionDto,
   MeetingPayload,
   MemberDto,
+  MilestoneDto,
   SolutionPayload,
   StuckPayload,
   ValidationPayload,
 } from '~~/shared/types/api'
 import type { EvidenceOption } from '~/utils/artifacts'
 
-const props = defineProps<{ log: LogDto; members: MemberDto[]; stuckLogs: LogDto[]; evidenceOptions: EvidenceOption[] }>()
+const props = defineProps<{
+  log: LogDto
+  members: MemberDto[]
+  stuckLogs: LogDto[]
+  evidenceOptions: EvidenceOption[]
+  milestones: MilestoneDto[]
+}>()
 const emit = defineEmits<{ updated: [log: LogDto] }>()
 
 const headingId = computed(() => `log-${props.log.id}-heading`)
@@ -242,6 +249,7 @@ async function saveEdit() {
         :members="members"
         :stuck-logs="stuckLogs"
         :evidence-options="evidenceOptions"
+        :milestones="milestones"
       />
       <p v-if="status" :class="['notice', status.kind]" :role="status.kind === 'error' ? 'alert' : 'status'">{{ status.text }}</p>
       <div class="actions">

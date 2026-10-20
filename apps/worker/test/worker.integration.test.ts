@@ -22,6 +22,11 @@ describe.skipIf(!url)('worker (PostgreSQL)', () => {
   it('dispatches undispatched outbox rows once, using the row id as the job id; failures stay queued', async () => {
     await expect(
       db!.transaction(async (tx) => {
+        // 개발 DB에 남아 있는 미전달 행이 있어도 이 테스트의 결과만 보도록 기준값을 잽니다.
+        const [before] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(outboxEvents)
+          .where(sql`${outboxEvents.dispatchedAt} is null and ${outboxEvents.topic} <> 'broken-queue'`)
         const rows = await tx
           .insert(outboxEvents)
           .values([
@@ -34,7 +39,7 @@ describe.skipIf(!url)('worker (PostgreSQL)', () => {
           if (queue === 'broken-queue') throw new Error('queue missing')
           sent.push([queue, data, options])
         })
-        expect(count).toBe(1)
+        expect(count).toBe(1 + (before?.n ?? 0))
         expect(sent.filter(([, , o]) => rows.some((r) => r.id === o.id))).toEqual([
           [ARTIFACT_SCAN_QUEUE, rows[0]!.payload, { id: rows[0]!.id }],
         ])

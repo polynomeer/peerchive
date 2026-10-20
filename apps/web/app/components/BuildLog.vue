@@ -6,6 +6,8 @@
  * - 입력은 프로젝트별로 localStorage에 임시 저장하고, 저장에 성공하면 지웁니다(시나리오 H: 실패해도 내용 보존).
  * - 재시도는 같은 clientId로 보내 네트워크 오류 뒤 중복 로그가 생기지 않게 합니다.
  * - 목록은 클라이언트에서 불러옵니다(필터·더 보기 상태를 화면이 가짐).
+ * - 마일스톤(T-06): 작성 폼에서 고르고(다음 로그에도 유지), 타임라인은 마일스톤이 바뀌는 곳에 구분선을 넣습니다.
+ *   마일스톤 필터는 태그 필터와 함께 쓸 수 있고, 필터 중에는 구분선을 생략합니다.
  */
 import type { LogDto, LogPageDto, LogTag, MemberDto } from '~~/shared/types/api'
 
@@ -14,6 +16,11 @@ const props = defineProps<{ projectId: string; canWrite: boolean; members: Membe
 // 파일 근거 후보: 이 과제의 산출물 버전(산출물 섹션과 같은 목록을 씁니다).
 const artifacts = useProjectArtifacts(props.projectId)
 const evidenceChoices = computed(() => evidenceOptions(artifacts.items.value))
+
+// 마일스톤: 마일스톤 섹션과 같은 목록을 씁니다(순서·이름은 이 목록 기준으로 보여 줌).
+const milestones = useProjectMilestones(props.projectId)
+const milestoneFilter = ref('')
+const filterMilestone = computed(() => milestones.byId.value.get(milestoneFilter.value) ?? null)
 
 // ── 타임라인 ──
 type Filter = 'all' | 'stuck' | 'decision' | 'validation' | 'mine'
@@ -36,6 +43,7 @@ async function load(reset: boolean) {
   const query: Record<string, string> = { limit: '20' }
   if (filter.value === 'mine' && props.meId) query.author = props.meId
   else if (filter.value !== 'all' && filter.value !== 'mine') query.tag = filter.value
+  if (milestoneFilter.value) query.milestone = milestoneFilter.value
   if (!reset && nextCursor.value) query.cursor = nextCursor.value
   try {
     const page = await $fetch<LogPageDto>(`/api/v1/projects/${props.projectId}/logs`, { query })
@@ -54,9 +62,38 @@ function setFilter(value: Filter) {
   void load(true)
 }
 
+function setMilestoneFilter(value: string) {
+  if (milestoneFilter.value === value) return
+  milestoneFilter.value = value
+  void load(true)
+}
+
+// 지운 마일스톤으로 거르고 있었다면 필터를 풉니다.
+watch(
+  () => milestones.items.value,
+  (list) => {
+    if (milestoneFilter.value && !list.some((m) => m.id === milestoneFilter.value)) setMilestoneFilter('')
+  },
+)
+
+/** 이 로그 앞에 넣을 마일스톤 구분선 문구. 바로 앞 로그와 마일스톤이 같으면 null(필터 중에도 null). */
+function dividerFor(index: number): string | null {
+  if (milestoneFilter.value) return null
+  const log = items.value[index]
+  if (!log) return null
+  const previous = index > 0 ? items.value[index - 1] : undefined
+  const id = log.milestone?.id ?? null
+  if (previous ? (previous.milestone?.id ?? null) === id : id === null) return null
+  if (!log.milestone) return '마일스톤 없음'
+  const current = milestones.byId.value.get(log.milestone.id)
+  const due = current?.dueAt ? ` (예정 ${formatDay(current.dueAt)})` : ''
+  return `${milestoneLabel(current ?? log.milestone)}${due}`
+}
+
 function replaceItem(log: LogDto) {
   items.value = items.value.map((item) => (item.id === log.id ? log : item))
   void loadStuckLogs()
+  void milestones.refresh()
 }
 
 // 💡해결이 연결할 막힘 후보(최근 50개).
@@ -120,12 +157,14 @@ async function submit() {
     })
     clearLogDraft(props.projectId)
     composerReady.value = false
-    Object.assign(form, emptyLogForm(form.tag))
+    // 태그와 마일스톤은 다음 기록에도 그대로 둡니다(같은 단계의 로그를 이어서 쓰는 경우가 많음).
+    Object.assign(form, { ...emptyLogForm(form.tag), milestoneId: form.milestoneId })
     clientId.value = newClientId()
     await nextTick()
     composerReady.value = true
     saveState.value = 'saved'
     if (created.tag === 'stuck' || created.tag === 'solution') void loadStuckLogs()
+    if (created.milestone) void milestones.refresh()
     await load(true)
   } catch (e) {
     const error = apiError(e)
@@ -151,6 +190,7 @@ onMounted(() => {
   void load(true)
   void loadStuckLogs()
   if (props.canWrite && !artifacts.loaded.value) void artifacts.refresh()
+  if (!milestones.loaded.value) void milestones.refresh()
 })
 </script>
 
@@ -178,6 +218,7 @@ onMounted(() => {
         :members="members"
         :stuck-logs="stuckLogs"
         :evidence-options="evidenceChoices"
+        :milestones="milestones.items.value"
       />
       <div class="actions">
         <button type="submit" :disabled="saveState === 'saving'">기록하기</button>
@@ -199,6 +240,17 @@ onMounted(() => {
         {{ f.label }}
       </button>
     </div>
+    <div v-if="milestones.items.value.length" class="milestone-filter">
+      <label for="log-milestone-filter">마일스톤별 보기</label>
+      <select id="log-milestone-filter" :value="milestoneFilter" @change="setMilestoneFilter(($event.target as HTMLSelectElement).value)">
+        <option value="">전체 마일스톤</option>
+        <option v-for="m in milestones.items.value" :key="m.id" :value="m.id">{{ milestoneLabel(m) }}</option>
+      </select>
+      <span v-if="filterMilestone" class="chip selected filter-chip">
+        📍 {{ milestoneLabel(filterMilestone) }}
+        <button type="button" class="link-button" :aria-label="`${milestoneLabel(filterMilestone)} 필터 해제`" @click="setMilestoneFilter('')">✕</button>
+      </span>
+    </div>
 
     <p v-if="loadError" class="notice error" role="alert">
       로그를 불러오지 못했습니다. <button type="button" class="link-button" @click="load(items.length === 0)">다시 시도</button>
@@ -206,8 +258,18 @@ onMounted(() => {
     <p v-else-if="!loading && items.length === 0" class="muted">아직 로그가 없습니다.</p>
 
     <ol class="plain timeline" aria-label="로그 목록 (최신순)">
-      <li v-for="log in items" :key="log.id">
-        <LogItem :log="log" :members="members" :stuck-logs="stuckLogs" :evidence-options="evidenceChoices" @updated="replaceItem" />
+      <li v-for="(log, index) in items" :key="log.id">
+        <p v-if="dividerFor(index)" class="milestone-divider">
+          <span>{{ dividerFor(index) }}</span>
+        </p>
+        <LogItem
+          :log="log"
+          :members="members"
+          :stuck-logs="stuckLogs"
+          :evidence-options="evidenceChoices"
+          :milestones="milestones.items.value"
+          @updated="replaceItem"
+        />
       </li>
     </ol>
     <p v-if="loading" class="muted" role="status">불러오는 중…</p>

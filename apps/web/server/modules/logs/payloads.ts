@@ -137,7 +137,7 @@ const bodySchema = z.string({ error: 'invalid' }).trim().max(BODY_MAX, { error: 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 
 /** 실제 달력 날짜인 YYYY-MM-DD. */
-const claimedDateSchema = z
+export const claimedDateSchema = z
   .string({ error: 'invalid' })
   .regex(DATE_PATTERN, { error: 'invalid_format' })
   .refine((value) => {
@@ -166,6 +166,8 @@ export const createLogSchema = z.object({
   claimedDate: claimedDateSchema.nullish(),
   resolvesEntryId: z.uuid({ error: 'invalid' }).nullish(),
   evidenceVersionIds: evidenceVersionIdsSchema.nullish(),
+  /** 이 로그가 속한 마일스톤(같은 프로젝트, 선택, T-06). */
+  milestoneId: z.uuid({ error: 'invalid' }).nullish(),
   /** 재전송 중복 방지용 클라이언트 생성 UUID(선택). */
   clientId: z.uuid({ error: 'invalid' }).optional(),
 })
@@ -183,12 +185,15 @@ export const reviseLogSchema = z.object({
   claimedDate: claimedDateSchema.nullish(),
   resolvesEntryId: z.uuid({ error: 'invalid' }).nullish(),
   evidenceVersionIds: evidenceVersionIdsSchema.nullish(),
+  milestoneId: z.uuid({ error: 'invalid' }).nullish(),
 })
 
 /** 목록 조회 쿼리. */
 export const listLogsQuerySchema = z.object({
   tag: z.enum(LOG_TAGS, { error: 'invalid' }).optional(),
   author: z.uuid({ error: 'invalid' }).optional(),
+  /** 현재 revision이 이 마일스톤에 속한 로그만(T-06). */
+  milestone: z.uuid({ error: 'invalid' }).optional(),
   cursor: z.string({ error: 'invalid' }).max(200, { error: 'invalid' }).optional(),
   limit: z.coerce
     .number({ error: 'invalid' })
@@ -205,6 +210,8 @@ export interface LogContent {
   links: LogLinkDto[]
   claimedDate: string | null
   resolvesEntryId: string | null
+  /** 같은 프로젝트의 마일스톤(존재·프로젝트 확인은 서비스가 함). */
+  milestoneId: string | null
 }
 
 /** UTC 기준 오늘 + 1일까지 허용합니다(한국 시간 오늘을 포함하도록 하루 여유). */
@@ -221,7 +228,14 @@ export function latestAllowedClaimedDate(now: Date): string {
  */
 export function validateLogContent(
   tag: LogTag,
-  input: { body: string; payload: unknown; links: LogLinkDto[]; claimedDate: string | null; resolvesEntryId: string | null },
+  input: {
+    body: string
+    payload: unknown
+    links: LogLinkDto[]
+    claimedDate: string | null
+    resolvesEntryId: string | null
+    milestoneId?: string | null
+  },
   now: Date,
   previousClaimedDate?: string | null,
 ): { content: LogContent; fields: null } | { content: null; fields: Record<string, string> } {
@@ -252,6 +266,7 @@ export function validateLogContent(
       links: input.links,
       claimedDate: input.claimedDate,
       resolvesEntryId: input.resolvesEntryId,
+      milestoneId: input.milestoneId?.toLowerCase() ?? null,
     },
     fields: null,
   }

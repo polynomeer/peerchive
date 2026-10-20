@@ -3,7 +3,7 @@
  * 빌드 로그 입력 필드. 작성 폼과 수정 폼이 함께 씁니다.
  * 고른 태그에 해당하는 구조화 필드만 보여 주며, form 객체(reactive)를 그대로 고칩니다.
  */
-import type { LogDto, MemberDto, TimeBucket } from '~~/shared/types/api'
+import type { LogDto, MemberDto, MilestoneDto, TimeBucket } from '~~/shared/types/api'
 import type { LogForm } from '~/utils/build-log'
 import type { EvidenceOption } from '~/utils/artifacts'
 
@@ -16,6 +16,8 @@ const props = defineProps<{
   stuckLogs: LogDto[]
   /** 이 과제의 산출물 버전(파일 근거 후보). */
   evidenceOptions: EvidenceOption[]
+  /** 이 과제의 마일스톤(순서대로, T-06). */
+  milestones: MilestoneDto[]
 }>()
 
 const id = (name: string) => `${props.idPrefix}-${name}`
@@ -185,6 +187,15 @@ const bodyPlaceholder = computed(() =>
       <p :id="id('evidence-hint')" class="hint">위 산출물에 올린 파일을 고릅니다. 검사 중인 파일도 붙일 수 있으며 "검사 중"으로 표시됩니다.</p>
       <p v-if="err('evidenceVersionIds')" :id="id('evidence-error')" class="field-error">{{ err('evidenceVersionIds') }}</p>
     </fieldset>
+
+    <div v-if="milestones.length || form.milestoneId" class="field">
+      <label :for="id('milestoneId')">마일스톤 (선택)</label>
+      <select :id="id('milestoneId')" v-model="form.milestoneId" :aria-invalid="invalid('milestoneId')" :aria-describedby="describedBy('milestoneId')">
+        <option value="">마일스톤 없음</option>
+        <option v-for="m in milestones" :key="m.id" :value="m.id">{{ milestoneLabel(m) }}</option>
+      </select>
+      <p v-if="err('milestoneId')" :id="id('milestoneId-error')" class="field-error">{{ err('milestoneId') }}</p>
+    </div>
 
     <div class="field">
       <label :for="id('claimedDate')">실제 수행일 (선택, 자기 기입)</label>

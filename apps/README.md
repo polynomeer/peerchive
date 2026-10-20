@@ -24,13 +24,16 @@
 | T-03 과제·초대·프로젝트 권한 | 완료 | 과제 생성·목록·수정(version 409), 멤버·초대(7일·일회성·취소)·역할 변경·내보내기·나가기·소유권 이전, 감사 이벤트 |
 | T-04 빌드 로그·revision·태그별 payload | 완료 | 7개 태그별 payload 검증(모르는 키 거부), 수정은 새 revision(낡은 `expectedRevision`은 409 `stale_revision`)·태그 변경 불가(422 `tag: immutable`), 💡해결↔🧱막힘 연결(같은 프로젝트만), 근거 링크(http/https, 서버가 열지 않음), 자기 기입 수행일(최대 내일) vs 기록 시각, `clientId` 재전송 중복 방지, cursor 목록·태그/작성자 필터, 과제 화면의 작성 폼(임시 저장·재시도)·타임라인·수정 이력 |
 | T-05 파일 업로드·격리·검사 | 완료 | 업로드 의도(15분)→PUT(스트림·SHA-256·크기 한도)→완료(idempotent, 같은 내용 중복 방지) 3단계, 파일당 20MB·1인당 500MB, worker 검사(magic-byte 판별·선언 형식/확장자 대조·내장 콘텐츠 점검·ClamAV 또는 개발용 signature-only), `pending→scanning→clean/quarantined/failed`·재시도·dead-letter, clean만 멤버에게 내려줌(그 밖에는 404, nosniff·sandbox CSP), 빌드 로그 파일 근거(같은 프로젝트·최대 10개·revision 이어받기), 과제 화면의 산출물 섹션(진행률·상태 문구·미리보기·새 버전)과 근거 선택([ADR 0007](../docs/adr/0007-file-storage-and-scanning.md)) |
-| T-06 마일스톤·스냅샷·진화 보기 | 다음 | |
+| T-06 마일스톤·스냅샷·진화 보기 | 완료 | 마일스톤(프로젝트당 12개, 이름 80자·메모 500자·예정일·자기 기입 도달일, version 409), 기본 단계 템플릿(기획→중간발표→구현→검증→최종제출, 빈 프로젝트만), 순서 변경(전체 순열만, ▲▼ 버튼)·position 빈틈없이 유지, 삭제는 어떤 로그 revision(이전 것 포함)이라도 가리키면 409 `in_use`(스냅샷은 함께 해제), 스냅샷은 같은 프로젝트의 clean 버전만(마일스톤당 6개, 검사 중 422 `not_clean`, 중복 409), 빌드 로그의 마일스톤 연결(revision별·이어받기·같은 프로젝트만)과 `milestone=` 필터, 과제 화면의 마일스톤 섹션·진화 보기(가로 스크롤 영역)·타임라인 구분선 |
+| T-07 | 다음 | [실행 계획 §4](../docs/planning/DELIVERY_PLAN.md) |
 
-화면: `/login`, `/onboarding`(프로필 설정 겸용), `/projects`, `/projects/[id]`(개요·산출물·빌드 로그·멤버), `/invite/[token]`, `/u/[handle]`.
+화면: `/login`, `/onboarding`(프로필 설정 겸용), `/projects`, `/projects/[id]`(개요·산출물·마일스톤·빌드 로그·멤버), `/invite/[token]`, `/u/[handle]`.
 
-빌드 로그 API: `POST/GET /api/v1/projects/:id/logs`, `GET /api/v1/logs/:id`, `GET/POST /api/v1/logs/:id/revisions`(본문에 `evidenceVersionIds[]`). 읽을 수 없는 프로젝트·로그는 404, reviewer/viewer의 작성·수정은 403입니다.
+빌드 로그 API: `POST/GET /api/v1/projects/:id/logs`(목록은 `tag=`·`author=`·`milestone=` 필터), `GET /api/v1/logs/:id`, `GET/POST /api/v1/logs/:id/revisions`(본문에 `evidenceVersionIds[]`, `milestoneId`). 읽을 수 없는 프로젝트·로그는 404, reviewer/viewer의 작성·수정은 403입니다.
 
 산출물 API: `POST /api/v1/projects/:id/artifacts/upload-intents`, `PUT /api/v1/uploads/:intentId`, `POST /api/v1/uploads/:intentId/complete`, `GET /api/v1/projects/:id/artifacts`, `GET /api/v1/artifacts/:id`, `GET /api/v1/artifacts/:id/versions/:versionId/content`, `POST /api/v1/artifacts/:id/versions/:versionId/rescan`. 상태 코드는 [ADR 0007](../docs/adr/0007-file-storage-and-scanning.md)에 정리했습니다.
+
+마일스톤 API: `GET/POST /api/v1/projects/:id/milestones`, `PUT /api/v1/projects/:id/milestones/order`(`milestoneIds[]` 전체 순열, 아니면 422 `mismatch`/`duplicate`), `POST /api/v1/projects/:id/milestones/apply-template`(마일스톤이 있으면 409 `not_empty`), `PATCH /api/v1/milestones/:id`(`expectedVersion`, 낡으면 409 `version_conflict`), `DELETE /api/v1/milestones/:id`(204, 로그가 가리키면 409 `in_use`), `POST /api/v1/milestones/:id/snapshots`(201, clean 아님 422 `not_clean`, 다른 프로젝트·없음 422 `not_found`, 중복 409 `duplicate`), `DELETE /api/v1/milestones/:id/snapshots/:artifactVersionId`(204). 한도 초과는 409 `limit_reached`. 읽을 수 없으면 404, reviewer/viewer의 쓰기는 403입니다.
 
 ## 준비
 

@@ -8,6 +8,7 @@
  * 근거 링크(log_revisions.links), 목록 조회 인덱스.
  * T-05(0003 migration): 산출물(artifacts)·버전(artifact_versions)·업로드 의도(upload_intents),
  * 로그 revision의 파일 근거(log_revision_evidence), 작업 outbox(outbox_events, ADR 0004·0007).
+ * T-06(0004 migration): 마일스톤(milestones)·스냅샷(milestone_snapshots), 로그 revision의 마일스톤(log_revisions.milestone_id).
  * 공개(Publication)·동의·기여는 다음 slice에서 추가합니다.
  *
  * 원칙
@@ -357,6 +358,11 @@ export const logRevisions = pgTable(
     /** solution → 해결한 stuck 로그. */
     resolvesEntryId: uuid('resolves_entry_id').references((): AnyPgColumn => logEntries.id),
     /**
+     * 이 revision이 속한 마일스톤(선택, 같은 프로젝트). 다른 내용처럼 revision마다 고정되며,
+     * 이전 revision이 가리킨 마일스톤도 이력으로 남으므로 그 마일스톤은 지울 수 없습니다(T-06).
+     */
+    milestoneId: uuid('milestone_id').references((): AnyPgColumn => milestones.id),
+    /**
      * 근거 링크 `[{url, title}]`(최대 10개, http/https만). 서버는 이 URL을 가져오지 않습니다.
      * 별도 테이블 대신 revision의 jsonb로 둡니다: revision은 추가만 하는 스냅샷이라 링크도 그 revision과
      * 함께 고정되고, 항상 revision과 같이 읽으며 링크 단위로 조회·참조하지 않습니다.
@@ -377,6 +383,8 @@ export const logRevisions = pgTable(
     check('log_revisions_payload_object_check', sql`jsonb_typeof(${t.payload}) = 'object'`),
     check('log_revisions_links_array_check', sql`jsonb_typeof(${t.links}) = 'array'`),
     index('log_revisions_resolves_entry_id_idx').on(t.resolvesEntryId),
+    // 마일스톤별 로그 수·삭제 가능 여부 확인.
+    index('log_revisions_milestone_id_idx').on(t.milestoneId),
     // 태그 고정: revision의 tag는 entry의 tag와 같아야 합니다.
     foreignKey({
       name: 'log_revisions_entry_tag_fk',
@@ -513,6 +521,73 @@ export const logRevisionEvidence = pgTable(
   (t) => [
     primaryKey({ name: 'log_revision_evidence_pkey', columns: [t.logRevisionId, t.artifactVersionId] }),
     index('log_revision_evidence_artifact_version_id_idx').on(t.artifactVersionId),
+  ],
+)
+
+// ── 마일스톤·스냅샷 (§6.3, T-06) ─────────────────────────────────────────
+
+/**
+ * 마일스톤. 순서 안내이며 완료 게이트가 아닙니다(PROOFU_EVOLUTION_PLAN §6.3).
+ * position은 프로젝트 안에서 1부터 빈틈없이 이어집니다(순서 변경·삭제 때 애플리케이션이 다시 매김).
+ * 프로젝트당 최대 12개는 애플리케이션이 프로젝트 행을 잠근 채 확인합니다.
+ */
+export const milestones = pgTable(
+  'milestones',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    position: integer('position').notNull(),
+    title: text('title').notNull(),
+    note: text('note'),
+    /** 예정일(계획). */
+    dueAt: date('due_at'),
+    /** 학생이 기입한 도달일(자기 주장). 플랫폼이 확인한 값이 아닙니다. */
+    claimedAt: date('claimed_at'),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id),
+    /** 낙관적 동시성용. 수정할 때마다 1씩 올리고, 요청의 expectedVersion과 다르면 409입니다. 순서 변경은 올리지 않습니다. */
+    version: integer('version').notNull().default(1),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    // 순서 변경은 한 트랜잭션에서 두 단계(임시로 밀어낸 뒤 다시 매김)로 해 이 제약과 충돌하지 않게 합니다.
+    unique('milestones_project_id_position_key').on(t.projectId, t.position),
+    check('milestones_position_check', sql`${t.position} >= 1`),
+    check('milestones_title_check', sql`char_length(${t.title}) between 1 and 80`),
+    check('milestones_note_check', sql`${t.note} is null or char_length(${t.note}) <= 500`),
+    check('milestones_version_check', sql`${t.version} >= 1`),
+  ],
+)
+
+/**
+ * 마일스톤 스냅샷: 그 시점 산출물 버전(진화 보기 단위). 같은 프로젝트의 clean 버전인지는 애플리케이션이 확인합니다.
+ * 같은 버전을 한 마일스톤에 두 번 지정할 수 없습니다(다른 마일스톤에는 지정 가능). 마일스톤당 최대 6개.
+ */
+export const milestoneSnapshots = pgTable(
+  'milestone_snapshots',
+  {
+    milestoneId: uuid('milestone_id')
+      .notNull()
+      .references(() => milestones.id),
+    artifactVersionId: uuid('artifact_version_id')
+      .notNull()
+      .references(() => artifactVersions.id),
+    note: text('note'),
+    position: integer('position').notNull(),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ name: 'milestone_snapshots_pkey', columns: [t.milestoneId, t.artifactVersionId] }),
+    index('milestone_snapshots_artifact_version_id_idx').on(t.artifactVersionId),
+    check('milestone_snapshots_position_check', sql`${t.position} >= 1`),
+    check('milestone_snapshots_note_check', sql`${t.note} is null or char_length(${t.note}) <= 300`),
   ],
 )
 

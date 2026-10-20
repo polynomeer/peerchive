@@ -62,6 +62,8 @@ export interface LogForm {
   followUps: string
   /** 파일 근거(산출물 버전 id, 최대 10개). */
   evidenceVersionIds: string[]
+  /** 속한 마일스톤 id(T-06). 빈 문자열이면 없음. */
+  milestoneId: string
 }
 
 export function emptyLogForm(tag: LogTag = 'progress'): LogForm {
@@ -91,6 +93,7 @@ export function emptyLogForm(tag: LogTag = 'progress'): LogForm {
     decisions: '',
     followUps: '',
     evidenceVersionIds: [],
+    milestoneId: '',
   }
 }
 
@@ -155,6 +158,7 @@ export function formRequest(form: LogForm) {
     links: parseLinks(form.links),
     claimedDate: form.claimedDate || null,
     evidenceVersionIds: form.evidenceVersionIds,
+    milestoneId: form.milestoneId || null,
     ...(form.tag === 'solution' && { resolvesEntryId: form.resolvesEntryId || null }),
   }
 }
@@ -167,6 +171,7 @@ export function logToForm(log: LogDto): LogForm {
   form.claimedDate = log.claimedDate ?? ''
   form.resolvesEntryId = log.resolves?.id ?? ''
   form.evidenceVersionIds = log.evidence.map((e) => e.versionId)
+  form.milestoneId = log.milestone?.id ?? ''
   const p = log.payload
   if (log.tag === 'stuck') {
     const s = p as StuckPayload
@@ -249,9 +254,9 @@ export function clearLogDraft(projectId: string): void {
   }
 }
 
-/** 폼에 입력한 내용이 있는지(태그만 고른 상태는 빈 폼으로 봄). */
+/** 폼에 입력한 내용이 있는지(태그·마일스톤만 고른 상태는 빈 폼으로 봄). */
 export function isLogFormEmpty(form: LogForm): boolean {
-  return JSON.stringify(form) === JSON.stringify(emptyLogForm(form.tag))
+  return JSON.stringify(form) === JSON.stringify({ ...emptyLogForm(form.tag), milestoneId: form.milestoneId })
 }
 
 /** UUID v4. crypto.randomUUID가 없는 환경(비보안 origin)도 지원합니다. */

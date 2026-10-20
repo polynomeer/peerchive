@@ -18,13 +18,20 @@ export type AuditAction =
   | 'log.revise'
   | 'artifact.upload'
   | 'artifact.rescan'
+  | 'milestone.create'
+  | 'milestone.update'
+  | 'milestone.delete'
+  | 'milestone.reorder'
+  | 'milestone.apply_template'
+  | 'milestone.snapshot_add'
+  | 'milestone.snapshot_remove'
 
 export async function recordAudit(
   db: DbExecutor,
   event: {
     actorId: string | null
     action: AuditAction
-    targetType: 'project' | 'invitation' | 'member' | 'user' | 'log' | 'artifact'
+    targetType: 'project' | 'invitation' | 'member' | 'user' | 'log' | 'artifact' | 'milestone'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

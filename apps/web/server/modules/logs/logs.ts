@@ -10,6 +10,8 @@
  * - 해결(solution)의 대상이 없거나 다른 프로젝트 로그면 422 `{resolvesEntryId: 'not_found'}`(존재를 구분하지 않음).
  * - 파일 근거(evidenceVersionIds, T-05)는 같은 프로젝트의 산출물 버전만 revision별로 붙입니다(artifacts/evidence.ts).
  *   수정 때 생략하면 이전 revision의 근거를 이어받습니다.
+ * - 마일스톤(milestoneId, T-06)도 revision별 값입니다. 같은 프로젝트의 마일스톤만 가리키며, 없거나 다른 프로젝트 것이면
+ *   422 `{milestoneId: 'not_found'}`. 수정 때 생략하면 이어받고 null이면 비웁니다. 목록은 `milestone=`으로 거릅니다.
  * - 감사 이벤트에는 태그·revision 번호만 남기고 본문은 넣지 않습니다(§6.6).
  */
 import { canReviseLog, canWriteLog, checkResolveTarget, isTagChangeAllowed, type Membership } from '@peerchive/domain'
@@ -30,6 +32,7 @@ import {
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
 import { checkEvidence, evidenceByRevision, evidenceIdsByRevision, insertEvidence } from '../artifacts/evidence'
+import { checkLogMilestone, milestoneRefsById } from '../milestones/milestones'
 import { type Actor, conflict, forbidden, invalid, notFound } from '../errors'
 import { parseInput } from '../validation'
 import { type ProjectRow, isUuid, loadReadableProject } from '../projects/access'
@@ -133,7 +136,9 @@ async function toLogDtos(
   ]
   const stuckIds = logs.filter((log) => log.entry.tag === 'stuck').map((log) => log.entry.id)
 
-  const [targets, solutions, evidence] = await Promise.all([
+  const milestoneIds = logs.map((log) => log.revision.milestoneId).filter((id): id is string => !!id)
+
+  const [targets, solutions, evidence, milestoneRefs] = await Promise.all([
     resolvesIds.length > 0
       ? selectLogs(db).where(and(eq(logEntries.projectId, project.id), inArray(logEntries.id, resolvesIds)))
       : Promise.resolve([]),
@@ -146,6 +151,7 @@ async function toLogDtos(
       db,
       logs.map((log) => log.revision.id),
     ),
+    milestoneRefsById(db, milestoneIds),
   ])
   const targetById = new Map(targets.map((row) => [row.entry.id, toRef(toLoaded(row))]))
   const solutionsByStuck = new Map<string, LogRefDto[]>()
@@ -171,6 +177,7 @@ async function toLogDtos(
     resolves: log.revision.resolvesEntryId ? (targetById.get(log.revision.resolvesEntryId) ?? null) : null,
     resolvedBy: solutionsByStuck.get(log.entry.id) ?? [],
     evidence: evidence.get(log.revision.id) ?? [],
+    milestone: log.revision.milestoneId ? (milestoneRefs.get(log.revision.milestoneId) ?? null) : null,
     canRevise: canReviseLog({ userId: actor.userId }, project, membership, log.entry),
   }))
 }
@@ -207,8 +214,8 @@ async function getLogDto(db: DbExecutor, actor: Actor, project: ProjectRow, memb
 // ── 쓰기 공통 검사 ────────────────────────────────────────────────────────
 
 /**
- * DB가 필요한 내용 검사: 해결 대상(같은 프로젝트의 막힘)과 회의 참석자(이 프로젝트 멤버였던 사용자).
- * 참석자는 지금은 나간 멤버도 허용합니다(회의 당시 멤버였을 수 있고, revision 때 거부되지 않도록).
+ * DB가 필요한 내용 검사: 해결 대상(같은 프로젝트의 막힘)과 회의 참석자(이 프로젝트 멤버였던 사용자),
+ * 마일스톤(같은 프로젝트). 참석자는 지금은 나간 멤버도 허용합니다(회의 당시 멤버였을 수 있고, revision 때 거부되지 않도록).
  */
 async function checkRelations(
   db: DbExecutor,
@@ -217,6 +224,7 @@ async function checkRelations(
   content: LogContent,
   entryId?: string,
 ): Promise<void> {
+  if (content.milestoneId) await checkLogMilestone(db, projectId, content.milestoneId)
   const fields: Record<string, string> = {}
   if (tag === 'solution' && content.resolvesEntryId) {
     const [target] = await db
@@ -288,6 +296,7 @@ export async function createLog(
       links: input.links ?? [],
       claimedDate: input.claimedDate ?? null,
       resolvesEntryId: input.resolvesEntryId ?? null,
+      milestoneId: input.milestoneId ?? null,
     },
     now,
   )
@@ -362,7 +371,7 @@ function stableJson(value: unknown): string {
 }
 
 const contentKey = (c: LogContent) =>
-  stableJson([c.body, c.payload, c.links, c.claimedDate, c.resolvesEntryId])
+  stableJson([c.body, c.payload, c.links, c.claimedDate, c.resolvesEntryId, c.milestoneId])
 
 /**
  * 작성자 본인이 새 revision을 만듭니다. 생략한 필드는 이전 revision 값을 이어받고(payload는 전체를 다시 보냄),
@@ -392,6 +401,7 @@ export async function reviseLog(
       links: current.links as LogLinkDto[],
       claimedDate: current.claimedDate,
       resolvesEntryId: current.resolvesEntryId,
+      milestoneId: current.milestoneId,
     }
     const checked = validateLogContent(
       tag,
@@ -401,6 +411,7 @@ export async function reviseLog(
         links: input.links === undefined ? previous.links : (input.links ?? []),
         claimedDate: input.claimedDate === undefined ? previous.claimedDate : input.claimedDate,
         resolvesEntryId: input.resolvesEntryId === undefined ? previous.resolvesEntryId : input.resolvesEntryId,
+        milestoneId: input.milestoneId === undefined ? previous.milestoneId : input.milestoneId,
       },
       now,
       previous.claimedDate,
@@ -469,6 +480,7 @@ export async function listLogs(
   const conditions = [eq(logEntries.projectId, project.id)]
   if (query.tag) conditions.push(eq(logEntries.tag, query.tag))
   if (query.author) conditions.push(eq(logEntries.authorId, query.author))
+  if (query.milestone) conditions.push(eq(logRevisions.milestoneId, query.milestone.toLowerCase()))
   if (cursor) {
     conditions.push(
       sql`(${logEntries.createdAt}, ${logEntries.id}) < (${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)`,
@@ -514,6 +526,7 @@ export async function listLogRevisions(db: DbExecutor, actor: Actor, logId: unkn
     claimedDate: row.claimedDate,
     resolvesEntryId: row.resolvesEntryId,
     evidenceVersionIds: evidence.get(row.id) ?? [],
+    milestoneId: row.milestoneId,
     recordedAt: row.recordedAt.toISOString(),
   }))
 }

@@ -179,6 +179,8 @@ export interface LogDto {
   resolvedBy: LogRefDto[]
   /** 이 revision에 붙인 파일 근거(첨부 순서). */
   evidence: EvidenceDto[]
+  /** 이 revision이 속한 마일스톤(T-06). */
+  milestone: MilestoneRefDto | null
   /** 요청자가 새 revision을 만들 수 있는지(작성자 본인 + owner/editor). */
   canRevise: boolean
 }
@@ -200,6 +202,8 @@ export interface LogRevisionDto {
   resolvesEntryId: string | null
   /** 이 revision의 파일 근거(artifact version id, 첨부 순서). */
   evidenceVersionIds: string[]
+  /** 이 revision이 속한 마일스톤 id(T-06). */
+  milestoneId: string | null
   recordedAt: string
 }
 
@@ -276,10 +280,65 @@ export interface EvidenceDto {
   contentUrl: string | null
 }
 
+// ── 마일스톤·스냅샷 (T-06) ───────────────────────────────────────────────
+
+/** 로그 등에서 마일스톤을 가리키는 짧은 참조. position은 응답 시점의 순서입니다. */
+export interface MilestoneRefDto {
+  id: string
+  position: number
+  title: string
+}
+
+/** 마일스톤 스냅샷 한 건(진화 보기 단위). 같은 프로젝트 멤버에게만 줍니다. */
+export interface MilestoneSnapshotDto {
+  artifactVersionId: string
+  artifactId: string
+  /** 산출물 이름. */
+  title: string
+  fileName: string
+  versionNo: number
+  mediaType: string | null
+  /** 지정할 때 clean이었고 clean은 최종 상태라 항상 clean입니다(형식상 상태를 함께 줌). */
+  scanStatus: ScanStatus
+  /** clean일 때만 내용 주소. */
+  contentUrl: string | null
+  note: string | null
+  position: number
+  createdAt: string
+}
+
+/** 마일스톤 한 건. 같은 프로젝트 멤버에게만 줍니다. */
+export interface MilestoneDto {
+  id: string
+  projectId: string
+  /** 1부터 빈틈없는 순서. */
+  position: number
+  title: string
+  note: string | null
+  /** 예정일(YYYY-MM-DD). */
+  dueAt: string | null
+  /** 도달일(YYYY-MM-DD, 자기 기입). */
+  claimedAt: string | null
+  /** 수정 요청의 expectedVersion으로 그대로 보냅니다. */
+  version: number
+  createdAt: string
+  updatedAt: string
+  /** 현재 revision이 이 마일스톤에 속한 로그 수. */
+  logCount: number
+  /** 스냅샷(지정 순서). */
+  snapshots: MilestoneSnapshotDto[]
+}
+
 /** API 오류 응답의 data 부분. */
 export interface ApiErrorData {
   code: string
   fields?: Record<string, string>
   /** 409 stale_revision일 때 서버의 현재 revision 번호. */
   currentRevision?: number
+  /** 409 version_conflict(마일스톤)일 때 서버의 현재 version. */
+  currentVersion?: number
+  /** 409 limit_reached일 때 한도. */
+  limit?: number
+  /** 409 in_use(마일스톤 삭제)일 때 그 마일스톤을 가리키는 로그 수(이전 revision 포함). */
+  logCount?: number
 }

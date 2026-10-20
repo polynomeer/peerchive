@@ -490,3 +490,163 @@ input[type='file'] {
   flex-direction: column;
   align-items: flex-start;
 }
+
+/* 마일스톤·진화 보기(T-06). 순서 이동은 버튼으로, 가로 스크롤은 진화 보기 영역 안에서만 합니다. */
+.milestone-list {
+  margin: 0.75rem 0;
+}
+.milestone-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.milestone-controls {
+  margin-top: 0.5rem;
+}
+.icon-button {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0.25rem 0.6rem;
+}
+.snapshot-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 0.75rem;
+}
+.snapshot-picker {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--border);
+}
+.milestone-new {
+  margin: 0.75rem 0;
+}
+.milestone-new summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 600;
+  padding: 0.35rem 0;
+}
+.milestone-new form {
+  margin-top: 0.5rem;
+}
+.milestone-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.6rem;
+  margin: 0 0 0.75rem;
+}
+.milestone-filter select {
+  width: auto;
+  max-width: 100%;
+}
+.filter-chip {
+  cursor: default;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.milestone-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.milestone-divider::before,
+.milestone-divider::after {
+  content: '';
+  flex: 1 1 1rem;
+  border-top: 1px solid var(--border);
+}
+.milestone-divider span {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+.evolution-block {
+  margin-top: 1.5rem;
+  min-width: 0;
+}
+.evolution-block h3 {
+  margin-bottom: 0.25rem;
+}
+/* 이 영역만 가로로 스크롤합니다. 카드 폭을 넘지 않도록 max-width를 둡니다. */
+.evolution {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 0.75rem;
+}
+.evolution-track {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 0.5rem;
+  width: max-content;
+}
+.evolution-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.evolution-column {
+  width: 13rem;
+  display: grid;
+  gap: 0.5rem;
+  align-content: start;
+}
+.evolution-title {
+  margin: 0;
+  display: grid;
+}
+.evolution-snaps {
+  gap: 0.75rem;
+}
+.evolution-figure {
+  margin: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+.evolution-figure figcaption {
+  overflow-wrap: anywhere;
+}
+.evolution-image {
+  display: block;
+  width: 100%;
+  max-height: 10rem;
+  object-fit: contain;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.pdf-card {
+  display: grid;
+  gap: 0.15rem;
+  justify-items: start;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  overflow-wrap: anywhere;
+}
+.evolution-arrow {
+  align-self: center;
+  color: var(--muted);
+  font-size: 1.25rem;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .evolution {
+    scroll-behavior: smooth;
+  }
+}
