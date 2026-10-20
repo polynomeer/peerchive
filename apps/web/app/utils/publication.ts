@@ -41,6 +41,7 @@ export const CANDIDATE_STATUS_LABELS: Record<CandidateStatus, string> = {
   superseded: '새 후보로 대체됨',
   published: '게시됨',
   withdrawn: '철회됨',
+  replaced: '새 버전으로 바뀜',
 }
 
 export const CONSENT_STATUS_LABELS: Record<ConsentStatus, string> = {
@@ -113,6 +114,8 @@ export function blockerLabel(blocker: PublicationBlockerDto, nameOf: (userId: st
       return `엠바고 중(${new Date(blocker.until).toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul' })}까지) — 게시할 수 없습니다`
     case 'superseded':
       return '새 후보로 대체되었습니다'
+    case 'subject_inactive':
+      return `${nameOf(blocker.userId)}: 탈퇴·정지한 계정(동의가 유효하지 않음 — 이 사람의 자료를 빼고 새 후보를 만드세요)`
   }
 }
 
@@ -122,9 +125,21 @@ export const PUBLICATION_ERROR_MESSAGES: Record<string, string> = {
   superseded: '이 후보는 새 후보로 대체되었습니다. 최신 후보를 확인하세요.',
   not_subject: '이 후보에 동의할 당사자가 아닙니다.',
   no_declined: '동의하지 않은 사람이 없습니다.',
-  publication_locked: '이미 게시되었거나 제한된 공개입니다(게시·철회는 다음 단계에서 제공).',
+  publication_locked: '운영 조치로 제한된 공개입니다. 조치가 풀릴 때까지 바꿀 수 없습니다.',
+  publish_blocked: '게시 조건이 그 사이 바뀌었습니다. 아래 “게시를 막는 것”을 확인하세요.',
+  not_published: '게시 중인 공개가 아닙니다.',
+  locked: '한 번 게시한 공개의 주소는 바꿀 수 없습니다.',
 }
 
-/** 공개 상태 안내 문구(게시는 T-12에서 제공). */
-export const PUBLISH_LATER_NOTE =
-  '게시 기능은 다음 단계에서 열립니다. 지금은 후보를 만들고 팀원 동의를 받아 “게시 준비 완료”까지 확인할 수 있습니다. 게시할 때 서버가 엠바고·동의·파일 검사를 다시 확인합니다.'
+/** 게시 확인 대화상자·공개 페이지의 사본 안내(PROOFU_EVOLUTION_PLAN §9.3, SYSTEM_DESIGN §11). */
+export const COPY_RECALL_NOTICE =
+  '철회하면 공개 페이지와 파일은 바로 닫히지만, 이미 내려받은 사본이나 외부 검색엔진·다른 사이트에 남은 사본은 회수를 보장할 수 없습니다.'
+
+export const WITHDRAW_CAUSE_LABELS: Record<'owner' | 'consent_revoked', string> = {
+  owner: '운영 책임자가 철회',
+  consent_revoked: '당사자가 동의를 철회',
+}
+
+/** 게시 안내 문구. */
+export const PUBLISH_NOTE =
+  '게시할 때 서버가 엠바고·동의(지금 내용 해시)·파일 검사·권한을 한 번 더 확인합니다. 그 사이 바뀐 것이 있으면 게시되지 않습니다.'

@@ -35,6 +35,11 @@ export const PUBLICATION_EVENTS = [
   'revise_candidate',
   /** 권한·엠바고 재검사 후 명시적 게시: ready → published */
   'publish',
+  /**
+   * 게시 중인 공개의 새 버전 게시(T-12): published → published. publish와 같은 전제 조건을 다시 검사하고,
+   * 이전 release는 replaced가 되어 더 이상 제공하지 않습니다(공개 버전 수정은 새 버전 생성, SYSTEM_DESIGN §1-7).
+   */
+  'republish',
   /** 철회·동의 철회·권리 문제: published → withdrawn */
   'withdraw',
   /** 운영 조치: published → restricted */
@@ -106,6 +111,7 @@ const TRANSITIONS: Readonly<Record<PublicationEvent, { from: PublicationState; t
   reopen_candidate: { from: 'ready', to: 'awaiting_consent' },
   revise_candidate: { from: 'awaiting_consent', to: 'draft' },
   publish: { from: 'ready', to: 'published' },
+  republish: { from: 'published', to: 'published' },
   withdraw: { from: 'published', to: 'withdrawn' },
   restrict: { from: 'published', to: 'restricted' },
   start_new_candidate: { from: 'withdrawn', to: 'draft' },
@@ -124,7 +130,7 @@ export function canPreparePublication(
   return canReadProjectWorkspace(viewer, project, membership) && (membership!.role === 'owner' || membership!.role === 'editor')
 }
 
-/** 미동의자 제외 후보 만들기 등 공개 운영 결정: active owner만. 게시(T-12)도 owner입니다. */
+/** 미동의자 제외 후보 만들기 등 공개 운영 결정: active owner만. 게시·전체 철회(T-12)도 owner입니다(§8, 대리 게시 없음). */
 export function canManagePublication(
   viewer: Viewer,
   project: ProjectRef,
@@ -191,6 +197,7 @@ function preconditions(event: PublicationEvent, ctx: PublicationContext): Public
     case 'mark_ready':
       return [...candidateBlockers(ctx), ...holdBlockers(ctx)]
     case 'publish':
+    case 'republish':
       // 게시 트랜잭션: 엠바고·동의(현재 manifest 해시)·파일 clean·hold를 모두 다시 검사합니다.
       return [...embargoBlockers(ctx), ...candidateBlockers(ctx), ...holdBlockers(ctx)]
     case 'start_new_candidate':
@@ -224,4 +231,41 @@ export function transition(
 /** 현재 상태에서 형식상 가능한 이벤트 목록(전제 조건은 검사하지 않음). */
 export function allowedEvents(state: PublicationState): PublicationEvent[] {
   return PUBLICATION_EVENTS.filter((event) => TRANSITIONS[event].from === state)
+}
+
+// ── 공개 조회 판정 (T-12, SYSTEM_DESIGN §1-4·§11) ───────────────────────────
+
+/** 공개 조회가 볼 상태. 모두 요청마다 DB에서 읽은 값이어야 합니다(캐시·worker 결과에 기대지 않음). */
+export interface PublicReadState {
+  publicationStatus: PublicationState
+  /** current_release_id가 가리키는 release의 후보 상태. */
+  releaseStatus: 'awaiting_consent' | 'ready' | 'superseded' | 'published' | 'withdrawn' | 'replaced'
+  /** 그 release가 공개의 current_release인지. */
+  isCurrentRelease: boolean
+  /** 지금 적용 중인 엠바고가 있는지(게시 뒤에 걸린 엠바고도 공개 조회를 막음). */
+  embargoActive: boolean
+}
+
+/**
+ * 공개 페이지(JSON)를 내줄 수 있는지. 게시됨 + 지금 release + release도 게시됨 + 엠바고 없음일 때만.
+ * 그 밖의 모든 경우(철회·제한·대체·엠바고·준비 중)는 같은 404로 답합니다(이유를 드러내지 않음).
+ */
+export function canServePublicRelease(state: PublicReadState): boolean {
+  return (
+    state.publicationStatus === 'published' &&
+    state.releaseStatus === 'published' &&
+    state.isCurrentRelease &&
+    !state.embargoActive
+  )
+}
+
+/**
+ * 공개 파일을 내줄 수 있는지. 공개 페이지를 내줄 수 있고, 그 버전이 지금 release 스냅샷에 들어 있으며,
+ * 지금도 clean일 때만. 같은 프로젝트의 clean 파일이라도 스냅샷에 없으면 내주지 않습니다.
+ */
+export function canServePublicArtifact(
+  state: PublicReadState,
+  file: { inCurrentSnapshot: boolean; scanStatus: FileScanStatus | null },
+): boolean {
+  return canServePublicRelease(state) && file.inCurrentSnapshot && file.scanStatus === 'clean'
 }

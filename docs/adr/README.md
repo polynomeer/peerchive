@@ -17,3 +17,4 @@ Peerchive 신규 앱(`apps/`, `packages/`)의 기술 결정을 짧게 남깁니�
 | [0009](0009-discord-bot-and-checkins.md) | 디스코드 봇과 주간 체크인: 별도 봇 프로세스 + 서명된 내부 API | 채택 |
 | [0010](0010-catalog-merge-and-embargo.md) | 학교·과목·개념 태그 정규화와 엠바고: 운영자 테이블 + 즉시 다시 가리키는 병합 + 단조 엠바고 | 채택 |
 | [0011](0011-publication-snapshot-and-consent.md) | 공개 후보와 동의: 저장된 공개 스냅샷 + manifest 해시에 묶인 동의 | 채택 |
+| [0012](0012-publish-withdraw-public-read.md) | 게시·철회·익명 공개 조회: 트랜잭션 재검사 + 요청마다 DB 상태 확인(no-store) + 운영 스위치 | 채택 |

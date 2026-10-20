@@ -1,5 +1,5 @@
 /**
- * Peerchive worker 진입점(ADR 0004). 지금은 outbox 전달과 파일 검사 작업만 처리합니다.
+ * Peerchive worker 진입점(ADR 0004). outbox 전달, 파일 검사 작업, 공개 게시·철회 이벤트(파생 데이터 정리, ADR 0012)를 처리합니다.
  *
  * 실행: `pnpm worker`(저장소 루트, 개발용) 또는 `pnpm --filter worker start`.
  * 종료 신호(SIGINT/SIGTERM)를 받으면 새 작업을 받지 않고 진행 중인 작업을 기다린 뒤(최대 30초) 연결을 닫습니다.
@@ -10,6 +10,7 @@ import { PgBoss } from 'pg-boss'
 import { createDb, pingDb } from '@peerchive/db'
 import { loadWorkerConfig } from './config'
 import { dispatchOutbox } from './dispatcher'
+import { registerPublicationQueues } from './publication-events'
 import { registerScanQueue } from './scan-worker'
 
 // 저장소 루트의 .env(로컬 전용)가 있으면 읽습니다. 이미 설정된 환경 변수가 우선합니다.
@@ -25,6 +26,7 @@ const boss = new PgBoss({ connectionString: config.databaseUrl, schema: 'pgboss'
 boss.on('error', (error) => console.error('[worker] pg-boss error:', error.message))
 await boss.start()
 await registerScanQueue(boss, db, { storage: config.storage, scanner: config.scanner }, config.scanConcurrency)
+await registerPublicationQueues(boss, db)
 
 let dispatching = false
 const timer = setInterval(() => {

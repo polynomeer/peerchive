@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /**
- * 공개 준비(T-11, PROOFU_EVOLUTION_PLAN §9.3): 공개 수준 → 고르기 → 점검(경고) → 미리보기 → 팀원 동의.
- * - 후보는 owner/editor가 만들고, 나머지 멤버는 읽기만 합니다. 게시 버튼은 T-12에서 열립니다(지금은 비활성 + 안내).
+ * 공개 준비·게시(T-11·T-12, PROOFU_EVOLUTION_PLAN §9.3): 공개 수준 → 고르기 → 점검(경고) → 미리보기 → 팀원 동의 → 게시 → (철회).
+ * - 후보는 owner/editor가 만들고, 나머지 멤버는 읽기만 합니다. 게시·철회는 owner만(서버가 게시 때 모든 조건을 다시 검사).
+ * - 게시 중에도 다음 버전 후보를 만들 수 있고, 새 버전을 게시하기 전까지 지금 공개 버전이 계속 보입니다.
  * - 미리보기는 서버가 저장한 공개 스냅샷만으로 그립니다(PublicSnapshotView).
  */
 import type {
@@ -10,6 +11,8 @@ import type {
   PublicationCandidateDto,
   PublicationLevel,
   PublicationStateDto,
+  PublicationSummaryDto,
+  PublishResultDto,
   UsageTerms,
 } from '~~/shared/types/api'
 
@@ -141,6 +144,7 @@ const SELECTION_ERRORS: Record<string, string> = {
   not_allowed: '요약 공개에는 파일을 넣을 수 없습니다.',
   not_member: '이 과제의 멤버가 아닌 사람이 있습니다.',
   taken: '이미 다른 공개가 쓰는 주소입니다.',
+  locked: '한 번 게시한 공개의 주소는 바꿀 수 없습니다.',
   reserved: '사용할 수 없는 주소입니다.',
   invalid_format: '영문 소문자·숫자·하이픈(-)만, 하이픈은 가운데에만 쓸 수 있습니다.',
 }
@@ -159,11 +163,12 @@ onMounted(loadPreview)
 
 // ── 미동의자 제외 ──
 async function excludeDeclined() {
-  if (!openCandidate.value) return
-  if (!confirm('동의하지 않은 사람의 로그·선언·파일·이름을 뺀 새 후보를 만듭니다. 자기 관련 내용이 그대로인 사람의 동의만 이어받고 나머지는 다시 요청합니다. 계속할까요?'))
+  const c = candidate.value
+  if (!c?.canExcludeDeclined) return
+  if (!confirm('동의하지 않은(또는 동의를 철회한) 사람의 로그·선언·파일·이름을 뺀 새 후보를 만듭니다. 자기 관련 내용이 그대로인 사람의 동의만 이어받고 나머지는 다시 요청합니다. 계속할까요?'))
     return
   try {
-    await $fetch(`/api/v1/candidates/${openCandidate.value.id}/exclude-declined`, { method: 'POST', body: {} })
+    await $fetch(`/api/v1/candidates/${c.id}/exclude-declined`, { method: 'POST', body: {} })
     await refresh()
     await loadPreview()
     notice.value = { kind: 'ok', text: '동의하지 않은 사람의 자료를 뺀 새 후보를 만들었습니다.' }
@@ -171,6 +176,73 @@ async function excludeDeclined() {
     notice.value = { kind: 'error', text: PUBLICATION_ERROR_MESSAGES[apiError(e).code] ?? '새 후보를 만들지 못했습니다.' }
   }
 }
+
+// ── 게시 ──
+const publishDialog = ref<HTMLDialogElement | null>(null)
+const publishing = ref(false)
+const exposedNames = computed(() => (preview.value?.snapshot.members ?? []).map((m) => m.label))
+const fileNames = computed(() => (preview.value?.snapshot.artifacts ?? []).map((a) => a.displayName))
+
+async function openPublishDialog() {
+  if (!candidate.value?.canPublish) return
+  if (!preview.value || preview.value.candidateId !== candidate.value.id) await loadPreview()
+  publishDialog.value?.showModal()
+}
+
+async function publish() {
+  const c = candidate.value
+  if (!c) return
+  publishing.value = true
+  notice.value = null
+  try {
+    const result = await $fetch<PublishResultDto>(`/api/v1/candidates/${c.id}/publish`, {
+      method: 'POST',
+      // 내가 본 후보의 해시. 그 사이 내용이 바뀌었으면 서버가 409로 거부합니다. 재시도해도 한 번만 게시됩니다.
+      body: { manifestHash: c.manifestHash, idempotencyKey: crypto.randomUUID() },
+    })
+    publishDialog.value?.close()
+    await refresh()
+    await loadPreview()
+    notice.value = { kind: 'ok', text: `공개 버전 v${result.release.version}을 게시했습니다.` }
+  } catch (e) {
+    publishDialog.value?.close()
+    const err = apiError(e)
+    notice.value = { kind: 'error', text: PUBLICATION_ERROR_MESSAGES[err.code] ?? '게시하지 못했습니다. 다시 시도하세요.' }
+    await refresh()
+  } finally {
+    publishing.value = false
+  }
+}
+
+// ── 철회 ──
+const withdrawDialog = ref<HTMLDialogElement | null>(null)
+const withdrawReason = ref('')
+const withdrawing = ref(false)
+async function withdraw() {
+  const pub = state.value?.publication
+  if (!pub) return
+  withdrawing.value = true
+  notice.value = null
+  try {
+    await $fetch<PublicationSummaryDto>(`/api/v1/publications/${pub.id}/withdraw`, {
+      method: 'POST',
+      body: { reason: withdrawReason.value || null },
+    })
+    withdrawDialog.value?.close()
+    withdrawReason.value = ''
+    await refresh()
+    notice.value = { kind: 'ok', text: '공개를 철회했습니다. 공개 페이지와 파일은 이제 열리지 않습니다.' }
+  } catch (e) {
+    withdrawDialog.value?.close()
+    const err = apiError(e)
+    notice.value = { kind: 'error', text: PUBLICATION_ERROR_MESSAGES[err.code] ?? (err.status === 422 ? '철회 사유는 300자까지 쓸 수 있습니다.' : '철회하지 못했습니다. 다시 시도하세요.') }
+  } finally {
+    withdrawing.value = false
+  }
+}
+
+const published = computed(() => state.value?.publication?.status === 'published')
+const isRelease = computed(() => candidate.value?.releaseNo != null)
 
 const nameOf = (userId: string) => candidate.value?.subjects.find((s) => s.userId === userId)?.displayName ?? '팀원'
 const shortHash = (hash: string) => `${hash.slice(0, 12)}…`
@@ -188,7 +260,8 @@ const bytes = (n: number) => formatBytes(n)
 
     <template v-else>
       <p class="actions">
-        <span class="badge private">🔒 지금은 팀만 보기</span>
+        <span v-if="!published" class="badge private">🔒 지금은 팀만 보기</span>
+        <span v-else class="badge">🌐 공개 중</span>
         <span v-if="state.publication" class="badge">상태: {{ PUBLICATION_STATUS_LABELS[state.publication.status] }}</span>
         <span v-if="state.embargo.active && state.embargo.until" class="badge embargo">엠바고 {{ seoulDay(state.embargo.until) }}까지</span>
       </p>
@@ -201,9 +274,62 @@ const bytes = (n: number) => formatBytes(n)
         이 과제는 엠바고 중이라 공개 후보를 만들 수 없습니다. 학기가 끝나도 자동으로 공개되지 않습니다.
       </p>
 
+      <!-- 공개 상태(게시·철회) -->
+      <section v-if="state.publication && (state.publication.firstPublishedAt || state.releases.length)" class="card" aria-labelledby="release-heading">
+        <h2 id="release-heading">공개 상태</h2>
+        <template v-if="state.publication.currentRelease && state.publication.publicPath">
+          <p>
+            <strong>공개 버전 v{{ state.publication.currentRelease.version }}</strong> 게시 중 · 게시일 {{ formatDateTime(state.publication.currentRelease.publishedAt) }}
+          </p>
+          <p>공개 주소: <NuxtLink :to="state.publication.publicPath" class="mono">{{ state.publication.publicPath }}</NuxtLink></p>
+          <p class="hint">로그인하지 않은 사람도 이 주소로 볼 수 있습니다. 다음 버전 후보를 만들어도 새 버전을 게시하기 전까지 지금 버전이 보입니다.</p>
+          <div v-if="state.canManage" class="actions">
+            <button type="button" class="danger" @click="withdrawDialog?.showModal()">공개 철회</button>
+          </div>
+        </template>
+        <template v-else-if="state.publication.status === 'withdrawn'">
+          <p>
+            <strong>철회됨</strong><template v-if="state.publication.withdrawnAt"> · {{ formatDateTime(state.publication.withdrawnAt) }}</template>
+            <template v-if="state.publication.withdrawCause"> · {{ WITHDRAW_CAUSE_LABELS[state.publication.withdrawCause] }}</template>
+          </p>
+          <p v-if="state.publication.withdrawNote" class="small">사유: “{{ state.publication.withdrawNote }}”</p>
+          <p class="hint">공개 페이지와 파일은 열리지 않습니다. 다시 공개하려면 새 후보를 만들어 동의를 받고 게시하세요.</p>
+        </template>
+        <h3>게시 이력</h3>
+        <ol class="plain">
+          <li v-for="r in state.releases" :key="r.candidateId" class="row">
+            <span>v{{ r.version }} · {{ r.title }} <span class="small muted">· {{ LEVEL_LABELS[r.level] }} · 후보 {{ r.candidateVersion }}</span></span>
+            <span class="small">
+              {{ CANDIDATE_STATUS_LABELS[r.status] }} · 게시 {{ formatDateTime(r.publishedAt) }}
+              <template v-if="r.replacedAt"> · 바뀜 {{ formatDateTime(r.replacedAt) }}</template>
+              <template v-if="r.withdrawnAt"> · 철회 {{ formatDateTime(r.withdrawnAt) }}</template>
+            </span>
+          </li>
+        </ol>
+      </section>
+
+      <dialog ref="withdrawDialog" class="confirm-dialog" aria-labelledby="withdraw-dialog-title">
+        <form method="dialog" class="stack" @submit.prevent="withdraw">
+          <h2 id="withdraw-dialog-title">공개를 철회할까요?</h2>
+          <p>공개 페이지와 파일이 바로 닫히고, 다시 공개하려면 새 후보를 만들어 동의를 다시 받아야 합니다.</p>
+          <p class="notice error">{{ COPY_RECALL_NOTICE }}</p>
+          <div class="field">
+            <label for="withdraw-reason">사유(선택, 300자, 팀에게만 보임)</label>
+            <textarea id="withdraw-reason" v-model="withdrawReason" maxlength="300" />
+          </div>
+          <div class="actions">
+            <button type="submit" class="danger" :disabled="withdrawing">{{ withdrawing ? '철회하는 중…' : '철회' }}</button>
+            <button type="button" class="secondary" @click="withdrawDialog?.close()">취소</button>
+          </div>
+        </form>
+      </dialog>
+
       <!-- 현재 후보 -->
       <section v-if="candidate" class="card" aria-labelledby="candidate-heading">
-        <h2 id="candidate-heading">현재 후보 (버전 {{ candidate.version }})</h2>
+        <h2 id="candidate-heading">
+          <template v-if="isRelease">공개 버전 v{{ candidate.releaseNo }} (후보 {{ candidate.version }})</template>
+          <template v-else>현재 후보 (버전 {{ candidate.version }})</template>
+        </h2>
         <dl class="kv">
           <dt>상태</dt>
           <dd><strong>{{ CANDIDATE_STATUS_LABELS[candidate.status] }}</strong></dd>
@@ -252,17 +378,48 @@ const bytes = (n: number) => formatBytes(n)
           <NuxtLink :to="`/consents?candidate=${candidate.id}`">내 동의 결정하기 ({{ candidate.myConsent ? CONSENT_STATUS_LABELS[candidate.myConsent] : '' }})</NuxtLink>
         </p>
 
-        <h3>게시를 막는 것</h3>
-        <p v-if="candidate.blockers.length === 0" class="notice ok">모든 동의와 파일 검사가 끝났습니다. 게시 준비 완료.</p>
-        <ul v-else>
-          <li v-for="(b, i) in candidate.blockers" :key="i">{{ blockerLabel(b, nameOf) }}</li>
-        </ul>
+        <template v-if="openCandidate">
+          <h3>게시를 막는 것</h3>
+          <p v-if="candidate.blockers.length === 0" class="notice ok">모든 동의와 파일 검사가 끝났습니다. 게시 준비 완료.</p>
+          <ul v-else>
+            <li v-for="(b, i) in candidate.blockers" :key="i">{{ blockerLabel(b, nameOf) }}</li>
+          </ul>
+        </template>
         <div class="actions">
-          <button v-if="candidate.canExcludeDeclined" type="button" class="secondary" @click="excludeDeclined">동의하지 않은 사람 자료 빼고 새 후보</button>
-          <button type="button" disabled aria-describedby="publish-later">게시</button>
+          <button v-if="candidate.canExcludeDeclined" type="button" class="secondary" @click="excludeDeclined">
+            {{ openCandidate ? '동의하지 않은 사람 자료 빼고 새 후보' : '동의를 철회·거절한 사람 자료 빼고 새 후보' }}
+          </button>
+          <button v-if="openCandidate && state.canManage" type="button" :disabled="!candidate.canPublish || publishing" aria-describedby="publish-note" @click="openPublishDialog">
+            {{ published ? `새 버전으로 게시(v${(state.publication?.currentRelease?.version ?? 0) + 1})` : '게시' }}
+          </button>
         </div>
-        <p id="publish-later" class="hint">{{ PUBLISH_LATER_NOTE }}</p>
+        <p v-if="openCandidate" id="publish-note" class="hint">
+          {{ state.canManage ? PUBLISH_NOTE : '게시는 운영 책임자(owner)가 합니다.' }}
+        </p>
       </section>
+
+      <dialog ref="publishDialog" class="confirm-dialog" aria-labelledby="publish-dialog-title">
+        <form v-if="candidate" method="dialog" class="stack" @submit.prevent="publish">
+          <h2 id="publish-dialog-title">이 내용으로 게시할까요?</h2>
+          <dl class="kv">
+            <dt>공개 수준</dt>
+            <dd>{{ LEVEL_LABELS[candidate.level] }}</dd>
+            <dt>공개 주소</dt>
+            <dd class="mono">/p/{{ candidate.slug }}</dd>
+            <dt>보이는 이름</dt>
+            <dd>{{ exposedNames.length ? exposedNames.join(', ') : '없음(제목·요약만)' }}</dd>
+            <dt>파일</dt>
+            <dd>{{ fileNames.length ? fileNames.join(', ') : '없음' }}</dd>
+          </dl>
+          <p v-if="published" class="hint">게시하면 지금 공개 버전은 새 버전으로 바뀌고, 이전 버전의 파일은 더 이상 열리지 않습니다.</p>
+          <p class="hint">로그인하지 않은 사람도 볼 수 있습니다. 언제든 철회할 수 있습니다.</p>
+          <p class="notice error">{{ COPY_RECALL_NOTICE }}</p>
+          <div class="actions">
+            <button type="submit" :disabled="publishing">{{ publishing ? '게시하는 중…' : '게시' }}</button>
+            <button type="button" class="secondary" @click="publishDialog?.close()">취소</button>
+          </div>
+        </form>
+      </dialog>
 
       <!-- 미리보기 -->
       <section v-if="preview" class="card" aria-labelledby="preview-heading">
@@ -273,7 +430,8 @@ const bytes = (n: number) => formatBytes(n)
 
       <!-- 후보 만들기 -->
       <section v-if="state.canPrepare" class="card" aria-labelledby="form-heading">
-        <h2 id="form-heading">{{ openCandidate ? '새 후보로 바꾸기' : '공개 후보 만들기' }}</h2>
+        <h2 id="form-heading">{{ openCandidate ? '새 후보로 바꾸기' : published ? '다음 공개 버전 후보 만들기' : '공개 후보 만들기' }}</h2>
+        <p v-if="published && !openCandidate" class="hint">새 버전을 게시하기 전까지 지금 공개 버전이 그대로 보입니다.</p>
         <form class="stack" novalidate @submit.prevent="submit">
           <fieldset :disabled="!canPrepare">
             <legend>공개 수준</legend>
@@ -296,8 +454,11 @@ const bytes = (n: number) => formatBytes(n)
           </div>
           <div class="field">
             <label for="pub-slug">공개 주소</label>
-            <input id="pub-slug" v-model="form.slug" class="mono" autocomplete="off" :disabled="!canPrepare" :aria-invalid="errors.slug ? 'true' : undefined" aria-describedby="pub-slug-hint" />
-            <p id="pub-slug-hint" class="hint">영문 소문자·숫자·하이픈 3–60자. 예: library-crowd-2026</p>
+            <input id="pub-slug" v-model="form.slug" class="mono" autocomplete="off" :disabled="!canPrepare" :readonly="state.publication?.slugLocked" :aria-invalid="errors.slug ? 'true' : undefined" aria-describedby="pub-slug-hint" />
+            <p id="pub-slug-hint" class="hint">
+              <template v-if="state.publication?.slugLocked">한 번 게시한 공개의 주소는 바꿀 수 없습니다.</template>
+              <template v-else>영문 소문자·숫자·하이픈 3–60자. 예: library-crowd-2026</template>
+            </p>
             <p v-if="errors.slug" class="field-error">{{ errorFor('slug') }}</p>
           </div>
 

@@ -61,6 +61,9 @@ export type AuditAction =
   | 'publication.candidate_create'
   | 'publication.exclude_declined'
   | 'consent.decide'
+  | 'consent.revoke'
+  | 'publication.publish'
+  | 'publication.withdraw'
 
 export async function recordAudit(
   db: DbExecutor,
@@ -87,6 +90,7 @@ export async function recordAudit(
       | 'concept_tag'
       | 'embargo'
       | 'operator'
+      | 'publication'
       | 'publication_candidate'
       | 'consent'
     targetId?: string | null

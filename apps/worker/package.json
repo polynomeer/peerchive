@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Peerchive 작업 worker(pg-boss). 지금은 파일 검사 작업만 처리합니다.",
+  "description": "Peerchive 작업 worker(pg-boss). 파일 검사와 공개 게시·철회 이벤트(파생 데이터 정리)를 처리합니다.",
   "scripts": {
     "dev": "NODE_ENV=development tsx src/main.ts",
     "start": "tsx src/main.ts",

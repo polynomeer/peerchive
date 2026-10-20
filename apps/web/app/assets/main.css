@@ -1073,3 +1073,30 @@ dl.kv dd {
 .chip.static {
   cursor: default;
 }
+
+/* ── 확인 대화상자·공개 페이지 (T-12) ── */
+.confirm-dialog {
+  max-width: min(36rem, calc(100vw - 2rem));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  color: var(--fg);
+  background: var(--bg);
+}
+.confirm-dialog::backdrop {
+  background: rgb(0 0 0 / 40%);
+}
+.confirm-dialog h2 {
+  margin-top: 0;
+}
+.public-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  align-items: baseline;
+}
+.public-footer {
+  border-top: 1px solid var(--border);
+  margin-top: 2rem;
+  padding-top: 1rem;
+}

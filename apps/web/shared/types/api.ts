@@ -697,7 +697,7 @@ export interface ApiErrorData {
 
 export type PublicationLevel = 'summary' | 'full'
 export type PublicationStatus = 'draft' | 'embargoed' | 'awaiting_consent' | 'ready' | 'published' | 'withdrawn' | 'restricted'
-export type CandidateStatus = 'awaiting_consent' | 'ready' | 'superseded' | 'published' | 'withdrawn'
+export type CandidateStatus = 'awaiting_consent' | 'ready' | 'superseded' | 'published' | 'withdrawn' | 'replaced'
 export type ConsentStatus = 'pending' | 'granted' | 'declined' | 'revoked'
 export type ExposureMode = 'name' | 'anonymous'
 
@@ -819,6 +819,8 @@ export type PublicationBlockerDto =
   | { kind: 'hold_open' }
   | { kind: 'embargo_active'; until: string }
   | { kind: 'superseded' }
+  /** 당사자 계정이 탈퇴·정지 상태(동의가 있어도 게시 불가, T-12). */
+  | { kind: 'subject_inactive'; userId: string }
 
 export interface ConsentSubjectDto {
   userId: string
@@ -874,6 +876,11 @@ export interface PublicationCandidateDto {
   myConsent: ConsentStatus | null
   canDecide: boolean
   canExcludeDeclined: boolean
+  /** owner이고 열린 후보이며 막는 것이 없음(서버가 게시 때 다시 검사, T-12). */
+  canPublish: boolean
+  /** 게시한 후보(release)면 공개 버전 번호와 게시 시각. */
+  releaseNo: number | null
+  publishedAt: string | null
   counts: { logs: number; milestones: number; claims: number; artifacts: number; members: number }
 }
 
@@ -905,13 +912,92 @@ export interface PublicationOptionsDto {
   licenses: string[]
 }
 
+/** 공개 요약(멤버·당사자용, T-12). 철회 원인·메모는 팀 안에서만 보입니다. */
+export interface PublicationSummaryDto {
+  id: string
+  slug: string
+  level: PublicationLevel
+  status: PublicationStatus
+  accessEpoch: number
+  /** 지금 공개로 제공하는 release(게시됨일 때만). */
+  currentRelease: { candidateId: string; version: number; publishedAt: string } | null
+  firstPublishedAt: string | null
+  withdrawnAt: string | null
+  withdrawCause: 'owner' | 'consent_revoked' | null
+  withdrawNote: string | null
+  /** 공개 페이지 경로(게시됨일 때만). */
+  publicPath: string | null
+  /** 한 번이라도 게시했으면 slug는 고정입니다. */
+  slugLocked: boolean
+}
+
+/** 게시 이력 한 줄(T-12). */
+export interface ReleaseSummaryDto {
+  candidateId: string
+  /** 공개 버전(release_no). */
+  version: number
+  /** 후보 번호. */
+  candidateVersion: number
+  status: CandidateStatus
+  title: string
+  level: PublicationLevel
+  publishedAt: string
+  replacedAt: string | null
+  withdrawnAt: string | null
+}
+
 /** GET /projects/:id/publication */
 export interface PublicationStateDto {
-  publication: { id: string; slug: string; level: PublicationLevel; status: PublicationStatus } | null
+  publication: PublicationSummaryDto | null
   candidate: PublicationCandidateDto | null
   options: PublicationOptionsDto
   embargo: EmbargoDto
   canPrepare: boolean
+  /** owner(게시·철회 가능). */
+  canManage: boolean
+  /** 게시 이력(최근 것부터). */
+  releases: ReleaseSummaryDto[]
+}
+
+/** POST /candidates/:id/publish 응답(T-12). */
+export interface PublishResultDto {
+  publication: PublicationSummaryDto
+  release: ReleaseSummaryDto
+  /** 같은 후보·해시로 이미 게시되어 있어 아무것도 바꾸지 않았는지. */
+  idempotent: boolean
+}
+
+/** POST /publications/:id/consents/revoke 응답(T-12). */
+export interface ConsentRevokeResultDto {
+  publicationId: string
+  publicationStatus: PublicationStatus
+  consentStatus: ConsentStatus
+}
+
+/** GET /me/publication-consents 한 줄: 내가 동의해 지금 게시 중인 공개(동의 철회 대상, T-12). */
+export interface MyPublishedConsentDto {
+  publicationId: string
+  slug: string
+  publicTitle: string
+  projectTitle: string
+  version: number
+  publishedAt: string
+  publicPath: string
+  scope: string[]
+}
+
+/**
+ * GET /public/publications/:slug — 익명 공개 조회(T-12). 저장된 스냅샷을 그대로 싣고, 공개 메타데이터만 더합니다.
+ * 내부 id(공개·후보·프로젝트)·동의·철회 정보는 싣지 않습니다.
+ */
+export interface PublicPublicationDto {
+  slug: string
+  level: PublicationLevel
+  /** 공개 버전(release_no). */
+  version: number
+  publishedAt: string
+  firstPublishedAt: string
+  snapshot: PublicSnapshot
 }
 
 /** GET /me/consent-requests 한 줄. */

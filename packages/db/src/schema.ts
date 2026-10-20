@@ -20,6 +20,9 @@
  * 결정은 ADR 0010.
  * T-11(0009 migration): 공개(publications)·공개 후보(publication_candidates: 공개 스냅샷·manifest·해시·점검 경고)·
  * 동의(consents, 후보·manifest 해시에 묶임). 결정은 ADR 0011. 게시·철회·공개 조회는 T-12입니다.
+ * T-12(0010 migration): 게시·철회 열(publications.access_epoch·first_published_at·withdrawn_*,
+ * publication_candidates.release_no·published_at·replaced_at·withdrawn_at, 후보 상태 replaced), 공개 release는 공개마다 하나.
+ * 결정은 ADR 0012.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -108,9 +111,17 @@ export const publicationStatus = pgEnum('publication_status', [
 export const publicationLevel = pgEnum('publication_level', ['summary', 'full'])
 /**
  * 공개 후보 상태. 열린 후보는 awaiting_consent/ready 중 하나이고, 새 후보를 만들면 이전 후보는 superseded가 됩니다.
- * published/withdrawn은 T-12(게시·철회)가 씁니다: 게시하면 같은 행이 release가 되고 스냅샷은 바뀌지 않습니다.
+ * published/withdrawn/replaced는 T-12(게시·철회)가 씁니다: 게시하면 같은 행이 release가 되고 스냅샷은 바뀌지 않습니다.
+ * 새 release를 게시하면 이전 release는 replaced(더 이상 제공하지 않음), 철회하면 withdrawn입니다.
  */
-export const candidateStatus = pgEnum('candidate_status', ['awaiting_consent', 'ready', 'superseded', 'published', 'withdrawn'])
+export const candidateStatus = pgEnum('candidate_status', [
+  'awaiting_consent',
+  'ready',
+  'superseded',
+  'published',
+  'withdrawn',
+  'replaced',
+])
 /** 동의 상태(@peerchive/domain ConsentStatus). revoked는 게시 후 동의 철회(T-12)용입니다. */
 export const consentStatus = pgEnum('consent_status', ['pending', 'granted', 'declined', 'revoked'])
 
@@ -1188,8 +1199,11 @@ export const embargoes = pgTable(
 
 /**
  * 공개(프로젝트당 하나). 안정된 URL(slug)과 공개 상태를 가집니다. 첫 공개 후보를 만들 때 생깁니다.
- * slug는 게시 전에는 새 후보마다 바꿀 수 있고(게시 후 규칙은 T-12), 전체에서 유일합니다.
- * current_release_id는 게시된 후보(T-12)를 가리키며 T-11에서는 항상 null입니다.
+ * slug는 처음 게시하기 전에는 새 후보마다 바꿀 수 있고, 한 번 게시한 뒤에는 고정됩니다(T-12). 전체에서 유일합니다.
+ * current_release_id는 마지막으로 게시한 후보(release)를 가리킵니다. 철회해도 이력으로 남지만, 공개 조회는
+ * status = 'published'이고 그 release도 published일 때만 내용을 돌려줍니다.
+ * access_epoch는 공개로 제공하는 것이 바뀔 때마다(게시·철회·동의 철회) 1씩 올립니다. 파일 ETag·캐시 키에 넣어
+ * 철회가 콘텐츠 캐시보다 우선하게 합니다(SYSTEM_DESIGN §11).
  */
 export const publications = pgTable(
   'publications',
@@ -1204,6 +1218,12 @@ export const publications = pgTable(
     status: publicationStatus('status').notNull().default('draft'),
     /** 게시된 release(publication_candidates 행). 순환 참조라 아래 foreignKey로 선언합니다. */
     currentReleaseId: uuid('current_release_id'),
+    accessEpoch: integer('access_epoch').notNull().default(0),
+    firstPublishedAt: timestamp('first_published_at', { withTimezone: true }),
+    /** 마지막 철회 시각·원인(owner 철회 / 당사자 동의 철회)·owner 메모. 다시 게시하면 비웁니다. 공개 응답에 싣지 않습니다. */
+    withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
+    withdrawCause: text('withdraw_cause'),
+    withdrawNote: text('withdraw_note'),
     createdBy: uuid('created_by')
       .notNull()
       .references(() => users.id),
@@ -1212,6 +1232,9 @@ export const publications = pgTable(
   },
   (t): PgTableExtraConfigValue[] => [
     check('publications_slug_format_check', sql`${t.slug} ~ '^[a-z0-9]+(-[a-z0-9]+)*$' and char_length(${t.slug}) between 3 and 60`),
+    check('publications_access_epoch_check', sql`${t.accessEpoch} >= 0`),
+    check('publications_withdraw_cause_check', sql`${t.withdrawCause} is null or ${t.withdrawCause} in ('owner', 'consent_revoked')`),
+    check('publications_withdraw_note_check', sql`${t.withdrawNote} is null or char_length(${t.withdrawNote}) between 1 and 300`),
     foreignKey({
       name: 'publications_current_release_id_fk',
       columns: [t.currentReleaseId],
@@ -1258,12 +1281,25 @@ export const publicationCandidates = pgTable(
     createdAt: createdAt(),
     readyAt: timestamp('ready_at', { withTimezone: true }),
     supersededAt: timestamp('superseded_at', { withTimezone: true }),
+    /** 공개 안에서 게시 순서(1부터, 공개 화면의 "공개 버전 vN"). 게시한 후보만 가집니다. */
+    releaseNo: integer('release_no'),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+    /** 새 release가 게시되어 이 release를 더 이상 제공하지 않게 된 시각. */
+    replacedAt: timestamp('replaced_at', { withTimezone: true }),
+    /** 이 release(또는 그때 열려 있던 후보)를 철회한 시각. */
+    withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
   },
   (t) => [
     unique('publication_candidates_publication_version_key').on(t.publicationId, t.version),
+    unique('publication_candidates_publication_release_key').on(t.publicationId, t.releaseNo),
     uniqueIndex('publication_candidates_open_key')
       .on(t.publicationId)
       .where(sql`${t.status} in ('awaiting_consent', 'ready')`),
+    // 지금 제공하는 release는 공개마다 하나뿐입니다.
+    uniqueIndex('publication_candidates_published_key')
+      .on(t.publicationId)
+      .where(sql`${t.status} = 'published'`),
+    check('publication_candidates_release_check', sql`(${t.releaseNo} is null) = (${t.publishedAt} is null) and (${t.releaseNo} is null or ${t.releaseNo} >= 1)`),
     index('publication_candidates_project_id_idx').on(t.projectId),
     check('publication_candidates_version_check', sql`${t.version} >= 1`),
     check('publication_candidates_manifest_hash_check', sql`${t.manifestHash} ~ '^[0-9a-f]{64}$'`),

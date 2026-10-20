@@ -2,7 +2,9 @@
  * 공개 후보·동의 (T-11, PROOFU_EVOLUTION_PLAN §9, SYSTEM_DESIGN §1·§6.5·§7.2·§8·§9, DELIVERY_PLAN T-11·시나리오 D, ADR 0011).
  *
  * 흐름: 선택 → 스냅샷(buildPublicSnapshot)·manifest·해시 → 공개 전 점검(경고) → 동의 요청 → 모두 동의·파일 clean·보류 없음이면 ready.
- * 게시·철회·공개 조회는 T-12입니다. 이 모듈은 게시 상태 전이(publish)를 하지 않습니다.
+ * 게시·철회·공개 조회는 T-12(releases.ts, public-read.ts)입니다. 이 모듈은 게시 상태 전이(publish)를 하지 않습니다.
+ * T-12 규칙: 게시 중인 공개에도 새 후보를 만들 수 있고(다음 공개 버전, 게시 전까지 이전 release를 계속 제공),
+ * 한 번 게시한 공개의 slug는 바꿀 수 없으며(422 `slug: locked`), 탈퇴·정지한 당사자의 동의는 유효하지 않습니다.
  *
  * - 후보 만들기: active owner/editor(reviewer/viewer 403, 비멤버 404). 엠바고 중이면 409 `embargo_active` + until
  *   (embargo 모듈의 assertPublishable). 선택한 로그·선언은 지금 revision으로 고정합니다. 파일은 전체 공개에서만(요약 공개면 422
@@ -71,6 +73,7 @@ import { summarize } from '../logs/logs'
 import { type ProjectRow, findMembership, isUuid, loadReadableProject } from '../projects/access'
 import { parseInput } from '../validation'
 import { buildManifest, canonicalHash, checkItemsFor, publicKeyFor } from './manifest'
+import { listReleases, loadPublicationSummary } from './summary'
 import {
   type SnapshotRefs,
   type SnapshotSource,
@@ -198,14 +201,14 @@ export const excludeDeclinedSchema = z.object({ consentSelf: z.boolean({ error: 
 
 // ── 행·선택 ──────────────────────────────────────────────────────────────
 
-type CandidateRow = typeof publicationCandidates.$inferSelect
-type PublicationRow = typeof publications.$inferSelect
+export type CandidateRow = typeof publicationCandidates.$inferSelect
+export type PublicationRow = typeof publications.$inferSelect
 
 /** 저장하는 선택(정규화, 포함된 id만). */
 type Selection = CandidateSelectionDto
 
-const OPEN_STATUSES = ['awaiting_consent', 'ready'] as const
-const isOpen = (status: CandidateRow['status']) => status === 'awaiting_consent' || status === 'ready'
+export const OPEN_STATUSES = ['awaiting_consent', 'ready'] as const
+export const isOpen = (status: CandidateRow['status']) => status === 'awaiting_consent' || status === 'ready'
 
 interface Pins {
   logs: ReadonlyMap<string, string>
@@ -362,7 +365,7 @@ async function loadSource(tx: DbExecutor, project: ProjectRow, selection: Select
 
 // ── 공개 상태 ─────────────────────────────────────────────────────────────
 
-function applyEvents(state: PublicationState, events: readonly PublicationEvent[], ctx: Parameters<typeof transition>[2]): PublicationState {
+export function applyEvents(state: PublicationState, events: readonly PublicationEvent[], ctx: Parameters<typeof transition>[2]): PublicationState {
   let current = state
   for (const event of events) {
     const result = transition(current, event, ctx)
@@ -376,7 +379,10 @@ function applyEvents(state: PublicationState, events: readonly PublicationEvent[
   return current
 }
 
-/** 새 후보 전에 공개를 draft로 되돌리는 이벤트. 게시됨·제한됨은 T-12/T-15 규칙이 정합니다. */
+/**
+ * 새 후보 전에 공개를 draft로 되돌리는 이벤트. 게시됨은 호출하는 쪽이 따로 다룹니다(공개 상태를 그대로 두고 다음 버전 후보만 만듦, T-12).
+ * 제한됨은 운영 조치(T-15)가 풀 때까지 잠깁니다.
+ */
 function eventsToDraft(state: PublicationState): PublicationEvent[] {
   switch (state) {
     case 'draft':
@@ -395,51 +401,97 @@ function eventsToDraft(state: PublicationState): PublicationEvent[] {
   }
 }
 
-/** 후보의 ready 판정 컨텍스트(지금 DB의 동의·파일 상태). 보류·신고(T-15)는 아직 없으므로 열린 보류도 없습니다. */
-async function readinessContext(db: DbExecutor, candidate: CandidateRow, now: Date): Promise<PublicationContext> {
+interface Readiness {
+  ctx: PublicationContext
+  /** 계정이 active가 아닌(탈퇴 요청·정지) 당사자. 그 동의는 granted라도 유효하지 않게 넘깁니다. */
+  inactiveSubjectIds: ReadonlySet<string>
+}
+
+/**
+ * 후보의 ready 판정 컨텍스트(지금 DB의 동의·파일 상태·당사자 계정 상태). 보류·신고(T-15)는 아직 없으므로 열린 보류도 없습니다.
+ * 파일은 스냅샷의 모든 파일(고른 파일 + 마일스톤 스냅샷)이고, 지금 행이 없으면 failed로 봅니다.
+ */
+export async function readinessContext(db: DbExecutor, candidate: CandidateRow, now: Date): Promise<Readiness> {
   const snapshot = candidate.snapshot as unknown as PublicSnapshot
   const versionIds = snapshot.artifacts.map((a) => a.artifactVersionId)
   const [consentRows, fileRows] = await Promise.all([
-    db.select().from(consents).where(eq(consents.candidateId, candidate.id)),
+    db
+      .select({ consent: consents, userStatus: users.status })
+      .from(consents)
+      .innerJoin(users, eq(users.id, consents.subjectUserId))
+      .where(eq(consents.candidateId, candidate.id)),
     versionIds.length
       ? db.select({ id: artifactVersions.id, scanStatus: artifactVersions.scanStatus }).from(artifactVersions).where(inArray(artifactVersions.id, versionIds))
       : Promise.resolve([]),
   ])
   const statusById = new Map(fileRows.map((f) => [f.id, f.scanStatus]))
+  const inactive = new Set(consentRows.filter((r) => r.userStatus !== 'active').map((r) => r.consent.subjectUserId))
   return {
-    now,
-    candidate: {
-      manifestHash: candidate.manifestHash,
-      files: versionIds.map((id) => ({ artifactVersionId: id, scanStatus: statusById.get(id) ?? 'failed' })),
-      requiredConsentSubjectIds: consentRows.map((c) => c.subjectUserId),
+    ctx: {
+      now,
+      candidate: {
+        manifestHash: candidate.manifestHash,
+        files: versionIds.map((id) => ({ artifactVersionId: id, scanStatus: statusById.get(id) ?? 'failed' })),
+        requiredConsentSubjectIds: consentRows.map((r) => r.consent.subjectUserId),
+      },
+      consents: consentRows.map(({ consent: c }) => ({
+        subjectId: c.subjectUserId,
+        manifestHash: c.manifestHash,
+        status: inactive.has(c.subjectUserId) && c.status === 'granted' ? 'pending' : c.status,
+      })),
+      hasOpenHold: false,
     },
-    consents: consentRows.map((c) => ({ subjectId: c.subjectUserId, manifestHash: c.manifestHash, status: c.status })),
-    hasOpenHold: false,
+    inactiveSubjectIds: inactive,
   }
 }
 
-/** mark_ready 전제 조건(모든 당사자 granted·파일 clean·보류 없음) 중 깨진 것. */
-async function readinessBlockers(db: DbExecutor, candidate: CandidateRow, now: Date): Promise<PublicationBlocker[]> {
-  const result = transition('awaiting_consent', 'mark_ready', await readinessContext(db, candidate, now))
-  return result.ok || result.error.code !== 'PRECONDITION_FAILED' ? [] : result.error.blockers
+/** mark_ready 전제 조건(모든 당사자 granted·파일 clean·보류 없음) 중 깨진 것 + 탈퇴·정지한 당사자. */
+export async function readinessBlockers(
+  db: DbExecutor,
+  candidate: CandidateRow,
+  now: Date,
+): Promise<{ blockers: PublicationBlocker[]; inactiveSubjectIds: ReadonlySet<string> }> {
+  const { ctx, inactiveSubjectIds } = await readinessContext(db, candidate, now)
+  const result = transition('awaiting_consent', 'mark_ready', ctx)
+  return { blockers: result.ok || result.error.code !== 'PRECONDITION_FAILED' ? [] : result.error.blockers, inactiveSubjectIds }
+}
+
+/** 도메인 blocker → 화면·409 응답용 DTO. 탈퇴·정지한 당사자는 consent_missing 대신 subject_inactive로 보여 줍니다. */
+export function toBlockerDtos(
+  blockers: readonly PublicationBlocker[],
+  consentStatusBy: ReadonlyMap<string, ConsentStatus>,
+  inactiveSubjectIds: ReadonlySet<string>,
+): PublicationBlockerDto[] {
+  const out: PublicationBlockerDto[] = []
+  for (const b of blockers) {
+    if (b.kind === 'consent_missing') {
+      if (inactiveSubjectIds.has(b.subjectId)) out.push({ kind: 'subject_inactive', userId: b.subjectId })
+      else out.push({ kind: 'consent_missing', userId: b.subjectId, status: consentStatusBy.get(b.subjectId) ?? 'pending' })
+    } else if (b.kind === 'consent_stale') out.push({ kind: 'consent_stale', userId: b.subjectId })
+    else if (b.kind === 'file_not_clean') out.push({ kind: 'file_not_clean', artifactVersionId: b.artifactVersionId, scanStatus: b.scanStatus })
+    else if (b.kind === 'hold_open') out.push({ kind: 'hold_open' })
+    else if (b.kind === 'embargo_active') out.push({ kind: 'embargo_active', until: b.until.toISOString() })
+  }
+  return out
 }
 
 /**
  * 열린 후보의 ready 여부를 다시 계산해 후보·공개 상태를 맞춥니다(공개 행을 잠근 트랜잭션 안에서).
  * awaiting_consent → ready(mark_ready), ready인데 조건이 깨지면 → awaiting_consent(reopen_candidate).
- * 공개 상태도 같은 도메인 이벤트로 옮깁니다(열린 후보를 따라감).
+ * 공개 상태도 같은 도메인 이벤트로 옮깁니다(열린 후보를 따라감). 단, 게시 중인 공개(다음 버전 후보)는 공개 상태를
+ * published로 그대로 둡니다(T-12).
  */
-async function refreshReadiness(tx: DbExecutor, publication: PublicationRow, candidateId: string, now: Date): Promise<CandidateRow> {
+export async function refreshReadiness(tx: DbExecutor, publication: PublicationRow, candidateId: string, now: Date): Promise<CandidateRow> {
   const [candidate] = await tx.select().from(publicationCandidates).where(eq(publicationCandidates.id, candidateId)).limit(1).for('update')
   if (!candidate) throw notFound()
   if (!isOpen(candidate.status)) return candidate
-  const ctx = await readinessContext(tx, candidate, now)
+  const { ctx } = await readinessContext(tx, candidate, now)
   const ready = transition('awaiting_consent', 'mark_ready', ctx).ok
   const event: PublicationEvent | null =
     candidate.status === 'awaiting_consent' && ready ? 'mark_ready' : candidate.status === 'ready' && !ready ? 'reopen_candidate' : null
   if (!event) return candidate
   const candidateState = applyEvents(candidate.status as PublicationState, [event], ctx)
-  const pubState = applyEvents(publication.status, [event], ctx)
+  const pubState = publication.status === 'published' ? 'published' : applyEvents(publication.status, [event], ctx)
   const [updated] = await tx
     .update(publicationCandidates)
     .set({ status: candidateState as CandidateRow['status'], readyAt: candidateState === 'ready' ? now : null })
@@ -450,7 +502,7 @@ async function refreshReadiness(tx: DbExecutor, publication: PublicationRow, can
   return updated!
 }
 
-async function lockPublication(tx: DbExecutor, publicationId: string): Promise<PublicationRow> {
+export async function lockPublication(tx: DbExecutor, publicationId: string): Promise<PublicationRow> {
   const [row] = await tx.select().from(publications).where(eq(publications.id, publicationId)).limit(1).for('update')
   if (!row) throw notFound()
   return row
@@ -467,6 +519,8 @@ async function ensurePublication(tx: DbExecutor, actor: Actor, project: ProjectR
     .limit(1)
   if (taken) throw invalid({ slug: 'taken' })
   const [existing] = await tx.select().from(publications).where(eq(publications.projectId, project.id)).limit(1).for('update')
+  // 한 번 게시한 공개의 주소는 바꾸지 않습니다(안정된 URL, 이미 퍼진 링크가 다른 사례를 가리키지 않게).
+  if (existing?.firstPublishedAt && existing.slug !== selection.slug) throw invalid({ slug: 'locked' })
   if (existing) return existing
   try {
     const [created] = await tx
@@ -503,7 +557,9 @@ async function createCandidateInTx(
   const embargo = await getProjectEmbargo(tx, project.id, now)
 
   // 열린 이전 후보는 대체합니다(그 동의는 더 이상 쓰이지 않음).
-  const draftState = applyEvents(publication.status, eventsToDraft(publication.status), { now, embargoUntil: embargo.until })
+  // 게시 중인 공개는 상태를 그대로 두고 다음 버전 후보만 만듭니다(게시 전까지 지금 release를 계속 제공).
+  const live = publication.status === 'published'
+  const draftState = live ? publication.status : applyEvents(publication.status, eventsToDraft(publication.status), { now, embargoUntil: embargo.until })
   await tx
     .update(publicationCandidates)
     .set({ status: 'superseded', supersededAt: now, readyAt: null })
@@ -577,15 +633,18 @@ async function createCandidateInTx(
     .returning()
   if (!candidate) throw new Error('candidate insert failed')
 
-  const pubState = applyEvents(draftState, ['create_candidate'], {
-    now,
-    embargoUntil: embargo.until,
-    candidate: { manifestHash, files: [], requiredConsentSubjectIds: [] },
-  })
+  const pubState = live
+    ? publication.status
+    : applyEvents(draftState, ['create_candidate'], {
+        now,
+        embargoUntil: embargo.until,
+        candidate: { manifestHash, files: [], requiredConsentSubjectIds: [] },
+      })
   try {
+    // 게시 중이면 공개 수준은 게시할 때 바꿉니다(지금 제공하는 release와 어긋나지 않게).
     await tx
       .update(publications)
-      .set({ status: pubState, slug: selection.slug, level: selection.level, updatedAt: now })
+      .set(live ? { updatedAt: now } : { status: pubState, slug: selection.slug, level: selection.level, updatedAt: now })
       .where(eq(publications.id, publication.id))
   } catch (error) {
     if (sqlState(error) === '23505') throw invalid({ slug: 'taken' })
@@ -686,6 +745,8 @@ function lowerKeys<T>(record: Record<string, T>): Record<string, T> {
 
 /**
  * POST /candidates/:id/exclude-declined — owner만. 거절한 당사자의 자료를 뺀 새 후보(201).
+ * 철회된 지금 release에도 쓸 수 있고, 그때는 동의를 철회한 사람도 뺍니다(T-12). 이전 release의 granted 동의는
+ * 자기 관련 부분이 그대로인 사람만 이어받습니다.
  * 거절이 없으면 409 `no_declined`, 대체된 후보면 409 `superseded`, 엠바고 409.
  */
 export async function excludeDeclined(
@@ -704,11 +765,16 @@ export async function excludeDeclined(
     const { project, membership } = await loadReadableProject(tx, actor, found.projectId, { lock: true })
     if (!canManagePublication({ userId: actor.userId }, project, membership)) throw forbidden()
     await assertPublishable(tx, actor, project.id, now)
-    await lockPublication(tx, found.publicationId)
+    const publication = await lockPublication(tx, found.publicationId)
     const [candidate] = await tx.select().from(publicationCandidates).where(eq(publicationCandidates.id, found.id)).limit(1).for('update')
-    if (!candidate || !isOpen(candidate.status)) throw await supersededError(tx, found)
+    if (!candidate) throw notFound()
+    // 철회된 지금 release(당사자 동의 철회·owner 철회)에서도 거절·철회한 사람을 뺀 새 후보를 만들 수 있습니다(T-12).
+    const withdrawnRelease =
+      candidate.status === 'withdrawn' && publication.status === 'withdrawn' && publication.currentReleaseId === candidate.id
+    if (!isOpen(candidate.status) && !withdrawnRelease) throw await supersededError(tx, found)
+    const excludedStatuses = withdrawnRelease ? (['declined', 'revoked'] as const) : (['declined'] as const)
     const declined = (
-      await tx.select().from(consents).where(and(eq(consents.candidateId, candidate.id), eq(consents.status, 'declined')))
+      await tx.select().from(consents).where(and(eq(consents.candidateId, candidate.id), inArray(consents.status, [...excludedStatuses])))
     ).map((c) => c.subjectUserId)
     if (declined.length === 0) throw conflict('no_declined')
 
@@ -729,7 +795,7 @@ export async function excludeDeclined(
   })
 }
 
-async function supersededError(db: DbExecutor, candidate: CandidateRow): Promise<ServiceError> {
+export async function supersededError(db: DbExecutor, candidate: CandidateRow): Promise<ServiceError> {
   const [open] = await db
     .select({ id: publicationCandidates.id })
     .from(publicationCandidates)
@@ -861,28 +927,39 @@ export async function listMyConsentRequests(db: DbExecutor, actor: Actor): Promi
 
 // ── 공개 준비 화면 ────────────────────────────────────────────────────────
 
-/** GET /projects/:id/publication — 멤버. 공개 상태, 열린(없으면 마지막) 후보, 선택지, 엠바고. */
+/**
+ * GET /projects/:id/publication — 멤버. 공개 상태·게시 요약, 보여 줄 후보(열린 후보 → 지금 release → 마지막 후보 순), 선택지,
+ * 엠바고, 게시 이력.
+ */
 export async function getPublicationState(db: DbExecutor, actor: Actor, projectId: unknown, now = new Date()): Promise<PublicationStateDto> {
   const { project, membership } = await loadReadableProject(db, actor, projectId)
   const embargo = toEmbargoDto(await getProjectEmbargo(db, project.id, now))
   const [publication] = await db.select().from(publications).where(eq(publications.projectId, project.id)).limit(1)
   let candidate: PublicationCandidateDto | null = null
   if (publication) {
+    const [open] = await db
+      .select({ id: publicationCandidates.id })
+      .from(publicationCandidates)
+      .where(and(eq(publicationCandidates.publicationId, publication.id), inArray(publicationCandidates.status, [...OPEN_STATUSES])))
+      .limit(1)
     const [latest] = await db
       .select({ id: publicationCandidates.id })
       .from(publicationCandidates)
       .where(eq(publicationCandidates.publicationId, publication.id))
       .orderBy(desc(publicationCandidates.version))
       .limit(1)
-    if (latest) candidate = await getCandidate(db, actor, latest.id, now)
+    const shownId = open?.id ?? publication.currentReleaseId ?? latest?.id
+    if (shownId) candidate = await getCandidate(db, actor, shownId, now)
   }
   const [current] = publication ? await db.select().from(publications).where(eq(publications.id, publication.id)).limit(1) : []
   return {
-    publication: current ? { id: current.id, slug: current.slug, level: current.level, status: current.status } : null,
+    publication: current ? await loadPublicationSummary(db, current) : null,
     candidate,
     options: await publicationOptions(db, project),
     embargo,
     canPrepare: canPreparePublication({ userId: actor.userId }, project, membership),
+    canManage: canManagePublication({ userId: actor.userId }, project, membership),
+    releases: current ? await listReleases(db, current.id) : [],
   }
 }
 
@@ -993,7 +1070,7 @@ function fixUrlFor(projectId: string, refs: SnapshotRefs, location: PublicationC
   }
 }
 
-async function toCandidateDto(
+export async function toCandidateDto(
   db: DbExecutor,
   actor: Actor,
   candidate: CandidateRow,
@@ -1039,16 +1116,14 @@ async function toCandidateDto(
 
   const open = isOpen(candidate.status)
   const blockers: PublicationBlockerDto[] = []
-  if (!open) blockers.push({ kind: 'superseded' })
-  else {
+  if (!open) {
+    // 게시·철회·대체된 release는 막는 것 대신 상태로 보여 줍니다. 대체된 후보만 superseded.
+    if (candidate.status === 'superseded') blockers.push({ kind: 'superseded' })
+  } else {
     const statusBy = new Map(subjectRows.map((r) => [r.consent.subjectUserId, r.consent.status]))
-    for (const b of await readinessBlockers(db, candidate, now)) {
-      if (b.kind === 'consent_missing') blockers.push({ kind: 'consent_missing', userId: b.subjectId, status: statusBy.get(b.subjectId) ?? 'pending' })
-      else if (b.kind === 'consent_stale') blockers.push({ kind: 'consent_stale', userId: b.subjectId })
-      else if (b.kind === 'file_not_clean') blockers.push({ kind: 'file_not_clean', artifactVersionId: b.artifactVersionId, scanStatus: b.scanStatus })
-      else if (b.kind === 'hold_open') blockers.push({ kind: 'hold_open' })
-    }
-    // 엠바고는 ready 판정에는 들어가지 않지만 게시(T-12)를 막으므로 함께 보여 줍니다.
+    const readiness = await readinessBlockers(db, candidate, now)
+    blockers.push(...toBlockerDtos(readiness.blockers, statusBy, readiness.inactiveSubjectIds))
+    // 엠바고는 ready 판정에는 들어가지 않지만 게시를 막으므로 함께 보여 줍니다.
     if (embargo.active && embargo.until) blockers.push({ kind: 'embargo_active', until: embargo.until.toISOString() })
   }
 
@@ -1080,7 +1155,15 @@ async function toCandidateDto(
     selection,
     myConsent: (mine?.status as ConsentStatus | undefined) ?? null,
     canDecide: open && mine !== null,
-    canExcludeDeclined: open && isOwner && subjectRows.some((r) => r.consent.status === 'declined'),
+    canExcludeDeclined:
+      isOwner &&
+      (open
+        ? subjectRows.some((r) => r.consent.status === 'declined')
+        : candidate.status === 'withdrawn' && publication.status === 'withdrawn' && publication.currentReleaseId === candidate.id &&
+          subjectRows.some((r) => r.consent.status === 'declined' || r.consent.status === 'revoked')),
+    canPublish: open && isOwner && blockers.length === 0,
+    releaseNo: candidate.releaseNo,
+    publishedAt: candidate.publishedAt?.toISOString() ?? null,
     counts: {
       logs: snapshot.logs.length,
       milestones: snapshot.milestones.length,

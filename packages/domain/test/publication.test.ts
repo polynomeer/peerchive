@@ -3,7 +3,10 @@ import {
   PUBLICATION_EVENTS,
   PUBLICATION_STATES,
   allowedEvents,
+  canServePublicArtifact,
+  canServePublicRelease,
   transition,
+  type PublicReadState,
   type PublicationContext,
 } from '../src'
 
@@ -205,5 +208,56 @@ describe('publication transition: reopening a ready candidate (T-11)', () => {
     for (const state of PUBLICATION_STATES.filter((s) => s !== 'ready')) {
       expect(transition(state, 'reopen_candidate', readyCtx()).ok).toBe(false)
     }
+  })
+})
+
+describe('publication transition: republish a new version (T-12)', () => {
+  it('published → published with the same preconditions as publish', () => {
+    expect(transition('published', 'republish', readyCtx())).toEqual({ ok: true, state: 'published' })
+    expect(allowedEvents('published')).toEqual(['republish', 'withdraw', 'restrict'])
+    expect(transition('published', 'republish', readyCtx({ hasOpenHold: true }))).toMatchObject({
+      ok: false,
+      error: { code: 'PRECONDITION_FAILED', blockers: [{ kind: 'hold_open' }] },
+    })
+    const until = new Date('2027-01-01T00:00:00Z')
+    expect(transition('published', 'republish', readyCtx({ embargoUntil: until }))).toMatchObject({
+      ok: false,
+      error: { code: 'PRECONDITION_FAILED', blockers: [{ kind: 'embargo_active', until }] },
+    })
+    expect(
+      transition('published', 'republish', readyCtx({ consents: [{ subjectId: 'owner', manifestHash: 'sha256:candidate-v2', status: 'granted' }] })),
+    ).toMatchObject({ ok: false, error: { blockers: [{ kind: 'consent_missing', subjectId: 'teammate' }] } })
+  })
+
+  it('only from published (a withdrawn or ready publication cannot republish)', () => {
+    for (const state of PUBLICATION_STATES.filter((s) => s !== 'published')) {
+      expect(transition(state, 'republish', readyCtx())).toMatchObject({ ok: false, error: { code: 'INVALID_TRANSITION' } })
+    }
+  })
+})
+
+describe('public read decisions (T-12)', () => {
+  const served: PublicReadState = { publicationStatus: 'published', releaseStatus: 'published', isCurrentRelease: true, embargoActive: false }
+
+  it('serves only the current published release of a published publication without an active embargo', () => {
+    expect(canServePublicRelease(served)).toBe(true)
+    for (const publicationStatus of PUBLICATION_STATES.filter((s) => s !== 'published')) {
+      expect(canServePublicRelease({ ...served, publicationStatus })).toBe(false)
+    }
+    for (const releaseStatus of ['awaiting_consent', 'ready', 'superseded', 'withdrawn', 'replaced'] as const) {
+      expect(canServePublicRelease({ ...served, releaseStatus })).toBe(false)
+    }
+    expect(canServePublicRelease({ ...served, isCurrentRelease: false })).toBe(false)
+    expect(canServePublicRelease({ ...served, embargoActive: true })).toBe(false)
+  })
+
+  it('serves a file only when it is in the current snapshot and still clean', () => {
+    expect(canServePublicArtifact(served, { inCurrentSnapshot: true, scanStatus: 'clean' })).toBe(true)
+    expect(canServePublicArtifact(served, { inCurrentSnapshot: false, scanStatus: 'clean' })).toBe(false)
+    for (const scanStatus of ['pending', 'scanning', 'quarantined', 'failed', null] as const) {
+      expect(canServePublicArtifact(served, { inCurrentSnapshot: true, scanStatus })).toBe(false)
+    }
+    expect(canServePublicArtifact({ ...served, publicationStatus: 'withdrawn' }, { inCurrentSnapshot: true, scanStatus: 'clean' })).toBe(false)
+    expect(canServePublicArtifact({ ...served, embargoActive: true }, { inCurrentSnapshot: true, scanStatus: 'clean' })).toBe(false)
   })
 })
