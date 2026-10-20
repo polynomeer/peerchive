@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ProjectDto } from '~~/shared/types/api'
+import type { MyCheckinStatusDto, ProjectDto } from '~~/shared/types/api'
 
 definePageMeta({ middleware: 'auth' })
 useHead({ title: '내 과제 — Peerchive' })
@@ -7,6 +7,10 @@ useHead({ title: '내 과제 — Peerchive' })
 const { data: projects, error: loadError } = await useFetch<ProjectDto[]>('/api/v1/projects', {
   default: () => [],
 })
+
+// 대시보드 "이번 주 체크인"(T-09). 실패해도 목록은 그대로 보여 줍니다.
+const { data: checkins } = await useFetch<MyCheckinStatusDto | null>('/api/v1/me/checkins', { default: () => null })
+const pendingCheckins = computed(() => checkins.value?.projects.filter((p) => !p.submitted) ?? [])
 
 const form = reactive({ title: '', kind: 'individual' as 'individual' | 'team', retroMode: false })
 const errors = ref<Record<string, string>>({})
@@ -56,6 +60,18 @@ const KIND_LABELS = { individual: '개인', team: '팀' } as const
         </span>
       </li>
     </ul>
+
+    <section v-if="checkins && checkins.projects.length > 0" class="card" aria-labelledby="checkin-card-heading">
+      <h2 id="checkin-card-heading">이번 주 체크인</h2>
+      <p class="hint">과제마다 60초: 투입 시간 · 체감 난이도 · 한 줄. 팀 안에서만 보입니다.</p>
+      <p v-if="pendingCheckins.length === 0" class="muted">이번 주 체크인을 모두 냈습니다.</p>
+      <ul class="plain">
+        <li v-for="p in checkins.projects" :key="p.projectId" class="row">
+          <NuxtLink :to="`/projects/${p.projectId}#checkin`">{{ p.title }}</NuxtLink>
+          <span :class="p.submitted ? 'muted' : 'badge'">{{ p.submitted ? '✓ 냈음' : '아직 안 냄' }}</span>
+        </li>
+      </ul>
+    </section>
 
     <section class="card" aria-labelledby="create-heading">
       <h2 id="create-heading">새 과제 만들기</h2>

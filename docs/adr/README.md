@@ -14,3 +14,4 @@ Peerchive 신규 앱(`apps/`, `packages/`)의 기술 결정을 짧게 남깁니�
 | [0006](0006-auth-sessions.md) | 인증: 이메일 매직링크 + 자체 DB 세션(표준 방식) | 채택 |
 | [0007](0007-file-storage-and-scanning.md) | 파일 저장·격리·검사: 저장소 추상화 + 3단계 업로드 + worker 검사 | 채택 |
 | [0008](0008-contribution-report-format.md) | 동료평가 리포트 형식: 인쇄용 HTML 페이지(브라우저 "PDF로 저장") | 채택 |
+| [0009](0009-discord-bot-and-checkins.md) | 디스코드 봇과 주간 체크인: 별도 봇 프로세스 + 서명된 내부 API | 채택 |

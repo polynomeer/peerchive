@@ -124,6 +124,9 @@ describe('retrospective mode', () => {
     // 할 일 전환 로그는 출처를 task로 남기고, 사후 작성 여부는 표시로 따로 남깁니다.
     expect(logSourceFor(false, 'task')).toEqual({ source: 'task', retrospective: false })
     expect(logSourceFor(true, 'task')).toEqual({ source: 'task', retrospective: true })
+    // 디스코드 수집(T-09)도 출처를 discord로 남깁니다.
+    expect(logSourceFor(false, 'discord')).toEqual({ source: 'discord', retrospective: false })
+    expect(logSourceFor(true, 'discord')).toEqual({ source: 'discord', retrospective: true })
   })
 
   it('treats a log as retrospective if its source is retro or it was flagged at creation', () => {

@@ -1,0 +1,19 @@
+{
+  "name": "@peerchive/bot-protocol",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Peerchive 웹 서버 ↔ 디스코드 봇 내부 API 약속: HMAC-SHA256 요청 서명·검증과 요청/응답 타입(ADR 0009). 런타임 의존성 없음(Node 표준 crypto).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "typescript": "5.9.3",
+    "vitest": "5.0.3"
+  }
+}

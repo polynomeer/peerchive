@@ -118,6 +118,7 @@ async function saveEdit() {
         <template v-if="log.claimedDate"> · {{ log.retrospective ? '기억·파일 기준 날짜' : '수행일' }}(자기 기입) <time :datetime="log.claimedDate">{{ log.claimedDate }}</time></template>
       </span>
       <span v-if="log.retrospective" class="badge retro">사후 작성</span>
+      <span v-if="log.source === 'discord'" class="badge">디스코드</span>
       <span v-if="log.revisionNo > 1" class="badge">수정됨 (r{{ log.revisionNo }})</span>
     </header>
     <p v-if="log.task" class="relation small">↳ 할 일에서 남김: {{ log.task.title }}</p>

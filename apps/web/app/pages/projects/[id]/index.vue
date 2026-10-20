@@ -272,6 +272,8 @@ const formatDate = (iso: string) => new Date(iso).toLocaleString('ko-KR', { date
         </form>
       </section>
 
+      <CheckinSection :project-id="project.id" :can-write="canEdit" :me-id="me?.id ?? null" />
+
       <TasksSection :project-id="project.id" :can-write="canEdit" :members="members" :retro="retro" />
 
       <ArtifactsSection :project-id="project.id" :can-write="canEdit" />
@@ -281,6 +283,8 @@ const formatDate = (iso: string) => new Date(iso).toLocaleString('ko-KR', { date
       <BuildLog :project-id="project.id" :can-write="canEdit" :members="members" :me-id="me?.id ?? null" :retro="retro" />
 
       <ContributionSection :project-id="project.id" :my-role="project.myRole" :me-id="me?.id ?? null" />
+
+      <DiscordSection :project-id="project.id" :is-owner="isOwner" />
 
       <section class="card" aria-labelledby="members-heading">
         <h2 id="members-heading">멤버</h2>

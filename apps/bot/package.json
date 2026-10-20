@@ -1,0 +1,24 @@
+{
+  "name": "bot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Peerchive 디스코드 봇(discord.js gateway). 업무 규칙은 웹 서버 내부 API에 두고, 봇은 서명한 요청만 보냅니다(ADR 0009).",
+  "scripts": {
+    "dev": "NODE_ENV=development tsx src/main.ts",
+    "start": "tsx src/main.ts",
+    "register-commands": "tsx src/register-commands.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@peerchive/bot-protocol": "workspace:*",
+    "discord.js": "14.27.0",
+    "tsx": "4.23.15"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "typescript": "5.9.3",
+    "vitest": "5.0.3"
+  }
+}

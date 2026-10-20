@@ -13,6 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@peerchive/bot-protocol": "workspace:*",
     "@peerchive/db": "workspace:*",
     "@peerchive/domain": "workspace:*",
     "@peerchive/files": "workspace:*",

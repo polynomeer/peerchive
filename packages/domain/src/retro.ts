@@ -9,8 +9,8 @@
  */
 import { type Membership, type ProjectRef, type Viewer, canReadProjectWorkspace } from './permissions'
 
-/** 로그가 어디서 왔는지(SYSTEM_DESIGN §6.3 LogEntry.source 중 이 앱이 만드는 값). */
-export type LogOrigin = 'web' | 'task'
+/** 로그가 어디서 왔는지(SYSTEM_DESIGN §6.3 LogEntry.source 중 이 앱이 만드는 값). discord는 T-09 봇 수집입니다. */
+export type LogOrigin = 'web' | 'task' | 'discord'
 
 /** 사후 작성 모드 켜기·끄기: active owner만. */
 export function canChangeRetroMode(
@@ -25,8 +25,9 @@ export function canChangeRetroMode(
 export function logSourceFor(
   retroMode: boolean,
   origin: LogOrigin,
-): { source: 'web' | 'task' | 'retro'; retrospective: boolean } {
-  if (origin === 'task') return { source: 'task', retrospective: retroMode }
+): { source: 'web' | 'task' | 'retro' | 'discord'; retrospective: boolean } {
+  // 할 일 전환·디스코드 수집은 출처를 그대로 남기고, 사후 작성 여부는 표시(retrospective)로만 고정합니다.
+  if (origin === 'task' || origin === 'discord') return { source: origin, retrospective: retroMode }
   return retroMode ? { source: 'retro', retrospective: true } : { source: 'web', retrospective: false }
 }
 

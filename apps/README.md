@@ -8,8 +8,10 @@
 |---|---|
 | `apps/web` | Nuxt 4(Vue 3, TypeScript strict). 화면(`app/`), `/api/v1` 라우트(`server/api`), 서비스 모듈(`server/modules`), 공유 DTO 타입(`shared/types`) |
 | `apps/worker` | 작업 worker(pg-boss, [ADR 0004](../docs/adr/0004-pg-boss-jobs.md)). outbox 전달과 파일 검사 작업 |
-| `packages/domain` | 런타임 의존성 없는 도메인 규칙: 과제 공간 권한 정책, 빌드 로그 작성·수정·해결 연결 규칙, 공개 상태 전이, 역할 선언·팀원 확인·기여 장부 기간 규칙, 산출물 업로드·열람 정책과 검사 상태 전이, 마일스톤·할 일·사후 작성 규칙 |
+| `apps/bot` | 디스코드 봇(discord.js gateway, [ADR 0009](../docs/adr/0009-discord-bot-and-checkins.md)). `/log`·📌 수집, 승인 요청 DM, 체크인 알림·주간 요약 게시. 규칙은 웹 서버 내부 API에 있음([설정 안내](bot/README.md)) |
+| `packages/domain` | 런타임 의존성 없는 도메인 규칙: 과제 공간 권한 정책, 빌드 로그 작성·수정·해결 연결 규칙, 공개 상태 전이, 역할 선언·팀원 확인·기여 장부 기간 규칙, 산출물 업로드·열람 정책과 검사 상태 전이, 마일스톤·할 일·사후 작성 규칙, 주간 체크인 주(서울 ISO 주)·알림 일정·익명 집계(n≥5) |
 | `packages/db` | Drizzle ORM 스키마, SQL migration(`migrations/`), `createDb(url)` |
+| `packages/bot-protocol` | 웹 ↔ 봇 내부 API 약속: HMAC-SHA256 요청 서명·검증(시각 차이 5분, nonce)과 요청/응답 타입 |
 | `packages/files` | 오브젝트 저장소 추상화(파일시스템 driver), 파일 형식 판별, 악성코드 검사 어댑터(clamd), 검사 작업([ADR 0007](../docs/adr/0007-file-storage-and-scanning.md)) |
 | `ops/docker-compose.yml` | 로컬 개발용 PostgreSQL 16, 선택 profile `clamav`(clamd) |
 
@@ -27,9 +29,10 @@
 | T-06 마일스톤·스냅샷·진화 보기 | 완료 | 마일스톤(프로젝트당 12개, 이름 80자·메모 500자·예정일·자기 기입 도달일, version 409), 기본 단계 템플릿(기획→중간발표→구현→검증→최종제출, 빈 프로젝트만), 순서 변경(전체 순열만, ▲▼ 버튼)·position 빈틈없이 유지, 삭제는 어떤 로그 revision(이전 것 포함)이라도 가리키면 409 `in_use`(스냅샷은 함께 해제), 스냅샷은 같은 프로젝트의 clean 버전만(마일스톤당 6개, 검사 중 422 `not_clean`, 중복 409), 빌드 로그의 마일스톤 연결(revision별·이어받기·같은 프로젝트만)과 `milestone=` 필터, 과제 화면의 마일스톤 섹션·진화 보기(가로 스크롤 영역)·타임라인 구분선 |
 | T-07 할 일·완료 전환·사후 작성 모드 | 완료 | 할 일(원본 Card 계승, 제목 120자·메모 1000자·담당자는 active 멤버·마감일, 열린 할 일 200개·전체 500개, version 409), 상태 메뉴와 ▲▼ 순서 변경(상태별 position 빈틈없이, 상태를 바꾸면 새 목록 맨 뒤, 드래그 없음), 완료 시 "막힌 적 있었나요? 결정할 게 있었나요?" 프롬프트(응답 없이도 완료)와 빌드 로그 전환(source `task`, 할 일당 한 번, 빌드 로그 검증 그대로, 전환한 할 일은 삭제 불가), 사후 작성 모드(만들 때 선택, 이후 owner만 켜고 끔, 그 모드에서 만든 로그(source `retro`)·마일스톤·스냅샷은 `retrospective`로 고정되어 모드를 꺼도 남음), 모든 프로젝트·로그·마일스톤·스냅샷 DTO의 `retrospective`(공개 DTO T-11/T-12로 옮길 대상), 과제 화면의 할 일 섹션·완료 프롬프트·`사후 작성` 배지·기억·파일 기준 날짜 칸·되짚기 안내 |
 | T-08 역할 선언·팀원 확인·기여 리포트 | 완료 | 역할 선언(문장 300자, 멤버당 10개)과 근거(같은 프로젝트의 로그 revision·파일 버전, 최대 20개, 격리·실패 파일 422, 검사 중은 허용), 수정은 작성자만 새 revision(owner도 403, 낡은 `expectedRevision` 409)이고 새 revision은 `본인 설명 · 미확인`부터, 팀원 확인·이의(작성자 아닌 owner/editor/reviewer, 자기 확인 403, 이전 revision 409 `not_current`, 이의는 메모 필수, 이의가 있으면 `이의 있음`), viewer는 읽기만, 기간 장부(서울 월~일, 종류별 개수·할 일 완료·clean 파일·회의 참석·선언 상태, 이름순, 점수·순위 없음, 나간 멤버는 그 기간 기록이 있을 때만), 주간 요약 문장 함수(pilot-kit §4.1), 과제 화면의 기여 섹션(선언 폼·근거 선택·확인 초기화 안내·이력·기간 요약 표)과 인쇄용 동료평가 리포트 `/projects/[id]/report`([ADR 0008](../docs/adr/0008-contribution-report-format.md)) |
-| T-09 디스코드 봇·주간 체크인 | 다음 | [실행 계획 §4](../docs/planning/DELIVERY_PLAN.md) |
+| T-09 디스코드 봇·주간 체크인 | 완료(실제 디스코드 연동은 미검증) | 디스코드 계정 연결(웹에서 10분·일회용 코드 → `/peerchive link`, 해시 저장, 계정당 하나·해제), owner의 채널 연결(`/peerchive bind`, 한 채널 한 과제, 주간 요약은 채널별 선택), `/log 태그 내용`(진행·회고·회의는 본문, 막힘은 증상+선택 시간, 결정·검증은 모달, 해결은 웹 안내, 빌드 로그 검증 그대로)·📌(내 메시지는 바로 🔨진행, 남의 메시지는 작성자 승인 DM 48시간 — 승인 전 로그 없음, 결정·만료 때 저장한 내용 삭제), 디스코드 id 기반 clientId(UUID v5)로 재전송해도 로그 하나, 출처 `디스코드` 표시, 연결 안 된 사용자·비멤버는 안내만(저장 없음), 봇↔웹 HMAC 서명 내부 API(`/api/internal/discord/*`, 쿠키로는 호출 불가), 주간 체크인(60초 폼: 시간·난이도·한 줄·못 한 이유·통계 동의(기본 꺼짐), 주마다 upsert, 이번 주·지난주만, 팀 안 공개, 한 줄 → 🔨진행/🧱막힘 로그 1회), 대시보드 "이번 주 체크인", 체크인 알림(일 20시)·주간 요약(화 10시, `formatWeeklySummary`) 예약 게시(채널·종류·주마다 한 번), 익명 집계 함수(n≥5)([ADR 0009](../docs/adr/0009-discord-bot-and-checkins.md)) |
+| T-10 학교·과목·개념 태그·엠바고 | 다음 | [실행 계획 §4](../docs/planning/DELIVERY_PLAN.md) |
 
-화면: `/login`, `/onboarding`(프로필 설정 겸용), `/projects`(새 과제의 "지난 과제 되짚기" 선택 포함), `/projects/[id]`(개요·할 일·산출물·마일스톤·빌드 로그·기여·멤버), `/projects/[id]/report?from=&to=`(인쇄용 동료평가 리포트), `/invite/[token]`, `/u/[handle]`.
+화면: `/login`, `/onboarding`(프로필 설정 겸용, 디스코드 연결), `/projects`(새 과제의 "지난 과제 되짚기" 선택, "이번 주 체크인" 카드 포함), `/projects/[id]`(개요·주간 체크인·할 일·산출물·마일스톤·빌드 로그·기여·디스코드 연결·멤버), `/projects/[id]/report?from=&to=`(인쇄용 동료평가 리포트), `/invite/[token]`, `/u/[handle]`.
 
 빌드 로그 API: `POST/GET /api/v1/projects/:id/logs`(목록은 `tag=`·`author=`·`milestone=` 필터), `GET /api/v1/logs/:id`, `GET/POST /api/v1/logs/:id/revisions`(본문에 `evidenceVersionIds[]`, `milestoneId`). 읽을 수 없는 프로젝트·로그는 404, reviewer/viewer의 작성·수정은 403입니다.
 
@@ -39,7 +42,13 @@
 
 할 일 API: `GET /api/v1/projects/:id/tasks?status=`, `POST /api/v1/projects/:id/tasks`(201), `PUT /api/v1/projects/:id/tasks/order`(`{status, taskIds[]}` 그 상태 전체 순열, 아니면 422 `mismatch`/`duplicate`), `PATCH /api/v1/tasks/:id`(`expectedVersion`, 낡으면 409 `version_conflict`, 담당자가 active 멤버가 아니면 422 `not_member`), `POST /api/v1/tasks/:id/complete`(200 `{task, prompt}`, 이미 완료면 그대로 200), `POST /api/v1/tasks/:id/convert`(201 `{task, log}`, 태그 `stuck`/`decision`/`progress`, payload는 빌드 로그 규칙으로 422, 완료 전 409 `not_done`, 두 번째 409 `already_converted`), `DELETE /api/v1/tasks/:id`(204, 전환한 할 일은 409 `converted`). 한도 초과는 409 `limit_reached`. 읽을 수 없으면 404, reviewer/viewer의 쓰기는 403입니다. 사후 작성 모드는 `POST /api/v1/projects`의 `retroMode`, `PATCH /api/v1/projects/:id`의 `retroMode`(지금과 다른 값이면 owner만, 아니면 403)로 정합니다.
 
-기여 API: `GET/POST /api/v1/projects/:id/claims`(본문 `{text, evidence?[{kind:'log'|'artifact', id}]}`, 201, 멤버당 10개 초과 409 `limit_reached`, 근거 422 `{evidence: 'not_found'|'not_attachable'}`), `GET/POST /api/v1/claims/:id/revisions`(`{expectedRevision, text?, evidence?}`, 201, 작성자만·아니면 403, 낡으면 409 `stale_revision`, 바뀐 것 없음 422 `no_changes`; 생략한 근거는 이어받음), `PUT /api/v1/claim-revisions/:id/endorsement`(`{status: 'confirmed'|'disputed', note?}`, 200, 자기 선언 403 `self_endorsement`, 현재 revision이 아니면 409 `not_current` + `currentRevisionId`, 이의에 메모 없으면 422), `DELETE /api/v1/claim-revisions/:id/endorsement`(204), `GET /api/v1/projects/:id/contribution?from=&to=`(서울 날짜·양 끝 포함, 기본 이번 주, 기간 오류 422 `{to: 'before_from'|'too_long'}`). 읽을 수 없으면 404, viewer의 쓰기는 403입니다. 주간 요약 문장은 `server/modules/contribution/weekly-summary.ts`의 `formatWeeklySummary`(봇 연결은 T-09).
+기여 API: `GET/POST /api/v1/projects/:id/claims`(본문 `{text, evidence?[{kind:'log'|'artifact', id}]}`, 201, 멤버당 10개 초과 409 `limit_reached`, 근거 422 `{evidence: 'not_found'|'not_attachable'}`), `GET/POST /api/v1/claims/:id/revisions`(`{expectedRevision, text?, evidence?}`, 201, 작성자만·아니면 403, 낡으면 409 `stale_revision`, 바뀐 것 없음 422 `no_changes`; 생략한 근거는 이어받음), `PUT /api/v1/claim-revisions/:id/endorsement`(`{status: 'confirmed'|'disputed', note?}`, 200, 자기 선언 403 `self_endorsement`, 현재 revision이 아니면 409 `not_current` + `currentRevisionId`, 이의에 메모 없으면 422), `DELETE /api/v1/claim-revisions/:id/endorsement`(204), `GET /api/v1/projects/:id/contribution?from=&to=`(서울 날짜·양 끝 포함, 기본 이번 주, 기간 오류 422 `{to: 'before_from'|'too_long'}`). 읽을 수 없으면 404, viewer의 쓰기는 403입니다. 주간 요약 문장은 `server/modules/contribution/weekly-summary.ts`의 `formatWeeklySummary`(봇이 화요일에 게시, T-09).
+
+디스코드 API(웹, 로그인): `GET /api/v1/me/integrations`, `POST /api/v1/me/integrations/discord/link-code`(201 `{code, expiresAt}`, 10분·한 번만, 원문은 이 응답에서만), `DELETE /api/v1/me/integrations/discord`(204), `POST /api/v1/projects/:id/discord/bind-code`(owner만, 아니면 403·비멤버 404, 201), `GET /api/v1/projects/:id/discord/bindings`(멤버), `PATCH /api/v1/discord-bindings/:id`(`{summaryEnabled}`, owner만), `DELETE /api/v1/discord-bindings/:id`(204, owner만, 승인 대기 📌 요청 만료).
+
+내부 API(봇 전용, `POST`, HMAC 서명 필수): `/api/internal/discord/link`·`bind`·`logs`·`pins`·`pin-decisions`·`notices/claim`·`notices/ack`. 업무 결과는 200 `{status}`(`created`/`duplicate`/`not_bound`/`not_linked`/`not_writer`/`invalid`/`web_only`/`approval_requested` 등, 이유를 자세히 밝히지 않음), 서명·시각·nonce 실패는 401 `invalid_signature`, 형식 오류 422, 비밀 미설정 503 `internal_api_disabled`. 세션 쿠키만으로는 부를 수 없습니다([ADR 0009](../docs/adr/0009-discord-bot-and-checkins.md)).
+
+체크인 API: `GET /api/v1/projects/:id/checkins/me?week=YYYY-Www`(본인, 없으면 `checkin: null`), `PUT /api/v1/projects/:id/checkins/me`(`{week?, timeBucket, difficulty, note?, shareForStats?, skipReasons?, promote?: {tag: 'progress'|'stuck'}}`, 처음 201·다시 200, 이번 주·지난주 밖이면 422 `{week: 'out_of_range'}`, promote에 한 줄이 없으면 422 `{note: 'required'}`, 쓰기 권한 없이 promote면 403), `GET /api/v1/projects/:id/checkins?week=`(멤버, 이름순 팀 현황, 통계 동의·이유는 싣지 않음), `GET /api/v1/me/checkins`(대시보드). 읽을 수 없는 프로젝트는 404.
 
 ## 준비
 
@@ -56,6 +65,7 @@ docker compose -f ops/docker-compose.yml up -d
 pnpm db:migrate
 pnpm dev                                      # http://localhost:3000
 pnpm worker                                   # 다른 터미널에서: 파일 검사 worker(개발 모드)
+pnpm bot                                      # 선택: 디스코드 봇(토큰 필요, apps/bot/README.md)
 pnpm test
 ```
 
@@ -78,6 +88,9 @@ pnpm test
 | `PEERCHIVE_MALWARE_SCANNER` | `signature-only` | worker 검사기. `clamav` 또는 `signature-only`(개발 전용, production에서 worker가 시작되지 않음) |
 | `CLAMAV_HOST` / `CLAMAV_PORT` | `127.0.0.1` / `3310` | clamd 주소 |
 | `PEERCHIVE_SCAN_CONCURRENCY` | `2` | worker의 동시 검사 수(1–8) |
+| `PEERCHIVE_INTERNAL_SECRET` | 없음 | 웹 ↔ 봇 내부 API HMAC 공유 비밀(web·bot 공통). 비우면 웹의 `/api/internal`이 꺼짐(503). production에서 약한 값(32자 미만·자리표시 값)이면 web·bot이 시작되지 않음 |
+| `PEERCHIVE_API_BASE_URL` / `PEERCHIVE_SITE_URL` | `http://localhost:3000` | 봇이 부를 웹 서버 주소 / 안내 링크 주소(production에서 API 주소 필수) |
+| `DISCORD_BOT_TOKEN` / `DISCORD_APPLICATION_ID` / `DISCORD_GUILD_ID` | 없음 | 봇 토큰·애플리케이션 id·(개발용) 명령 등록 서버. [apps/bot/README.md](bot/README.md) |
 
 - 빌드한 서버(`node apps/web/.output/server/index.mjs`)는 기본적으로 production으로 동작합니다(Secure 쿠키, dev-console 거부). 로컬에서 빌드 결과를 점검할 때만 `NODE_ENV=development`를 명시하세요.
 
@@ -88,6 +101,7 @@ pnpm test
 | `pnpm typecheck` | 모든 워크스페이스 타입 검사(web은 `nuxt typecheck`) |
 | `pnpm build` | web 프로덕션 빌드(`apps/web/.output`) |
 | `pnpm worker` | worker 개발 실행(`NODE_ENV=development`, 루트 `.env` 읽음). 배포용은 `pnpm --filter worker start`(production 기본, 실제 검사기 필요). SIGINT/SIGTERM이면 진행 중인 작업을 기다린 뒤(최대 30초) 종료 |
+| `pnpm bot` | 디스코드 봇 개발 실행(`NODE_ENV=development`, 루트 `.env` 읽음). 처음엔 `pnpm --filter bot register-commands`로 슬래시 명령 등록. 배포용은 `pnpm --filter bot start` |
 | `pnpm db:generate` | `packages/db/src/schema.ts` 변경을 SQL migration으로 생성 |
 | `pnpm check:archive` | 원본 아카이브 보존 검증(`python3 scripts/check_archive.py`) |
 

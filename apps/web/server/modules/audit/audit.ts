@@ -36,13 +36,34 @@ export type AuditAction =
   | 'claim.revise'
   | 'endorsement.set'
   | 'endorsement.withdraw'
+  | 'integration.link'
+  | 'integration.unlink'
+  | 'discord.bind'
+  | 'discord.unbind'
+  | 'discord.binding_update'
+  | 'discord.pin_request'
+  | 'discord.pin_decision'
+  | 'checkin.submit'
 
 export async function recordAudit(
   db: DbExecutor,
   event: {
     actorId: string | null
     action: AuditAction
-    targetType: 'project' | 'invitation' | 'member' | 'user' | 'log' | 'artifact' | 'milestone' | 'task' | 'claim'
+    targetType:
+      | 'project'
+      | 'invitation'
+      | 'member'
+      | 'user'
+      | 'log'
+      | 'artifact'
+      | 'milestone'
+      | 'task'
+      | 'claim'
+      | 'integration'
+      | 'discord_binding'
+      | 'discord_pin_request'
+      | 'checkin'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

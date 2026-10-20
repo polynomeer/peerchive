@@ -12,6 +12,9 @@
  * T-07(0005 migration): 할 일(tasks, 원본 Card 계승)과 빌드 로그 전환 연결(tasks.log_entry_id),
  * 사후 작성 표시(log_entries·milestones·milestone_snapshots.retrospective, 만들 때의 projects.retro_mode로 고정).
  * T-08(0006 migration): 역할 선언(role_claims)·revision(claim_revisions)·근거(claim_evidence)·팀원 확인(endorsements).
+ * T-09(0007 migration): 외부 계정 연결(integrations)·일회용 연결 코드(discord_codes)·채널 연결(discord_channel_bindings)·
+ * 📌 승인 요청(discord_pin_requests)·봇 알림 outbox(discord_notices)·내부 API nonce(internal_request_nonces)·
+ * 주간 체크인(weekly_checkins). 결정은 ADR 0009.
  * 공개(Publication)·동의는 다음 slice에서 추가합니다.
  *
  * 원칙
@@ -75,6 +78,16 @@ export const scanStatus = pgEnum('scan_status', ['pending', 'scanning', 'clean',
 export const taskStatus = pgEnum('task_status', ['todo', 'doing', 'done'])
 /** 팀원 확인 상태(§7.3). 철회는 행을 지웁니다. 판정 규칙은 @peerchive/domain의 claimStatus입니다. */
 export const endorsementStatus = pgEnum('endorsement_status', ['confirmed', 'disputed'])
+/** 외부 계정 공급자(§6.1 Integration). 지금은 discord만 연결합니다. */
+export const integrationProvider = pgEnum('integration_provider', ['discord', 'github'])
+/** 디스코드 일회용 코드 종류: 계정 연결(link) 또는 채널 연결(bind). */
+export const discordCodeKind = pgEnum('discord_code_kind', ['link', 'bind'])
+/** 남의 메시지 📌 승인 요청 상태. 결정되거나 만료되면 저장했던 메시지 내용을 지웁니다. */
+export const pinRequestStatus = pgEnum('pin_request_status', ['pending', 'approved', 'rejected', 'expired'])
+/** 봇이 채널에 보낼 예약 알림 종류. */
+export const discordNoticeKind = pgEnum('discord_notice_kind', ['checkin_reminder', 'weekly_summary'])
+/** 주간 체크인 투입 시간(0 / ~2h / ~5h / ~10h / 10h+, PROOFU_EVOLUTION_PLAN §6.4). */
+export const checkinTimeBucket = pgEnum('checkin_time_bucket', ['none', 'lt2h', 'lt5h', 'lt10h', 'ten_plus'])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -789,6 +802,197 @@ export const outboxEvents = pgTable(
   (t) => [
     index('outbox_events_undispatched_idx').on(t.createdAt).where(sql`${t.dispatchedAt} is null`),
     check('outbox_events_payload_object_check', sql`jsonb_typeof(${t.payload}) = 'object'`),
+  ],
+)
+
+// ── 연동·주간 체크인 (§6.1 Integration, §6.3 WeeklyCheckin, §12.1, T-09, ADR 0009) ──────────
+
+/**
+ * 외부 계정 연결. 디스코드는 사용자 id(snowflake)만 저장하고 토큰은 받지 않습니다(봇 토큰 하나로 동작).
+ * 해제는 revoked_at을 채우며, 연결 중인(revoked_at null) 행은 (공급자, 외부 id)와 (사용자, 공급자)마다 하나입니다.
+ */
+export const integrations = pgTable(
+  'integrations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    provider: integrationProvider('provider').notNull(),
+    externalId: text('external_id').notNull(),
+    linkedAt: timestamp('linked_at', { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('integrations_provider_external_active_key')
+      .on(t.provider, t.externalId)
+      .where(sql`${t.revokedAt} is null`),
+    uniqueIndex('integrations_user_provider_active_key')
+      .on(t.userId, t.provider)
+      .where(sql`${t.revokedAt} is null`),
+  ],
+)
+
+/**
+ * 디스코드 일회용 코드(10분, 한 번만). 원문은 만든 응답에서 한 번만 보여 주고 SHA-256 해시만 저장합니다.
+ * bind 코드는 프로젝트를 가리키고, 만든 사람(owner)의 디스코드 계정으로만 쓸 수 있습니다.
+ */
+export const discordCodes = pgTable(
+  'discord_codes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    kind: discordCodeKind('kind').notNull(),
+    codeHash: text('code_hash').notNull().unique(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    projectId: uuid('project_id').references(() => projects.id),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('discord_codes_user_id_idx').on(t.userId),
+    check('discord_codes_project_check', sql`(${t.kind} = 'bind') = (${t.projectId} is not null)`),
+  ],
+)
+
+/**
+ * 디스코드 채널 ↔ 프로젝트 연결. id만 저장하고 채널 이름(label)은 선택입니다.
+ * 한 채널은 한 프로젝트에만 연결합니다(해제 전까지). 주간 요약 게시는 owner가 켤 때만(summary_enabled).
+ */
+export const discordChannelBindings = pgTable(
+  'discord_channel_bindings',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    guildId: text('guild_id').notNull(),
+    channelId: text('channel_id').notNull(),
+    label: text('label'),
+    summaryEnabled: boolean('summary_enabled').notNull().default(false),
+    boundBy: uuid('bound_by')
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+    unboundAt: timestamp('unbound_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('discord_channel_bindings_channel_active_key')
+      .on(t.channelId)
+      .where(sql`${t.unboundAt} is null`),
+    index('discord_channel_bindings_project_id_idx').on(t.projectId),
+    check('discord_channel_bindings_label_check', sql`${t.label} is null or char_length(${t.label}) <= 100`),
+  ],
+)
+
+/**
+ * 남의 메시지에 단 📌의 승인 요청(48시간). 작성자가 승인해야 작성자 이름의 로그가 생깁니다.
+ * content는 승인 전까지만 두고, 승인·거절·만료되면 null로 지웁니다(ADR 0009). 메시지마다 요청은 하나입니다.
+ */
+export const discordPinRequests = pgTable(
+  'discord_pin_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    bindingId: uuid('binding_id')
+      .notNull()
+      .references(() => discordChannelBindings.id),
+    messageId: text('message_id').notNull().unique(),
+    channelId: text('channel_id').notNull(),
+    authorExternalId: text('author_external_id').notNull(),
+    authorUserId: uuid('author_user_id')
+      .notNull()
+      .references(() => users.id),
+    requesterUserId: uuid('requester_user_id')
+      .notNull()
+      .references(() => users.id),
+    content: text('content'),
+    status: pinRequestStatus('status').notNull().default('pending'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    logEntryId: uuid('log_entry_id').references(() => logEntries.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('discord_pin_requests_pending_idx').on(t.expiresAt).where(sql`${t.status} = 'pending'`),
+    // 결정·만료된 요청에는 메시지 내용이 남지 않습니다.
+    check('discord_pin_requests_content_check', sql`${t.status} = 'pending' or ${t.content} is null`),
+  ],
+)
+
+/**
+ * 봇이 채널에 보낼 예약 알림(outbox). (연결, 종류, 주)마다 하나만 만들어 같은 주에 두 번 보내지 않습니다.
+ * 봇이 가져가면 claimed_at(5분 임대)을 채우고, 보낸 뒤 delivered_at을 채웁니다.
+ */
+export const discordNotices = pgTable(
+  'discord_notices',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    bindingId: uuid('binding_id')
+      .notNull()
+      .references(() => discordChannelBindings.id),
+    kind: discordNoticeKind('kind').notNull(),
+    isoWeek: text('iso_week').notNull(),
+    content: text('content').notNull(),
+    createdAt: createdAt(),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
+    attempts: integer('attempts').notNull().default(0),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    /** 보내지 못하고 포기했으면 짧은 이유(예: unreachable). */
+    failedReason: text('failed_reason'),
+    discordMessageId: text('discord_message_id'),
+  },
+  (t) => [
+    unique('discord_notices_binding_kind_week_key').on(t.bindingId, t.kind, t.isoWeek),
+    index('discord_notices_undelivered_idx').on(t.createdAt).where(sql`${t.deliveredAt} is null`),
+    check('discord_notices_iso_week_check', sql`${t.isoWeek} ~ '^[0-9]{4}-W[0-9]{2}$'`),
+  ],
+)
+
+/** 내부 API 요청 nonce(10분 기억, replay 방지). 오래된 행은 요청을 받을 때 지웁니다. */
+export const internalRequestNonces = pgTable(
+  'internal_request_nonces',
+  {
+    nonce: text('nonce').primaryKey(),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('internal_request_nonces_received_at_idx').on(t.receivedAt)],
+)
+
+/**
+ * 주간 체크인(60초 폼). (프로젝트, 사용자, 주)마다 하나이며 다시 내면 덮어씁니다(upsert).
+ * 팀 안에서만 보이고(§6.4), 통계 공유(share_for_stats)는 따로 동의하며 기본은 꺼짐입니다(§11.2).
+ * iso_week는 서울 날짜 기준 `YYYY-Www`입니다.
+ */
+export const weeklyCheckins = pgTable(
+  'weekly_checkins',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    isoWeek: text('iso_week').notNull(),
+    timeBucket: checkinTimeBucket('time_bucket').notNull(),
+    difficulty: integer('difficulty').notNull(),
+    note: text('note'),
+    /** "이 한 줄을 빌드 로그로 옮기기"로 만든 로그(한 번만). */
+    promotedLogEntryId: uuid('promoted_log_entry_id').references(() => logEntries.id),
+    shareForStats: boolean('share_for_stats').notNull().default(false),
+    /** 기록을 못 했거나 덜 한 이유(pilot-kit §3 6번, 복수). */
+    skipReasons: text('skip_reasons').array().notNull().default(sql`'{}'::text[]`),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    unique('weekly_checkins_project_user_week_key').on(t.projectId, t.userId, t.isoWeek),
+    index('weekly_checkins_project_week_idx').on(t.projectId, t.isoWeek),
+    check('weekly_checkins_iso_week_check', sql`${t.isoWeek} ~ '^[0-9]{4}-W[0-9]{2}$'`),
+    check('weekly_checkins_difficulty_check', sql`${t.difficulty} between 1 and 5`),
+    check('weekly_checkins_note_check', sql`${t.note} is null or char_length(${t.note}) between 1 and 200`),
   ],
 )
 

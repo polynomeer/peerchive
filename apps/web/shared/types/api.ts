@@ -516,6 +516,87 @@ export interface ContributionDto {
   disclaimer: typeof CONTRIBUTION_DISCLAIMER
 }
 
+// ── 디스코드 연동·주간 체크인 (T-09, ADR 0009) ───────────────────────────
+
+/** 본인 연동 상태. 디스코드 사용자 id는 끝 4자리만 보여 줍니다. */
+export interface IntegrationsDto {
+  discord: { linked: boolean; linkedAt: string | null; externalIdHint: string | null }
+}
+
+/** 일회용 코드(10분, 한 번만). 원문은 이 응답에서 한 번만 받습니다. */
+export interface DiscordCodeDto {
+  code: string
+  expiresAt: string
+}
+
+/** 채널 연결. 멤버에게만 줍니다(디스코드 id만, 채널 이름은 선택 label). */
+export interface DiscordBindingDto {
+  id: string
+  guildId: string
+  channelId: string
+  label: string | null
+  summaryEnabled: boolean
+  createdAt: string
+}
+
+export type CheckinTimeBucket = 'none' | 'lt2h' | 'lt5h' | 'lt10h' | 'ten_plus'
+export type CheckinSkipReason = 'busy' | 'bothersome' | 'nothing_to_log' | 'unsure_where' | 'other'
+
+/** 본인 체크인. 통계 공유·기록 못 한 이유는 본인에게만 보입니다. */
+export interface CheckinDto {
+  id: string
+  projectId: string
+  week: string
+  timeBucket: CheckinTimeBucket
+  difficulty: number
+  note: string | null
+  shareForStats: boolean
+  skipReasons: CheckinSkipReason[]
+  promotedLogId: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+/** GET /projects/:id/checkins/me */
+export interface MyCheckinDto {
+  week: string
+  from: string
+  to: string
+  checkin: CheckinDto | null
+}
+
+/** 팀원 체크인 한 줄(같은 프로젝트 active 멤버에게만). 통계 공유·이유는 싣지 않습니다. */
+export interface TeamCheckinEntryDto {
+  member: LogAuthorDto
+  submitted: boolean
+  timeBucket: CheckinTimeBucket | null
+  difficulty: number | null
+  note: string | null
+  promotedLogId: string | null
+  updatedAt: string | null
+}
+
+/** GET /projects/:id/checkins?week= */
+export interface CheckinWeekDto {
+  week: string
+  from: string
+  to: string
+  /** 이름순. */
+  entries: TeamCheckinEntryDto[]
+}
+
+/** PUT /projects/:id/checkins/me 응답. promote를 요청했으면 만든(또는 이미 있던) 로그. */
+export interface CheckinSaveDto {
+  checkin: CheckinDto
+  log: LogDto | null
+}
+
+/** GET /me/checkins — 대시보드 "이번 주 체크인". */
+export interface MyCheckinStatusDto {
+  week: string
+  projects: Array<{ projectId: string; title: string; submitted: boolean }>
+}
+
 /** API 오류 응답의 data 부분. */
 export interface ApiErrorData {
   code: string
