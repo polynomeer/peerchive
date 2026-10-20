@@ -26,8 +26,8 @@ export type PublicationCheckRule = (typeof PUBLICATION_CHECK_RULES)[number]
 export type CheckItemKind = 'text' | 'file_name' | 'url'
 
 export interface CheckLocation {
-  /** 어디에 있는 내용인지. senior_note는 선배 노트(T-13)입니다. */
-  kind: 'title' | 'summary' | 'log' | 'claim' | 'milestone' | 'artifact' | 'senior_note'
+  /** 어디에 있는 내용인지. senior_note는 선배 노트(T-13), case_study·portfolio는 케이스 스터디·포트폴리오 판(T-14)입니다. */
+  kind: 'title' | 'summary' | 'log' | 'claim' | 'milestone' | 'artifact' | 'senior_note' | 'case_study' | 'portfolio'
   /** 스냅샷 안의 키(로그 `l3`, 선언 `c1`, 파일은 버전 id 등). 제목·요약은 없음. */
   key?: string
   /** 필드 경로(예: `body`, `payload.errorText`, `links.0.url`, `displayName`). */

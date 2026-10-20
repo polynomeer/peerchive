@@ -1,6 +1,6 @@
 /**
  * Peerchive worker 진입점(ADR 0004). outbox 전달, 파일 검사 작업, 공개 게시·철회 이벤트(파생 데이터 정리, ADR 0012),
- * 과목 허브 파생 데이터(검색 색인·유용성 신호·선배 노트 색인, ADR 0013)를 처리합니다.
+ * 과목 허브 파생 데이터(검색 색인·유용성 신호·선배 노트 색인, ADR 0013), 케이스 스터디 이용 불가 표시(ADR 0014)를 처리합니다.
  *
  * 실행: `pnpm worker`(저장소 루트, 개발용) 또는 `pnpm --filter worker start`.
  * 종료 신호(SIGINT/SIGTERM)를 받으면 새 작업을 받지 않고 진행 중인 작업을 기다린 뒤(최대 30초) 연결을 닫습니다.
@@ -12,6 +12,7 @@ import { createDb, pingDb } from '@peerchive/db'
 import { loadWorkerConfig } from './config'
 import { registerCourseHubDerived, registerSeniorNoteQueues } from './course-hub-derived'
 import { dispatchOutbox } from './dispatcher'
+import { registerPortfolioDerived } from './portfolio-derived'
 import { registerPublicationQueues } from './publication-events'
 import { registerScanQueue } from './scan-worker'
 
@@ -30,6 +31,8 @@ await boss.start()
 await registerScanQueue(boss, db, { storage: config.storage, scanner: config.scanner }, config.scanConcurrency)
 // 과목 허브 파생 데이터(검색 색인·유용성 신호, T-13)를 게시·철회 이벤트에 등록한 뒤 큐를 엽니다.
 registerCourseHubDerived()
+// 철회·대체된 release에 고정된 케이스 스터디를 이용 불가로 표시(T-14).
+registerPortfolioDerived()
 await registerPublicationQueues(boss, db)
 await registerSeniorNoteQueues(boss, db)
 

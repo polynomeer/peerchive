@@ -110,6 +110,30 @@ export function createPublicJsonHandler<T>(
   })
 }
 
+/**
+ * 익명 공개 텍스트 handler(T-14 README 카드 등): JSON handler와 같은 공개 헤더·운영 스위치·404 정규화 + 지정한 Content-Type.
+ */
+export function createPublicTextHandler(
+  deps: PublicHandlerDeps,
+  contentType: string,
+  run: (db: DbExecutor, event: H3Event, now: Date) => Promise<string>,
+): EventHandler {
+  const getEnv = deps.getEnv ?? (() => process.env)
+  return defineEventHandler(async (event) => {
+    const env = getEnv()
+    applyBase(event, env)
+    if (publicReadsDisabled(env)) throw disabledError()
+    let body: string
+    try {
+      body = await run(deps.getDb(), event, deps.now?.() ?? new Date())
+    } catch (error) {
+      throw mapError(error)
+    }
+    setResponseHeader(event, 'content-type', contentType)
+    return body
+  })
+}
+
 /** GET /api/v1/public/publications/:slug */
 export function createPublicPublicationHandler(deps: PublicHandlerDeps): EventHandler {
   return createPublicJsonHandler(deps, (db, event, now) => getPublicPublication(db, getRouterParam(event, 'slug'), now))

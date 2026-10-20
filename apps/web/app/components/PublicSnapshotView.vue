@@ -5,6 +5,7 @@
  * 파일 내용은 게시 후 release 확인 경로(T-12)로만 열 수 있으므로 여기서는 이름·크기·사용 조건만 보여 줍니다.
  * `fileUrl`을 주면(T-12) 파일 이름을 그 주소로 연결합니다.
  * 로그마다 `<idPrefix>-<로그 키>` id를 붙여 과목 허브의 막힘 카드가 `/p/<slug>#public-<키>`로 가리킬 수 있게 합니다(T-13).
+ * 케이스 스터디의 출처 칩(T-14)을 위해 역할 선언·마일스톤은 `<idPrefix>-<키>`, 파일은 `<idPrefix>-f-<버전 id>`, 제목은 `<idPrefix>-title` id를 가집니다.
  */
 import type { PublicLog, PublicSnapshot } from '~~/shared/types/api'
 
@@ -79,7 +80,7 @@ const CLAIM_STATUS: Record<'unconfirmed' | 'confirmed' | 'disputed', string> = {
     <section v-if="snapshot.milestones.length" :aria-labelledby="`${base}-milestones`">
       <h3 :id="`${base}-milestones`">마일스톤</h3>
       <ol class="snapshot-list">
-        <li v-for="m in snapshot.milestones" :key="m.key">
+        <li v-for="m in snapshot.milestones" :id="`${base}-${m.key}`" :key="m.key" class="snapshot-anchor" tabindex="-1">
           <strong>{{ m.position }}. {{ m.title }}</strong>
           <span v-if="m.retrospective" class="badge retro">사후 작성</span>
           <span class="small muted">
@@ -126,7 +127,7 @@ const CLAIM_STATUS: Record<'unconfirmed' | 'confirmed' | 'disputed', string> = {
     <section v-if="snapshot.claims.length" :aria-labelledby="`${base}-claims`">
       <h3 :id="`${base}-claims`">역할 선언</h3>
       <ul class="snapshot-list">
-        <li v-for="c in snapshot.claims" :key="c.key">
+        <li v-for="c in snapshot.claims" :id="`${base}-${c.key}`" :key="c.key" class="snapshot-anchor" tabindex="-1">
           <p>
             <strong>{{ memberLabel(c.member) }}</strong>: “{{ c.text }}”
           </p>
@@ -145,7 +146,7 @@ const CLAIM_STATUS: Record<'unconfirmed' | 'confirmed' | 'disputed', string> = {
     <section v-if="snapshot.artifacts.length" :aria-labelledby="`${base}-files`">
       <h3 :id="`${base}-files`">파일</h3>
       <ul class="snapshot-list">
-        <li v-for="a in snapshot.artifacts" :key="a.artifactVersionId">
+        <li v-for="a in snapshot.artifacts" :id="`${base}-f-${a.artifactVersionId}`" :key="a.artifactVersionId" class="snapshot-anchor" tabindex="-1">
           <a v-if="fileUrl && fileUrl(a.artifactVersionId)" :href="fileUrl(a.artifactVersionId)!" rel="noopener">{{ a.displayName }}</a>
           <span v-else>{{ a.displayName }}</span>
           <span class="small muted"> · {{ formatBytes(a.bytes) }} · {{ usageLabel(a.usage) }}</span>

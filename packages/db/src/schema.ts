@@ -26,6 +26,9 @@
  * T-13(0012 migration): 공개 release의 과목 연결(publication_candidates.course_id·term_label, 게시 때 정본 과목으로 기록),
  * 선배 노트(senior_notes), 유용성 신호(usefulness_signals), 플랜 포크(plan_forks), 검색 문서(search_documents, 파생 데이터).
  * 결정은 ADR 0013.
+ * T-14(0013 migration): 케이스 스터디(case_studies, 게시된 release 하나에 고정)·문장(case_sentences, 문장마다 스냅샷 인용),
+ * 포트폴리오 판(portfolio_editions, 만든 뒤 바꾸지 않음)·대표 사례(portfolio_items)·역량 근거(competency_evidence, 점수 없음).
+ * 결정은 ADR 0014.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -139,6 +142,10 @@ export const signalTargetKind = pgEnum('signal_target_kind', ['stuck_item', 'sen
 export const signalKind = pgEnum('signal_kind', ['me_too', 'helped'])
 /** 검색 문서 종류(파생 데이터): 공개 사례 / 막힘 카드 / 선배 노트. */
 export const searchDocKind = pgEnum('search_doc_kind', ['case', 'stuck', 'note'])
+/** 케이스 스터디 지원 직무(T-14). */
+export const caseJobTarget = pgEnum('case_job_target', ['backend', 'frontend', 'data', 'pm', 'design', 'general'])
+/** 케이스 스터디 상태(T-14): 초안 → 게시 → (원본 release 철회·대체 시) 이용 불가. 이용 불가는 되돌리지 않습니다. */
+export const caseStudyStatus = pgEnum('case_study_status', ['draft', 'published', 'unavailable'])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -1537,5 +1544,172 @@ export const searchDocuments = pgTable(
           and ((${t.kind} = 'case') = (${t.itemKey} is null)))
         or (${t.kind} = 'note' and ${t.seniorNoteId} is not null and ${t.noteVersion} is not null and ${t.publicationId} is null and ${t.releaseId} is null)`,
     ),
+  ],
+)
+
+// ── 포트폴리오 (§6.5 CaseStudy·CaseSentence·PortfolioEdition·PortfolioItem·CompetencyEvidence, §11, T-14, ADR 0014) ─────
+
+/**
+ * 케이스 스터디. 게시된 release 하나(release_id, 그 공개 버전 release_version)에 고정되며, 그 release 스냅샷에 팀원 키(member_key)로
+ * 들어 있는 사람만 만들 수 있습니다. 공개 읽기는 이 행의 상태만 믿지 않고 요청마다 그 release가 지금도 제공 가능한지
+ * (servableReleaseSql) 확인합니다. 철회·대체되면 worker 정리 handler가 unavailable로 표시합니다(늦어도 읽기에는 보이지 않음).
+ * - reveal_self: 스냅샷에서 익명이던 사람이 자기 이름(프로필)과 연결하겠다고 확인했는지. 다른 팀원은 스냅샷 그대로입니다.
+ * - title·문장은 스냅샷 글로 만든 초안 + 사용자가 고친 글입니다. 비공개 작업 테이블의 글을 넣지 않습니다.
+ */
+export const caseStudies = pgTable(
+  'case_studies',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    publicationId: uuid('publication_id')
+      .notNull()
+      .references(() => publications.id),
+    releaseId: uuid('release_id')
+      .notNull()
+      .references(() => publicationCandidates.id),
+    releaseVersion: integer('release_version').notNull(),
+    /** 스냅샷 안의 이 사람 가명 키(공개마다 안정됨). */
+    memberKey: text('member_key').notNull(),
+    selfAnonymous: boolean('self_anonymous').notNull(),
+    revealSelf: boolean('reveal_self').notNull().default(false),
+    jobTarget: caseJobTarget('job_target').notNull(),
+    /** 초안 생성 방식. MVP는 template만(AI 다듬기는 P1). */
+    generator: text('generator').notNull().default('template'),
+    title: text('title').notNull(),
+    status: caseStudyStatus('status').notNull().default('draft'),
+    version: integer('version').notNull().default(1),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+    unavailableAt: timestamp('unavailable_at', { withTimezone: true }),
+    /** withdrawn(원본 공개 철회) / replaced(새 공개 버전으로 대체). */
+    unavailableReason: text('unavailable_reason'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('case_studies_user_id_idx').on(t.userId),
+    index('case_studies_publication_id_idx').on(t.publicationId),
+    index('case_studies_release_id_idx').on(t.releaseId),
+    check('case_studies_generator_check', sql`${t.generator} in ('template')`),
+    check('case_studies_title_check', sql`char_length(${t.title}) between 1 and 80`),
+    check('case_studies_version_check', sql`${t.version} >= 1`),
+    check('case_studies_release_version_check', sql`${t.releaseVersion} >= 1`),
+    check('case_studies_reveal_check', sql`not ${t.selfAnonymous} or ${t.revealSelf}`),
+    check('case_studies_published_check', sql`${t.status} <> 'published' or ${t.publishedAt} is not null`),
+    check(
+      'case_studies_unavailable_check',
+      sql`(${t.status} = 'unavailable') = (${t.unavailableAt} is not null) and (${t.unavailableReason} is null or ${t.unavailableReason} in ('withdrawn', 'replaced'))`,
+    ),
+  ],
+)
+
+/**
+ * 케이스 스터디 문장. 구역(section)·구역 안 순서(position)·글·종류(evidence/reflection)·인용(citations: 고정한 release 스냅샷 안의
+ * {releaseVersion, kind, key} 목록). 인용 없는 문장은 초안에 둘 수 있지만 게시는 막히고, 한계·회고 구역의 reflection(본인 회고)만 예외입니다.
+ * 편집은 케이스의 문장 전체를 바꿉니다(케이스 version 증가).
+ */
+export const caseSentences = pgTable(
+  'case_sentences',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    caseStudyId: uuid('case_study_id')
+      .notNull()
+      .references(() => caseStudies.id),
+    section: text('section').notNull(),
+    position: integer('position').notNull(),
+    text: text('text').notNull(),
+    kind: text('kind').notNull().default('evidence'),
+    citations: jsonb('citations').$type<Array<Record<string, unknown>>>().notNull().default([]),
+  },
+  (t) => [
+    unique('case_sentences_position_key').on(t.caseStudyId, t.section, t.position),
+    check(
+      'case_sentences_section_check',
+      sql`${t.section} in ('problem_result', 'my_role', 'decisions', 'stuck_solved', 'validation', 'limits', 'sources')`,
+    ),
+    check('case_sentences_kind_check', sql`${t.kind} in ('evidence', 'reflection') and (${t.kind} = 'evidence' or ${t.section} = 'limits')`),
+    check('case_sentences_text_check', sql`char_length(${t.text}) between 1 and 500`),
+    check('case_sentences_position_check', sql`${t.position} >= 0`),
+    check('case_sentences_citations_array_check', sql`jsonb_typeof(${t.citations}) = 'array'`),
+  ],
+)
+
+/**
+ * 포트폴리오 판. 만들 때마다 새 version(사용자마다 1부터)이고 만든 뒤 바꾸지 않습니다. 사용자마다 지금 판(current)은 하나이며
+ * 공개 프로필은 지금 판만 보여 줍니다(이전 판은 남지만 공개하지 않음).
+ * - headline: 판의 한 줄 소개(없으면 프로필의 한 줄 소개). competencies: [{label, preset}] 행 순서. skills_declared: 자기 선언 스킬.
+ */
+export const portfolioEditions = pgTable(
+  'portfolio_editions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    version: integer('version').notNull(),
+    headline: text('headline'),
+    competencies: jsonb('competencies').$type<Array<Record<string, unknown>>>().notNull().default([]),
+    skillsDeclared: text('skills_declared').array().notNull().default(sql`'{}'::text[]`),
+    /** current: 공개 프로필에 쓰는 판 / superseded: 새 판으로 바뀜. */
+    status: text('status').notNull().default('current'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('portfolio_editions_user_version_key').on(t.userId, t.version),
+    uniqueIndex('portfolio_editions_current_key').on(t.userId).where(sql`${t.status} = 'current'`),
+    check('portfolio_editions_status_check', sql`${t.status} in ('current', 'superseded')`),
+    check('portfolio_editions_version_check', sql`${t.version} >= 1`),
+    check('portfolio_editions_headline_check', sql`${t.headline} is null or char_length(${t.headline}) between 1 and 120`),
+    check('portfolio_editions_competencies_array_check', sql`jsonb_typeof(${t.competencies}) = 'array'`),
+  ],
+)
+
+/** 판의 대표 케이스 스터디(최대 5개, 순서). 공개 읽기는 그 케이스가 지금 게시 중이고 원본 release가 제공 가능할 때만 내용을 보여 줍니다. */
+export const portfolioItems = pgTable(
+  'portfolio_items',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    editionId: uuid('edition_id')
+      .notNull()
+      .references(() => portfolioEditions.id),
+    caseStudyId: uuid('case_study_id')
+      .notNull()
+      .references(() => caseStudies.id),
+    position: integer('position').notNull(),
+  },
+  (t) => [
+    unique('portfolio_items_edition_case_key').on(t.editionId, t.caseStudyId),
+    unique('portfolio_items_edition_position_key').on(t.editionId, t.position),
+    index('portfolio_items_case_study_id_idx').on(t.caseStudyId),
+    check('portfolio_items_position_check', sql`${t.position} between 0 and 4`),
+  ],
+)
+
+/**
+ * 역량 × 근거: 판의 역량 행(competency_index) × 대표 케이스의 인용 하나(스냅샷 kind·key). 점수·수준 필드는 없습니다.
+ * 칸은 읽을 때 이 행들을 종류별로 세어 만듭니다(@peerchive/domain computeCompetencyMatrix).
+ */
+export const competencyEvidence = pgTable(
+  'competency_evidence',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    editionId: uuid('edition_id')
+      .notNull()
+      .references(() => portfolioEditions.id),
+    competencyIndex: integer('competency_index').notNull(),
+    caseStudyId: uuid('case_study_id')
+      .notNull()
+      .references(() => caseStudies.id),
+    releaseVersion: integer('release_version').notNull(),
+    evidenceKind: text('evidence_kind').notNull(),
+    evidenceKey: text('evidence_key').notNull(),
+  },
+  (t) => [
+    unique('competency_evidence_ref_key').on(t.editionId, t.competencyIndex, t.caseStudyId, t.evidenceKind, t.evidenceKey),
+    index('competency_evidence_case_study_id_idx').on(t.caseStudyId),
+    check('competency_evidence_index_check', sql`${t.competencyIndex} between 0 and 11`),
+    check('competency_evidence_kind_check', sql`${t.evidenceKind} in ('log', 'claim', 'milestone', 'artifact')`),
+    check('competency_evidence_key_check', sql`char_length(${t.evidenceKey}) between 1 and 64`),
   ],
 )

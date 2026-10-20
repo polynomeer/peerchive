@@ -4,7 +4,7 @@
  * - `publication.withdrawn`: 등록된 파생 데이터 정리 handler(T-13 검색 색인·유용성 신호, T-14 포트폴리오·케이스 …)를 차례로 실행하고
  *   `publication.derived_cleanup` 감사 이벤트를 (공개, access_epoch)마다 한 번 남깁니다.
  * - `publication.published`: 등록된 handler의 onPublished(T-13 검색 색인, 대체된 release의 신호 정리)를 실행합니다.
- *   T-13 handler는 course-hub-derived.ts에 있고 main.ts가 registerCourseHubDerived()로 등록합니다.
+ *   T-13 handler는 course-hub-derived.ts, T-14 케이스 스터디 handler는 portfolio-derived.ts에 있고 main.ts가 등록합니다.
  * - 공개 읽기는 이 worker에 기대지 않습니다. 웹의 공개 조회는 요청마다 공개 상태를 DB에서 확인하므로, 이 작업이 늦거나 실패해도
  *   철회된 공개는 이미 보이지 않습니다. 정리 handler는 "보이지 않게"가 아니라 "남은 사본 지우기"를 맡습니다.
  * - handler는 idempotent해야 합니다(재시도·중복 전달). payload의 accessEpoch보다 오래된 파생 행만 지우는 식으로 씁니다.

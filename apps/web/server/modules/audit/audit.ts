@@ -69,6 +69,11 @@ export type AuditAction =
   | 'senior_note.publish'
   | 'senior_note.withdraw'
   | 'plan.fork'
+  | 'case_study.create'
+  | 'case_study.update'
+  | 'case_study.publish'
+  | 'case_study.unpublish'
+  | 'portfolio_edition.create'
 
 export async function recordAudit(
   db: DbExecutor,
@@ -99,6 +104,8 @@ export async function recordAudit(
       | 'publication_candidate'
       | 'consent'
       | 'senior_note'
+      | 'case_study'
+      | 'portfolio_edition'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

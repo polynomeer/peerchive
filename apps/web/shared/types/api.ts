@@ -810,7 +810,11 @@ export type PublicationCheckRule =
 
 export interface PublicationCheckDto {
   rule: PublicationCheckRule
-  location: { kind: 'title' | 'summary' | 'log' | 'claim' | 'milestone' | 'artifact' | 'senior_note'; key?: string; field: string }
+  location: {
+    kind: 'title' | 'summary' | 'log' | 'claim' | 'milestone' | 'artifact' | 'senior_note' | 'case_study' | 'portfolio'
+    key?: string
+    field: string
+  }
   /** 가린 표본. */
   sample: string
   /** 고칠 곳(과제 화면 링크). 제목·요약은 null(이 화면에서 고침). */
@@ -1166,4 +1170,199 @@ export interface PublicSearchDto {
   type: SearchKind | null
   courseId: string | null
   results: SearchResultDto[]
+}
+
+// ── 케이스 스터디·포트폴리오 판·공개 프로필 (T-14, ADR 0014) ─────────────────
+// 공개 DTO는 (a) 프로필의 공개 필드, (b) 지금 제공 가능한 release 스냅샷, (c) 사용자가 케이스·판에 쓴 글에서만 만듭니다.
+// 내부 id(사용자·케이스·공개·release)·이메일은 공개 DTO에 싣지 않습니다.
+
+export type CaseJobTarget = 'backend' | 'frontend' | 'data' | 'pm' | 'design' | 'general'
+export type CaseSectionKey = 'problem_result' | 'my_role' | 'decisions' | 'stuck_solved' | 'validation' | 'limits' | 'sources'
+export type CaseStudyStatus = 'draft' | 'published' | 'unavailable'
+export type CitationKind = 'summary' | 'log' | 'claim' | 'milestone' | 'artifact'
+export type CaseSentenceKind = 'evidence' | 'reflection'
+/** 볼 수 없는 이유: 원본 공개 철회 / 새 공개 버전으로 대체 / 그 밖(예: 게시 뒤 엠바고). */
+export type CaseUnavailableReason = 'withdrawn' | 'replaced' | 'blocked'
+
+export interface CaseCitationRef {
+  releaseVersion: number
+  kind: CitationKind
+  key: string
+}
+
+/** 화면용 인용(스냅샷에서 만든 짧은 표시 + 공개 사례 페이지 안의 위치). */
+export interface CaseCitationDto extends CaseCitationRef {
+  /** 스냅샷이 지금 제공 가능할 때만 채움. */
+  label: string | null
+  path: string | null
+}
+
+export interface CaseSentenceDto {
+  text: string
+  kind: CaseSentenceKind
+  citations: CaseCitationDto[]
+}
+
+export interface CaseSectionDto {
+  key: CaseSectionKey
+  label: string
+  sentences: CaseSentenceDto[]
+}
+
+export interface CaseStudySourceInfo {
+  slug: string
+  path: string
+  releaseVersion: number
+  publicTitle: string
+  termLabel: string | null
+  /** 스냅샷에서 이 사람의 표시(이름 또는 "팀원 A"). */
+  selfLabel: string
+  selfAnonymous: boolean
+  revealSelf: boolean
+}
+
+/** 작성자에게만 주는 케이스 스터디(초안 포함). */
+export interface CaseStudyDto {
+  id: string
+  title: string
+  jobTarget: CaseJobTarget
+  /** 읽는 지금 기준 상태(원본 release를 더 이상 제공하지 않으면 unavailable). */
+  status: CaseStudyStatus
+  unavailableReason: CaseUnavailableReason | null
+  version: number
+  generator: 'template'
+  source: CaseStudySourceInfo
+  sections: CaseSectionDto[]
+  /** 게시를 막는 출처 없는 문장(구역 키·구역 안 순서). */
+  uncited: Array<{ section: CaseSectionKey; index: number }>
+  /** 공개 전 점검 경고(가린 표본). 게시하려면 확인해야 합니다. */
+  warnings: PublicationCheckDto[]
+  /** 고정한 release의 공개 스냅샷(인용 고르기용). 볼 수 없게 되면 null. */
+  snapshot: PublicSnapshot | null
+  /** 볼 수 없게 되었을 때, 같은 공개의 지금 버전으로 다시 만들 수 있으면 그 slug. */
+  recreateSlug: string | null
+  publishedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CaseStudySummaryDto {
+  id: string
+  title: string
+  jobTarget: CaseJobTarget
+  status: CaseStudyStatus
+  unavailableReason: CaseUnavailableReason | null
+  version: number
+  source: { slug: string; releaseVersion: number; publicTitle: string }
+  uncitedCount: number
+  recreateSlug: string | null
+  publishedAt: string | null
+  updatedAt: string
+}
+
+/** GET /me/case-study-sources 한 줄: 내가 팀원 키로 들어 있는 지금 게시 중인 release. */
+export interface CaseStudySourceDto {
+  slug: string
+  path: string
+  title: string
+  releaseVersion: number
+  publishedAt: string
+  termLabel: string | null
+  selfLabel: string
+  selfAnonymous: boolean
+  caseStudies: Array<{ id: string; jobTarget: CaseJobTarget; status: CaseStudyStatus }>
+}
+
+export interface CompetencyEvidenceInput {
+  caseStudyId: string
+  citations: Array<{ kind: Exclude<CitationKind, 'summary'>; key: string }>
+}
+
+/** 작성자에게만 주는 포트폴리오 판. */
+export interface PortfolioEditionDto {
+  id: string
+  version: number
+  current: boolean
+  headline: string | null
+  createdAt: string
+  featured: Array<{ caseStudyId: string; title: string; position: number }>
+  competencies: Array<{ label: string; preset: string | null; evidence: CompetencyEvidenceInput[] }>
+  skillsDeclared: string[]
+  warnings: PublicationCheckDto[]
+}
+
+export interface PublicCitationDto {
+  label: string
+  path: string
+}
+
+export interface PublicCaseSentenceDto {
+  text: string
+  /** 한계·회고 구역의 출처 없는 본인 회고("본인 회고"로 표시). */
+  reflection: boolean
+  citations: PublicCitationDto[]
+}
+
+/** 공개 프로필의 대표 케이스(포트폴리오 요약 보기). 볼 수 없으면 글 없이 안내만. */
+export type PublicCaseStudyDto =
+  | {
+      anchor: string
+      available: true
+      title: string
+      jobTarget: CaseJobTarget
+      jobTargetLabel: string
+      path: string
+      releaseVersion: number
+      termLabel: string | null
+      selfLabel: string
+      sections: Array<{ key: CaseSectionKey; label: string; sentences: PublicCaseSentenceDto[] }>
+    }
+  | { anchor: string; available: false; message: string }
+
+export interface PublicMatrixCellDto {
+  column: string
+  available: boolean
+  /** 종류별 개수만(점수·수준 없음). */
+  counts: Array<{ category: string; label: string; count: number }>
+  text: string
+  evidence: PublicCitationDto[]
+}
+
+export interface PublicCompetencyMatrixDto {
+  columns: Array<{ ref: string; title: string; available: boolean }>
+  rows: Array<{ label: string; evidenceBacked: boolean; cells: PublicMatrixCellDto[] }>
+}
+
+export interface PublicTimelineItemDto {
+  termLabel: string | null
+  /** 정렬용 연도(학기 정보가 없으면 게시 연도). */
+  year: number
+  title: string
+  path: string
+}
+
+/** 공개 포트폴리오 보기(공개 프로필·판 미리보기 공통). */
+export interface PortfolioViewDto {
+  headline: string | null
+  featured: PublicCaseStudyDto[]
+  matrix: PublicCompetencyMatrixDto
+  evidenceBackedCompetencies: string[]
+  skillsDeclared: string[]
+}
+
+/** GET /public/profiles/:handle — 이메일·내부 id 없음. */
+export interface PublicPortfolioProfileDto extends PortfolioViewDto {
+  handle: string
+  displayName: string
+  jobTargets: string[]
+  schoolLabel: string | null
+  gradTerm: string | null
+  contactPolicy: ContactPolicy
+  /** 연락 정책 안내 문구(연락 기능은 P2, 이메일은 싣지 않음). */
+  contactText: string
+  openToWork: boolean
+  edition: { version: number; createdAt: string } | null
+  /** 후배 기여: 개수만, 순위 없음. */
+  juniorContribution: { planForks: number; seniorNotes: number }
+  timeline: PublicTimelineItemDto[]
 }
