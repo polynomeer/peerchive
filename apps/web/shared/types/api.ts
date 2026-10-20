@@ -810,7 +810,7 @@ export type PublicationCheckRule =
 
 export interface PublicationCheckDto {
   rule: PublicationCheckRule
-  location: { kind: 'title' | 'summary' | 'log' | 'claim' | 'milestone' | 'artifact'; key?: string; field: string }
+  location: { kind: 'title' | 'summary' | 'log' | 'claim' | 'milestone' | 'artifact' | 'senior_note'; key?: string; field: string }
   /** 가린 표본. */
   sample: string
   /** 고칠 곳(과제 화면 링크). 제목·요약은 null(이 화면에서 고침). */
@@ -1003,6 +1003,10 @@ export interface PublicPublicationDto {
   publishedAt: string
   firstPublishedAt: string
   snapshot: PublicSnapshot
+  /** 이 release가 연결된 과목 허브(정본 과목 id, T-13). 없으면 null. */
+  courseId: string | null
+  /** 이 공개의 계획을 포크한 서로 다른 사용자 수(T-13). */
+  forkCount: number
 }
 
 /** GET /me/consent-requests 한 줄. */
@@ -1017,4 +1021,149 @@ export interface ConsentRequestDto {
   requestedAt: string
   requestedBy: string
   previewUrl: string
+}
+
+// ── 과목 허브·선배 노트·플랜 포크·유용성 신호·검색 (T-13, ADR 0013) ──────────
+// 공개 DTO는 게시된 release 스냅샷과 게시된 선배 노트에서만 만듭니다. 교수 실명·평가 필드는 없습니다.
+
+export type SeniorNoteDisplayMode = 'name' | 'display' | 'anonymous'
+export type SeniorNoteStatus = 'draft' | 'published' | 'withdrawn' | 'hidden'
+export type SeniorNoteTimeBucket = 'lt10h' | 'lt20h' | 'lt40h' | 'forty_plus'
+export type SeniorNoteQuestion = 'firstWeek' | 'timeSink' | 'differently' | 'wishKnew'
+export type SeniorNoteAnswers = Partial<Record<SeniorNoteQuestion, string>>
+export type SignalKind = 'me_too' | 'helped'
+export type SearchKind = 'case' | 'stuck' | 'note'
+
+/** 항목별 유용성 신호 수(작성자별 합계는 없음). */
+export interface SignalCountsDto {
+  meToo: number
+  helped: number
+}
+
+export interface CourseHubCaseDto {
+  slug: string
+  path: string
+  title: string
+  termLabel: string | null
+  level: PublicationLevel
+  kind: 'individual' | 'team'
+  /** 팀 과제면 스냅샷에 실린 참여자 수(익명 포함), 개인 과제면 null. */
+  teamSize: number | null
+  milestoneCount: number
+  stuckCount: number
+  retrospective: boolean
+  forkCount: number
+  publishedAt: string
+}
+
+export interface CourseHubStuckDto {
+  slug: string
+  caseTitle: string
+  key: string
+  symptom: string
+  keywords: string[]
+  timeBucket: string | null
+  resolved: boolean
+  recordedAt: string
+  /** 공개 사례 페이지의 그 막힘 위치(`/p/<slug>#public-<key>`). */
+  path: string
+  signals: SignalCountsDto
+}
+
+/** 공개 선배 노트. 작성자 id는 싣지 않습니다(익명이면 "익명 선배"). */
+export interface PublicSeniorNoteDto {
+  id: string
+  author: string
+  anonymous: boolean
+  termLabel: string | null
+  totalTimeBucket: SeniorNoteTimeBucket | null
+  answers: SeniorNoteAnswers
+  publishedAt: string
+  signals: SignalCountsDto
+}
+
+export interface CourseHubWorkloadDto {
+  /** 통계 공유에 동의한 체크인 분포. 동의한 사람이 minGroup명 미만이면 null. */
+  stats: { contributors: number; timeBuckets: Record<CheckinTimeBucket, number>; difficulty: Record<'1' | '2' | '3' | '4' | '5', number> } | null
+  minGroup: number
+  /** stats가 null일 때 "아직 데이터가 충분하지 않음". */
+  message: string | null
+}
+
+export interface CourseHubRelatedDto {
+  id: string
+  title: string
+  code: string | null
+  schoolName: string
+  sharedTags: ConceptTagDto[]
+}
+
+/** GET /public/courses/:id — 정본 과목의 허브. 병합된 id로 부르면 정본을 돌려줍니다(course.id가 다름). */
+export interface PublicCourseHubDto {
+  course: { id: string; title: string; code: string | null; school: { name: string }; authoredBy: 'student' }
+  conceptTags: ConceptTagDto[]
+  cases: CourseHubCaseDto[]
+  stuckItems: CourseHubStuckDto[]
+  seniorNotes: PublicSeniorNoteDto[]
+  workload: CourseHubWorkloadDto
+  otherSchools: CourseHubRelatedDto[]
+}
+
+/** 작성자에게만 주는 선배 노트(초안 포함). */
+export interface SeniorNoteDto {
+  id: string
+  course: { id: string; title: string; schoolName: string }
+  displayMode: SeniorNoteDisplayMode
+  /** display 모드의 표시명(name 모드는 계정 이름, anonymous는 null). */
+  displayName: string | null
+  /** 공개 화면에 보일 이름. */
+  publicLabel: string
+  termLabel: string | null
+  totalTimeBucket: SeniorNoteTimeBucket | null
+  answers: SeniorNoteAnswers
+  status: SeniorNoteStatus
+  publishedAt: string | null
+  withdrawnAt: string | null
+  version: number
+  createdAt: string
+  updatedAt: string
+  /** 공개 전 점검 경고(가린 표본만). 게시하려면 확인해야 합니다. */
+  warnings: PublicationCheckDto[]
+}
+
+/** POST /public/publications/:slug/fork 응답. */
+export interface PlanForkResultDto {
+  projectId: string
+  projectPath: string
+  /** 새로 만들었으면 true(201), 이미 포크한 적이 있어 기존 프로젝트를 돌려주면 false(200). */
+  created: boolean
+  copied: { milestones: number; references: number }
+}
+
+/** PUT/DELETE /signals 응답: 그 대상의 지금 개수와 내 신호. */
+export interface SignalStateDto {
+  signals: SignalCountsDto
+  mine: { meToo: boolean; helped: boolean }
+}
+
+/** GET /me/signals 한 줄(지금 공개인 대상만). */
+export type MySignalDto =
+  | { target: 'stuck_item'; slug: string; itemKey: string; kind: SignalKind }
+  | { target: 'senior_note'; noteId: string; kind: SignalKind }
+
+export interface SearchResultDto {
+  kind: SearchKind
+  title: string
+  snippet: string
+  /** 공개 사례·막힘은 공개 페이지 경로, 노트는 과목 허브의 노트 위치. */
+  path: string
+  course: { id: string; title: string; schoolName: string } | null
+}
+
+/** GET /public/search */
+export interface PublicSearchDto {
+  q: string
+  type: SearchKind | null
+  courseId: string | null
+  results: SearchResultDto[]
 }

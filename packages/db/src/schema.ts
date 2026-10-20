@@ -23,6 +23,9 @@
  * T-12(0010 migration): 게시·철회 열(publications.access_epoch·first_published_at·withdrawn_*,
  * publication_candidates.release_no·published_at·replaced_at·withdrawn_at, 후보 상태 replaced), 공개 release는 공개마다 하나.
  * 결정은 ADR 0012.
+ * T-13(0012 migration): 공개 release의 과목 연결(publication_candidates.course_id·term_label, 게시 때 정본 과목으로 기록),
+ * 선배 노트(senior_notes), 유용성 신호(usefulness_signals), 플랜 포크(plan_forks), 검색 문서(search_documents, 파생 데이터).
+ * 결정은 ADR 0013.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -124,6 +127,18 @@ export const candidateStatus = pgEnum('candidate_status', [
 ])
 /** 동의 상태(@peerchive/domain ConsentStatus). revoked는 게시 후 동의 철회(T-12)용입니다. */
 export const consentStatus = pgEnum('consent_status', ['pending', 'granted', 'declined', 'revoked'])
+/** 선배 노트 작성자 표시(@peerchive/domain SENIOR_NOTE_DISPLAY_MODES): 계정 이름 / 직접 입력한 표시명 / 익명("익명 선배"). */
+export const seniorNoteDisplayMode = pgEnum('senior_note_display_mode', ['name', 'display', 'anonymous'])
+/** 선배 노트 상태. hidden은 운영자 조치용(T-15, 지금은 API 없음). 공개 조회는 published만 봅니다. */
+export const seniorNoteStatus = pgEnum('senior_note_status', ['draft', 'published', 'withdrawn', 'hidden'])
+/** 선배 노트의 대략 총 소요 시간(supply-kit §2): ~10h / ~20h / ~40h / 40h+. */
+export const seniorNoteTimeBucket = pgEnum('senior_note_time_bucket', ['lt10h', 'lt20h', 'lt40h', 'forty_plus'])
+/** 유용성 신호의 대상: 공개 사례의 막힘 카드(공개·로그 키) / 게시된 선배 노트. */
+export const signalTargetKind = pgEnum('signal_target_kind', ['stuck_item', 'senior_note'])
+/** 유용성 신호 종류: 나도 여기서 막혔어요 / 도움됐어요. */
+export const signalKind = pgEnum('signal_kind', ['me_too', 'helped'])
+/** 검색 문서 종류(파생 데이터): 공개 사례 / 막힘 카드 / 선배 노트. */
+export const searchDocKind = pgEnum('search_doc_kind', ['case', 'stuck', 'note'])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -1300,9 +1315,18 @@ export const publicationCandidates = pgTable(
     replacedAt: timestamp('replaced_at', { withTimezone: true }),
     /** 이 release(또는 그때 열려 있던 후보)를 철회한 시각. */
     withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
+    /**
+     * 게시 때 기록한 과목 허브 연결(T-13): 스냅샷에 과목이 있고 프로젝트의 학기가 같은 (연도, 학기)일 때 그 학기의 정본 과목.
+     * 운영자가 과목을 병합하면 같은 트랜잭션에서 정본으로 옮깁니다(merge.ts). 공개 응답에 내부 학기 id는 싣지 않습니다.
+     */
+    courseId: uuid('course_id').references(() => courses.id),
+    /** 게시 때의 학기 표시(예: "2026년 1학기", 스냅샷의 연도·학기에서 만듦). */
+    termLabel: text('term_label'),
   },
   (t) => [
     unique('publication_candidates_publication_version_key').on(t.publicationId, t.version),
+    // 과목 허브: 과목별 지금 게시 중인 release.
+    index('publication_candidates_course_published_idx').on(t.courseId).where(sql`${t.status} = 'published'`),
     unique('publication_candidates_publication_release_key').on(t.publicationId, t.releaseNo),
     uniqueIndex('publication_candidates_open_key')
       .on(t.publicationId)
@@ -1352,5 +1376,166 @@ export const consents = pgTable(
     check('consents_manifest_hash_check', sql`${t.manifestHash} ~ '^[0-9a-f]{64}$'`),
     check('consents_note_check', sql`${t.note} is null or char_length(${t.note}) between 1 and 300`),
     check('consents_decided_check', sql`(${t.status} = 'pending') = (${t.decidedAt} is null)`),
+  ],
+)
+
+// ── 과목 허브 (§6.2 SeniorNote·PlanFork·UsefulnessSignal, §11, T-13, ADR 0013) ─────────────
+
+/**
+ * 선배 노트(과목을 마친 학생이 남기는 질문형 회고). 공개 사례 없이도 쓸 수 있습니다.
+ * - answers: {firstWeek, timeSink, differently, wishKnew} 각 1000자 이하, 비어 있지 않은 답 2개 이상(@peerchive/domain normalizeSeniorNoteAnswers).
+ * - display_name_snapshot: name이면 게시 때의 계정 이름, display면 작성자가 입력한 표시명, anonymous면 null("익명 선배").
+ *   작성자(author_id)는 공개 응답에 싣지 않고 운영자는 감사 기록으로만 압니다.
+ * - 공개 조회는 status = 'published'만 읽습니다. 게시한 노트를 고치면 draft로 돌아가 다시 게시해야 합니다(점검을 다시 거침).
+ * - 정답·답안·교수 개인 평가가 없다는 확인(no_answers_confirmed)은 만들 때 필수입니다.
+ */
+export const seniorNotes = pgTable(
+  'senior_notes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** 정본 과목. 과목 병합 때 정본으로 옮깁니다. */
+    courseId: uuid('course_id')
+      .notNull()
+      .references(() => courses.id),
+    authorId: uuid('author_id')
+      .notNull()
+      .references(() => users.id),
+    displayMode: seniorNoteDisplayMode('display_mode').notNull(),
+    displayNameSnapshot: text('display_name_snapshot'),
+    termLabel: text('term_label'),
+    totalTimeBucket: seniorNoteTimeBucket('total_time_bucket'),
+    answers: jsonb('answers').$type<Record<string, string>>().notNull(),
+    noAnswersConfirmed: boolean('no_answers_confirmed').notNull(),
+    status: seniorNoteStatus('status').notNull().default('draft'),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+    withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    /** 낙관적 동시성. 내용을 고칠 때마다 1씩 올립니다(게시·철회는 올리지 않음). */
+    version: integer('version').notNull().default(1),
+  },
+  (t) => [
+    index('senior_notes_course_published_idx').on(t.courseId, t.publishedAt.desc()).where(sql`${t.status} = 'published'`),
+    index('senior_notes_author_id_idx').on(t.authorId),
+    check('senior_notes_answers_object_check', sql`jsonb_typeof(${t.answers}) = 'object'`),
+    check('senior_notes_confirmed_check', sql`${t.noAnswersConfirmed}`),
+    check('senior_notes_version_check', sql`${t.version} >= 1`),
+    check(
+      'senior_notes_display_name_check',
+      sql`${t.displayNameSnapshot} is null or char_length(${t.displayNameSnapshot}) between 1 and 80`,
+    ),
+    check('senior_notes_term_label_check', sql`${t.termLabel} is null or char_length(${t.termLabel}) between 1 and 30`),
+    check('senior_notes_published_check', sql`${t.status} <> 'published' or ${t.publishedAt} is not null`),
+  ],
+)
+
+/**
+ * 유용성 신호("나도 여기서 막혔어요"·"도움됐어요"). 사용자·대상·종류마다 하나. 항목별 개수로만 쓰고 작성자별로 합산하지 않습니다.
+ * 대상: 막힘 카드(publication_id + 스냅샷 로그 키, 키는 공개마다 안정됨) 또는 선배 노트. 대상이 지금 공개일 때만 남길 수 있고,
+ * 읽기는 지금 공개인 대상만 셉니다. 철회되면 worker 정리 handler가 지웁니다(늦어도 읽기에는 보이지 않음).
+ */
+export const usefulnessSignals = pgTable(
+  'usefulness_signals',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    targetKind: signalTargetKind('target_kind').notNull(),
+    publicationId: uuid('publication_id').references(() => publications.id),
+    itemKey: text('item_key'),
+    seniorNoteId: uuid('senior_note_id').references(() => seniorNotes.id),
+    kind: signalKind('kind').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('usefulness_signals_stuck_key')
+      .on(t.userId, t.publicationId, t.itemKey, t.kind)
+      .where(sql`${t.targetKind} = 'stuck_item'`),
+    uniqueIndex('usefulness_signals_note_key')
+      .on(t.userId, t.seniorNoteId, t.kind)
+      .where(sql`${t.targetKind} = 'senior_note'`),
+    index('usefulness_signals_publication_idx').on(t.publicationId, t.itemKey),
+    index('usefulness_signals_note_idx').on(t.seniorNoteId),
+    check(
+      'usefulness_signals_target_check',
+      sql`(${t.targetKind} = 'stuck_item' and ${t.publicationId} is not null and ${t.itemKey} is not null and ${t.seniorNoteId} is null)
+        or (${t.targetKind} = 'senior_note' and ${t.seniorNoteId} is not null and ${t.publicationId} is null and ${t.itemKey} is null)`,
+    ),
+    check('usefulness_signals_item_key_check', sql`${t.itemKey} is null or char_length(${t.itemKey}) between 1 and 40`),
+  ],
+)
+
+/**
+ * 플랜 포크 기록. 포크로 만든 프로젝트는 포크한 사람의 비공개 과제 공간이고, 공개 스냅샷의 계획 요소(마일스톤 이름·순서·상대 일수,
+ * 참고 링크)만 복사합니다(@peerchive/domain forkPlanFromSnapshot). (원본 공개, 사용자)마다 하나: 같은 사람이 다시 포크하면
+ * 기존 프로젝트를 돌려줍니다. 포크 수 = 이 테이블의 행 수(= 서로 다른 사용자 수).
+ * 원본이 철회돼도 이 행과 복사된 계획은 포크한 사람의 데이터로 남고, 원본 링크는 공개 조회 규칙대로 끊깁니다(§11).
+ */
+export const planForks = pgTable(
+  'plan_forks',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sourcePublicationId: uuid('source_publication_id')
+      .notNull()
+      .references(() => publications.id),
+    sourceReleaseId: uuid('source_release_id')
+      .notNull()
+      .references(() => publicationCandidates.id),
+    /** 포크한 공개 버전(release_no). */
+    releaseVersion: integer('release_version').notNull(),
+    targetProjectId: uuid('target_project_id')
+      .notNull()
+      .unique()
+      .references(() => projects.id),
+    forkedBy: uuid('forked_by')
+      .notNull()
+      .references(() => users.id),
+    /** 복사한 것의 개수만({milestones, references}). */
+    copied: jsonb('copied').$type<Record<string, number>>().notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('plan_forks_source_user_key').on(t.sourcePublicationId, t.forkedBy),
+    index('plan_forks_forked_by_idx').on(t.forkedBy),
+    check('plan_forks_release_version_check', sql`${t.releaseVersion} >= 1`),
+  ],
+)
+
+/**
+ * 공개 검색 문서(파생 데이터, SYSTEM_DESIGN §11.1). worker가 게시 이벤트에서 만들고 철회·대체·노트 철회 때 지웁니다.
+ * **편의용 사본일 뿐이며 공개 여부의 근거가 아닙니다**: 검색 쿼리는 항상 공개·release·노트 행과 조인해 지금 게시 상태와 엠바고를
+ * 같은 쿼리에서 확인하므로, 정리가 늦어 남은 행이 있어도 철회된 내용은 나오지 않습니다.
+ * - case/stuck: release_id(그 release 스냅샷에서 만든 문서). 지금 release와 같을 때만 검색됩니다.
+ * - note: senior_note_id + note_version(그 버전에서 만든 문서). 노트가 published이고 버전이 같을 때만 검색됩니다.
+ */
+export const searchDocuments = pgTable(
+  'search_documents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    kind: searchDocKind('kind').notNull(),
+    publicationId: uuid('publication_id').references(() => publications.id),
+    releaseId: uuid('release_id').references(() => publicationCandidates.id),
+    itemKey: text('item_key'),
+    seniorNoteId: uuid('senior_note_id').references(() => seniorNotes.id),
+    noteVersion: integer('note_version'),
+    title: text('title').notNull(),
+    snippet: text('snippet').notNull(),
+    /** 정규화한 검색 대상 글(@peerchive/domain normalizeSearchText). */
+    searchText: text('search_text').notNull(),
+    indexedAt: timestamp('indexed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('search_documents_case_key').on(t.releaseId).where(sql`${t.kind} = 'case'`),
+    uniqueIndex('search_documents_stuck_key').on(t.releaseId, t.itemKey).where(sql`${t.kind} = 'stuck'`),
+    uniqueIndex('search_documents_note_key').on(t.seniorNoteId).where(sql`${t.kind} = 'note'`),
+    index('search_documents_publication_idx').on(t.publicationId),
+    index('search_documents_search_text_trgm_idx').using('gin', t.searchText.op('gin_trgm_ops')),
+    check(
+      'search_documents_target_check',
+      sql`(${t.kind} in ('case', 'stuck') and ${t.publicationId} is not null and ${t.releaseId} is not null and ${t.seniorNoteId} is null
+          and ((${t.kind} = 'case') = (${t.itemKey} is null)))
+        or (${t.kind} = 'note' and ${t.seniorNoteId} is not null and ${t.noteVersion} is not null and ${t.publicationId} is null and ${t.releaseId} is null)`,
+    ),
   ],
 )

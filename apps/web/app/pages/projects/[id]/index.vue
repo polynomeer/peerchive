@@ -261,7 +261,7 @@ const formatDate = (iso: string) => new Date(iso).toLocaleString('ko-KR', { date
             <dt>목표</dt>
             <dd>{{ project.goal || '아직 없음' }}</dd>
             <dt>요약</dt>
-            <dd>{{ project.summaryByStudent || '아직 없음' }}</dd>
+            <dd class="pre">{{ project.summaryByStudent || '아직 없음' }}</dd>
           </dl>
           <div class="actions">
             <button v-if="canEdit" type="button" class="secondary" @click="startEdit">수정</button>

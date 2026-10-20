@@ -79,6 +79,9 @@ importers:
       '@peerchive/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@peerchive/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@peerchive/files':
         specifier: workspace:*
         version: link:../../packages/files

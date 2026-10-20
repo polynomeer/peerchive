@@ -26,7 +26,7 @@ import { ServiceError } from '../errors'
 import { isPublicApiPath } from '../../../shared/utils/public-paths'
 import { getPublicPublication, openPublicArtifact } from './public-read'
 
-export { PUBLIC_API_PREFIX, isPublicApiPath, isPublicPagePath } from '../../../shared/utils/public-paths'
+export { PUBLIC_API_PREFIX, isAnonymousPublicRequest, isPublicApiPath, isPublicPagePath } from '../../../shared/utils/public-paths'
 
 type Env = Readonly<Record<string, string | undefined>>
 const TRUTHY = new Set(['1', 'true', 'yes', 'on'])
@@ -58,6 +58,10 @@ function notFoundError() {
 
 function mapError(error: unknown): unknown {
   if (error instanceof ServiceError && error.code === 'NOT_FOUND') return notFoundError()
+  // 검색어 형식 오류 등(T-13). 필드별 코드만 싣습니다.
+  if (error instanceof ServiceError && error.code === 'VALIDATION') {
+    return createError({ statusCode: 422, statusMessage: 'Unprocessable Entity', data: { code: error.reason ?? 'validation_failed', fields: error.fields ?? {} } })
+  }
   return error
 }
 
@@ -84,8 +88,14 @@ export interface PublicHandlerDeps {
   now?: () => Date
 }
 
-/** GET /api/v1/public/publications/:slug */
-export function createPublicPublicationHandler(deps: PublicHandlerDeps): EventHandler {
+/**
+ * 익명 공개 JSON handler 공통(T-12, T-13): 공개 헤더(no-store·nosniff·no-referrer·noindex 기본) + 운영 스위치 확인 + 404 정규화.
+ * `run`은 요청마다 DB를 읽어 지금 공개인 것만 돌려줘야 합니다.
+ */
+export function createPublicJsonHandler<T>(
+  deps: PublicHandlerDeps,
+  run: (db: DbExecutor, event: H3Event, now: Date) => Promise<T>,
+): EventHandler {
   const getEnv = deps.getEnv ?? (() => process.env)
   return defineEventHandler(async (event) => {
     const env = getEnv()
@@ -93,11 +103,16 @@ export function createPublicPublicationHandler(deps: PublicHandlerDeps): EventHa
     // 미들웨어가 없어도 막히도록 handler에서도 확인합니다.
     if (publicReadsDisabled(env)) throw disabledError()
     try {
-      return await getPublicPublication(deps.getDb(), getRouterParam(event, 'slug'), deps.now?.() ?? new Date())
+      return await run(deps.getDb(), event, deps.now?.() ?? new Date())
     } catch (error) {
       throw mapError(error)
     }
   })
+}
+
+/** GET /api/v1/public/publications/:slug */
+export function createPublicPublicationHandler(deps: PublicHandlerDeps): EventHandler {
+  return createPublicJsonHandler(deps, (db, event, now) => getPublicPublication(db, getRouterParam(event, 'slug'), now))
 }
 
 export interface PublicArtifactHandlerDeps extends PublicHandlerDeps {

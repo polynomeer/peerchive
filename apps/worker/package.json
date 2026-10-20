@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Peerchive 작업 worker(pg-boss). 파일 검사와 공개 게시·철회 이벤트(파생 데이터 정리)를 처리합니다.",
+  "description": "Peerchive 작업 worker(pg-boss). 파일 검사, 공개 게시·철회 이벤트(검색 색인·유용성 신호 정리), 선배 노트 색인을 처리합니다.",
   "scripts": {
     "dev": "NODE_ENV=development tsx src/main.ts",
     "start": "tsx src/main.ts",
@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@peerchive/db": "workspace:*",
+    "@peerchive/domain": "workspace:*",
     "@peerchive/files": "workspace:*",
     "pg-boss": "12.36.0",
     "tsx": "4.23.15"

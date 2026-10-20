@@ -7,6 +7,7 @@ const { me, logout } = useAuth()
     <a class="skip-link" href="#main">본문으로 건너뛰기</a>
     <header class="site-header">
       <NuxtLink to="/" class="brand">Peerchive</NuxtLink>
+      <HeaderSearch />
       <nav aria-label="주 메뉴">
         <ul class="nav-list">
           <template v-if="me">

@@ -15,7 +15,18 @@ import {
   isMetadataReady,
 } from '@peerchive/domain'
 import { ObjectNotFoundError, isObjectKey, type ObjectStorage } from '@peerchive/files'
-import { and, artifactVersions, artifacts, eq, publicationCandidates, publications, type DbExecutor } from '@peerchive/db'
+import {
+  and,
+  artifactVersions,
+  artifacts,
+  courses,
+  eq,
+  planForks,
+  publicationCandidates,
+  publications,
+  sql,
+  type DbExecutor,
+} from '@peerchive/db'
 import { getProjectEmbargo } from '../embargo/embargo'
 import { notFound } from '../errors'
 import { isUuid } from '../projects/access'
@@ -33,8 +44,8 @@ interface ServedRelease {
   state: PublicReadState
 }
 
-/** slug의 지금 release를 내줄 수 있으면 돌려주고, 아니면 null. 매 요청 DB를 읽습니다. */
-async function loadServedRelease(db: DbExecutor, slug: unknown, now: Date): Promise<ServedRelease | null> {
+/** slug의 지금 release를 내줄 수 있으면 돌려주고, 아니면 null. 매 요청 DB를 읽습니다. 플랜 포크·신호(T-13)도 이 판정을 씁니다. */
+export async function loadServedRelease(db: DbExecutor, slug: unknown, now: Date): Promise<ServedRelease | null> {
   if (typeof slug !== 'string' || slug.length < 3 || slug.length > 60 || !SLUG_PATTERN.test(slug)) return null
   const [row] = await db
     .select({ publication: publications, release: publicationCandidates })
@@ -59,6 +70,15 @@ export async function getPublicPublication(db: DbExecutor, slug: unknown, now = 
   const served = await loadServedRelease(db, slug, now)
   if (!served) throw notFound()
   const { publication, release, snapshot } = served
+  let courseId: string | null = null
+  if (release.courseId) {
+    const [course] = await db.select({ id: courses.id, mergedInto: courses.mergedInto }).from(courses).where(eq(courses.id, release.courseId)).limit(1)
+    courseId = course ? (course.mergedInto ?? course.id) : null
+  }
+  const [{ forks } = { forks: 0 }] = await db
+    .select({ forks: sql<number>`count(*)::int` })
+    .from(planForks)
+    .where(eq(planForks.sourcePublicationId, publication.id))
   return {
     slug: publication.slug,
     level: release.level,
@@ -66,6 +86,8 @@ export async function getPublicPublication(db: DbExecutor, slug: unknown, now = 
     publishedAt: release.publishedAt!.toISOString(),
     firstPublishedAt: (publication.firstPublishedAt ?? release.publishedAt!).toISOString(),
     snapshot,
+    courseId,
+    forkCount: forks,
   }
 }
 

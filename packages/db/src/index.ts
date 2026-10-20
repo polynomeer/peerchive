@@ -13,7 +13,8 @@ export * from './outbox'
  * 쿼리 연산자 재노출. 앱이 drizzle-orm을 따로 의존하면 peer 조합이 달라 인스턴스가 둘이 될 수 있으므로
  * 이 패키지를 통해서만 씁니다.
  */
-export { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from 'drizzle-orm'
+export { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, notInArray, or, sql } from 'drizzle-orm'
+export type { SQL } from 'drizzle-orm'
 
 export type Database = PostgresJsDatabase<typeof schema> & { $client: postgres.Sql }
 

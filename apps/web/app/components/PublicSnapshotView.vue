@@ -4,6 +4,7 @@
  * 공개 준비 화면의 미리보기, 동의 요청 화면, 그리고 T-12의 공개 페이지가 같은 컴포넌트를 씁니다.
  * 파일 내용은 게시 후 release 확인 경로(T-12)로만 열 수 있으므로 여기서는 이름·크기·사용 조건만 보여 줍니다.
  * `fileUrl`을 주면(T-12) 파일 이름을 그 주소로 연결합니다.
+ * 로그마다 `<idPrefix>-<로그 키>` id를 붙여 과목 허브의 막힘 카드가 `/p/<slug>#public-<키>`로 가리킬 수 있게 합니다(T-13).
  */
 import type { PublicLog, PublicSnapshot } from '~~/shared/types/api'
 
@@ -97,7 +98,7 @@ const CLAIM_STATUS: Record<'unconfirmed' | 'confirmed' | 'disputed', string> = {
     <section v-if="snapshot.logs.length" :aria-labelledby="`${base}-logs`">
       <h3 :id="`${base}-logs`">과정 기록</h3>
       <ol class="snapshot-list">
-        <li v-for="log in snapshot.logs" :key="log.key" class="snapshot-log">
+        <li v-for="log in snapshot.logs" :id="`${base}-${log.key}`" :key="log.key" class="snapshot-log" tabindex="-1">
           <p class="log-head">
             <strong>{{ LOG_TAG_LABELS[log.tag] }}</strong>
             <span class="small muted">{{ memberLabel(log.author) }} · 출처 {{ SOURCE_LABELS[log.source] }}</span>

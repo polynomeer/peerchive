@@ -7,6 +7,7 @@
  * - 과목: 같은 학교끼리만(다르면 409 different_school — 학교를 먼저 병합). 원본 과목의 학기는 정본 과목으로 옮기고,
  *   정본에 같은 (연도, 학기)가 있으면 원본 학기를 그 학기로 병합해 프로젝트·학기 엠바고를 옮깁니다. 옮겨진 프로젝트의
  *   embargo_until은 단조 규칙대로 max(지금 값, 정본 학기 종료·학기 엠바고)입니다. 개념 태그 연결도 정본으로 옮깁니다.
+ *   과목 허브(T-13)의 공개 release 과목 연결(publication_candidates.course_id)과 선배 노트(senior_notes.course_id)도 정본으로 옮깁니다.
  * - 개념 태그: 과목 연결과 하위 태그(parent_id)를 정본으로 옮깁니다.
  * 순환·사슬 방지: 대상은 정본(merged_into null)이어야 하고 원본도 아직 병합되지 않아야 하며(checkMerge),
  * 원본을 가리키던 병합 행도 정본을 가리키게 바꿔(평탄화) 항상 한 단계입니다.
@@ -24,7 +25,9 @@ import {
   isNull,
   ne,
   projects,
+  publicationCandidates,
   schools,
+  seniorNotes,
   sql,
   type DbExecutor,
 } from '@peerchive/db'
@@ -152,6 +155,19 @@ export async function mergeCourse(db: DbExecutor, actor: Actor, sourceId: unknow
       on conflict do nothing`)
     await tx.delete(courseConceptTags).where(eq(courseConceptTags.courseId, source.id))
 
+    // 과목 허브(T-13): 공개 release의 과목 연결과 선배 노트를 정본으로 옮깁니다(rehome). 공개 읽기도 병합된 id를 함께 보므로
+    // 이 갱신이 없어도 보이지만, 정본 하나로 모아 두어 다음 병합·집계가 단순해집니다.
+    const releasesRehomed = await tx
+      .update(publicationCandidates)
+      .set({ courseId: target.id })
+      .where(eq(publicationCandidates.courseId, source.id))
+      .returning({ id: publicationCandidates.id })
+    const notesRehomed = await tx
+      .update(seniorNotes)
+      .set({ courseId: target.id })
+      .where(eq(seniorNotes.courseId, source.id))
+      .returning({ id: seniorNotes.id })
+
     await tx.update(courses).set({ mergedInto: target.id }).where(eq(courses.mergedInto, source.id))
     await tx.update(courses).set({ mergedInto: target.id, mergedAt: now }).where(eq(courses.id, source.id))
     await recordAudit(tx, {
@@ -159,7 +175,14 @@ export async function mergeCourse(db: DbExecutor, actor: Actor, sourceId: unknow
       action: 'course.merge',
       targetType: 'course',
       targetId: source.id,
-      metadata: { into: target.id, termsMoved, termsMerged, projectsRepointed },
+      metadata: {
+        into: target.id,
+        termsMoved,
+        termsMerged,
+        projectsRepointed,
+        releasesRehomed: releasesRehomed.length,
+        seniorNotesRehomed: notesRehomed.length,
+      },
     })
     return toCourseDto(target)
   })

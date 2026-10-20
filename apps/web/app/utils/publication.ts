@@ -88,6 +88,7 @@ export const CHECK_LOCATION_LABELS: Record<string, string> = {
   claim: '역할 선언',
   milestone: '마일스톤',
   artifact: '파일',
+  senior_note: '선배 노트',
 }
 
 export function usageLabel(usage: UsageTerms): string {

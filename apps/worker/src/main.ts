@@ -1,5 +1,6 @@
 /**
- * Peerchive worker 진입점(ADR 0004). outbox 전달, 파일 검사 작업, 공개 게시·철회 이벤트(파생 데이터 정리, ADR 0012)를 처리합니다.
+ * Peerchive worker 진입점(ADR 0004). outbox 전달, 파일 검사 작업, 공개 게시·철회 이벤트(파생 데이터 정리, ADR 0012),
+ * 과목 허브 파생 데이터(검색 색인·유용성 신호·선배 노트 색인, ADR 0013)를 처리합니다.
  *
  * 실행: `pnpm worker`(저장소 루트, 개발용) 또는 `pnpm --filter worker start`.
  * 종료 신호(SIGINT/SIGTERM)를 받으면 새 작업을 받지 않고 진행 중인 작업을 기다린 뒤(최대 30초) 연결을 닫습니다.
@@ -9,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { PgBoss } from 'pg-boss'
 import { createDb, pingDb } from '@peerchive/db'
 import { loadWorkerConfig } from './config'
+import { registerCourseHubDerived, registerSeniorNoteQueues } from './course-hub-derived'
 import { dispatchOutbox } from './dispatcher'
 import { registerPublicationQueues } from './publication-events'
 import { registerScanQueue } from './scan-worker'
@@ -26,7 +28,10 @@ const boss = new PgBoss({ connectionString: config.databaseUrl, schema: 'pgboss'
 boss.on('error', (error) => console.error('[worker] pg-boss error:', error.message))
 await boss.start()
 await registerScanQueue(boss, db, { storage: config.storage, scanner: config.scanner }, config.scanConcurrency)
+// 과목 허브 파생 데이터(검색 색인·유용성 신호, T-13)를 게시·철회 이벤트에 등록한 뒤 큐를 엽니다.
+registerCourseHubDerived()
 await registerPublicationQueues(boss, db)
+await registerSeniorNoteQueues(boss, db)
 
 let dispatching = false
 const timer = setInterval(() => {

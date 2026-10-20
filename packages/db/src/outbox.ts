@@ -4,7 +4,7 @@
  * payload에는 id·번호만 넣고 본문·이메일·이름은 넣지 않습니다.
  */
 
-/** 공개 release 게시(T-12). 이후 검색 색인·과목 집계(T-13)·포트폴리오(T-14)가 구독합니다. */
+/** 공개 release 게시(T-12). worker의 검색 색인·유용성 신호 정리(T-13)와 포트폴리오(T-14)가 구독합니다. */
 export const PUBLICATION_PUBLISHED_TOPIC = 'publication.published'
 /** 공개 철회(owner 철회 또는 당사자 동의 철회, T-12). worker가 파생 데이터 정리 handler를 실행합니다. */
 export const PUBLICATION_WITHDRAWN_TOPIC = 'publication.withdrawn'
@@ -21,4 +21,16 @@ export interface PublicationOutboxPayload {
   cause?: 'owner' | 'consent_revoked'
   /** 게시가 대체한 이전 release(published만, 없으면 null). */
   replacedReleaseId?: string | null
+}
+
+/** 선배 노트 게시(T-13). worker가 검색 문서를 만듭니다. */
+export const SENIOR_NOTE_PUBLISHED_TOPIC = 'senior_note.published'
+/** 선배 노트 철회·게시 취소(고쳐서 draft로 돌아감, T-13). worker가 검색 문서·유용성 신호를 지웁니다. */
+export const SENIOR_NOTE_WITHDRAWN_TOPIC = 'senior_note.withdrawn'
+
+export interface SeniorNoteOutboxPayload {
+  seniorNoteId: string
+  courseId: string
+  /** 이벤트 시점의 노트 version. 게시 handler는 지금 version이 같고 published일 때만 색인합니다. */
+  version: number
 }

@@ -4,8 +4,9 @@
  * - 공개 조회 API(`/api/v1/public/publications/:slug`)의 저장된 스냅샷만으로 PublicSnapshotView가 그립니다. 비공개 API를 부르지 않습니다.
  * - SSR에서 쿠키를 넘기지 않고(`$fetch`), 레이아웃도 로그인 상태를 읽지 않습니다(HTML·payload에 보는 사람의 정보 없음).
  * - Open Graph는 스냅샷의 제목·요약만 씁니다. 파일럿 동안 기본 noindex(서버 설정으로 바꿈).
+ * - T-13: 과목 허브 링크, 계획 포크 수와 "이 계획 포크하기"(로그인 여부는 화면이 뜬 뒤 클라이언트에서만 확인).
  */
-import type { PublicPublicationDto } from '~~/shared/types/api'
+import type { PlanForkResultDto, PublicPublicationDto } from '~~/shared/types/api'
 
 definePageMeta({ layout: 'public' })
 
@@ -46,6 +47,26 @@ useSeoMeta({
   robots: () => (indexable.value ? 'index, follow' : 'noindex, nofollow'),
 })
 
+// 계획 포크(T-13): 마일스톤 이름·순서와 참고 링크만 내 새 비공개 과제로 복사합니다.
+const loggedIn = ref<boolean | null>(null)
+const forking = ref(false)
+const forkMessage = ref('')
+onMounted(async () => {
+  loggedIn.value = !!(await useAuth().ensure())
+})
+async function fork() {
+  forkMessage.value = ''
+  forking.value = true
+  try {
+    const result = await $fetch<PlanForkResultDto>(`/api/v1/public/publications/${encodeURIComponent(slug.value)}/fork`, { method: 'POST' })
+    await navigateTo(result.projectPath)
+  } catch (error) {
+    forkMessage.value = courseHubErrorMessage(apiError(error).code)
+  } finally {
+    forking.value = false
+  }
+}
+
 const fileUrl = (versionId: string) =>
   `/api/v1/public/publications/${encodeURIComponent(slug.value)}/artifacts/${encodeURIComponent(versionId)}`
 </script>
@@ -68,7 +89,20 @@ const fileUrl = (versionId: string) =>
         <span>게시일 {{ formatDateTime(data.publishedAt) }}</span>
         <span v-if="data.firstPublishedAt !== data.publishedAt">처음 게시 {{ formatDateTime(data.firstPublishedAt) }}</span>
       </p>
+      <p v-if="data.courseId" class="small"><NuxtLink :to="`/c/${data.courseId}`">이 과목의 다른 사례·막힘·선배 노트 보기</NuxtLink></p>
       <PublicSnapshotView :snapshot="data.snapshot" :file-url="data.level === 'full' ? fileUrl : undefined" id-prefix="public" />
+      <section class="fork-box" aria-labelledby="fork-title">
+        <h2 id="fork-title">이 계획으로 시작하기</h2>
+        <p class="small">
+          마일스톤 이름·순서와 참고 링크만 내 새 비공개 과제로 복사합니다. 기록·해결 방법·파일·사람 이름은 복사하지 않습니다.
+          <template v-if="data.forkCount"> 지금까지 {{ data.forkCount }}명이 이 계획을 포크했습니다.</template>
+        </p>
+        <p class="actions">
+          <button v-if="loggedIn" type="button" :disabled="forking" @click="fork">이 계획 포크하기</button>
+          <span v-else-if="loggedIn === false" class="small"><NuxtLink to="/login">로그인</NuxtLink>하면 이 계획을 포크할 수 있어요.</span>
+        </p>
+        <p v-if="forkMessage" class="field-error" role="alert">{{ forkMessage }}</p>
+      </section>
       <footer class="public-footer small">
         <p>
           이 사례는 학생이 고른 기록만 담은 공개 스냅샷이며, 함께한 사람의 동의를 받아 게시되었습니다. 당사자는 언제든 공개를 철회할 수 있고,

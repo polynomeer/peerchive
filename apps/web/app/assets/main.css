@@ -1100,3 +1100,103 @@ dl.kv dd {
   margin-top: 2rem;
   padding-top: 1rem;
 }
+
+/* ── 과목 허브·검색·선배 노트 (T-13) ── */
+.header-search,
+.hub-search {
+  display: flex;
+  gap: 0.4rem;
+  flex: 1 1 14rem;
+  max-width: 28rem;
+  min-width: 0;
+}
+.header-search input,
+.hub-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+input[type='search'] {
+  padding: 0.45rem 0.6rem;
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.hub-search {
+  max-width: none;
+  margin: 1rem 0;
+}
+.hub-list {
+  gap: 0.75rem;
+}
+.hub-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  overflow-wrap: anywhere;
+}
+.hub-card > p {
+  margin: 0.25rem 0;
+}
+.hub-card-title {
+  font-weight: 600;
+}
+.chip.static {
+  cursor: default;
+}
+a.chip {
+  text-decoration: none;
+}
+.signal-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+.signal-buttons button {
+  font-size: 0.875rem;
+  padding: 0.3rem 0.7rem;
+}
+.signal-buttons button[aria-pressed='true'] {
+  background: var(--surface);
+  font-weight: 600;
+}
+.note-answers dt {
+  font-weight: 600;
+  margin-top: 0.5rem;
+}
+.note-answers dd {
+  margin: 0.15rem 0 0;
+}
+.workload-table {
+  width: 100%;
+  min-width: 0;
+  max-width: 24rem;
+}
+.fork-box {
+  margin-top: 2rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.fork-box h2 {
+  margin-top: 0;
+}
+.snapshot-log:target {
+  outline: 3px solid var(--focus);
+  outline-offset: 4px;
+}
+.header-search button,
+.hub-search button {
+  white-space: nowrap;
+}
+@media (max-width: 40rem) {
+  .site-header .header-search {
+    order: 3;
+    flex-basis: 100%;
+    max-width: none;
+  }
+}

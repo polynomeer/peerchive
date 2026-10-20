@@ -33,6 +33,7 @@ import {
   type PublicationOutboxPayload,
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
+import { courseLinkForRelease } from '../course-hub/course-link'
 import { assertPublishable, getProjectEmbargo } from '../embargo/embargo'
 import { type Actor, conflict, forbidden, notFound } from '../errors'
 import { findMembership, isUuid, loadReadableProject } from '../projects/access'
@@ -143,9 +144,11 @@ export async function publishCandidate(
       .set({ status: 'replaced', replacedAt: now })
       .where(and(eq(publicationCandidates.publicationId, publication.id), eq(publicationCandidates.status, 'published')))
       .returning({ id: publicationCandidates.id })
+    // 과목 허브 연결(T-13): 스냅샷의 과목과 프로젝트의 지금 학기가 같을 때만 정본 과목을 기록합니다.
+    const link = await courseLinkForRelease(tx, project.courseTermId, refreshed.snapshot as unknown as PublicSnapshot)
     const [release] = await tx
       .update(publicationCandidates)
-      .set({ status: 'published', releaseNo: nextRelease, publishedAt: now })
+      .set({ status: 'published', releaseNo: nextRelease, publishedAt: now, courseId: link.courseId, termLabel: link.termLabel })
       .where(eq(publicationCandidates.id, refreshed.id))
       .returning()
     const accessEpoch = publication.accessEpoch + 1
