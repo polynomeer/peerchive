@@ -128,6 +128,26 @@ describe('filesystem storage', () => {
     )
     await rm(path.join(root, '..', 'peerchive-outside.txt'), { force: true })
   })
+
+  it('lists keys under a prefix with modification times, skipping temp and foreign files', async () => {
+    const empty: string[] = []
+    for await (const item of storage.list('quarantine')) empty.push(item.key)
+    expect(empty).toEqual([])
+    const q = newQuarantineKey()
+    const c = cleanKeyFor(crypto.randomUUID())
+    await storage.put(q, Readable.from([Buffer.from('q')]), { maxBytes: 10 })
+    await storage.put(c, Readable.from([Buffer.from('c')]), { maxBytes: 10 })
+    const id = q.split('/')[1]!
+    await writeFile(path.join(root, 'quarantine', id.slice(0, 2), `${id}.x.part`), 'partial')
+    await writeFile(path.join(root, 'quarantine', id.slice(0, 2), 'notes.txt'), 'x')
+    const seen: Array<{ key: string; modifiedAt: Date }> = []
+    for await (const item of storage.list('quarantine')) seen.push(item)
+    expect(seen.map((s) => s.key)).toEqual([q])
+    expect(seen[0]!.modifiedAt).toBeInstanceOf(Date)
+    const cleanKeys: string[] = []
+    for await (const item of storage.list('clean')) cleanKeys.push(item.key)
+    expect(cleanKeys).toEqual([c])
+  })
 })
 
 describe('storage/scanner configuration', () => {

@@ -62,6 +62,11 @@ export interface ObjectStorage {
   move(from: ObjectKey, to: ObjectKey): Promise<void>
   /** 지우기. 없어도 오류가 아닙니다. */
   delete(key: ObjectKey): Promise<void>
+  /**
+   * 접두어(quarantine/clean) 아래의 키와 마지막 수정 시각(T-16 주기 정리: 주인 없는 격리 파일 찾기). 서버 형식의 키만 돌려주고
+   * 쓰는 중인 임시 파일은 건너뜁니다. 순서는 정하지 않습니다.
+   */
+  list(prefix: 'quarantine' | 'clean'): AsyncIterable<{ key: ObjectKey; modifiedAt: Date }>
 }
 
 export class ObjectTooLargeError extends Error {

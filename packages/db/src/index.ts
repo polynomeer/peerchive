@@ -8,6 +8,7 @@ import * as schema from './schema'
 export { schema }
 export * from './schema'
 export * from './outbox'
+export * from './ops'
 
 /**
  * 쿼리 연산자 재노출. 앱이 drizzle-orm을 따로 의존하면 peer 조합이 달라 인스턴스가 둘이 될 수 있으므로

@@ -31,6 +31,8 @@
  * 결정은 ADR 0014.
  * T-15(0014 migration): 신고(reports)·운영 조치(moderation_actions)·가린 항목(release_hidden_items)·보류(holds)·이의제기(appeals),
  * 케이스 스터디·공개 프로필의 운영 숨김(case_studies.hidden_at·profiles.hidden_at). 결정은 ADR 0015.
+ * T-16(0015 migration): 탈퇴 계정 정리(users.purged_at)·삭제 장부(deletion_ledger, 개인정보 없음), 분석 수집 거부(users.analytics_opt_out),
+ * pilot 분석 이벤트(analytics_events, 허용 목록 props만), worker 상태 기록(worker_heartbeats). 결정은 ADR 0016.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -160,6 +162,25 @@ export const moderationActionKind = pgEnum('moderation_action_kind', ['none', 'r
 export const hiddenItemKind = pgEnum('hidden_item_kind', ['log', 'claim', 'artifact'])
 /** 이의제기 상태(T-15): 열림 → 유지/되돌림. */
 export const appealStatus = pgEnum('appeal_status', ['open', 'upheld', 'reversed'])
+/** pilot 분석 이벤트 이름(T-16, DELIVERY_PLAN §6 + login_succeeded, @peerchive/domain ANALYTICS_EVENT_NAMES와 같은 값). */
+export const analyticsEventName = pgEnum('analytics_event_name', [
+  'project_created',
+  'log_saved',
+  'evidence_attached',
+  'milestone_snapshot_set',
+  'checkin_submitted',
+  'claim_endorsed',
+  'report_exported',
+  'candidate_prepared',
+  'consent_completed',
+  'publication_published',
+  'publication_withdrawn',
+  'plan_forked',
+  'usefulness_marked',
+  'senior_note_published',
+  'portfolio_shared',
+  'login_succeeded',
+])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -171,8 +192,15 @@ export const users = pgTable(
     /** 로그인·알림용. 공개 DTO에 싣지 않습니다. */
     privateEmail: text('private_email').notNull(),
     status: userStatus('status').notNull().default('active'),
-    /** 탈퇴 요청 시각. 요청 즉시 status='deleted'로 바꾸고, 실제 삭제(purge)는 별도 작업입니다. */
+    /** 탈퇴 요청 시각. 요청 즉시 status='deleted'로 바꾸고, 실제 삭제(purge)는 유예 기간 뒤 worker 작업입니다(T-16, ADR 0016). */
     deletionRequestedAt: timestamp('deletion_requested_at', { withTimezone: true }),
+    /**
+     * 정리(purge)를 마친 시각(T-16). 이때 표시 이름은 "탈퇴한 사용자", 이메일은 자리표시 주소로 바뀌고 프로필·세션·로그인 수단·연동·체크인·
+     * 신호·선배 노트·케이스·포트폴리오·혼자 쓴 과제가 지워집니다. 팀 기록이 이 행을 가리키므로 행 자체는 남깁니다(ADR 0016).
+     */
+    purgedAt: timestamp('purged_at', { withTimezone: true }),
+    /** pilot 분석 이벤트 수집 거부(T-16). true면 이 사용자를 주체로 하는 이벤트를 만들지 않습니다(설정 화면). */
+    analyticsOptOut: boolean('analytics_opt_out').notNull().default(false),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -1927,5 +1955,82 @@ export const appeals = pgTable(
     check('appeals_message_check', sql`char_length(${t.message}) between 1 and 1000`),
     check('appeals_decision_note_check', sql`${t.decisionNote} is null or char_length(${t.decisionNote}) between 1 and 1000`),
     check('appeals_decided_check', sql`(${t.status} = 'open') = (${t.decidedAt} is null)`),
+  ],
+)
+
+// ── 운영: 삭제 장부·분석 이벤트·worker 상태 (§6.6 DeletionLedger, §11, §14, DELIVERY_PLAN §6, T-16, ADR 0016) ─────────────
+
+/**
+ * 삭제 장부(DeletionLedger). 탈퇴 계정 정리(purge) 한 번에 지운 대상 종류마다 한 행(지운 개수)을 남깁니다.
+ * **개인정보 없음**: 사용자 id 대신 서버 비밀 pepper로 만든 HMAC-SHA256(subject_hash)만 두고, 이름·이메일·제목·id 목록을 넣지 않습니다.
+ * 오래된 백업을 복구하면 `pnpm ops:reapply-deletions`가 이 장부(지금 DB 또는 내보낸 파일)의 subject_hash와 복구된 사용자 id의 HMAC을
+ * 맞춰 다시 정리합니다(§11 "복구 시 최신 삭제를 재적용하기 전에는 외부 트래픽을 열지 않음"). pepper를 바꾸면 재적용이 맞추지 못하므로 바꾸지 않습니다.
+ */
+export const deletionLedger = pgTable(
+  'deletion_ledger',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    subjectHash: text('subject_hash').notNull(),
+    /** 지운 대상 종류(예: profile, sessions, solo_projects, artifact_objects). */
+    entityKind: text('entity_kind').notNull(),
+    count: integer('count').notNull(),
+    /** 탈퇴 요청 시각(분 단위로 자름). */
+    requestedAt: timestamp('requested_at', { withTimezone: true }),
+    purgedAt: timestamp('purged_at', { withTimezone: true }).notNull().defaultNow(),
+    /** purge: 유예 기간 뒤 정리 / reapply: 복구 뒤 재적용. */
+    source: text('source').notNull().default('purge'),
+  },
+  (t) => [
+    index('deletion_ledger_subject_hash_idx').on(t.subjectHash),
+    check('deletion_ledger_subject_hash_check', sql`${t.subjectHash} ~ '^[0-9a-f]{64}$'`),
+    check('deletion_ledger_entity_kind_check', sql`${t.entityKind} ~ '^[a-z_]{1,40}$'`),
+    check('deletion_ledger_count_check', sql`${t.count} >= 0`),
+    check('deletion_ledger_source_check', sql`${t.source} in ('purge', 'reapply')`),
+  ],
+)
+
+/**
+ * pilot 분석 이벤트(DELIVERY_PLAN §6). 과제 본문·파일 내용·검색 원문·연락처·제목·URL·파일 이름은 넣지 않습니다.
+ * - actor_hash / project_hash: 사용자·프로젝트 id의 HMAC-SHA256(분석 전용 pepper, 삭제 장부 pepper와 다름). hash_key_id는 pepper를
+ *   구분하는 짧은 값(pepper의 SHA-256 앞 8자)이며, pepper를 바꾸면(rotate) 이전 이벤트와 이어지지 않습니다.
+ * - props: 이벤트마다 허용 목록(@peerchive/domain ANALYTICS_PROP_SPECS)의 키·값(태그·출처·개수·수준·참거짓)만. 목록 밖이면 이벤트를 버립니다.
+ * - 수집 거부(users.analytics_opt_out)한 사람은 이벤트를 만들지 않습니다. 탈퇴 정리 때 그 사람의 이벤트도 지웁니다.
+ */
+export const analyticsEvents = pgTable(
+  'analytics_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: analyticsEventName('name').notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+    actorHash: text('actor_hash').notNull(),
+    projectHash: text('project_hash'),
+    hashKeyId: text('hash_key_id').notNull(),
+    props: jsonb('props').$type<Record<string, string | number | boolean>>().notNull().default({}),
+  },
+  (t) => [
+    index('analytics_events_name_occurred_idx').on(t.name, t.occurredAt),
+    index('analytics_events_actor_occurred_idx').on(t.actorHash, t.occurredAt),
+    check('analytics_events_actor_hash_check', sql`${t.actorHash} ~ '^[0-9a-f]{64}$'`),
+    check('analytics_events_project_hash_check', sql`${t.projectHash} is null or ${t.projectHash} ~ '^[0-9a-f]{64}$'`),
+    check('analytics_events_hash_key_id_check', sql`${t.hashKeyId} ~ '^[0-9a-f]{8}$'`),
+    check('analytics_events_props_object_check', sql`jsonb_typeof(${t.props}) = 'object'`),
+  ],
+)
+
+/**
+ * worker 상태 기록(§14 관측). worker 프로세스는 1분마다 name='worker' 행을, 주기 작업은 실행할 때마다 name='task:<이름>' 행을 고쳐 씁니다.
+ * details에는 개수·상태 코드만 둡니다(내용·id 목록 없음). 운영자 health 상세 확인이 마지막 시각으로 worker 정지를 알아챕니다.
+ */
+export const workerHeartbeats = pgTable(
+  'worker_heartbeats',
+  {
+    name: text('name').primaryKey(),
+    beatAt: timestamp('beat_at', { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    details: jsonb('details').$type<Record<string, string | number | boolean | null>>().notNull().default({}),
+  },
+  (t) => [
+    check('worker_heartbeats_name_check', sql`${t.name} ~ '^[a-z0-9:_.-]{1,60}$'`),
+    check('worker_heartbeats_details_object_check', sql`jsonb_typeof(${t.details}) = 'object'`),
   ],
 )

@@ -106,6 +106,13 @@
       "when": 1792507333190,
       "tag": "0014_moderation",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1792510063624,
+      "tag": "0015_ops_analytics",
+      "breakpoints": true
     }
   ]
 }

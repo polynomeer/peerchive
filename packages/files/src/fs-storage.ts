@@ -9,7 +9,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
-import { copyFile, link, mkdir, rename, stat, unlink } from 'node:fs/promises'
+import { copyFile, link, mkdir, readdir, rename, stat, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import type { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -23,6 +23,7 @@ import {
   ObjectNotFoundError,
   ObjectTooLargeError,
   assertObjectKey,
+  isObjectKey,
 } from './storage'
 
 const isErrno = (error: unknown, code: string) => (error as NodeJS.ErrnoException | null)?.code === code
@@ -126,6 +127,37 @@ export function createFilesystemStorage(rootDir: string): ObjectStorage {
         await unlink(resolveKey(key))
       } catch (error) {
         if (!isErrno(error, 'ENOENT')) throw error
+      }
+    },
+
+    async *list(prefix) {
+      const base = path.join(root, prefix)
+      let shards: string[]
+      try {
+        shards = await readdir(base)
+      } catch (error) {
+        if (isErrno(error, 'ENOENT')) return
+        throw error
+      }
+      for (const shard of shards) {
+        let names: string[]
+        try {
+          names = await readdir(path.join(base, shard))
+        } catch (error) {
+          if (isErrno(error, 'ENOENT') || isErrno(error, 'ENOTDIR')) continue
+          throw error
+        }
+        for (const name of names) {
+          const key = `${prefix}/${name}`
+          // 임시 파일(.part)·다른 파일은 키 형식이 아니므로 건너뜁니다. 샤드 디렉터리도 키와 맞아야 합니다.
+          if (!isObjectKey(key) || name.slice(0, 2) !== shard) continue
+          try {
+            const info = await stat(path.join(base, shard, name))
+            yield { key, modifiedAt: info.mtime }
+          } catch (error) {
+            if (!isErrno(error, 'ENOENT')) throw error
+          }
+        }
       }
     },
   }
