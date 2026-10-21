@@ -2,7 +2,7 @@
 
 [한국어](PROOFU_EVOLUTION_PLAN.md) | **English**
 
-Written: 2026-10-18 (Asia/Seoul) · Status: consolidated proposal · For: product planning, design, and go/no-go on implementation
+Written: 2026-10-18 (Asia/Seoul) · Updated: 2026-10-20 (features adapted from campus community apps; community plan in §8.9) · Status: consolidated proposal · For: product planning, design, and go/no-go on implementation
 
 Peerchive is the new name for the project that continues from **ProofU**, an undergraduate graduation project built in 2019. Combining *Peer + Archive*, the name captures the goal of a public archive where students learn from one another's assignment and project experiences. The project was renamed to distinguish it from a separate career-management project called `proofu`. The GitHub repository name and address also changed from `proofu-univ` to [`peerchive`](https://github.com/polynomeer/peerchive). Document file paths are unchanged, and the preserved code is the original ProofU implementation.
 
@@ -78,6 +78,7 @@ Secondary customers are **universities** (capstone/PBL outcome management and ex
 - **Students in software-related team assignments and capstones** at one university department, plus graduates and upper-year students who have already taken those courses. Code coexists with reports, presentations, and designs, making this a good starting point.
 - Designed from the start to work **without a GitHub account**, using only files, links, and logs, so it can expand to non-development majors.
 - The distribution unit is not the whole school but **one semester cohort, 2–3 courses, 10–20 teams**. It must be able to start at the student or club level even without professor participation. Company features are validated only after student-side value is confirmed.
+- Just as campus community apps (such as Fizz) open school by school, course hubs **open gradually, starting with courses that meet a minimum supply** (§8.6). Empty course pages are not shown first; before opening, the page shows "Coming soon · notify me" and a request to write a senior note.
 
 ---
 
@@ -129,7 +130,7 @@ Self-introduction is already possible with a GitHub profile README, so "self-int
 | GitHub | Code version control and collaboration | Integrated as a source of evidence |
 | Trello, Notion | General task and document management | Differentiated by an assignment-specific structure (milestones, contribution, publication policy) |
 | KakaoTalk, Discord | Team conversation | A bot joins and collects decisions and progress from conversations into records |
-| Course review communities | Course reviews, anonymous boards | An archive of assignment *processes*, not professor ratings. No professor ratings |
+| Campus communities (Everytime, Fizz) | School-verified anonymous boards, timetables, course reviews | School, department, and study rooms are adapted (§8.9), but no professor or course ratings. The difference is carrying the community into an archive of assignment *processes* |
 | Notion/LinkedIn portfolios | Self-introduction, showcase | A portfolio assembled from records and linked to evidence |
 | LMS, grading tools | Distributing, collecting, and grading assignments | A record the student owns even after the course ends |
 
@@ -332,11 +333,127 @@ GitHub's fork is applied to *plans*. Juniors fork a senior's assignment's **mile
 
 Juniors can post questions on public 🧱 stuck logs (if the author allows it). Answers focused on principles and approaches are encouraged; completing another student's in-progress assignment on their behalf or selling answers is not allowed. Other students' "this helped" signals are used **only to sort cards by usefulness** and are not summed into an author's personal score.
 
+**Per-thread anonymous labels.** So that basic questions can be asked without hesitation, participants in a Q&A thread can appear as `Asker`, `Anon 1`, `Anon 2`, as in Everytime and Fizz. The same person keeps the same number within a thread, and numbers do not carry across threads, which makes it hard to link posts and infer identity. Answers from the stuck log's author show as `Author` even when anonymous, to preserve trust. As with senior notes, operators can see the real author to handle reports, and the author chooses whether anonymous answers count toward "Junior impact" in their portfolio.
+
 ### 8.6 Policy
 
 - **Professor names, grading tendencies, and star ratings are not handled.** This is a different domain from course review services and avoids reputation disputes. The instructor field is hidden by default.
 - Cases for in-progress assignments in the same course and semester are subject to **embargo** (§9.2).
 - The "school context" captured by the original ProofU's school notice collection (YUnotice) is inherited through the school → course structure, but without crawling.
+- **Anyone can read; only school-verified accounts can write in course hubs.** Senior notes, stuck Q&A answers, and assignment type summaries can be written only by current students and alumni verified with that school's email. Because school email often disappears after graduation, verification history from enrollment is retained and alumni get an `Alumni` label. Verification is used only to check writing eligibility; student ID and department are not shown publicly (§10.1).
+- **Gradual course hub opening.** A course page goes public once its public cases and senior notes reach a threshold (initial proposal: 3 in total, finalized in the pilot). Before that, students who registered the course (§8.7) see "Coming soon" with a notify option, and students who finished the course see a request for a senior note.
+- **Student curators.** Each course has 1–2 senior students or alumni who finished it as curators. Curators propose concept tag merges, tidy assignment type summaries, and do first-pass report review; final actions such as unpublishing or account measures are taken by operators. Curator activity can be shown under "Junior impact" in the portfolio.
+- **Course hubs stay a public archive.** Anonymous free conversation happens in the campus community (§8.9), not in course hubs, and course reviews and marketplaces are not built anywhere.
+
+### 8.7 This semester's courses (P1)
+
+Like Everytime's timetable, students register **the courses they are taking this semester** at the start of the term. They pick courses by searching school and course directly; timetables from other services are not crawled or imported through account linking.
+
+- For each registered course, the home screen shows entry points to the course hub (if open), senior notes, and plan forks. Instead of waiting for students to find the course hub, it hands it to them at the start of the semester.
+- When a team assignment starts, creating an assignment space from a registered course fills in course, semester, and embargo (§9.2) automatically.
+- Course registrations are **visible only to the student.** They are not shown on public profiles, and figures such as "N students taking this course this semester" appear on course hubs only as anonymous aggregates with n ≥ 5.
+- At the end of the semester, registered courses drive the "Leave a senior note" and "Publish this?" notifications.
+
+### 8.8 Find teammates (P1)
+
+Helps form team-assignment groups per course at the start of the semester. It carries the original ProofU's team join requests into a course context.
+
+- Students who registered the same course post "Looking for teammates"; applicants **may** attach their public profile or public case links. Applying without them is allowed.
+- Only the poster sees the applicant list. Applicants are never sorted or ranked by activity, fork count, or confirmations. No rejection reasons are recorded.
+- Once the team is formed, the post and applications close and lead straight to creating an assignment space and invitations (§16 assignment space and team invites).
+- For courses where the instructor assigns teams, the course curator can mark the feature as hidden.
+- The same recruiting flow is used for study groups (§8.9.5). Teammate and study recruiting share one "Recruiting" list, distinguished by type.
+
+### 8.9 Campus community: rooms and pages (P1)
+
+Drawing on Everytime's per-school boards and Fizz's school-verified feeds, Peerchive adds communities organized by school, department, cohort, and study group. The goal is to address the 2019 limitation that assignment records alone gave little reason to come back daily during the semester (§1.2), and to carry questions and study groups from the community into archive records. The community is an entrance to the archive, not a replacement, and community posts are kept separate from the public archive.
+
+#### 8.9.1 Referenced features and Peerchive's choices
+
+| Referenced feature | Common form in Everytime and Fizz | Peerchive's choice |
+|---|---|---|
+| School-verified spaces | Verify your school to enter its feed and boards | Official pages are read and written only by verified members of that school |
+| Per-school boards | Free, secret, freshmen, alumni, info, recruiting boards | Official pages get a default board set (§8.9.3) |
+| User-created boards | Students create boards and decide whether anonymity is allowed | Anyone creates small-to-medium "rooms", and **the room owner sets the name display mode: real name, display name, or anonymous** |
+| Anonymous posts and numbered comments | Per-post anonymity, comments as `Anon 1`, `Anon 2`, `Author` label | Per-thread anonymous labels (§8.5) apply across the community |
+| Likes and hot posts | HOT/BEST collections by like or upvote count | Likes only, no downvotes. A "Most liked" tab on official pages |
+| Polls | Polls attached to posts | Poll attachments (P2) |
+| Reports and auto-hide | Hidden after accumulated reports, usage restrictions | Temporary hide after accumulated reports, then review (§8.9.6) |
+| Student moderators | Per-school student moderators and ambassadors | Course curators (§8.6) extended to moderate official pages |
+| Recruiting boards | Study group, club, society recruiting | Study recruiting → study room → study record → public case (§8.9.5) |
+| Anonymous DMs, marketplace, course reviews | Anonymous messages from posts, used goods trading, professor and course ratings | **Not built** (§8.9.7) |
+
+#### 8.9.2 Kinds of spaces
+
+| Kind | Created by | Name display default | How to join | Example |
+|---|---|---|---|---|
+| **Official school page** | Operators, on request | **Anonymous** | Verify that school's email | ○○ University |
+| **Official department page** | Operators, on request | **Anonymous** | School verification + department selection (self-reported) | ○○ Univ. Computer Science |
+| **User room** | Any logged-in user | **Set by the room owner** (real name, display name, anonymous) | Join method set by the owner | Class of 2012 CS cohort room, OS study group, ○○ society |
+| **Course hub** | Operators and curators (§8.6) | Author's choice (§8.3) | Anyone reads, school-verified accounts write | Operating Systems |
+
+Official pages and user rooms share the same board structure and differ only in permissions and defaults. Course hubs are the public archive, so they are not mixed with the community; each course hub links to a room through "Talk about this course".
+
+#### 8.9.3 Official school and department pages
+
+- **Opening requests.** Any school-verified student can request one. Operators open it when requests from verified students of the same school reach a threshold (initial proposal: 10) or when a student council or department student council asks. Like school-by-school opening (§2.2), empty pages are not created in advance.
+- **Official label.** Only official pages get an `Official` badge. User rooms cannot use words such as `Official` or `Student Council` in their names, and rooms impersonating a school or department can be reported. Users are told that "Official" means opened and run by Peerchive, not endorsed by the school.
+- **Anonymous by default.** Posts and comments are anonymous by default; an author can choose to post a single post under their display name. Real names are not used.
+- **Visibility.** Only verified members of that school read and write. Department pages are readable by verified members of the school and writable by those who selected that department. Because school email cannot confirm a department, the department is self-reported, and department moderators can restrict obvious outsiders. Official page posts are not exposed to logged-out users or search engines.
+- **Default boards.** Free / Freshmen / Alumni / Questions / Info / Recruiting (study groups, teammates, clubs) / Notices (moderators only). Technical and assignment questions on the Questions board can be moved into stuck logs (§8.9.8).
+- **Moderators.** Like student curators, 2–3 per school or department. Moderators cannot see the authors of anonymous posts either.
+
+#### 8.9.4 User rooms
+
+Anyone can create a small-to-medium room. These are for groups smaller than official pages where people tend to know each other, such as cohort rooms, clubs, societies, and interest groups.
+
+| Set when creating a room | Options | Notes |
+|---|---|---|
+| Name display mode | **Real name / display name / anonymous** | E.g., a "Class of 2012 Computer Science" room created with real names means members post under real names |
+| Affiliation | Linked to a school / not linked | When linked, only accounts verified with that school can join |
+| Discovery | Listed and searchable / link or invite only | Anonymous rooms can also be listed |
+| Join method | Open / owner approval / invite only | Real-name rooms default to approval or invite |
+| Capacity | 300 by default; larger requires operator review | Large communities are steered toward official pages |
+
+- **Changing the display mode.** A new mode applies **only to later posts**. Anonymous posts are not exposed when a room switches to real names, and real-name posts do not become anonymous. All members are notified before the switch, which takes effect 7 days later.
+- **Real-name rooms.** The real name is the one entered on the account; Peerchive does not verify identity. In school-linked rooms, school verification status is shown next to the name. Entry years such as "Class of 2012" are used only in room names or self-introductions, keeping the principle of not collecting student ID numbers (§10.1).
+- **Anonymous rooms.** The smaller the room, the easier anonymity breaks. In anonymous rooms with fewer than 10 members, post times are shown only as "today" or "this week", and the creation screen warns that "in small anonymous rooms, writing style and timing can reveal who wrote a post".
+- **Owner permissions.** Pin notices, hide posts, approve and remove members, change room settings. Owners of anonymous rooms cannot see authors either. When the owner leaves, ownership passes to the longest-standing admin or member; if none remain, the room is archived.
+
+#### 8.9.5 Finding study groups
+
+- **Recruiting posts.** Can be posted on an official page's Recruiting board, a course hub, or a user room. Fields: topic or course, duration, number of members, format (online, offline, time slots), goal, and the name display mode of the study room to be created.
+- **Applying.** Same as finding teammates (§8.8): profile attachment is optional, applicants are not ranked, and no rejection reasons are recorded. Even for posts on anonymous boards, applicant details are visible only to the poster.
+- **Study rooms.** When recruiting closes, a study room is created and applicants are invited. Because members are accountable to one another, **display names are the default**; the recruiting post can choose real names or anonymity instead.
+- **Study records.** Alongside the board, a study room can turn on the same build log and milestones as an assignment space. Recording what was done each week lets members turn the study retrospective into a public case or portfolio entry at the end. Records from anonymous study rooms are not linked to portfolios.
+
+#### 8.9.6 Anonymity and moderation
+
+- **Anonymous means anonymous to other users.** Operators can identify authors to handle reports and legal requests, and the writing screen says so. Room owners and moderators cannot.
+- **Anonymous posts are not linked to profiles.** They do not appear on public profiles, portfolios, or contribution ledgers and are not counted in activity totals. There are no anonymous activity scores or levels.
+- **Per-thread numbers.** `Anon 1` and `Anon 2` persist only within a thread, and `Author` is shown (§8.5).
+- **Reports and temporary hiding.** When reports from distinct verified users reach a threshold (initial proposal: 5 on official pages, 3 in user rooms), the post is temporarily hidden and reviewed by moderators and operators. Takedown requests claiming rights violations follow a separate procedure finalized after legal review.
+- **Usage restrictions.** Warning → time-limited community writing ban → permanent community ban. Community restrictions are separate from use of assignment spaces and portfolios.
+- **Prohibited.** Sharing answers to in-progress assignments or exam questions, defaming or doxxing professors or specific individuals by name, impersonating a school or department, repeated promotion. Anonymous posts containing strings that look like real names or contact details trigger a warning before posting (P2).
+- **Academic integrity.** The embargo policy (§9.2) also applies to course-linked rooms. Sharing answers or code for same-semester assignments is reportable; questions about plans and concepts are allowed.
+
+#### 8.9.7 What we won't build
+
+- **Anonymous DMs.** One-to-one messages sent straight from anonymous posts easily become a harassment channel. Contact happens through recruiting applications and inside real-name or display-name rooms.
+- **Professor and course ratings, exam information.** The §8.6 policy applies to the community as is.
+- **Marketplace and real-time chat.** Rooms are board-style; real-time conversation is left to the team's messenger and bot (§6.5).
+- **Downvotes and activity rankings.** Burying posts with mass downvotes and ranking activity conflict with the principle of not converting contribution into activity volume (§7).
+
+#### 8.9.8 Paths into the archive
+
+| From the community | To the archive | Conditions |
+|---|---|---|
+| Technical and assignment questions and answers on Questions boards | Stuck log (🧱) or stuck Q&A | Consent from the asker and the accepted answerer; the name display mode is chosen again when moving |
+| Long advice posts from senior students | Senior note (§8.3) | Author consent, linked to the course |
+| Study room records | Public case, portfolio | Publication process (§9.3) and member consent |
+| Recruiting posts | Assignment space, study room | Created automatically when recruiting closes |
+
+Moving content from the community into the archive is always the author's choice; community posts are never exposed automatically in the public archive or to search engines.
 
 ---
 
@@ -426,7 +543,7 @@ flowchart LR
 ```
 
 - Basic information: name or display name, one-line introduction, target role, public contact method, featured cases. School, department, expected graduation date, and real name are optional, and the profile can be created privately first.
-- Student ID numbers and grades are not collected. School email verification is an optional badge.
+- Student ID numbers and grades are not collected. School email verification is an optional badge on profiles and is required only to write in course hubs (§8.6).
 - Contact is offered only through methods the student allows.
 
 ### 10.2 Case study
@@ -508,11 +625,17 @@ Unwanted recruiting contact, collection of grades or sensitive information, and 
 
 ```text
 Peerchive
-├── Home (logged in: my assignments dashboard / logged out: explore course archive)
+├── Home (logged in: this semester's courses and my assignments dashboard / logged out: explore course archive)
 ├── Explore
 │   ├── School > Course > Assignment type > Case
+│   ├── Course > Find teammates (P1)
 │   ├── Stuck search (error messages, keywords)
 │   └── Concept tags
+├── Community (P1, school verification required)
+│   ├── My school · My department (official, anonymous by default)
+│   ├── My rooms (cohort, study, club; owner sets name display mode)
+│   ├── Recruiting (study groups, teammates, clubs)
+│   └── Find rooms · Create a room · Request an official page
 ├── My assignments
 │   └── Assignment space [Overview | Build log | To-do | Outputs | Contribution | Publish]
 ├── Portfolio [Case studies | Profile | Export]
@@ -520,7 +643,7 @@ Peerchive
 └── Settings (integrations: GitHub, Discord / notifications / publication defaults)
 ```
 
-The top menu starts with **Explore / My assignments / Portfolio**. Editing areas and public showcase areas are visually distinguished, and share buttons always display the publication scope.
+The top menu starts with **Explore / My assignments / Portfolio**, adding **Community** from P1 when the community opens. Editing areas and public showcase areas are visually distinguished, and share buttons always display the publication scope. The community writing screen always shows the current space's name display mode (🙈 Anonymous / 🏷️ Display name / 🪪 Real name) with text.
 
 ### 13.2 Key screens
 
@@ -614,6 +737,9 @@ This section is an operational and product policy proposal and does not assert a
 | Contribution display | No activity scores or rankings; self-description and teammate confirmation distinguished | MVP |
 | Recruiting | Not exposed in talent search unless the student turns it on; no selling student data; no school or view-count rankings | P2 |
 | Faculty requests | Embargo request channel | P2 |
+| Community anonymity | Anonymous to other users only; operators can identify authors. Anonymous posts are not linked to profiles or portfolios | P1 |
+| Community moderation | Temporary hiding after accumulated reports, staged restrictions, no school or department impersonation, embargo applies to course-linked rooms | P1 |
+| Takedown requests | Procedure for rights-violation claims finalized after legal review | Before P1 launch |
 
 These measures **do not promise complete prevention of dishonesty.** The goal is to keep the default usage flow from drifting into answer sharing.
 
@@ -642,9 +768,13 @@ The MVP's purpose is to validate the flow in which **an assignment is recorded d
 | P1 | Advanced archive | Workload distribution aggregation, usefulness signals, stuck Q&A, semantic search for similar sticking points |
 | P1 | Advanced portfolio | Competency × evidence matrix, per-role versions, interview prep pack, limited sharing links, application PDF, README card |
 | P1 | Advanced collaboration | Kanban board view, per-log feedback comments (publication handled separately), GitHub App |
+| P1 | Campus community | One official page at the pilot school, user rooms (real name, display name, or anonymous), recruiting and study rooms, per-thread anonymous numbers, reports and temporary hiding, moving questions into stuck logs |
 | P2 | Recruiters, institutions | Portfolio Q&A, talent search and contact, mentor review, class space and dashboard, faculty embargo requests |
+| P2 | Community enhancements | More official department pages, polls, "Most liked" tab, real-name and contact warnings on anonymous posts, turning study records into public cases |
 
-**What we won't build:** built-in chat (replaced by the messenger bot), a separate calendar engine (replaced by deadlines and .ics export), a school notice crawler, Git hosting, auto-grading. The original implementations stay in the archive and will be reconsidered if real demand is confirmed.
+Because the community carries a heavy moderation load, it opens at a single pilot school only after the MVP has validated the archive flow.
+
+**What we won't build:** built-in chat (replaced by the messenger bot; community rooms are board-style too), a separate calendar engine (replaced by deadlines and .ics export), a school notice crawler, Git hosting, auto-grading. The original implementations stay in the archive and will be reconsidered if real demand is confirmed.
 
 If available time is under 20 hours per week, a reduced plan applies: the Discord bot, peer evaluation PDF, and plan fork move to P1, leaving only the build log, contribution ledger, publication, and minimal course hub.
 
@@ -683,6 +813,17 @@ Initial pricing and revenue are not fixed; paid hypotheses will be validated aft
 | AI | Template drafts in MVP, AI in P1 | Results of cost and quality experiments |
 | Technical direction | Preserve original + new app side by side | When existing production data or users are confirmed |
 | Company features | Start with reading public profiles | When repeated recruiting review and contact demand is confirmed |
+| Course hub writing eligibility | Anyone reads; school-email-verified students and alumni write | If verification sharply reduces senior note supply, allow unverified writing labeled `Unverified` |
+| Course hub opening | Open courses with 3+ public cases and senior notes in total | Lower the threshold if "Coming soon" causes more drop-off than empty pages in the pilot |
+| Student curators | 1–2 senior students or alumni per course; operators take final actions | Operators take over if curators are hard to find |
+| Stuck Q&A anonymity | Per-thread anonymous labels allowed; operators can see the author | Default to display names if reports or answer trading rise in anonymous answers |
+| This semester's courses | Search and register directly, visible only to the student, no external timetable integration | Consider bulk import if the school provides public course offering data |
+| Find teammates | P1, profile attachment optional, no applicant ranking | Drop if interviews show team formation is not a real pain |
+| Community launch | P1, one pilot school, after the archive flow is validated | If almost nothing moves from the community into records (stuck logs, study records), keep only recruiting and study rooms |
+| Name display mode | Official school and department pages anonymous by default; room owners choose real name, display name, or anonymous; changes apply only to later posts | If reports from anonymous rooms exceed moderation capacity, limit anonymous user rooms to verified owners and smaller capacity |
+| Official page opening | Operators open one when 10 verified students of the same school or a student council request it | If requests are too few, operators open the pilot school's page first |
+| Department check | Self-reported, plus department moderators restricting outsiders | If impersonation or outsiders recur, consider extra checks such as department student council confirmation (student ID numbers are still not collected) |
+| Anonymous DMs | Not built | If recruiting and study contact proves very inconvenient, first consider messages inside real-name or display-name rooms |
 
 **Questions for the owner**
 1. First pilot school and department: can we reach a cohort of juniors or clubs at the school connected to the original ProofU?
@@ -691,6 +832,11 @@ Initial pricing and revenue are not fixed; paid hypotheses will be validated aft
 4. Embargo: enforced default or author's choice?
 5. Development time: is the assumption of 20–30 hours per week correct?
 6. Does an existing production DB exist, and what share of target students use Git?
+7. Email verification at the pilot school: is the student email domain identifiable, and does email survive graduation?
+8. Course list: can the school's public course offering list serve as reference data for course registration and hubs?
+9. Student curators: can we find a senior student or alumnus to curate each of the first 2–3 courses?
+10. Community moderation: how many hours per week can go to reviewing reports, and are there students at the pilot school willing to moderate?
+11. Of the conversations pilot students already have on Everytime, which would have a reason to move to Peerchive (study recruiting, assignment questions, etc.)?
 
 Even without answers, we can start with a manual experiment using 3–5 consented completed assignments and graduates' senior notes ([Delivery plan §2](planning/DELIVERY_PLAN.en.md#2-validation-experiments-before-development)).
 
@@ -703,6 +849,7 @@ Official sources checked on 2026-10-13. External documents were used to confirm 
 - [GitHub profile README](https://docs.github.com/en/account-and-profile/how-tos/profile-customization/managing-your-profile-readme): confirms that a self-introduction feature is already provided.
 - [GitHub Classroom shutdown notice](https://github.com/orgs/community/discussions/205975): confirms the shutdown date and preservation of existing repositories.
 - [1EdTech CLR](https://www.1edtech.org/standards/clr): a record standard linking learner achievements and evidence. Peerchive is currently not an accredited issuing or standards-compliant service.
+- Fizz and Everytime (added 2026-10-20): only widely known feature patterns of campus community apps were referenced, such as school verification, school-by-school opening, per-thread anonymous labels, and timetables. Their internal policies and operating figures were not checked, and the scope was narrowed to fit Peerchive (§8.5–§8.9). The community (§8.9) drew on patterns of per-school boards, user-created boards, likes and hot posts, polls, hiding after accumulated reports, student moderators, and recruiting boards.
 
 ## Preserving the original record
 
