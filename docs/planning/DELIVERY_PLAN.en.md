@@ -2,7 +2,7 @@
 
 [한국어](DELIVERY_PLAN.md) | **English**
 
-Written: 2026-10-18 · Status: consolidated proposal
+Written: 2026-10-18 · Updated: 2026-10-20 (campus community in §4.1, §5.1, §6.1, §9.1, and gate GC) · Status: consolidated proposal
 
 [Product proposal](../PROOFU_EVOLUTION_PLAN.en.md) · [System design](SYSTEM_DESIGN.en.md)
 
@@ -24,7 +24,7 @@ Run these with Notion, Discord, static pages, and spreadsheets before writing co
 
 | Participants | Number | Key questions |
 |---|---|---|
-| Current students | 8–12 | In your last team assignment, how did you prove who did what? Have you ever received past materials passed down from seniors, and what was most useful? Where did you record judgments, failures, and validation along the way? What did you have to redo when building a portfolio? How much would you publish, and whose consent is needed? What does your team use for chat? |
+| Current students | 8–12 | In your last team assignment, how did you prove who did what? Have you ever received past materials passed down from seniors, and what was most useful? Where did you record judgments, failures, and validation along the way? What did you have to redo when building a portfolio? How much would you publish, and whose consent is needed? What does your team use for chat? Do you recruit study groups or ask assignment questions on Everytime or similar apps, and have you wished those conversations had been kept as records? |
 | People with hiring-review experience | 4–6 | View three student cases for 90 seconds each and explain the role, evidence, and possible interview questions. Do not infer from interviews any commitment that companies will use the platform |
 | Professors, teaching assistants, mentors | 2–3 | Actual publication conditions and concerns, acceptability of publishing after the term (embargo), potential use of contribution reports for peer evaluation |
 
@@ -53,7 +53,7 @@ Even if results show students find it hard to publish actual submissions, that i
 | **1. MVP development** | 2026-12-01 ~ 2027-02-26 (13 weeks, winter break) | §4 backlog T-01–T-16 | private alpha → preparation for limited public | **G1** (week 7), **G2** preparation (week 13) |
 | **2. Pilot** | 2027-03-02 ~ 06-30 (spring term) | Real use by 10–20 teams in one department, public course hubs, end-of-term publication campaign | Metrics, interviews, incident records | **G2** (before publishing public cases), **G3** |
 | **3. Portfolio** | 2027-07 ~ 08 (summer break) | 1–3 P1 items that resolve the biggest obstacle found in experiments (candidates: AI case polishing, competency × evidence, restricted sharing/PDF, interview prep pack) | Portfolios for second-half recruitment season | Scope decided by G3 results |
-| **4. Expansion** | 2027 fall term onward | Multiple departments and schools, Kanban board, GitHub App, stuck-card Q&A, semantic search, class spaces, monetization experiments | – | **G4** |
+| **4. Expansion** | 2027 fall term onward | Multiple departments and schools, Kanban board, GitHub App, stuck-card Q&A, semantic search, campus community (one pilot school, §4.1), class spaces, monetization experiments | – | **GC** (community launch), **G4** |
 
 Detailed implementation proceeds in **vertical feature slices** rather than completing each layer separately (e.g., finish the assignment creation screen, API, DB, and authorization tests together). Do not handle file scanning, the authorization model, or publication candidates as temporary patches right before the pilot.
 
@@ -95,6 +95,25 @@ Detailed implementation proceeds in **vertical feature slices** rather than comp
 
 The start order is T-01 → T-02/T-03 → T-04/T-05 → T-06/T-07 → T-08/T-09 → T-10 → T-11/T-12 → T-13/T-14/T-15 → T-16. These are task dependencies, not a committed plan for parallel staffing.
 
+### 4.1 P1 campus community backlog
+
+The community in [product plan §8.9](../PROOFU_EVOLUTION_PLAN.en.md#89-campus-community-rooms-and-pages-p1) opens at a single pilot school after the MVP has validated the archive flow (G3). The data model, permissions, and visibility follow [system design §6.7, §8.1, and §8.2](SYSTEM_DESIGN.en.md#67-campus-community-p1). Scope is the P1 row of product plan §16 (one official page, user rooms, recruiting and study rooms, per-thread anonymous numbers, reports and temporary hiding, moving questions into stuck logs); polls, "Most liked", more official department pages, and real-name warnings on anonymous posts are P2.
+
+| ID | Task | Depends on | Done when |
+|---|---|---|---|
+| C-01 | School email verification, self-reported department | T-02, T-10 | Code expiry and retry limits, verification history kept for alumni, no student ID numbers, departments, or verification emails in public DTOs. The same record decides course hub writing eligibility |
+| C-02 | Spaces, boards, memberships, join methods | C-01 | Only operators open official pages, opening requests counted (threshold 10, or student council), reserved names rejected, capacity 300, owner succession and archiving |
+| C-03 | Name display mode and change history | C-02 | Mode frozen on posts and comments at write time; changes are scheduled 7 days ahead, notify members, and apply only to later posts; zero retroactive changes to earlier posts |
+| C-04 | Posts, comments, likes, per-thread anonymous numbers | C-03 | Numbers persist within a thread and are unlinked across threads, `Author` label shown, no author identifiers in owner or moderator responses, no downvotes |
+| C-05 | Visibility and search engine exclusion | C-02 | 404 for logged-out users, other schools, and non-members; `noindex`, robots, and sitemap exclusion; no Open Graph body previews; zero community bodies in public search, embeddings, or aggregates |
+| C-06 | Reports, temporary hiding, restrictions, author identification | C-04, T-15 | Auto-hide when distinct verified reporters reach the threshold (5 official, 3 rooms); staged restrictions do not affect assignment spaces or portfolios; operator author identification requires a reason and audit entry |
+| C-07 | Recruiting, applications, study room creation | C-04 | Same recruiting table as finding teammates, applicant list visible only to the recruiter and unranked, closing creates the study room and invitations |
+| C-08 | Study records | C-07, T-06 | Build log and milestones usable in study rooms, publication through the publication process and member consent, records from anonymous study rooms cannot be linked to portfolios |
+| C-09 | Moving into the archive | C-04, T-13 | Question and accepted answer → stuck log or Q&A; advice post → senior note. Nothing is copied before all parties consent, name display mode chosen again, original post keeps its visibility |
+| C-10 | Moderation tools and instrumentation | C-06, T-16 | Report queue and handling time, weekly moderation hours recorded, §6.1 events (anonymous posts without user keys) |
+
+The start order is C-01 → C-02 → C-03/C-05 → C-04 → C-06 → C-07/C-09 → C-08 → C-10. C-05 and C-06 are required by gate GC (§7), so they are finished before any feature expansion. Even when time is short, C-08 and C-09, which lead into the archive, are not deferred; instead, the official page is delayed and recruiting and study rooms (C-07) open first, because the goal is to confirm that the community leads into the archive.
+
 ## 5. Acceptance scenarios
 
 **A. Recording a personal assignment without GitHub**
@@ -124,6 +143,29 @@ On mobile, a student can upload a file first and complete the description later.
 **I. Reading for hiring**
 An anonymous reviewer opens a public profile without logging in and finds the problem, personal role, and evidence of the featured assignment within 90 seconds. Only the contact details the student allowed are visible. Private school information, emails, team feedback, and check-ins are not included in page HTML, JSON, Open Graph, or printed output.
 
+### 5.1 Community acceptance scenarios (P1)
+
+**J. Official school page visibility**
+A student verified with a pilot school email reads the official school page and posts anonymously. Logged-out users, users verified with another school, and users whose verification was revoked get 404 at the same URL. No body text appears in a search engine crawler simulation or external link previews, and community posts do not mix into public search or course pages.
+
+**K. Protecting anonymous authors**
+When the poster comments on their own anonymous post, they appear as `Author`; other participants appear as `Anon 1`, `Anon 2` in order of first participation, and those numbers persist within the thread. Nothing links them by number or key to the same person's posts in other threads. Owner and moderator API responses and screens contain no author identifiers either. Anonymous posts do not appear on the author's public profile, portfolio, or activity totals.
+
+**L. Changing the name display mode**
+When an owner switches a real-name room to anonymous, all members are notified and the change takes effect 7 days later. Real-name posts written before then stay under real names; later posts are anonymous. Conversely, switching an anonymous room to real names does not reveal the authors of earlier anonymous posts. The change history is visible in room settings.
+
+**M. Reports, temporary hiding, restrictions**
+When 3 distinct verified users report a post in a user room, it is hidden immediately and queued for review. Repeated reports from the same person do not accumulate. Because the owner cannot know the anonymous author, they request a sanction; an operator records a reason, identifies the author, and issues a warning or write suspension. The identification is audited, and the restricted user can still use their own assignment spaces and portfolio.
+
+**N. From study recruiting to records**
+When a study recruiting post goes up on an official page's Recruiting board, applicant details are visible only to the recruiter and are not ranked. When recruiting closes, a study room with display names by default is created and applicants are invited. Members keep a weekly build log in the study room and, at the end, publish it as a public case with member consent. Records from anonymous study rooms cannot be linked to portfolios.
+
+**O. Moving a question into a stuck log**
+When an answer to an assignment question on the Questions board is accepted, the asker requests "Move to stuck log". Only after both the asker and the accepted answerer consent and choose the name display mode again is a copy created as a stuck log; the original post keeps its community visibility. If either declines, nothing is copied.
+
+**P. Small anonymous rooms and impersonation**
+In an anonymous room with 9 members, post times show only as "today" or "this week", and the creation screen warns about identification risk. Creating a user room with `Official` or `Student Council` in its name is rejected, and the `Official` badge appears only on spaces opened by operators.
+
 ## 6. Measurement plan
 
 **North star metric:** among assignments and senior notes published at the end of the term, **the number that junior students forked as a plan or marked “This helped”** (hypothesized pilot-term target: 15).
@@ -148,6 +190,24 @@ Minimal analytics events: `project_created`, `log_saved` (tag, source), `evidenc
 
 Public view counts, likes, and commit counts are not used as personal capability scores. Ratios from small samples are not generalized to the entire university student market, and improving employment rates is a separate long-term research question that an early pilot cannot prove.
 
+### 6.1 Community metrics (P1)
+
+The community succeeds not by time spent but by whether **questions and study groups in the community lead into archive records**. These metrics decide product plan §19's rule, "if almost nothing moves from the community into records, keep only recruiting and study rooms".
+
+| Metric | Definition | Draft judgment for one pilot term |
+|---|---|---|
+| **Community → stuck log conversion** (core) | Share and count of technical and assignment questions on Questions boards moved into stuck logs or stuck Q&A | At least 10% of questions or 20 items. Below 5% counts as "almost nothing" |
+| **Community → study record conversion** (core) | Share of closed study recruitments whose study room kept a build log for at least 3 weeks | At least 30%. Below 10%, keep recruiting only and drop study records |
+| Study publication | Share of recorded study groups that became public cases or senior notes at term end | 20% |
+| Recruiting success | Share of recruiting posts closed with a study room or assignment space created | 40% |
+| Archive entry | Share of community users who opened a course hub or their own assignment space for the first time | 30% |
+| Return visits | Share of school-verified users visiting at least weekly during the term (exam periods tracked separately) | 30% |
+| Report rate and handling time | Reports per 1,000 posts; median time from auto-hide to completed review | Median review within 24 hours |
+| Moderation load | Weekly report review hours for operators and moderators | Within the hours available per product plan §19 question 10 |
+| Author identification | Number of operator author identifications and share linked to a report | 100% linked to reports, zero unlinked lookups |
+
+Community analytics events: `community_post_created` (space_kind, name_mode, board_kind), `community_comment_created`, `archive_transfer_requested`, `archive_transfer_completed` (target), `recruitment_closed` (kind), `study_room_created`, `study_record_logged`, `report_filed`, `post_auto_hidden`, `sanction_issued` (level), `operator_identity_lookup`. **Events for anonymous posts and comments carry no user key**, and conversion metrics count only users who consented at the moment of conversion. Bodies, titles, and space names are never included in events. Like counts and post counts are not used as personal metrics.
+
 ## 7. Release and expansion gates
 
 | Gate | Required checks | If failed |
@@ -156,6 +216,7 @@ Public view counts, likes, and commit counts are not used as personal capability
 | **G1: private alpha** | Authorization, persistence, file quarantine, account state, and bot collection tests; use by two internal teams | Do not accept external users |
 | **G2: limited public** | Publication consent, embargo, withdrawal, derivative blocking, reports, and recovery work; report handler, response time, and deletion procedure designated | Block public features; re-verify after fixing |
 | **G3: Next cohort** | Review recording burden, student value, publication policy, operating cost | Adjust purpose of use or recruitment scope |
+| **GC: Community launch** | G3 passed; C-05 and C-06 regression tests (visibility, author non-disclosure, auto-hide); report reviewer, weekly hours, and response time assigned; at least 2 moderators at the pilot school; takedown request procedure legally reviewed; community rules announced | Do not open the community; open only recruiting and study rooms in a limited way, or hold |
 | **G4: Employer and institution expansion** | Supply of consenting users, repeated review demand, contact and data policies confirmed | Stay at the public profile link level |
 
 Separate feature completion from operational readiness. Writing down a legal or school-policy review in a document does not make it complete.
@@ -196,13 +257,30 @@ Split supply units smaller than full cases to gather initial content quickly.
 | External API dependence | Connection failures, switch to private, quotas | Links first, adapters and retry, usable without integrations |
 | Weak employer demand | Shared links are not actually read | Keep the value of student recording and organization; defer employer features |
 
+### 9.1 Community moderation risks (P1)
+
+The community carries a far heavier operating load than the archive. Open only what a solo developer and a small moderation team can handle.
+
+| Risk | Early signal | Response |
+|---|---|---|
+| Report review exceeds capacity | Growing review backlog, median handling time over 24 hours, weekly review hours above what is available | Keep automatic temporary hiding, first-pass review by moderators, limit user room capacity and new room creation, narrow anonymous rooms to verified owners and capped capacity (product plan §19), and if still overloaded, pause writing on the official page |
+| Anonymous harassment, doxxing | Real names or contact details of specific people, repeated reports about the same target | Rules against naming and doxxing, no anonymous DMs, staged restrictions, consider pulling forward the real-name and contact warning (P2) |
+| Cannot recruit moderators | Fewer than 2 moderator volunteers at the pilot school | Limit to one official page that operators can run directly; user rooms rely on owner responsibility plus operator report handling |
+| Abuse of, or distrust in, operator author identification | Lookups not linked to reports, user inquiries | Limit the permission to the report-handling role, require a reason and report ID, review audit logs regularly, disclose on the writing screen |
+| Identification in small anonymous rooms | "I know who wrote this" reports in small anonymous rooms | Time buckets for rooms under 10 members, warning at creation, restrict anonymity for small rooms if needed |
+| School or department impersonation | Names resembling `Official` or student councils, outsiders on department pages | Reject reserved words, keep the `Official` badge separate, department moderators restrict outsiders' writing, consider department council confirmation if repeated (no student ID collection) |
+| Answer sharing, academic misconduct | Reports of code or answers shared in course-linked rooms during the same term | Embargo policy for course-linked rooms, categorized report reasons, plan and concept questions allowed |
+| Takedown and legal requests | Rights infringement claims, law enforcement requests | Finalize a legally reviewed separate procedure before GC, keep handling records |
+| Community replaces the archive instead of leading into it | Post counts grow but §6.1 conversion metrics stay low | Make "Move to stuck log" more prominent on Questions boards; if conversion stays low, keep only recruiting and study rooms and shrink the free boards |
+| Competing with existing communities, empty spaces | Only conversations already on Everytime repeat, visits decline | Focus on uses that lead to records, such as study recruiting and assignment questions; never create empty official pages in advance. If opening requests are too few, operators open the page first at the single pilot school only (product plan §19) |
+
 ## 10. Operating cost estimation approach
 
 Because the hosting provider, region, capacity, and pricing have not been chosen, monthly costs are not presented as fixed numbers. Recalculate against official prices at the time a provider is selected.
 
 - Fixed: web, worker, and bot runtime, PostgreSQL, monitoring, authentication and email
 - Variable: storage, download transfer, scanning/thumbnail/PDF jobs, AI tokens, external API calls
-- People: publication guidance, reports and disputes, interviews, file and DB recovery, deployment management
+- People: publication guidance, reports and disputes, interviews, file and DB recovery, deployment management, community report review and moderator support (P1, weekly hours recorded separately)
 
 An initial 50 students × 500MB assumes up to roughly 25GB of original data; derivative files, versions, backups, and transfer are additional. Prefer external links for video, and set per-student limits and overall budget alerts. If budget is short, cut AI, automatic GitHub connection, sophisticated PDFs, and semantic search first, while keeping private authorization, file quarantine, publication withdrawal, and recovery.
 
