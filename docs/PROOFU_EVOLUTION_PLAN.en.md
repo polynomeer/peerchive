@@ -2,7 +2,7 @@
 
 [한국어](PROOFU_EVOLUTION_PLAN.md) | **English**
 
-Written: 2026-10-18 (Asia/Seoul) · Updated: 2026-10-20 (features adapted from campus community apps; community plan in §8.9) · Status: consolidated proposal · For: product planning, design, and go/no-go on implementation
+Written: 2026-10-18 (Asia/Seoul) · Updated: 2026-10-23 (identity position §4.4; alumni, topics, and organization expansion §8.9.9–§8.9.11; visibility and following §10.7) · Status: consolidated proposal · For: product planning, design, and go/no-go on implementation
 
 Peerchive is the new name for the project that continues from **ProofU**, an undergraduate graduation project built in 2019. Combining *Peer + Archive*, the name captures the goal of a public archive where students learn from one another's assignment and project experiences. The project was renamed to distinguish it from a separate career-management project called `proofu`. The GitHub repository name and address also changed from `proofu-univ` to [`peerchive`](https://github.com/polynomeer/peerchive). Document file paths are unchanged, and the preserved code is the original ProofU implementation.
 
@@ -156,6 +156,28 @@ As of 2026, the cost of producing outputs has dropped sharply. We therefore **as
 | An *explainable process* in which milestones, decisions, and sticking points leading to the output are linked in chronological order | Certification of performance or originality |
 | A descriptive display of the type and number of pieces of evidence for each contribution claim | Overall competency scores, employability scores |
 | Optional disclosure of AI usage scope, and a record of how it was verified and revised | Flagging AI usage as a penalty signal |
+
+### 4.4 Identity position: real names for records, anonymity for lounges
+
+Verified anonymity is the core strength of Everytime, Blind, and Fizz. Peerchive does not chase that strength head-on; it puts **identity at the center and treats anonymity as a per-space mode**. Affiliation verification is strong, and users choose per space how much to reveal.
+
+**Why anonymity is not the center**
+1. ProofU (Prove you), the contribution ledger, and portfolios are about proving "who did it"; anonymous activity does not accumulate as proof.
+2. Everytime is already the standard anonymous community on Korean campuses, so competing on the same ground loses on network effects. Conversely, "a place where records and people remain" is structurally hard for anonymous communities.
+3. In anonymity-first services, handling harassment and defamation easily becomes most of the operation, which a small team cannot sustain.
+
+Spaces for sharing and joking still need anonymity, so identity is split into four levels, and each space defines which levels it allows.
+
+| Level | What is shown | What accumulates | Where it is used |
+|---|---|---|---|
+| 0. Anonymous | `Anon 1` (kept only within a thread) | Nothing | Official school lounges, commiseration topics |
+| 1. Affiliation-labeled anonymous | `○○ Univ. · Alumni`, `Bootcamp graduate` | Nothing | Cross-school topics, career and practitioner Q&A (§8.9.10) |
+| 2. Display name | A persistent pseudonym such as `@devjimin` | Followers, public posts, public records | Public profile, study groups, creator activity |
+| 3. Real name | Kim Jimin | Followers, portfolio, alumni directory | Alumni and club OB groups, real-name rooms, recruiter-facing profile |
+
+- **Level 0–1 posts are never linked to level 2–3 profiles.** Follows, public post lists, and activity records show only levels 2–3, so even a well-known user's anonymous posts cannot be traced.
+- **A display name (level 2) is an identity separate from the real name.** It lets users build followers and reputation without revealing their real name; the link between display name and real name is shown only if the user turns it on.
+- Because levels are switched within one account, operators can identify authors at every level to handle reports (§8.9.6).
 
 ---
 
@@ -382,6 +404,8 @@ Drawing on Everytime's per-school boards and Fizz's school-verified feeds, Peerc
 | Student moderators | Per-school student moderators and ambassadors | Course curators (§8.6) extended to moderate official pages |
 | Recruiting boards | Study group, club, society recruiting | Study recruiting → study room → study record → public case (§8.9.5) |
 | Anonymous DMs, marketplace, course reviews | Anonymous messages from posts, used goods trading, professor and course ratings | **Not built** (§8.9.7) |
+| Affiliation-labeled anonymity and topics (Blind) | Company name on anonymous posts, cross-company topics | Cross-school and cross-organization topics with affiliation-labeled anonymity (§8.9.10) |
+| Group management tools (Band) | Per-group profiles, events and RSVPs, notice read receipts, albums | Alumni, club OB, and graduate room template (§8.9.9) |
 
 #### 8.9.2 Kinds of spaces
 
@@ -391,6 +415,8 @@ Drawing on Everytime's per-school boards and Fizz's school-verified feeds, Peerc
 | **Official department page** | Operators, on request | **Anonymous** | School verification + department selection (self-reported) | ○○ Univ. Computer Science |
 | **User room** | Any logged-in user | **Set by the room owner** (real name, display name, anonymous) | Join method set by the owner | Class of 2012 CS cohort room, OS study group, ○○ society |
 | **Course hub** | Operators and curators (§8.6) | Author's choice (§8.3) | Anyone reads, school-verified accounts write | Operating Systems |
+| **Topic** (P2) | Operators | **Affiliation-labeled anonymous** | Any organization-verified account | Job hunting, grad school, military and veterans, engineering life, backend |
+| **Organization page** (P2) | Operators, on request | Anonymous | Per-organization verification (§8.9.11) | ○○ Bootcamp, ○○ training program |
 
 Official pages and user rooms share the same board structure and differ only in permissions and defaults. Course hubs are the public archive, so they are not mixed with the community; each course hub links to a room through "Talk about this course".
 
@@ -454,6 +480,53 @@ Anyone can create a small-to-medium room. These are for groups smaller than offi
 | Recruiting posts | Assignment space, study room | Created automatically when recruiting closes |
 
 Moving content from the community into the archive is always the author's choice; community posts are never exposed automatically in the public archive or to search engines.
+
+#### 8.9.9 Alumni spaces: alumni and club OB groups, and commiseration lounges (P2)
+
+Spaces where alumni, current students, and veterans stay together, not just current students. The design separates Band-style **tools for running groups of people who know each other** from Blind- and Everytime-style **lounges for sharing and joking**.
+
+**Alumni and club OB rooms** — a template of user rooms (§8.9.4).
+
+| Feature | Description | Reference |
+|---|---|---|
+| Per-room profiles | Different name and photo per room (e.g., "Kim Jimin, cohort 12" in an OB room, display name in a study room) | Band |
+| Status badges | `Current`, `OB`, `Cohort n`, `Alumni`. Cohort is self-reported and can be corrected by organizers | Club OB culture |
+| Events and RSVPs | Homecoming and networking session announcements, going/not going/maybe responses, recurring meetups | Band |
+| Read receipts, polls, albums | Read counts on organizer notices, date and venue polls, event photo albums (file scanning applies) | Band |
+| Member directory | Cohort, current work, interests, and contact methods shown **only for members who consent**. Cannot be exported outside the room | Alumni directory |
+
+- The default name display is real name or display name; anonymity is not recommended given the networking purpose.
+- Dues and payment management are not built.
+
+**Commiseration lounges** — the free board of official school pages and cross-school commiseration topics (§8.9.10).
+
+- Anonymous by default, with images and short videos allowed. Uploads go through the existing file scanning and quarantine pipeline.
+- Even after school email expires, verification history from enrollment keeps alumni in the alumni board and lounges (§8.6).
+- Topics that current students and veterans can laugh about together (campus life, military service, job hunting, first jobs) are grouped as topics, and much-liked posts collect in a "Most liked" tab. Likes are not summed into author scores.
+
+#### 8.9.10 Cross-school topics and affiliation-labeled anonymity (P2)
+
+Adapts Blind's "company lounge + cross-company topics" structure and its practice of showing only the affiliation on anonymous posts.
+
+- **Topics.** Operators open channels for job hunting, grad school, startups, military and veterans, engineering life, and roles (backend, design, data, etc.). Any organization-verified account can take part.
+- **Affiliation-labeled anonymity (level 1).** Topic posts show only affiliation and status, such as `○○ Univ. · Alumni`, never a name. Context makes anonymous posts more trustworthy, and the author chooses the label scope (organization name / organization type / none).
+- **Affiliation label threshold.** If an affiliation has fewer verified members than a threshold (initial proposal: 50), the label is automatically broadened to a category such as `Bootcamp graduate` or `University alumni`. This keeps affiliation labels from breaking anonymity in small groups and extends the n ≥ 5 anonymous aggregation principle (§6.4).
+- **Practitioner answers.** In role topics, alumni working in the field answer juniors' career questions, and good answers can be moved into senior notes (§8.3) with the author's consent.
+- **Not adopted.** Star reviews of companies or education providers and salary information carry the same reputation-dispute risk as professor ratings and are not built. Experiences of bootcamps and training programs are kept as **structured completion retrospectives** in the senior-note format instead of star ratings.
+
+#### 8.9.11 Organization expansion: bootcamps, education providers, training programs (P2)
+
+So that people who went through the same program can gather even without a degree, "school" is generalized to **"organization"**. Organization types are university, bootcamp, training program, and inter-university club. Expansion follows once the university pilot is stable.
+
+| Verification method | When used | Notes |
+|---|---|---|
+| Organization email | Universities and providers that issue email | Default method |
+| Organizer invite code | When a bootcamp or training program participates | Per-cohort codes with expiry |
+| Cohort organizer approval | When the organization does not participate | Approved by verified members of the same cohort |
+| Certificate check | When none of the above is available | Checked only; the original is not stored |
+
+- Organization pages share the structure of official school pages, and per-cohort rooms use the alumni and OB template (§8.9.9).
+- Team projects and portfolios are central to bootcamps and training programs, so assignment spaces, public cases, and portfolios (§6–§10) may fit them more directly than universities. The possibility of selling to organizations is kept as a hypothesis in §17.
 
 ---
 
@@ -545,6 +618,7 @@ flowchart LR
 - Basic information: name or display name, one-line introduction, target role, public contact method, featured cases. School, department, expected graduation date, and real name are optional, and the profile can be created privately first.
 - Student ID numbers and grades are not collected. School email verification is an optional badge on profiles and is required only to write in course hubs (§8.6).
 - Contact is offered only through methods the student allows.
+- Public profiles use a real name or display name (levels 2–3 in §4.4); anonymous community activity never appears on them. Per-item visibility and following are covered in §10.7.
 
 ### 10.2 Case study
 
@@ -587,6 +661,31 @@ For each featured case, expected questions are generated from decision and stuck
 - 2–3 sentence summaries and public links for résumés and cover letters
 - A markdown card for the GitHub profile README — a path from GitHub into Peerchive
 - Export of all of the student's own data (free core value)
+
+### 10.7 Visibility, following, and social links (P1)
+
+When users make their assignment records and posts public, others can see that person's activity in one place and keep following it.
+
+**Per-item visibility**
+
+| Item | Options | Notes |
+|---|---|---|
+| Public cases and case studies | Only those that went through the publication process (§9.3) appear on the profile | Account visibility settings never bypass the publication process or team consent |
+| Assignment list | Public / logged-in users / same organization / approved followers / private | Course, semester, and title only. Contents of private assignment spaces never appear |
+| Public posts | The same five levels | Only posts written under a display name or real name. Anonymous posts (levels 0–1) never appear under any setting |
+| Senior notes and study records | The same five levels | Senior notes written anonymously are excluded |
+| Follower and following lists | Public / private | |
+
+**Following**
+- Public accounts can be followed immediately; private accounts require approval. Only real-name or display-name profiles can be followed.
+- The following feed centers on public cases, senior notes, public posts, and study records, prioritizing records and writing so it does not become a photo feed.
+- Users choose whether to show their follower count. **There is no global popularity ranking**, and recommendations are based only on shared courses, organizations, and interests. The principle of not turning activity into rankings (§7) applies to followers too.
+- Block, mute, and remove-follower are provided; blocked users cannot see the profile regardless of visibility settings.
+
+**Social links**
+- Instagram, YouTube, LinkedIn, GitHub, and blog links can be added to a profile.
+- If the linked page links back to the Peerchive profile, a `Verified` mark is shown. This confirms account ownership only, not the person or their career.
+- Real-name and display-name profiles can carry different links, and the connection between them is shown only if the user turns it on (§4.4).
 
 ---
 
@@ -635,11 +734,14 @@ Peerchive
 │   ├── My school · My department (official, anonymous by default)
 │   ├── My rooms (cohort, study, club; owner sets name display mode)
 │   ├── Recruiting (study groups, teammates, clubs)
+│   ├── Topics (P2, cross-school and cross-organization, affiliation-labeled anonymity)
+│   ├── Alumni, club OB, and graduate rooms (P2, events and directory)
 │   └── Find rooms · Create a room · Request an official page
+├── Following feed (P1)
 ├── My assignments
 │   └── Assignment space [Overview | Build log | To-do | Outputs | Contribution | Publish]
 ├── Portfolio [Case studies | Profile | Export]
-├── @username (public profile)
+├── @username (public profile: cases, assignment list, public posts, followers, social links)
 └── Settings (integrations: GitHub, Discord / notifications / publication defaults)
 ```
 
@@ -740,6 +842,10 @@ This section is an operational and product policy proposal and does not assert a
 | Community anonymity | Anonymous to other users only; operators can identify authors. Anonymous posts are not linked to profiles or portfolios | P1 |
 | Community moderation | Temporary hiding after accumulated reports, staged restrictions, no school or department impersonation, embargo applies to course-linked rooms | P1 |
 | Takedown requests | Procedure for rights-violation claims finalized after legal review | Before P1 launch |
+| Identity separation | Anonymous and affiliation-labeled anonymous posts are never linked to real-name or display-name profiles, follows, or activity records | P1 |
+| Affiliation label threshold | Affiliations with fewer verified members than the threshold are shown as a broader category | P2 |
+| Public profiles | Per-item visibility, private accounts and blocking, no popularity ranking | P1 |
+| Alumni directory | Consenting members only, no export outside the room | P2 |
 
 These measures **do not promise complete prevention of dishonesty.** The goal is to keep the default usage flow from drifting into answer sharing.
 
@@ -770,9 +876,12 @@ The MVP's purpose is to validate the flow in which **an assignment is recorded d
 | P1 | Advanced collaboration | Kanban board view, per-log feedback comments (publication handled separately), GitHub App |
 | P1 | Campus community | One official page at the pilot school, user rooms (real name, display name, or anonymous), recruiting and study rooms, per-thread anonymous numbers, reports and temporary hiding, moving questions into stuck logs |
 | P2 | Recruiters, institutions | Portfolio Q&A, talent search and contact, mentor review, class space and dashboard, faculty embargo requests |
+| P1 | Public profiles and following | Display-name profiles, per-item visibility, follow, private accounts, blocking, following feed, social links with link-back verification |
 | P2 | Community enhancements | More official department pages, polls, "Most liked" tab, real-name and contact warnings on anonymous posts, turning study records into public cases |
+| P2 | Alumni and topics | Alumni and club OB room template (per-room profiles, events, RSVPs, read receipts, albums, directory), lounge media, cross-school topics, affiliation-labeled anonymity |
+| P2 | Organization expansion | Bootcamp and training program organization pages, invite-code and cohort-approval verification, completion retrospectives |
 
-Because the community carries a heavy moderation load, it opens at a single pilot school only after the MVP has validated the archive flow.
+Because the community carries a heavy moderation load, it opens at a single pilot school only after the MVP has validated the archive flow. The condition for moving to each next stage is whether community activity leads into records and portfolios.
 
 **What we won't build:** built-in chat (replaced by the messenger bot; community rooms are board-style too), a separate calendar engine (replaced by deadlines and .ics export), a school notice crawler, Git hosting, auto-grading. The original implementations stay in the archive and will be reconsidered if real demand is confirmed.
 
@@ -788,6 +897,7 @@ If available time is under 20 hours per week, a reduced plan applies: the Discor
 | Students (optional) | Premium: custom portfolio domain and themes, expanded AI interviews, many per-role versions | Willingness to pay during hiring season needs validation |
 | Universities, departments | Class space, progress dashboard, showcase gallery SaaS | Demand from capstone/PBL operation and outcome management |
 | Companies | Search and contact consenting candidates, employer branding, industry-linked assignments | Only after student supply is sufficient |
+| Bootcamps and education providers | Per-cohort project spaces, graduate portfolio showcases, graduate networks | After organization expansion (§8.9.11). Hypothesis: because team projects are central to their programs, they may decide to adopt faster than universities |
 
 Initial pricing and revenue are not fixed; paid hypotheses will be validated after measuring labor, storage, AI, and operational burden. For the first year, the goal is **density at one school and one department** rather than revenue. We do not propose selling student data or ranking students by school or view count.
 
@@ -824,6 +934,13 @@ Initial pricing and revenue are not fixed; paid hypotheses will be validated aft
 | Official page opening | Operators open one when 10 verified students of the same school or a student council request it | If requests are too few, operators open the pilot school's page first |
 | Department check | Self-reported, plus department moderators restricting outsiders | If impersonation or outsiders recur, consider extra checks such as department student council confirmation (student ID numbers are still not collected) |
 | Anonymous DMs | Not built | If recruiting and study contact proves very inconvenient, first consider messages inside real-name or display-name rooms |
+| Identity position | Identity-centered, anonymity as a per-space mode (§4.4). Level 0–1 posts never linked to profiles | Revisit the weight of anonymous spaces if the pilot shows little activity outside anonymous lounges |
+| Display names | A persistent pseudonymous identity separate from the real name, followable | If display names are used for impersonation or reputation laundering, require an organization verification badge on display-name profiles |
+| Follower counts | Users choose whether to show them; no popularity ranking | Show by default if follower counts prove important for attracting creators |
+| Affiliation-labeled anonymity | Used in topics; affiliations under 50 verified members shown as a broader category | Adjust the threshold to pilot scale |
+| Alumni spaces | P2, alumni and club OB room template and commiseration lounges | Move to P1 if it strongly boosts alumni supply (senior notes) |
+| Organization expansion | P2, bootcamps and training programs after the university pilot stabilizes | Swap the order if a university pilot is hard to reach and a bootcamp partnership is available first |
+| Organization ratings | No star ratings or salary information, only structured completion retrospectives | No planned change |
 
 **Questions for the owner**
 1. First pilot school and department: can we reach a cohort of juniors or clubs at the school connected to the original ProofU?
@@ -837,6 +954,8 @@ Initial pricing and revenue are not fixed; paid hypotheses will be validated aft
 9. Student curators: can we find a senior student or alumnus to curate each of the first 2–3 courses?
 10. Community moderation: how many hours per week can go to reviewing reports, and are there students at the pilot school willing to moderate?
 11. Of the conversations pilot students already have on Everytime, which would have a reason to move to Peerchive (study recruiting, assignment questions, etc.)?
+12. Is there an alumni association or club OB group that could open the first alumni space with us?
+13. Is there a bootcamp or training program we could partner with, and does it issue graduate email or per-cohort rosters?
 
 Even without answers, we can start with a manual experiment using 3–5 consented completed assignments and graduates' senior notes ([Delivery plan §2](planning/DELIVERY_PLAN.en.md#2-validation-experiments-before-development)).
 
@@ -850,6 +969,7 @@ Official sources checked on 2026-10-13. External documents were used to confirm 
 - [GitHub Classroom shutdown notice](https://github.com/orgs/community/discussions/205975): confirms the shutdown date and preservation of existing repositories.
 - [1EdTech CLR](https://www.1edtech.org/standards/clr): a record standard linking learner achievements and evidence. Peerchive is currently not an accredited issuing or standards-compliant service.
 - Fizz and Everytime (added 2026-10-20): only widely known feature patterns of campus community apps were referenced, such as school verification, school-by-school opening, per-thread anonymous labels, and timetables. Their internal policies and operating figures were not checked, and the scope was narrowed to fit Peerchive (§8.5–§8.9). The community (§8.9) drew on patterns of per-school boards, user-created boards, likes and hot posts, polls, hiding after accumulated reports, student moderators, and recruiting boards.
+- Blind, Band, and Instagram (added 2026-10-23): referenced Blind's affiliation-labeled anonymity and cross-affiliation topics, Band's per-group profiles, events, read receipts, and albums, and Instagram's follow, private account, and profile link patterns (§4.4, §8.9.9–§8.9.11, §10.7). The current features and policies of each service were not checked directly.
 
 ## Preserving the original record
 
