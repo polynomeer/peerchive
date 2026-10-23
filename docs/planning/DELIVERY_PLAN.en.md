@@ -2,7 +2,7 @@
 
 [한국어](DELIVERY_PLAN.md) | **English**
 
-Written: 2026-10-18 · Updated: 2026-10-20 (campus community in §4.1, §5.1, §6.1, §9.1, and gate GC) · Status: consolidated proposal
+Written: 2026-10-18 · Updated: 2026-10-24 (campus community in §4.1, §5.1, §6.1, §9.1, and gate GC; public profiles, following, alumni, topics, and organizations in §4.2, §4.3, §5.2, §5.3, §6.2, §9.2, and gates GP and GA) · Status: consolidated proposal
 
 [Product proposal](../PROOFU_EVOLUTION_PLAN.en.md) · [System design](SYSTEM_DESIGN.en.md)
 
@@ -53,7 +53,7 @@ Even if results show students find it hard to publish actual submissions, that i
 | **1. MVP development** | 2026-12-01 ~ 2027-02-26 (13 weeks, winter break) | §4 backlog T-01–T-16 | private alpha → preparation for limited public | **G1** (week 7), **G2** preparation (week 13) |
 | **2. Pilot** | 2027-03-02 ~ 06-30 (spring term) | Real use by 10–20 teams in one department, public course hubs, end-of-term publication campaign | Metrics, interviews, incident records | **G2** (before publishing public cases), **G3** |
 | **3. Portfolio** | 2027-07 ~ 08 (summer break) | 1–3 P1 items that resolve the biggest obstacle found in experiments (candidates: AI case polishing, competency × evidence, restricted sharing/PDF, interview prep pack) | Portfolios for second-half recruitment season | Scope decided by G3 results |
-| **4. Expansion** | 2027 fall term onward | Multiple departments and schools, Kanban board, GitHub App, stuck-card Q&A, semantic search, campus community (one pilot school, §4.1), class spaces, monetization experiments | – | **GC** (community launch), **G4** |
+| **4. Expansion** | 2027 fall term onward | Multiple departments and schools, Kanban board, GitHub App, stuck-card Q&A, semantic search, campus community (one pilot school, §4.1), public profiles and following (§4.2), alumni, topic, and organization expansion (P2, §4.3), class spaces, monetization experiments | – | **GC** (community launch), **GP** (public profiles and following), **GA** (alumni and organizations), **G4** |
 
 Detailed implementation proceeds in **vertical feature slices** rather than completing each layer separately (e.g., finish the assignment creation screen, API, DB, and authorization tests together). Do not handle file scanning, the authorization model, or publication candidates as temporary patches right before the pilot.
 
@@ -114,6 +114,40 @@ The community in [product plan §8.9](../PROOFU_EVOLUTION_PLAN.en.md#89-campus-c
 
 The start order is C-01 → C-02 → C-03/C-05 → C-04 → C-06 → C-07/C-09 → C-08 → C-10. C-05 and C-06 are required by gate GC (§7), so they are finished before any feature expansion. Even when time is short, C-08 and C-09, which lead into the archive, are not deferred; instead, the official page is delayed and recruiting and study rooms (C-07) open first, because the goal is to confirm that the community leads into the archive.
 
+### 4.2 P1 public profile and following backlog
+
+The four identity levels in [product plan §4.4](../PROOFU_EVOLUTION_PLAN.en.md#44-identity-position-real-names-for-records-anonymity-for-lounges) and the per-item visibility, following, and social links in [§10.7](../PROOFU_EVOLUTION_PLAN.en.md#107-visibility-following-and-social-links-p1). The data model and permissions follow [system design §6.7.1, §8.3, §9.2, and §11.3](SYSTEM_DESIGN.en.md#671-identity-levels-public-profiles-and-following-p1). Scope is the P1 "Public profiles and following" row of product plan §16. Once public cases and portfolios (T-11–T-14) work in the pilot (G3), personas and visibility are built first in stage 4, and following and the feed open only after gate GP (§7).
+
+| ID | Task | Depends on | Done when |
+|---|---|---|---|
+| S-01 | Personas, display names, real-name link flag | T-14 | One `real` and one `display` per account, unique handles, reserved words rejected. `Profile` and `PortfolioEdition` belong to personas. While the link is off, zero information about the other persona in either profile's HTML, JSON, OG, PDF, search, or follow lists; link toggles are audited |
+| S-02 | Identity separation boundary | S-01, C-04 | Lint forbids the social module from importing community post tables, the social DB role has no SELECT on community posts, `PersonaActivity.persona_id NOT NULL`, no projection path for level 0–1 posts. Property-based regression test passes (zero level 0–1 posts in profiles, feed, follows, recommendations, search, OG, PDF). If the community is not open yet, test against the C-04 table schema alone |
+| S-03 | Per-item visibility and assignment list | S-01, T-12 | Five audience levels and two for `follow_lists`. Public case items appear only through the publication process and cannot be widened by settings. `ProjectListing` shows course, semester, and title only, without the title during embargo. Access results for private assignment spaces are identical before and after any setting change |
+| S-04 | Follow, private accounts, block, mute | S-03 | Approval flow for private accounts, no following of one's own personas, follower removal, block, and mute without notifications. Blocking returns 404 and deletes follows both ways; choosing `all_personas` shows the link-inference warning. Blocks do not apply to level 0–1 posts |
+| S-05 | Profile posts, following feed, recommendations | S-02, S-04 | Permissions and source state rechecked at read time; withdrawal, hiding, blocks, and narrowed visibility apply from the next request. No popularity ranking or follower-count sorting; recommendations from overlapping courses, organizations, and target roles. The feed prioritizes records (cases, notes, studies) |
+| S-06 | Social links and link-back check | S-01 | SSRF defenses in the link-fetching worker (allowed schemes, redirect limits, private IP blocking, timeouts), switch to `lost` on recheck, separate links per persona, usability check that `Verified` is not read as identity verification |
+| S-07 | Reports and instrumentation | S-05, T-15 | Personas, profile posts, and social links added as report targets, display-name impersonation as a report reason, §6.2 events (level 0–1 posts without user keys) |
+
+The start order is S-01 → S-02/S-03 → S-04 → S-06 → S-05 → S-07. **S-02 is finished before following and the feed.** If time is short, defer S-05's recommendations and S-06, and open public profiles with display names, visibility, and blocking (S-01–S-04) only.
+
+### 4.3 P2 alumni, topic, and organization expansion backlog
+
+The alumni and club OB rooms, cross-school topics with affiliation-labeled anonymity, and bootcamp and education provider expansion in [product plan §8.9.9–§8.9.11](../PROOFU_EVOLUTION_PLAN.en.md#899-alumni-spaces-alumni-and-club-ob-groups-and-commiseration-lounges-p2). The data model and permissions follow [system design §6.7.2, §8.4, and §9.2](SYSTEM_DESIGN.en.md#672-alumni-spaces-topics-and-organization-expansion-p2). Work starts after GC, once there is evidence that the community leads into the archive (§6.1) and gate GA (§7) has passed. Organization expansion (I-) follows a stable university pilot; if a university pilot is hard to reach and a bootcamp partnership is available first, the order is swapped per product plan §19.
+
+| ID | Task | Depends on | Done when |
+|---|---|---|---|
+| A-01 | Alumni and OB room template, per-room profiles, status badges | C-02, S-01 | User rooms with `template = alumni`; zero per-room profiles outside the room, on public profiles, or in PersonaActivity; names fixed in real-name rooms; self-reported cohort with organizer edit history |
+| A-02 | Events, RSVPs, notice read receipts, polls, albums | A-01, T-05 | One response per occurrence, notice reads return counts only, polls show totals only, albums with file scanning, EXIF removal, and short signed URLs; RSVPs and read records deleted on leaving |
+| A-03 | Member directory consent | A-01 | Zero rows without consent, fields can be left empty, immediate deletion on withdrawal or leaving, no export path (API, CSV, PDF, bulk read), page-size and read rate limits |
+| A-04 | Lounge media and alumni access | C-04, T-05 | Limits for images and short videos with metadata removal; alumni whose school email has expired can still read alumni boards and lounges through verification history |
+| I-01 | Organization generalization and verification methods | C-01 | After adding `kind` and `method` to `institution`, zero regressions in existing university email verification. Hashed invite codes with expiry, use limits, and revocation; cohort approval by 2 members (approvers verified only by non-approval methods); certificate files deleted within 7 days of the decision and recorded in `DeletionLedger` |
+| A-05 | Topics, affiliation-labeled anonymity, threshold | I-01, S-02, C-04 | Operator-only topic creation, `affiliation_label` frozen at write time, automatic broadening when `(organization, standing)` has fewer than 50 verified members, broadening disclosed only to the author, no departments, cohorts, or entry years, zero level 0–1 projections (S-02 tests extended) |
+| A-06 | Moving practitioner answers, completion retrospectives | A-05, C-09 | Topic answer → senior note reuses `ArchiveTransfer` with name mode chosen again; completion retrospectives have no star rating, salary, or recommendation score fields |
+| I-02 | Organization pages, cohort rooms, organization admins | I-01, A-01 | Organization admin rights never exceed owner and moderator rights, no author identification, no API to query users by organization, organization statistics only as thresholded aggregates |
+| A-07 | Operations and instrumentation | A-02–A-06, C-10 | Report reasons for directories, events, and topics; processing queue per verification method (certificate review time recorded); P2 events in §6.2 |
+
+The start order is A-01 → A-02/A-03 → A-04 → I-01 → A-05 → A-06 → I-02 → A-07. If alumni spaces strongly boost senior note supply (§6.2), A-01–A-03 can move up to P1 per product plan §19. When time is short, defer polls and albums (part of A-02) and lounge video (A-04) first; A-06, which leads into records, is not deferred.
+
 ## 5. Acceptance scenarios
 
 **A. Recording a personal assignment without GitHub**
@@ -166,6 +200,40 @@ When an answer to an assignment question on the Questions board is accepted, the
 **P. Small anonymous rooms and impersonation**
 In an anonymous room with 9 members, post times show only as "today" or "this week", and the creation screen warns about identification risk. Creating a user room with `Official` or `Student Council` in its name is rejected, and the `Official` badge appears only on spaces opened by operators.
 
+### 5.2 Public profile and following acceptance scenarios (P1)
+
+**Q. Anonymous posts never leak into profiles**
+The owner of `@devjimin`, a display name with many followers, writes an anonymous post on the official school page and (P2) an affiliation-labeled anonymous post in a topic. Neither appears anywhere in the activity lists, following feed, recommendations, search, OG, or PDF of `@devjimin` or the real-name profile, and response JSON carries neither the post ID nor its timestamp. After the owner switches a room to real names, earlier anonymous posts still do not appear on the profile. If the same post is moved into the archive under the display name, only the copy appears on `@devjimin`, with no visible link to the original.
+
+**R. Separating display name and real name**
+With the link off, neither the display-name profile nor the real-name profile carries the other's information in HTML, JSON, OG, PDF, follow lists, or recommendations. When the user turns the link on, both show links to each other; turning it off removes them from the next request, and the toggle history remains only in the audit record. Following someone as a display name shows only the display name in their follower list.
+
+**S. Visibility never bypasses the publication process**
+Even with every item set to `Public`, publication candidates lacking team consent, private assignment spaces, and titles of embargoed assignments do not appear on the profile. The assignment list shows only course, semester, and title for projects the user picked, with no other members' names or logs. Withdrawing a public case removes it from the profile list and followers' feeds from the next request.
+
+**T. Private accounts and following**
+A follow request to a private account shows only basic information until approved; after approval, the assignment list and posts at the `approved followers` level become visible. Removing a follower does not notify them. Switching from private to public does not auto-approve pending requests but asks the owner. With follower count display off, public responses carry no number.
+
+**U. Blocking**
+When A blocks B from A's display-name profile, B gets 404 for that profile, follows between them are deleted, and no notification is sent. A's real-name profile is hidden only if A chooses "block on all profiles", which shows the link-inference warning. Anonymous posts on the official school page remain visible regardless of the block.
+
+**V. Social link verification**
+After adding the Peerchive profile link to a GitHub profile and requesting a check, `Verified` is shown. Removing the link turns it into `lost` at the next recheck. URLs redirecting to private IPs or internal addresses are refused by the fetching worker without connecting.
+
+### 5.3 Alumni, topic, and organization acceptance scenarios (P2)
+
+**W. Alumni and OB rooms**
+In a club OB room, a member appears with the per-room profile `Kim Jimin, cohort 12` and an `OB` badge, and that name never appears on public profiles, search, or feeds outside the room. When organizers post a homecoming event, members respond going/not going/maybe, and the responder list is visible only to members. Organizer notices show only a read count, never who read them.
+
+**X. Member directory consent**
+The directory shows only members who consented, and only the fields they consented to. When a member withdraws consent or leaves, their entry disappears immediately. There is no way to export the directory as CSV or PDF or read it all at once, and paging through many pages quickly hits a rate limit.
+
+**Y. Affiliation label threshold**
+A graduate of a bootcamp with 30 verified members posting in the `Job hunting` topic is labeled `Bootcamp graduate`, and only the author is told that the label was broadened. An alumnus of a university with 60 or more verified alumni is labeled `○○ Univ. · Alumni`. If the author chooses `None`, no affiliation is shown. Later growth in members or a change of affiliation never alters labels on existing posts, and departments and cohorts are never shown.
+
+**Z. Organization verification methods and organization admins**
+Expired invite codes and codes over their use limit are rejected. A cohort whose organization does not participate is verified by approval from 2 members of the same cohort, and approvals from members verified only by cohort approval do not count. For certificate checks, the file is deleted right after the decision and a deletion record remains. Organization admins cannot learn the authors of anonymous or affiliation-labeled anonymous posts on their organization page, and cannot query affiliated users' profiles or assignment spaces by organization.
+
 ## 6. Measurement plan
 
 **North star metric:** among assignments and senior notes published at the end of the term, **the number that junior students forked as a plan or marked “This helped”** (hypothesized pilot-term target: 15).
@@ -208,6 +276,31 @@ The community succeeds not by time spent but by whether **questions and study gr
 
 Community analytics events: `community_post_created` (space_kind, name_mode, board_kind), `community_comment_created`, `archive_transfer_requested`, `archive_transfer_completed` (target), `recruitment_closed` (kind), `study_room_created`, `study_record_logged`, `report_filed`, `post_auto_hidden`, `sanction_issued` (level), `operator_identity_lookup`. **Events for anonymous posts and comments carry no user key**, and conversion metrics count only users who consented at the moment of conversion. Bodies, titles, and space names are never included in events. Like counts and post counts are not used as personal metrics.
 
+### 6.2 Public profile, following, alumni, and organization metrics (P1, P2)
+
+Public profiles and following succeed not by follower counts but by **whether following leads to reading and writing records**; alumni and organization expansion succeeds by **whether the supply of senior notes and public cases grows**. These metrics decide the change conditions in product plan §19 for the identity position, display names, follower counts, affiliation labels, and alumni spaces.
+
+| Metric | Definition | Draft judgment |
+|---|---|---|
+| **Identity leaks** (required) | Count of level 0–1 posts found in profiles, feeds, follows, recommendations, search, OG, or PDF, or of personas with a private link shown together | Zero. Any single case stops the feed and profile features until the cause is fixed |
+| **Following → record use** (core, P1) | Share of users who open a public case or senior note from the following feed and leave "Helpful" or fork | 15% of feed users. Below 5%, reduce the feed to profile subscription notifications |
+| Feed composition | Share of records (cases, senior notes, study records) among feed items shown | At least 50%. If photo-centric profile posts are the majority, adjust media weight |
+| Non-anonymous activity share (P1) | Share of community posts written under display or real names (levels 2–3) and activity in spaces other than anonymous lounges | If there is almost no activity outside anonymous lounges (under 10%), revisit the weight of anonymous spaces per product plan §19 |
+| Display name use | Share of public profile holders who created a display-name persona, and who turned on the link | Observation only (no target) |
+| Display-name impersonation and reputation laundering | Impersonation or deception reports against display-name profiles, and confirmed cases | If confirmed cases recur, require an organization verification badge on display-name profiles per §19 |
+| Follower count display choice | Share of users showing follower counts; creator interview results | Evidence for the §19 change condition (important for attracting creators) |
+| Social link referrals | Users with verified social links and visits arriving through external links | Observation only |
+| Blocks, mutes, follower removals | Occurrences per 1,000 active follow relationships | If they spike, review recommendation and exposure |
+| **Alumni → senior note supply** (core, P2) | Share and count of alumni in alumni and OB rooms or topics who left a senior note or completion retrospective during the term | 10% or at least 30 items is evidence for moving alumni spaces up to P1 per §19 |
+| Topic → senior note conversion (P2) | Share of answers in role topics moved into senior notes | 5% |
+| Alumni room activity (P2) | Share of alumni rooms with at least one event or notice per month; RSVP rate per event | 40%, 30% |
+| Directory consent rate (P2) | Share of alumni room members who consented to the directory | Observation only (never forced, even if low) |
+| Affiliation label broadening rate (P2) | Share of topic posts broadened by the threshold | If it is the majority, revisit the threshold for pilot scale (§19) |
+| Organization verification (P2) | Count and processing time per verification method; verifications found to be impersonation | Median certificate review within 3 days; review approval paths when impersonation is confirmed |
+| Organization supply (P2) | Public cases and portfolios that started in organization cohort rooms | Evidence for the organization sales hypothesis (product plan §17) |
+
+Analytics events: `persona_created` (kind), `identity_link_toggled`, `visibility_changed` (item_kind, audience), `project_listed`, `follow_requested`, `follow_approved`, `follower_removed`, `block_created` (scope), `mute_created`, `feed_item_opened` (source_type), `social_link_verified`, and for P2 `alumni_room_created`, `event_created`, `rsvp_submitted`, `directory_consent_changed`, `topic_post_created` (label_scope_applied, broadened), `affiliation_verified` (method), `completion_retro_published`. Events for level 0–1 posts carry no user key, and block, mute, and follower removal events carry no key for the other person. Follower counts and feed impressions are never used as personal metrics or rankings.
+
 ## 7. Release and expansion gates
 
 | Gate | Required checks | If failed |
@@ -217,6 +310,8 @@ Community analytics events: `community_post_created` (space_kind, name_mode, boa
 | **G2: limited public** | Publication consent, embargo, withdrawal, derivative blocking, reports, and recovery work; report handler, response time, and deletion procedure designated | Block public features; re-verify after fixing |
 | **G3: Next cohort** | Review recording burden, student value, publication policy, operating cost | Adjust purpose of use or recruitment scope |
 | **GC: Community launch** | G3 passed; C-05 and C-06 regression tests (visibility, author non-disclosure, auto-hide); report reviewer, weekly hours, and response time assigned; at least 2 moderators at the pilot school; takedown request procedure legally reviewed; community rules announced | Do not open the community; open only recruiting and study rooms in a limited way, or hold |
+| **GP: Public profiles and following launch** | G2 passed; S-02 regression tests (zero identity leaks); S-03 visibility and S-04 block 404 tests; personas and profile posts included as report targets; display-name impersonation handling criteria announced | Do not open following or the feed; stay at the public profile link level |
+| **GA: Alumni, topics, organizations** | GC passed with §6.1 conversion evidence; A-03 directory, A-05 threshold, and extended S-02 regression tests; an alumni group or partner organization to open with (product plan §19 questions 12 and 13); certificate file deletion procedure and organization admin scope reviewed | Keep only the alumni boards and lounges of existing official pages |
 | **G4: Employer and institution expansion** | Supply of consenting users, repeated review demand, contact and data policies confirmed | Stay at the public profile link level |
 
 Separate feature completion from operational readiness. Writing down a legal or school-policy review in a document does not make it complete.
@@ -273,6 +368,24 @@ The community carries a far heavier operating load than the archive. Open only w
 | Takedown and legal requests | Rights infringement claims, law enforcement requests | Finalize a legally reviewed separate procedure before GC, keep handling records |
 | Community replaces the archive instead of leading into it | Post counts grow but §6.1 conversion metrics stay low | Make "Move to stuck log" more prominent on Questions boards; if conversion stays low, keep only recruiting and study rooms and shrink the free boards |
 | Competing with existing communities, empty spaces | Only conversations already on Everytime repeat, visits decline | Focus on uses that lead to records, such as study recruiting and assignment questions; never create empty official pages in advance. If opening requests are too few, operators open the page first at the single pilot school only (product plan §19) |
+
+### 9.2 Public profile, following, alumni, and organization expansion risks (P1, P2)
+
+| Risk | Early signal | Response |
+|---|---|---|
+| Anonymous posts joined to profiles | Regression tests or reports find level 0–1 posts in profiles or feeds; reports inferring "this display name wrote that anonymous post" from timing or style | Zero identity leaks rule (§6.2), stop feed and profile features on discovery, strengthen the S-02 boundary (module lint, DB grants, property tests), widen time buckets for small spaces |
+| Persona link inferred through blocks or visibility | Questions or reports that "these two profiles seem to be the same person" | Keep the default block scope to that persona, warn when choosing `all_personas` or `same_institution`, regression-test response differences related to the link |
+| Display-name impersonation and reputation laundering | Display names imitating other people or organizations; reappearing under a new display name after reports | Impersonation report reason, limits on display name changes, sanctions applied per account, require an organization verification badge on display-name profiles if it recurs (product plan §19) |
+| Follower competition and show-off feeds | Spike in users showing follower counts; photo-centric profile posts become the majority of the feed | No popularity ranking, no follower-count sorting or recommendation weight, records first in the feed, limits on media per profile post |
+| Misunderstanding visibility settings | Questions like "I set everything public but my case isn't shown" or "it's private but visible by link" | Preview on the settings screen showing the relation to the publication process and public URLs; when switching to private, explain that published releases need a separate withdrawal |
+| Abuse of social link checks | Attempts to reach internal addresses; `Verified` mistaken for identity verification | SSRF defenses in the link-fetching worker, limits on recheck frequency and count, explanatory text for `Verified` |
+| Small affiliation labels breaking anonymity | Reports of "I know who that is" in small organizations or cohorts | Keep or raise the threshold of 50, never show departments or cohorts, broaden that affiliation's label in bulk on reports |
+| Harvesting and spam from member directories | Spike in directory reads; reports of promotion or spam via directory contacts | Consented fields only, no export, rate limits, owner removal and operator sanctions on reports |
+| Fake cohorts and organization impersonation | Growth in accounts verified by approval chains; bulk approvals by the same approver | Approvers verified only by non-approval methods, 2 approvals required, approver records, approval rights restricted when impersonation is confirmed |
+| Organization admins as surveillance tools | Organizations asking to view affiliated users' activity or identify anonymous authors | No API to query users by organization, author identification only for the operator report-handling role, stated in organization agreements (G4) |
+| Reputation disputes with organizations | Completion retrospectives used as de facto ratings or defamation; organizations demanding deletion | No star ratings or salaries, structured retrospective format, rule against naming and defaming individuals, takedown request procedure (GC) |
+| Alumni spaces stay purely social | Alumni rooms are active but the §6.2 supply metrics are low | Surface senior note requests and the completion retrospective format in alumni rooms; if it stays low, shrink P2 scope to events and directories |
+| Alumni room moderation load and storage cost | Growth in album and video storage; more reports | Per-room storage limits, external links first for video, included in cost estimation (§10) |
 
 ## 10. Operating cost estimation approach
 

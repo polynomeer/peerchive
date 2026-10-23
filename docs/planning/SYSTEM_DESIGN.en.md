@@ -2,7 +2,7 @@
 
 [한국어](SYSTEM_DESIGN.md) | **English**
 
-Written: 2026-10-18 · Updated: 2026-10-20 (campus community in §6.7, §8.1, §8.2, §9.1) · Status: integrated proposal before implementation
+Written: 2026-10-18 · Updated: 2026-10-24 (campus community in §6.7, §8.1, §8.2, §9.1; identity, public profiles, and following in §6.7.1, §8.3, §9.2, §11.3; alumni, topics, and organizations in §6.7.2, §8.4) · Status: integrated proposal before implementation
 
 [Product proposal](../PROOFU_EVOLUTION_PLAN.en.md) · [Delivery plan](DELIVERY_PLAN.en.md)
 
@@ -316,6 +316,108 @@ erDiagram
 - **Embargo.** The embargo (§7.2, product plan §9.2) also applies to spaces and posts with `linked_course_id`. Community posting is not blocked, but sharing answers or code for same-semester assignments is a report reason. Any path that publishes a record moved into the archive still goes through the normal publication process and embargo checks.
 - **What we won't build.** There are no tables for anonymous DMs, marketplaces, real-time chat, downvotes, activity rankings, or professor and course ratings (product plan §8.9.7).
 
+#### 6.7.1 Identity levels, public profiles, and following (P1)
+
+Covers the four identity levels in [product plan §4.4](../PROOFU_EVOLUTION_PLAN.en.md#44-identity-position-real-names-for-records-anonymity-for-lounges) and the per-item visibility, following, and social links in [§10.7](../PROOFU_EVOLUTION_PLAN.en.md#107-visibility-following-and-social-links-p1). Levels 2–3 (display name, real name) are stored as **personas**; levels 0–1 (anonymous, affiliation-labeled anonymous) create no persona and exist only as a per-post `name_mode`. Profiles, follows, and feeds are owned by a separate module (`server/modules/social`) that never reads community post tables (§8.3).
+
+```mermaid
+erDiagram
+    User ||--o{ Persona : "real · display"
+    User ||--o| IdentityLink : "link flag"
+    Persona ||--|| Profile : has
+    Persona ||--o{ VisibilitySetting : sets
+    Persona ||--o{ ProjectListing : lists
+    Persona ||--o{ ProfilePost : writes
+    Persona ||--o{ SocialLink : links
+    Persona ||--o{ Follow : "follows / followed"
+    User ||--o{ Block : blocks
+    User ||--o{ Mute : mutes
+    Persona ||--o{ PersonaActivity : "projected into"
+```
+
+| Entity | Key fields | Rules |
+|---|---|---|
+| Persona | id, user_id, kind(real/display), handle, display_name, account_privacy(public/private), show_follower_count, status | In P1, at most one `real` and one `display` per account. Handles are unique in one global namespace shared by both kinds. The `real` name is `User.real_name` (§6.7) and is not identity-verified. Neither the persona row nor any public DTO carries the ID of the same user's other persona |
+| IdentityLink | user_id, real_persona_id, display_persona_id, visible (default false), changed_at | **The display-name ↔ real-name link flag.** While `visible = false`, no public DTO, search, recommendation, follow list, OG card, or PDF emits the two personas together. Toggles are recorded only as AuditEvents |
+| Profile (change to §6.1) | `persona_id` instead of `user_id` | headline, job_targets, contact_policy, etc. are per persona. `PortfolioEdition` also belongs to a persona, and recruiter-facing portfolios default to the `real` persona |
+| VisibilitySetting | persona_id, item_kind(project_list/posts/notes_and_studies/follow_lists), audience(public/signed_in/same_institution/approved_followers/private) | Unique on `(persona_id, item_kind)`. `follow_lists` allows only public/private. Initial defaults: `project_list = private`; the rest `signed_in` for public accounts and `approved_followers` for private ones. Public cases and case studies are not governed by this setting (§8.3 invariant 2) |
+| ProjectListing | project_member_id, persona_id, shown_at, hidden_at? | Only projects the member picks appear in the assignment list. Exposed fields are course, semester, and `Project.title` only — no other members' names, logs, or files. Projects in an embargoed course show course and semester without the title. The internal Project of an `anonymous` study room cannot be listed |
+| ProfilePost | id, persona_id, body, media_version_ids[], status, created_at | Short posts written directly on the profile. Media only from versions that passed §10 file scanning. Visibility follows the `posts` setting |
+| Follow | follower_persona_id, followee_persona_id, status(pending/active), created_at, approved_at? | Unique on `(follower, followee)`. Both sides are personas, so following as a display name never reveals the real name. A user's personas cannot follow each other. Private accounts go `pending → active` on approval. Removing a follower deletes the row without notifying them |
+| Block | blocker_user_id, blocked_user_id, origin_persona_id, scope(origin_persona/all_personas), created_at | Stored per user; by default it hides only the persona the block was made from. `all_personas` applies only when the user chooses it, and while the link is private the UI warns that "hiding your other profile too may reveal that both are you." Blocking deletes follows in both directions and does not notify the other person. **Not applied to level 0–1 posts** (anonymous posts disappearing would itself be a clue to the author) |
+| Mute | muter_user_id, muted_persona_id, created_at | Excluded only from the following feed and notifications. The other person is not told |
+| SocialLink | id, persona_id, provider(instagram/youtube/linkedin/github/blog/other), url, verification(unverified/verified/lost), verified_at?, last_checked_at? | Separate per persona. Link-back checks run only in the link-fetching worker under §10 rules (allowed schemes, redirect limits, private IP blocking, timeouts); if a recheck no longer finds the link-back, the status becomes `lost`. `verified` confirms account ownership only, not the person or their career |
+| PersonaActivity | id, persona_id, source_type(publication_release/senior_note/study_release/profile_post/community_post), source_id, item_kind, created_at, withdrawn_at? | **The only source** read by public profile activity lists and the following feed. `persona_id NOT NULL`. Source modules project into it via outbox; community posts are projected only when `name_mode ∈ {real, display}` and the space is `listed`. Hiding, deletion, withdrawal, or re-choosing the name mode sets `withdrawn_at` through the outbox in the same transaction |
+
+- **Persona attribution of posts.** When `name_mode` on `Post`, `Comment`, `SeniorNote`, or `ArchiveTransfer` is `real` or `display`, the `persona_id` at write time is frozen with it. `anonymous` (level 0) and P2's `affiliated_anonymous` (level 1) always have a NULL `persona_id` (CHECK constraint). `author_id` stays for operator author lookup (§8.1), but the social module cannot read that column.
+- **Relation to existing rules.** The §6.7 `StudyRecord` rule ("records from anonymous study rooms cannot be linked to portfolios") and `SeniorNote.display_mode = anonymous` are treated as level 0 here and are never projected into PersonaActivity.
+- **Recommendations.** Follow recommendations are computed only from overlapping courses, organizations, and target roles, never sorted by follower counts or activity. There is no global popularity ranking table or view. With `show_follower_count = false`, public DTOs carry no number (shown only to the owner).
+
+#### 6.7.2 Alumni spaces, topics, and organization expansion (P2)
+
+Covers the alumni and club OB rooms, cross-school topics with affiliation-labeled anonymity, and bootcamp and education provider expansion in [product plan §8.9.9](../PROOFU_EVOLUTION_PLAN.en.md#899-alumni-spaces-alumni-and-club-ob-groups-and-commiseration-lounges-p2)–[§8.9.11](../PROOFU_EVOLUTION_PLAN.en.md#8911-organization-expansion-bootcamps-education-providers-training-programs-p2).
+
+```mermaid
+erDiagram
+    Institution ||--o{ Cohort : runs
+    Institution ||--o{ InstitutionAffiliation : verifies
+    User ||--o{ InstitutionAffiliation : holds
+    InstitutionAffiliation }o--o| Cohort : "in cohort"
+    Institution ||--o{ InstitutionInviteCode : issues
+    InstitutionAffiliation ||--o{ CohortApproval : "approved by"
+    InstitutionAffiliation |o--o| CertificateCheck : "checked by"
+    Institution ||--o{ CommunitySpace : "pages · cohort rooms"
+    CommunitySpace ||--o{ RoomProfile : has
+    CommunitySpace ||--o{ Event : schedules
+    Event ||--o{ EventRsvp : receives
+    Post ||--o{ NoticeRead : "read by"
+    CommunitySpace ||--o{ DirectoryEntry : lists
+    CommunitySpace ||--o{ Album : has
+```
+
+**Organizations: generalizing schools**
+
+| Entity | Key fields | Rules |
+|---|---|---|
+| Institution | id, kind(university/bootcamp/training_program/club_federation), name, broad_label, merged_into?, status | Generalizes `School` in §6.2. `broad_label` is the category used when an affiliation label is broadened (e.g., `University`, `Bootcamp`). Courses and course hubs are used by default only with `kind = university` |
+| Cohort | id, institution_id, label (e.g., `Cohort 12`), starts_on?, ends_on? | Cohorts of bootcamps, training programs, and clubs. Not used for universities (entry year stays in room names and bios only; student ID numbers are still not collected) |
+| InstitutionAffiliation | fields of §6.7 `SchoolAffiliation` + institution_id, method(email/invite_code/cohort_approval/certificate_check), cohort_id?, standing(student/alumni/trainee/graduate), expires_at? | **Organization verification methods** are distinguished by `method`. Email verification works as before, and verification history is kept after graduation or completion, shown as `alumni` or `graduate`. A user can hold several organization affiliations |
+| InstitutionInviteCode | id, institution_id, cohort_id, code_hash, issued_by, expires_at, max_uses, used_count, revoked_at? | Issued only by organization admins (`InstitutionAdmin`). Plaintext codes are not stored; expiry, use limits, revocation |
+| CohortApproval | affiliation_id, approver_user_id, created_at | Approval by verified members of the same cohort when the organization does not participate. Initial proposal: 2 approvals required. **Approvers must have been verified by a method other than `cohort_approval`** (prevents fake cohorts built from approval chains). Approvals are recorded, and if a verification is later found to be impersonation, the approvers' approval rights can be restricted |
+| CertificateCheck | affiliation_id, reviewed_by, result(approved/rejected), checked_at, file_purged_at | Manual operator check. The upload lives only in a quarantine bucket and is deleted as soon as a decision is made (within 7 days), recorded in `DeletionLedger`. The original, OCR text, and certificate numbers are not kept |
+| InstitutionAdmin | institution_id, user_id, role(admin/cohort_manager) | Runs the organization page and issues invite codes. Cannot identify authors of anonymous or affiliation-labeled anonymous posts |
+
+- **Migration principle.** Since the app does not exist yet, P1 implementation names the tables `institution` and `institution_affiliation` from the start, using only `kind = university` and `method = email`. `School` and `SchoolAffiliation` in this document refer to the university case of the same tables, and P2 adds organization kinds and verification methods without a separate migration.
+- **More space kinds.** `CommunitySpace.kind` gains `topic` and `institution_page`, and user rooms get `template(none/alumni)`. An organization's per-cohort room is a user room with `template = alumni`, linked by `institution_id` and `cohort_id`.
+
+**Alumni and club OB rooms**
+
+| Entity | Key fields | Rules |
+|---|---|---|
+| RoomProfile | space_id, user_id, display_name?, avatar_version_id?, badges[](current/ob/alumni/cohort), cohort_label?, bio? | **Per-room profile.** Visible only to room members and never linked to Persona, PersonaActivity, or public profiles. In `real` rooms the name stays the real name and only the photo, badges, and bio vary per room; in `display` rooms the name can vary per room too. Cohort is self-reported and can be corrected by the owner or admins (with history). Not created in `anonymous` rooms |
+| Event | id, space_id, title, starts_at, ends_at?, location_text?, recurrence(none/weekly/monthly), rsvp_deadline?, created_by, status | **Events.** Created only by owners and admins. Recurrence supports simple rules only; occurrences are distinguished by `occurrence_date` |
+| EventRsvp | event_id, occurrence_date, user_id, response(going/not_going/maybe), updated_at | **RSVPs.** Unique on `(event_id, occurrence_date, user_id)`. Responders are listed by RoomProfile name to room members only |
+| NoticeRead | post_id, user_id, read_at | Created only for `notice` board posts, idempotent. The API returns **only the read count**, never who read it |
+| Poll / PollVote | post_id, options[], closes_at / poll_id, user_id, option_id | Date and venue polls. Same tables as the P2 polls in §8.9.1. Only totals are shown |
+| Album / AlbumItem | space_id, title / album_id, artifact_version_id, uploader_id | Only versions that passed §10 scanning and quarantine. Short signed URLs for room members only. Photos stay after the uploader leaves, but the uploader can delete them |
+| DirectoryEntry | space_id, user_id, cohort_label?, current_work?, interests[], contact_method?, consented_at, withdrawn_at? | **Member directory consent.** A row exists only for consenting members, and each field can be left empty. Withdrawing consent or leaving the room deletes the row immediately. No export API, CSV, PDF, or bulk read; page-size limits and read rate limits. The directory is never used for search, recommendations, or PersonaActivity outside the room |
+
+- Alumni and OB rooms default to `real` or `display`; choosing `anonymous` at creation shows a note that it is not recommended for alumni networking. There are no dues or payment tables.
+- **Lounge media.** Images and short videos in official school free boards and commiseration topics use the `ArtifactVersion` pipeline (§10) as is, with length and size limits for video. Media metadata (EXIF location, etc.) is stripped before storage.
+
+**Topics and affiliation-labeled anonymity**
+
+| Entity | Key fields | Rules |
+|---|---|---|
+| CommunitySpace (`kind = topic`) | §6.7 fields + topic_category(career/grad_school/startup/military/campus_life/role) | Created only by operators. `current_name_mode = affiliated_anonymous` is fixed. Readable and writable by any account with at least one active `InstitutionAffiliation` |
+| Post, Comment (extended) | `affiliated_anonymous` added to name_mode; affiliation_id?, label_scope_requested(institution/institution_kind/none), label_scope_applied, affiliation_label | `affiliation_label` is **frozen as a string at write time** (e.g., `○○ Univ. · Alumni`) and never changes with later affiliation changes or member growth. `affiliation_id` is an operator-only column; public DTOs carry only the string |
+| InstitutionMemberCount | institution_id, standing, active_count, computed_at | Daily count of active verified members. Used only to apply the affiliation label threshold |
+
+- **Affiliation label threshold.** At write time, if `active_count` for `(institution_id, standing)` is below the threshold (initial proposal: 50, configurable) or no count exists, `label_scope_applied` is automatically broadened to `institution_kind` (e.g., `Bootcamp graduate`, `University alumni`). The label is never narrower than the scope the author chose. Departments, cohorts, and entry years never appear in affiliation labels. The threshold extends the n ≥ 5 anonymous aggregation principle in product plan §6.4 to individual posts.
+- **Numbers.** Topic posts also get per-thread numbers via `ThreadAlias`, with the affiliation label next to the number. They are never linked to the same author's other threads.
+- **Moving practitioner answers.** Moving a topic answer into a senior note uses `ArchiveTransfer` (§6.7), and the name mode is chosen again. If it stays at level 1, the senior note carries only the affiliation label and is not linked to a persona.
+- **Completion retrospectives.** Experiences of bootcamps and training programs are kept as structured retrospectives: a `SeniorNote` with `institution_id` and `cohort_id`. There are no star rating, salary, or recommendation score fields.
+
 ## 7. State transitions and publication flow
 
 ### 7.1 Project work state
@@ -402,6 +504,57 @@ Community roles are separate from project roles. The same person can be the owne
 - **Separation from the public archive.** Community bodies never enter the public search index (§11.1), `pgvector` embeddings, course aggregates (§11.2), public releases, or portfolios. Search inside the community is a separate query scoped to the spaces the user can read. In P1, community bodies are not sent to AI jobs.
 - **When moving into the archive.** Only the copy created by `ArchiveTransfer` follows archive rules; the original post's visibility does not change.
 - **Notifications.** Push and email notifications never include anonymous authors, and for school-linked spaces send only the title so the body preview does not appear on lock screens.
+
+### 8.3 Identity separation and public profile permissions (P1)
+
+Two rules are invariants across the whole community and profile design.
+
+**Invariant 1. Level 0–1 posts are never joined into profile, follow, or feed queries.**
+- Public profiles, follow lists, the following feed, follow recommendations, and "new post from someone you follow" notifications read only `PersonaActivity`, `Persona`, `Follow`, and public release views. The social module does not import `Post`, `Comment`, `ThreadAlias`, or `ArchiveTransfer` (module dependency rules checked by a CI lint), and the DB role used by the social module has no SELECT grant on community post tables.
+- The community module emits PersonaActivity outbox events only for posts with `name_mode ∈ {real, display}`, and `PersonaActivity.persona_id` is NOT NULL. `anonymous` and `affiliated_anonymous` posts have no projection path at all.
+- A later name mode change never promotes existing level 0–1 posts to levels 2–3 (`name_mode` is frozen, §6.7). If levels 2–3 are chosen again when moving to the archive, **only the copy** is attributed to the persona, and the link between original and copy is never put in public DTOs.
+- Regression test: after generating arbitrary combinations of users, personas, spaces, and posts, a property-based test confirms that profile, feed, follow, recommendation, search, OG, and PDF responses contain zero IDs, body hashes, or timestamps of level 0–1 posts. Analytics events for level 0–1 posts also carry no user key (DELIVERY_PLAN §6.1).
+
+**Invariant 2. Account visibility settings never bypass the publication process.**
+- Public cases, case studies, and portfolio items appear on a profile only when `PublicationRelease.status = published` and the owner's consent is included. `VisibilitySetting` and `account_privacy` can only **narrow** this set, never widen it. Even on a private account, already published releases stay reachable at their public URLs and are only removed from the profile list.
+- Setting the assignment list to `public` exposes only the fields allowed by `ProjectListing` (§6.7.1) and does not change read access to private assignment spaces (§8). Embargo, consent withdrawal, and report-based hiding apply before any visibility setting.
+- Approving a follower widens only the visibility audience (`approved_followers`); it grants no project membership or community space access. Community posts appear on a profile only when they are in a `listed` space and the viewer passes `canReadSpace`.
+
+| Action | Signed out | Signed-in user | Same organization verified | Approved follower | Owner | Blocked user | Operator |
+|---|---|---|---|---|---|---|---|
+| Basic profile (name, bio, social links) | Yes | Yes | Yes | Yes | Yes | **404** | Yes |
+| List of public cases and case studies | Public releases only (not on private accounts) | Same | Same | Public releases only | All + private drafts | 404 | Policy actions |
+| Assignment list, public posts, senior notes, study records | When `public` | `signed_in` or wider | `same_institution` or wider | `approved_followers` or wider | Yes | 404 | Enforcement only |
+| Follower and following lists | When `public` | Same | Same | Same | Yes | 404 | Enforcement only |
+| Request to follow | No | Yes | Yes | – | No (self or own persona) | No (404) | – |
+| Approve or remove followers, block, mute | No | No | No | No | Yes | – | – |
+| See the display-name ↔ real-name link | Only when `IdentityLink.visible` | Same | Same | Same | Yes | 404 | During report handling, with an audit record |
+
+- **Private accounts** (`account_privacy = private`) show only basic information, Instagram-style, and limit other items to `approved_followers` or narrower. Switching public → private is immediate; switching private → public does not auto-approve pending follow requests but asks the owner.
+- **`same_institution`** is evaluated by whether viewer and persona owner hold an active `InstitutionAffiliation` with the same organization. Using it on a display-name persona can let affiliation be inferred from whether access succeeds, so the settings screen says so.
+- **Blocking** uses `Block.scope` (§6.7.1) for what to hide and returns 404 to the blocked user to hide existence. Blocks do not affect reading or writing level 0–1 posts; in level 2–3 spaces (real-name and display-name rooms), the blocked user's posts are shown collapsed.
+- Policy functions are split into `canViewPersona`, `canViewPersonaItem(itemKind)`, `canFollow`, and `canSeeIdentityLink`, and APIs, feed generation, notifications, OG, and PDF all go through them.
+
+### 8.4 Alumni space, topic, and organization permissions (P2)
+
+| Action | Signed-in non-member | Room or organization verified member | Owner or admin | Organization admin (`InstitutionAdmin`) | Operator |
+|---|---|---|---|---|---|
+| Read and write alumni and OB rooms | No (404) | Active members only | Yes | Enforcement only, for the organization's cohort rooms | Enforcement only |
+| See per-room profiles | No | Members of the same room only | Same | Same | Enforcement only |
+| Edit cohort and badges | No | Self (self-reported) | Yes (with history) | Yes, for the organization's cohort rooms | Yes |
+| Create events / RSVP | No | RSVP only | Create and edit | Create, for the organization's cohort rooms | – |
+| Notice read receipts | No | Read count only | Read count only | Read count only | – |
+| See the member directory | No | Consented fields of consenting members only | Same (no export) | Same | Enforcement only |
+| Read and write topics | No (404) without an active organization verification | Yes with at least one active organization verification | – | – | Yes |
+| Choose the affiliation label scope | – | The author, only toward broader scopes | – | – | – |
+| Issue and revoke invite codes | No | No | No | Own organization only | Yes |
+| Cohort approval | No | Same cohort, members verified by a method other than `cohort_approval` | Same | Yes | Yes |
+| Certificate check | No | No | No | No | Operator review role only |
+| **Identify authors of anonymous or affiliation-labeled anonymous posts** | No | No | **No** | **No** | **Only with a recorded reason, scope, and audit record** (§8.1) |
+
+- Organization admins hold only the owner and moderator rights of their organization page; they cannot query public profiles, follows, or assignment spaces of affiliated users by organization. Organization-level statistics are offered only as aggregates under the same threshold as §11.2.
+- When an organization verification expires or is revoked, topic writing rights and access to that organization's page and cohort rooms are blocked from the next request. The `affiliation_label` of existing posts does not change.
+- Directory entries, RSVPs, and read records are deleted when a member leaves; events, albums, and poll results remain as room records.
 
 ## 9. Draft API contracts (`/api/v1`)
 
@@ -490,6 +643,45 @@ Example anonymous post response (identical for owners and moderators):
 }
 ```
 
+### 9.2 Draft public profile, follow, alumni, topic, and organization API (P1, P2)
+
+| Method and path | Role | Key conditions |
+|---|---|---|
+| `POST /personas`, `PATCH /personas/:id` (P1) | Create and edit a display-name persona | Owner, one per kind, unique handle, reserved words rejected |
+| `PUT /me/identity-link` (P1) | Show the display-name ↔ real-name link | Owner, AuditEvent on change |
+| `PUT /personas/:id/visibility` (P1) | Per-item visibility | Owner; public case items are not accepted (they go through publication) |
+| `POST /projects/:id/listing`, `DELETE /projects/:id/listing` (P1) | Show in the assignment list | Member of that project; title excluded during embargo |
+| `GET /profiles/:handle` (changed, P1) | Persona public profile | `canViewPersona`, 404 when blocked, no data about the other persona while the link is private |
+| `GET /profiles/:handle/activity?kind=` (P1) | Activity per item | `canViewPersonaItem`, reads `PersonaActivity` only |
+| `POST /profiles/:handle/follow`, `POST /follow-requests/:id/approve`, `DELETE /followers/:personaId` (P1) | Follow, approve, remove follower | Following persona specified; own personas not allowed |
+| `POST /blocks`, `POST /mutes` (P1) | Block and mute | Owner, block scope chosen, other person not notified |
+| `GET /feed` (P1) | Following feed | Permissions rechecked at read time, cursor pagination |
+| `POST /personas/:id/social-links`, `POST /social-links/:id/verify` (P1) | Social links and link-back check | Fetched only by the link worker, retry limits |
+| `POST /community/affiliations` (extended, P2) | Organization verification | Per `method`: email code, invite code, cohort approval request, certificate upload |
+| `POST /affiliations/:id/cohort-approvals` (P2) | Cohort approval | Same cohort, members verified by a non-approval method, once per person |
+| `POST /institutions/:id/invite-codes`, `POST /invite-codes/:id/revoke` (P2) | Invite codes | Organization admins; plaintext shown once in the response only |
+| `POST /community/spaces/:id/events`, `PUT /events/:id/rsvp` (P2) | Events and RSVPs | Owners and admins create, members respond |
+| `POST /community/posts/:id/read` (P2) | Notice read | Idempotent, returns only the read count |
+| `PUT /community/spaces/:id/room-profile`, `PUT /community/spaces/:id/directory-entry`, `DELETE …/directory-entry` (P2) | Per-room profile and directory consent | The room member themself; directory requires a consent checkbox |
+| `GET /community/spaces/:id/directory` (P2) | View the directory | Room members, page-size limit, no export formats |
+| `POST /community/topics/:id/posts` (P2) | Topic posts | Active organization verification; server sets `label_scope_applied` by threshold |
+
+Example response for an affiliation-labeled anonymous post:
+
+```json
+{
+  "id": "post-id",
+  "nameMode": "affiliated_anonymous",
+  "authorLabel": "Author",
+  "affiliationLabel": "Bootcamp graduate",
+  "comments": [
+    { "id": "c1", "authorLabel": "Anon 1", "affiliationLabel": "○○ Univ. · Alumni", "body": "…" }
+  ]
+}
+```
+
+Whether the label was automatically broadened (`labelBroadened`) is included only in the author's own response and never sent to other users.
+
 ## 10. Files and external links
 
 - States: `pending → scanning → clean / quarantined / failed`. Check allowed MIME types, extensions, actual signatures, and size together.
@@ -514,6 +706,12 @@ Stage 1 is PostgreSQL full-text search + `pg_trgm` (course names, Korean partial
 ### 11.2 Course aggregates and anonymity
 
 Workload distribution and common stuck points are a separate materialized view computed only from public releases and check-ins with `share_for_stats=true`. If a group (same course and assignment type) is smaller than the threshold (draft: 5), no result is returned. Public aggregate paths never read private workspace tables directly.
+
+### 11.3 Derived consistency of profiles and the following feed (P1)
+
+- The following feed does no write-time fan-out; it is built **at read time** by joining `Follow` and `PersonaActivity`, rechecking `canViewPersonaItem` and source state (release active, post visible) per item. Withdrawals, hiding, blocks, and narrowed visibility apply from the next request, and caches are invalidated by a per-persona `access_epoch`.
+- `PersonaActivity` is updated only through source-module outboxes. Even if the worker is late or fails, the read path's source-state recheck blocks first, so withdrawn cases and hidden posts do not linger in feeds.
+- Follower counts are computed internally regardless of the owner's display setting but are never used for sorting or recommendation weight. Level 0–1 posts never enter any part of this path (§8.3).
 
 ## 12. Integrations
 

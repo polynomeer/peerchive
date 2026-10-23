@@ -2,7 +2,7 @@
 
 **한국어** | [English](SYSTEM_DESIGN.en.md)
 
-작성일: 2026-10-18 · 갱신: 2026-10-20 (캠퍼스 커뮤니티 §6.7·§8.1·§8.2·§9.1 반영) · 상태: 구현 전 통합 제안
+작성일: 2026-10-18 · 갱신: 2026-10-24 (캠퍼스 커뮤니티 §6.7·§8.1·§8.2·§9.1, 정체성·공개 프로필·팔로우 §6.7.1·§8.3·§9.2·§11.3, 졸업생·토픽·기관 §6.7.2·§8.4 반영) · 상태: 구현 전 통합 제안
 
 [제품 기획](../PROOFU_EVOLUTION_PLAN.md) · [실행 계획](DELIVERY_PLAN.md)
 
@@ -316,6 +316,108 @@ erDiagram
 - **엠바고.** `linked_course_id`가 있는 공간·글에도 엠바고(§7.2, 제품 기획 §9.2)를 적용합니다. 커뮤니티 글은 게시를 막지 않지만, 같은 학기 과제의 답안·코드 공유는 신고 사유로 분류합니다. 아카이브로 옮긴 기록이 공개되는 경로는 원래의 공개 절차와 엠바고 검사를 그대로 거칩니다.
 - **만들지 않는 것.** 익명 쪽지, 장터, 실시간 채팅, 비추천, 활동 순위, 교수·강의 평가 테이블은 두지 않습니다(제품 기획 §8.9.7).
 
+#### 6.7.1 정체성 단계·공개 프로필·팔로우 (P1)
+
+[제품 기획 §4.4](../PROOFU_EVOLUTION_PLAN.md#44-정체성-포지션-실명은-기록에-익명은-라운지에)의 정체성 4단계와 [§10.7](../PROOFU_EVOLUTION_PLAN.md#107-공개-범위팔로우소셜-링크-p1)의 항목별 공개 범위·팔로우·소셜 링크를 다룹니다. 2~3단계(표시명·실명)는 **페르소나**로 저장하고, 0~1단계(익명·소속 표시 익명)는 페르소나를 만들지 않고 글 단위 `name_mode`로만 남깁니다. 프로필·팔로우·피드는 별도 모듈(`server/modules/social`)이 소유하며, 이 모듈은 커뮤니티 글 테이블을 읽지 않습니다(§8.3).
+
+```mermaid
+erDiagram
+    User ||--o{ Persona : "real · display"
+    User ||--o| IdentityLink : "link flag"
+    Persona ||--|| Profile : has
+    Persona ||--o{ VisibilitySetting : sets
+    Persona ||--o{ ProjectListing : lists
+    Persona ||--o{ ProfilePost : writes
+    Persona ||--o{ SocialLink : links
+    Persona ||--o{ Follow : "follows / followed"
+    User ||--o{ Block : blocks
+    User ||--o{ Mute : mutes
+    Persona ||--o{ PersonaActivity : "projected into"
+```
+
+| 엔티티 | 주요 필드 | 규칙 |
+|---|---|---|
+| Persona | id, user_id, kind(real/display), handle, display_name, account_privacy(public/private), show_follower_count, status | P1은 계정당 `real` 1개, `display` 1개까지. handle은 두 종류가 같은 전역 공간에서 유일. `real`의 이름은 `User.real_name`(§6.7)이며 신분 검증 아님. 페르소나 행과 공개 DTO에는 같은 사용자의 다른 페르소나 ID를 두지 않음 |
+| IdentityLink | user_id, real_persona_id, display_persona_id, visible(기본 false), changed_at | **표시명과 실명의 연결 플래그.** `visible = false`이면 어떤 공개 DTO·검색·추천·팔로우 목록·OG·PDF도 두 페르소나를 함께 내보내지 않음. 켜고 끈 이력은 AuditEvent로만 남김 |
+| Profile (§6.1 변경) | `user_id` 대신 `persona_id` | headline·job_targets·contact_policy 등은 페르소나별. `PortfolioEdition`도 페르소나에 귀속하고, 채용자용 포트폴리오는 `real` 페르소나를 기본으로 함 |
+| VisibilitySetting | persona_id, item_kind(project_list/posts/notes_and_studies/follow_lists), audience(public/signed_in/same_institution/approved_followers/private) | `(persona_id, item_kind)` 유일. `follow_lists`는 public/private만. 초기안 기본값: `project_list = private`, 나머지는 공개 계정이면 `signed_in`, 비공개 계정이면 `approved_followers`. 공개 사례·케이스 스터디는 이 설정의 대상이 아님(§8.3 불변조건 2) |
+| ProjectListing | project_member_id, persona_id, shown_at, hidden_at? | 멤버가 직접 고른 과제만 과제 수행 목록에 나타남. 노출 필드는 과목·학기·`Project.title`뿐이며 다른 멤버 이름·로그·파일은 없음. 엠바고 중인 과목 과제는 제목 없이 과목·학기만. `anonymous` 스터디 방의 내부 Project는 등록 불가 |
+| ProfilePost | id, persona_id, body, media_version_ids[], status, created_at | 프로필에 직접 쓰는 짧은 글. 미디어는 §10 파일 검사를 거친 버전만. 노출은 `posts` 공개 범위를 따름 |
+| Follow | follower_persona_id, followee_persona_id, status(pending/active), created_at, approved_at? | `(follower, followee)` 유일. 팔로우하는 쪽과 받는 쪽 모두 페르소나이므로 표시명으로 팔로우해도 실명은 드러나지 않음. 같은 사용자의 페르소나끼리는 팔로우 불가. 비공개 계정은 `pending → active` 승인. 팔로워 삭제는 행 삭제이며 상대에게 알리지 않음 |
+| Block | blocker_user_id, blocked_user_id, origin_persona_id, scope(origin_persona/all_personas), created_at | 저장은 사용자 단위, 숨김 범위는 기본으로 차단을 건 페르소나. `all_personas`는 사용자가 고를 때만 적용하며, 연결이 비공개이면 “다른 프로필까지 숨기면 같은 사람임이 추정될 수 있습니다”를 안내. 차단 시 양방향 Follow 삭제, 상대에게 알림 없음. **0~1단계 글에는 적용하지 않음**(익명 글이 사라지는 것 자체가 작성자 추정 단서가 되므로) |
+| Mute | muter_user_id, muted_persona_id, created_at | 팔로우 피드·알림에서만 제외. 상대에게 알리지 않음 |
+| SocialLink | id, persona_id, provider(instagram/youtube/linkedin/github/blog/other), url, verification(unverified/verified/lost), verified_at?, last_checked_at? | 페르소나별로 별개. 되돌림 링크 확인은 §10의 링크 수집 worker 규칙(허용 스킴·redirect 제한·사설 IP 차단·timeout)으로만 수행하고, 재확인에서 되돌림 링크가 사라지면 `lost`. `verified`는 계정 소유 확인일 뿐 인물·경력 검증이 아님 |
+| PersonaActivity | id, persona_id, source_type(publication_release/senior_note/study_release/profile_post/community_post), source_id, item_kind, created_at, withdrawn_at? | 공개 프로필의 활동 목록과 팔로우 피드가 읽는 **유일한 원천.** `persona_id NOT NULL` 제약. 원본 모듈이 outbox로 투영하며, 커뮤니티 글은 `name_mode ∈ {real, display}`이고 `listed` 공간의 글만 투영. 숨김·삭제·철회·이름 표시 재선택 시 같은 트랜잭션의 outbox로 `withdrawn_at`을 채움 |
+
+- **글의 페르소나 귀속.** `Post`·`Comment`·`SeniorNote`·`ArchiveTransfer`의 `name_mode`가 `real` 또는 `display`이면 작성 시점의 `persona_id`를 함께 고정합니다. `anonymous`(0단계)와 P2의 `affiliated_anonymous`(1단계)는 `persona_id`가 항상 NULL입니다(CHECK 제약). `author_id`는 운영자 작성자 확인(§8.1)을 위해 유지하지만 social 모듈은 이 컬럼을 읽을 수 없습니다.
+- **기존 규칙과의 관계.** §6.7의 `StudyRecord`(“익명 스터디 방 기록은 포트폴리오 연결 불가”)와 `SeniorNote.display_mode = anonymous`는 이 절의 0단계로 취급해 PersonaActivity로 투영하지 않습니다.
+- **추천.** 팔로우 추천은 같은 과목·기관·관심 직무의 교집합으로만 계산하고, 팔로워 수·활동량으로 정렬하지 않습니다. 전체 인기 순위 테이블·뷰는 두지 않습니다. `show_follower_count = false`이면 공개 DTO에 숫자를 싣지 않습니다(본인에게만 표시).
+
+#### 6.7.2 졸업생 공간·토픽·기관 확장 (P2)
+
+[제품 기획 §8.9.9](../PROOFU_EVOLUTION_PLAN.md#899-졸업생-공간-동문회ob와-공감-라운지-p2)–[§8.9.11](../PROOFU_EVOLUTION_PLAN.md#8911-기관-확장-부트캠프교육기관교육-프로그램-p2)의 동문회·OB 방, 학교를 넘나드는 토픽과 소속 표시 익명, 부트캠프·교육기관 확장을 다룹니다.
+
+```mermaid
+erDiagram
+    Institution ||--o{ Cohort : runs
+    Institution ||--o{ InstitutionAffiliation : verifies
+    User ||--o{ InstitutionAffiliation : holds
+    InstitutionAffiliation }o--o| Cohort : "in cohort"
+    Institution ||--o{ InstitutionInviteCode : issues
+    InstitutionAffiliation ||--o{ CohortApproval : "approved by"
+    InstitutionAffiliation |o--o| CertificateCheck : "checked by"
+    Institution ||--o{ CommunitySpace : "pages · cohort rooms"
+    CommunitySpace ||--o{ RoomProfile : has
+    CommunitySpace ||--o{ Event : schedules
+    Event ||--o{ EventRsvp : receives
+    Post ||--o{ NoticeRead : "read by"
+    CommunitySpace ||--o{ DirectoryEntry : lists
+    CommunitySpace ||--o{ Album : has
+```
+
+**기관: 학교의 일반화**
+
+| 엔티티 | 주요 필드 | 규칙 |
+|---|---|---|
+| Institution | id, kind(university/bootcamp/training_program/club_federation), name, broad_label, merged_into?, status | §6.2 `School`의 일반화. `broad_label`은 소속 표시를 넓힐 때 쓰는 범주(예: `대학`, `부트캠프`). 과목·과목 허브는 `kind = university`에서만 기본 사용 |
+| Cohort | id, institution_id, label(예: `12기`), starts_on?, ends_on? | 부트캠프·교육 프로그램·동아리 기수. 대학에서는 쓰지 않음(입학연도는 방 이름·자기 소개로만, 학번 미수집 원칙 유지) |
+| InstitutionAffiliation | §6.7 `SchoolAffiliation`의 필드 + institution_id, method(email/invite_code/cohort_approval/certificate_check), cohort_id?, standing(student/alumni/trainee/graduate), expires_at? | **기관 인증 수단**을 `method`로 구분. 메일 인증 결과는 기존과 같고, 졸업·수료 후에도 인증 이력을 유지해 `alumni`·`graduate`로 표시. 한 사용자가 여러 기관 소속을 가질 수 있음 |
+| InstitutionInviteCode | id, institution_id, cohort_id, code_hash, issued_by, expires_at, max_uses, used_count, revoked_at? | 기관 운영진(`InstitutionAdmin`)만 발급. 원문 코드 저장 안 함, 만료·사용 한도·철회 |
+| CohortApproval | affiliation_id, approver_user_id, created_at | 기관이 참여하지 않을 때 같은 기수 인증 멤버의 승인. 필요 승인 수 초기안 2명. **승인자는 `cohort_approval`이 아닌 수단으로 인증된 멤버여야 함**(승인 연쇄로 가짜 기수를 만드는 것 방지). 승인자는 승인 기록을 남기며 이후 그 인증이 사칭으로 판정되면 승인 자격을 제한 |
+| CertificateCheck | affiliation_id, reviewed_by, result(approved/rejected), checked_at, file_purged_at | 운영자 수동 확인. 업로드 파일은 격리 버킷에만 두고 결정 즉시(최대 7일) 삭제해 `DeletionLedger`에 기록. 원본·OCR 텍스트·수료증 번호를 보관하지 않음 |
+| InstitutionAdmin | institution_id, user_id, role(admin/cohort_manager) | 기관 페이지 운영과 초대 코드 발급. 익명·소속 표시 익명 글의 작성자 확인 권한 없음 |
+
+- **이관 원칙.** 아직 앱이 없으므로 P1 구현부터 테이블 이름을 `institution`·`institution_affiliation`으로 만들고 `kind = university`, `method = email`만 씁니다. 이 문서의 `School`·`SchoolAffiliation`은 같은 테이블의 대학 사례를 가리키며, P2에서 별도 migration 없이 기관 종류·인증 수단을 추가합니다.
+- **공간 종류 확장.** `CommunitySpace.kind`에 `topic`·`institution_page`를 더하고, 사용자 방에 `template(none/alumni)`을 둡니다. 기관의 기수별 방은 `template = alumni`인 사용자 방이며 `institution_id`·`cohort_id`로 연결합니다.
+
+**동문회·OB 방**
+
+| 엔티티 | 주요 필드 | 규칙 |
+|---|---|---|
+| RoomProfile | space_id, user_id, display_name?, avatar_version_id?, badges[](current/ob/alumni/cohort), cohort_label?, bio? | **방별 프로필.** 방 멤버에게만 보이고 Persona·PersonaActivity·공개 프로필과 연결하지 않음. `real` 방에서는 이름은 실명으로 고정하고 사진·배지·소개만 방별, `display` 방에서는 이름도 방별로 정할 수 있음. 기수는 자기 신고이며 방장·admin이 수정 가능(수정 이력 남김). `anonymous` 방에는 만들지 않음 |
+| Event | id, space_id, title, starts_at, ends_at?, location_text?, recurrence(none/weekly/monthly), rsvp_deadline?, created_by, status | **일정.** 방장·admin만 생성. 반복은 단순 규칙만 지원하고 회차는 `occurrence_date`로 구분 |
+| EventRsvp | event_id, occurrence_date, user_id, response(going/not_going/maybe), updated_at | **참석 응답.** `(event_id, occurrence_date, user_id)` 유일. 응답자 목록은 방 멤버에게만 RoomProfile 이름으로 표시 |
+| NoticeRead | post_id, user_id, read_at | `notice` 게시판 글에만 생성, 멱등. API는 **읽음 수만** 반환하고 누가 읽었는지는 내보내지 않음 |
+| Poll / PollVote | post_id, options[], closes_at / poll_id, user_id, option_id | 장소·날짜 투표. §8.9.1의 P2 투표와 같은 테이블. 결과는 집계만 표시 |
+| Album / AlbumItem | space_id, title / album_id, artifact_version_id, uploader_id | §10 파일 검사·격리를 그대로 거친 버전만. 방 멤버에게만 짧은 서명 URL. 방을 나가도 올린 사진은 남되 본인이 삭제 가능 |
+| DirectoryEntry | space_id, user_id, cohort_label?, current_work?, interests[], contact_method?, consented_at, withdrawn_at? | **멤버 명부 동의.** 동의한 멤버만 행이 존재하고 항목별로 비울 수 있음. 동의 철회·방 탈퇴 시 즉시 행 삭제. 내보내기 API·CSV·PDF·일괄 조회 없음, 페이지당 개수 제한과 조회 rate limit. 명부는 방 밖 검색·추천·PersonaActivity에 쓰지 않음 |
+
+- 동문회·OB 방의 이름 표시 기본값은 `real` 또는 `display`이며, 만들 때 `anonymous`를 고르면 “동문 네트워킹에는 권장하지 않음”을 안내합니다. 회비·결제 테이블은 두지 않습니다.
+- **공감 라운지 미디어.** 공식 학교 페이지 자유 게시판과 공감 토픽의 이미지·짧은 영상은 `ArtifactVersion` 파이프라인(§10)을 그대로 쓰고, 영상은 길이·용량 한도를 둡니다. 미디어 메타데이터(EXIF 위치 등)는 저장 전에 제거합니다.
+
+**토픽과 소속 표시 익명**
+
+| 엔티티 | 주요 필드 | 규칙 |
+|---|---|---|
+| CommunitySpace (`kind = topic`) | §6.7 필드 + topic_category(career/grad_school/startup/military/campus_life/role) | 운영자만 생성. `current_name_mode = affiliated_anonymous` 고정. 열람·쓰기는 활성 `InstitutionAffiliation`이 하나라도 있는 계정 |
+| Post·Comment (확장) | name_mode에 `affiliated_anonymous` 추가, affiliation_id?, label_scope_requested(institution/institution_kind/none), label_scope_applied, affiliation_label | `affiliation_label`은 **작성 시점 문자열로 고정**(예: `○○대 · 졸업생`). 이후 소속 변경·인원 증가로 바뀌지 않음. `affiliation_id`는 운영자 전용 컬럼이며 공개 DTO에는 문자열만 실림 |
+| InstitutionMemberCount | institution_id, standing, active_count, computed_at | 활성 인증 회원 수의 일 단위 집계. 소속 표시 임계값 판정에만 씀 |
+
+- **소속 표시 임계값.** 작성 시점에 `(institution_id, standing)`의 `active_count`가 임계값(초기안 50, 설정값) 미만이거나 집계가 없으면 `label_scope_applied`를 `institution_kind`(예: `부트캠프 수료생`, `대학 졸업생`)로 자동 상향합니다. 작성자가 고른 범위보다 좁게 표시하는 경우는 없습니다. 학과·기수·입학연도는 소속 표시에 넣지 않습니다. 임계값 판정은 제품 기획 §6.4의 n ≥ 5 익명 집계 원칙을 개인 글에 확장한 것입니다.
+- **번호.** 토픽 글도 `ThreadAlias`로 스레드 안 번호를 붙이고, 소속 표시는 번호 옆에 붙습니다. 같은 작성자의 다른 스레드와는 연결하지 않습니다.
+- **현직자 답변의 이동.** 토픽 답변을 선배 노트로 옮길 때는 `ArchiveTransfer`(§6.7)를 쓰고 이름 표시 방식을 다시 고릅니다. 1단계로 남기면 선배 노트에도 소속 표시만 붙고 페르소나와 연결되지 않습니다.
+- **수료 회고.** 부트캠프·교육 프로그램 경험은 `SeniorNote`에 `institution_id`·`cohort_id`를 붙인 구조화된 회고로 남깁니다. 별점·연봉·추천 점수 필드는 두지 않습니다.
+
 ## 7. 상태 전이와 공개 흐름
 
 ### 7.1 프로젝트 작업 상태
@@ -402,6 +504,57 @@ MVP는 `private`, `public(summary/full)`을 구현합니다. `private`는 승인
 - **공개 아카이브와 분리.** 커뮤니티 본문은 공개 검색 색인(§11.1)·`pgvector` 임베딩·과목 집계(§11.2)·공개 release·포트폴리오에 들어가지 않습니다. 커뮤니티 안의 검색은 사용자가 읽을 수 있는 공간으로 범위를 제한한 별도 질의로 처리합니다. P1에서는 커뮤니티 본문을 AI 작업에 보내지 않습니다.
 - **아카이브로 옮길 때.** `ArchiveTransfer`로 만든 복사본만 아카이브 규칙을 따르며, 원 글의 열람 범위는 바뀌지 않습니다.
 - **알림.** 푸시·메일 알림에는 익명 글의 작성자 정보를 넣지 않고, 학교 연결 공간의 본문 미리보기는 기기 잠금 화면에 노출되지 않게 제목만 보냅니다.
+
+### 8.3 정체성 분리와 공개 프로필 권한 (P1)
+
+두 가지를 커뮤니티·프로필 설계 전체의 불변조건으로 둡니다.
+
+**불변조건 1. 0~1단계 글은 프로필·팔로우·피드 쿼리에 절대 조인되지 않습니다.**
+- 공개 프로필·팔로우 목록·팔로우 피드·팔로우 추천·알림 “팔로우한 사람의 새 글”은 모두 `PersonaActivity`·`Persona`·`Follow`와 공개 release 뷰만 읽습니다. social 모듈은 `Post`·`Comment`·`ThreadAlias`·`ArchiveTransfer`를 import하지 않고(모듈 의존 규칙을 CI lint로 검사), social 모듈이 쓰는 DB 역할에는 커뮤니티 글 테이블의 SELECT 권한을 주지 않습니다.
+- 커뮤니티 모듈은 `name_mode ∈ {real, display}`인 글에 대해서만 PersonaActivity outbox 이벤트를 만들고, `PersonaActivity.persona_id`는 NOT NULL입니다. `anonymous`·`affiliated_anonymous` 글은 투영 경로 자체가 없습니다.
+- 이름 표시 방식이 이후 바뀌어도 이미 쓴 0~1단계 글이 2~3단계로 승격되지 않습니다(§6.7 `name_mode` 고정). 아카이브로 옮길 때 2~3단계를 다시 고르면 **복사본만** 페르소나에 귀속되고, 원 글과 복사본의 연결은 공개 DTO에 싣지 않습니다.
+- 회귀 테스트: 임의의 사용자·페르소나·공간·글 조합을 생성한 뒤 프로필·피드·팔로우·추천·검색·OG·PDF 응답에 0~1단계 글의 ID·본문 해시·작성 시각이 0건인지 속성 기반 테스트로 확인합니다. 분석 이벤트에도 0~1단계 글은 사용자 키 없이 기록합니다(DELIVERY_PLAN §6.1).
+
+**불변조건 2. 계정 공개 설정은 공개 절차를 우회하지 않습니다.**
+- 공개 사례·케이스 스터디·포트폴리오 항목은 `PublicationRelease.status = published`이고 본인 동의가 포함된 것만 프로필에 나옵니다. `VisibilitySetting`·`account_privacy`는 이 집합을 **좁힐 수만** 있고 넓힐 수 없습니다. 비공개 계정이라도 이미 공개된 release는 공개 URL로 열람 가능하며, 프로필 목록에서만 빠집니다.
+- 과제 수행 목록을 `public`으로 해도 노출 필드는 `ProjectListing` 규칙(§6.7.1)뿐이고 비공개 과제 공간의 읽기 권한(§8)은 바뀌지 않습니다. 엠바고·동의 철회·신고 숨김은 공개 범위 설정보다 먼저 적용합니다.
+- 팔로워 승인은 열람 범위(`approved_followers`)만 넓히며, 프로젝트 멤버십·커뮤니티 공간 열람 권한을 주지 않습니다. 커뮤니티 글은 `listed` 공간의 글이라도 열람자가 `canReadSpace`를 통과할 때만 프로필에 보입니다.
+
+| 행동 | 비로그인 | 로그인 사용자 | 같은 기관 인증 | 승인된 팔로워 | 본인 | 차단당한 사용자 | 운영자 |
+|---|---|---|---|---|---|---|---|
+| 프로필 기본 정보(이름·소개·소셜 링크) | 가능 | 가능 | 가능 | 가능 | 가능 | **404** | 가능 |
+| 공개 사례·케이스 스터디 목록 | 공개 release만(비공개 계정이면 불가) | 같음 | 같음 | 공개 release만 | 전체 + 비공개 초안 | 404 | 정책 조치 |
+| 과제 수행 목록·공개 글·선배 노트·스터디 기록 | `public`일 때 | `signed_in` 이상 | `same_institution` 이상 | `approved_followers` 이상 | 가능 | 404 | 조치 목적만 |
+| 팔로워·팔로잉 목록 | `public`일 때 | 같음 | 같음 | 같음 | 가능 | 404 | 조치 목적만 |
+| 팔로우 요청 | 불가 | 가능 | 가능 | – | 불가(자기·자기 페르소나) | 불가(404) | – |
+| 팔로워 승인·삭제, 차단·뮤트 | 불가 | 불가 | 불가 | 불가 | 가능 | – | – |
+| 표시명 ↔ 실명 연결 보기 | `IdentityLink.visible`일 때만 | 같음 | 같음 | 같음 | 가능 | 404 | 신고 처리 시 감사 기록과 함께 |
+
+- **비공개 계정**(`account_privacy = private`)은 Instagram식으로 기본 정보만 보이고 나머지 항목은 `approved_followers` 이하로 제한됩니다. 공개 → 비공개 전환은 즉시, 비공개 → 공개 전환 시 대기 중인 팔로우 요청은 자동 승인하지 않고 본인에게 묻습니다.
+- **`same_institution`** 판정은 열람자와 페르소나 소유자가 같은 기관의 활성 `InstitutionAffiliation`을 가졌는지로 합니다. 표시명 페르소나에 이 범위를 쓰면 열람 성공 여부로 소속이 추정될 수 있으므로 설정 화면에 안내합니다.
+- **차단**은 §6.7.1 `Block.scope`로 숨김 범위를 정하고, 차단된 사용자에게는 존재 여부를 숨기기 위해 404를 돌려줍니다. 차단은 0~1단계 글의 열람·작성에 영향을 주지 않으며, 2~3단계 공간(실명·표시명 방)에서는 차단한 사용자의 글을 접어서 보여 줍니다.
+- 정책 함수는 `canViewPersona`·`canViewPersonaItem(itemKind)`·`canFollow`·`canSeeIdentityLink`로 나누고, API·피드 생성·알림·OG·PDF가 같은 함수를 거칩니다.
+
+### 8.4 졸업생 공간·토픽·기관 권한 (P2)
+
+| 행동 | 비회원 로그인 사용자 | 방·기관 인증 멤버 | 방장·admin | 기관 운영진(`InstitutionAdmin`) | 운영자 |
+|---|---|---|---|---|---|
+| 동문회·OB 방 읽기·쓰기 | 불가(404) | active 멤버만 | 가능 | 기관 기수 방이면 운영 조치만 | 조치 목적만 |
+| 방별 프로필 보기 | 불가 | 같은 방 멤버만 | 같음 | 같음 | 조치 목적만 |
+| 기수·배지 수정 | 불가 | 본인(자기 신고) | 가능(이력 남김) | 기관 기수 방이면 가능 | 가능 |
+| 일정 생성 / 참석 응답 | 불가 | 응답만 | 생성·수정 | 기관 기수 방이면 생성 | – |
+| 공지 읽음 확인 | 불가 | 읽음 수만 | 읽음 수만 | 읽음 수만 | – |
+| 멤버 명부 보기 | 불가 | 동의한 멤버의 동의 항목만 | 같음(내보내기 불가) | 같음 | 조치 목적만 |
+| 토픽 읽기·쓰기 | 활성 기관 인증이 없으면 불가(404) | 활성 기관 인증이 하나라도 있으면 가능 | – | – | 가능 |
+| 소속 표시 범위 선택 | – | 작성자 본인이 넓히는 방향으로만 | – | – | – |
+| 초대 코드 발급·철회 | 불가 | 불가 | 불가 | 자기 기관만 | 가능 |
+| 기수 승인 | 불가 | 같은 기수, `cohort_approval` 외 수단으로 인증된 멤버만 | 같음 | 가능 | 가능 |
+| 수료증 확인 | 불가 | 불가 | 불가 | 불가 | 운영자 확인 역할만 |
+| **익명·소속 표시 익명 글의 작성자 확인** | 불가 | 불가 | **불가** | **불가** | **사유·범위·감사 기록을 남긴 경우만**(§8.1) |
+
+- 기관 운영진은 기관 페이지의 방장·모더레이터와 같은 권한만 가지며, 기관 소속 사용자의 공개 프로필·팔로우·과제 공간 정보를 기관 단위로 조회할 수 없습니다. 기관 대상 통계는 §11.2와 같은 임계값을 적용한 집계만 제공합니다.
+- 기관 인증이 만료·철회되면 다음 요청부터 그 기관의 토픽 쓰기 자격과 기관 페이지·기수 방 접근을 막습니다. 이미 쓴 글의 `affiliation_label`은 바꾸지 않습니다.
+- 명부·참석 응답·읽음 기록은 방 탈퇴 시 삭제하고, 일정·앨범·투표 결과는 방 기록으로 남깁니다.
 
 ## 9. API 계약 초안 (`/api/v1`)
 
@@ -490,6 +643,45 @@ MVP는 `private`, `public(summary/full)`을 구현합니다. `private`는 승인
 }
 ```
 
+### 9.2 공개 프로필·팔로우·졸업생·토픽·기관 API 초안 (P1·P2)
+
+| 메서드·경로 | 역할 | 주요 조건 |
+|---|---|---|
+| `POST /personas`, `PATCH /personas/:id` (P1) | 표시명 페르소나 생성·수정 | 본인, 종류별 1개, handle 유일·예약어 거부 |
+| `PUT /me/identity-link` (P1) | 표시명 ↔ 실명 연결 표시 | 본인, 변경 시 AuditEvent |
+| `PUT /personas/:id/visibility` (P1) | 항목별 공개 범위 | 본인, 공개 사례 항목은 받지 않음(공개 절차 경유) |
+| `POST /projects/:id/listing`, `DELETE /projects/:id/listing` (P1) | 과제 수행 목록 표시 | 해당 프로젝트 멤버, 엠바고 중이면 제목 제외 |
+| `GET /profiles/:handle` (변경, P1) | 페르소나 공개 프로필 | `canViewPersona`, 차단 시 404, 연결 비공개면 다른 페르소나 정보 없음 |
+| `GET /profiles/:handle/activity?kind=` (P1) | 항목별 활동 | `canViewPersonaItem`, `PersonaActivity`만 조회 |
+| `POST /profiles/:handle/follow`, `POST /follow-requests/:id/approve`, `DELETE /followers/:personaId` (P1) | 팔로우·승인·팔로워 삭제 | 팔로우 주체 페르소나 지정, 자기 페르소나 불가 |
+| `POST /blocks`, `POST /mutes` (P1) | 차단·뮤트 | 본인, 차단 범위 선택, 상대에게 알림 없음 |
+| `GET /feed` (P1) | 팔로우 피드 | 읽기 시점 권한 재검사, cursor 페이지네이션 |
+| `POST /personas/:id/social-links`, `POST /social-links/:id/verify` (P1) | 소셜 링크·되돌림 확인 | 링크 수집 worker에서만 접속, 재시도 제한 |
+| `POST /community/affiliations` (확장, P2) | 기관 인증 | `method`별 검증: 메일 코드·초대 코드·기수 승인 요청·수료증 업로드 |
+| `POST /affiliations/:id/cohort-approvals` (P2) | 기수 승인 | 같은 기수·비승인 수단 인증 멤버, 1인 1회 |
+| `POST /institutions/:id/invite-codes`, `POST /invite-codes/:id/revoke` (P2) | 초대 코드 | 기관 운영진, 응답에만 원문 1회 표시 |
+| `POST /community/spaces/:id/events`, `PUT /events/:id/rsvp` (P2) | 일정·참석 | 방장·admin 생성, 멤버 응답 |
+| `POST /community/posts/:id/read` (P2) | 공지 읽음 | 멱등, 읽음 수만 반환 |
+| `PUT /community/spaces/:id/room-profile`, `PUT /community/spaces/:id/directory-entry`, `DELETE …/directory-entry` (P2) | 방별 프로필·명부 동의 | 방 멤버 본인, 명부는 동의 체크 필수 |
+| `GET /community/spaces/:id/directory` (P2) | 명부 보기 | 방 멤버, 페이지 크기 제한, 내보내기 형식 없음 |
+| `POST /community/topics/:id/posts` (P2) | 토픽 글 | 활성 기관 인증, 서버가 임계값으로 `label_scope_applied` 결정 |
+
+소속 표시 익명 글 응답 예시:
+
+```json
+{
+  "id": "post-id",
+  "nameMode": "affiliated_anonymous",
+  "authorLabel": "글쓴이",
+  "affiliationLabel": "부트캠프 수료생",
+  "comments": [
+    { "id": "c1", "authorLabel": "익명1", "affiliationLabel": "○○대 · 졸업생", "body": "…" }
+  ]
+}
+```
+
+소속 표시가 자동으로 넓혀졌는지(`labelBroadened`)는 작성자 본인 응답에만 싣고, 다른 사용자에게는 보내지 않습니다.
+
 ## 10. 파일과 외부 링크
 
 - 상태: `pending → scanning → clean / quarantined / failed`. 허용 MIME·확장자·실제 signature·용량을 함께 검사합니다.
@@ -514,6 +706,12 @@ MVP는 `private`, `public(summary/full)`을 구현합니다. `private`는 승인
 ### 11.2 과목 집계와 익명성
 
 워크로드 분포·자주 막히는 지점은 공개 release와 `share_for_stats=true` 체크인만으로 계산하는 별도 materialized view입니다. 그룹(같은 과목·과제 유형) 크기가 임계값(초안 5) 미만이면 결과를 반환하지 않습니다. 비공개 작업 공간 테이블을 공개 집계 경로에서 직접 읽지 않습니다.
+
+### 11.3 프로필·팔로우 피드의 파생 일관성 (P1)
+
+- 팔로우 피드는 쓰기 시점 fan-out을 하지 않고 **읽기 시점에** `Follow`와 `PersonaActivity`를 조인해 만들며, 항목마다 `canViewPersonaItem`과 원본 상태(release 활성·글 visible)를 다시 확인합니다. 철회·숨김·차단·공개 범위 축소는 다음 요청부터 반영되고, 캐시는 페르소나 단위 `access_epoch`로 무효화합니다.
+- `PersonaActivity`는 원본 모듈의 outbox로만 갱신합니다. worker가 늦거나 실패해도 읽기 경로의 원본 상태 재확인이 먼저 차단하므로, 철회된 사례·숨긴 글이 피드에 남지 않습니다.
+- 팔로워 수는 본인 표시 설정과 관계없이 내부에서 계산하지만 정렬·추천 가중치로 쓰지 않습니다. 0~1단계 글은 이 경로 어디에도 들어오지 않습니다(§8.3).
 
 ## 12. 연동
 
