@@ -21,8 +21,8 @@ export default defineNuxtConfig({
     // NUXT_SITE_ORIGIN: 허용 사이트 origin(쉼표 구분). 첫 항목으로 로그인·초대 링크를 만들고,
     // 상태 변경 API의 Origin/Referer 검사(CSRF)에 씁니다. 배포 시 반드시 실제 origin으로 설정하세요.
     siteOrigin: 'http://localhost:3000',
-    // NUXT_MAIL_TRANSPORT: 현재 'dev-console'(개발 전용, 링크를 서버 콘솔에 출력)만 있습니다.
-    // NODE_ENV=production에서 dev-console이면 서버가 시작되지 않습니다.
+    // NUXT_MAIL_TRANSPORT(또는 우선하는 PEERCHIVE_MAIL_TRANSPORT): 'smtp'(실제 발송, PEERCHIVE_SMTP_*·PEERCHIVE_MAIL_FROM)
+    // 또는 'dev-console'(개발 전용, 링크를 서버 콘솔에 출력). production에서는 올바른 smtp가 아니면 서버가 시작되지 않습니다.
     mailTransport: 'dev-console',
   },
 })

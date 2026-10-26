@@ -13,7 +13,7 @@
 | `packages/db` | Drizzle ORM 스키마, SQL migration(`migrations/`), `createDb(url)`, outbox 주제·payload(`src/outbox.ts`), 운영자 부여 CLI(`scripts/grant-operator.ts`) |
 | `packages/bot-protocol` | 웹 ↔ 봇 내부 API 약속: HMAC-SHA256 요청 서명·검증(시각 차이 5분, nonce)과 요청/응답 타입 |
 | `packages/files` | 오브젝트 저장소 추상화(파일시스템 driver), 파일 형식 판별, 악성코드 검사 어댑터(clamd), 검사 작업, 이미지 메타데이터 제거(EXIF/GPS/XMP/주석, 무손실)·PDF 문서 속성 점검과 backfill([ADR 0007](../docs/adr/0007-file-storage-and-scanning.md)) |
-| `ops/docker-compose.yml` | 로컬 개발용 PostgreSQL 16, 선택 profile `clamav`(clamd) |
+| `ops/docker-compose.yml` | 로컬 개발용 PostgreSQL 16, 선택 profile `clamav`(clamd)·`mailpit`(SMTP 시험 서버)·`minio`(S3 호환 저장소). 선택 서비스는 profile을 지정할 때만 뜸 |
 | `ops/backup.sh`·`ops/restore.sh`·`ops/restore-drill.sh` | 백업(pg_dump custom + 파일 tar + 장부 + 행 수 + 체크섬, 보존 기간)·복구(덮어쓰기는 `--force`)·복구 연습(임시 DB, 재적용까지, 시간 출력). 절차는 [운영 runbook](../docs/ops/RUNBOOK.md) |
 
 ## 구현 현황
@@ -38,6 +38,7 @@
 | T-14 케이스 템플릿 초안·포트폴리오·공개 프로필 | 완료 | 케이스 스터디(지금 게시 중인 release에 팀원 키로 들어 있는 사람만, 익명이던 사람은 `revealSelf: true` 확인 — 다른 팀원 표시는 스냅샷 그대로, release에 고정), 템플릿 초안(생성형 모델 없음, 저장된 스냅샷 글만 고정 문장 틀에 채움: 문제와 결과·내 역할·핵심 결정·막힘과 해결·검증·한계·회고·원본 링크, 내 확인된 선언 먼저·내 결정/검증·참석한 회의·막힘+해결 쌍·회고, 직무별 구역 순서, 결정적), 문장마다 스냅샷 인용 `{releaseVersion, kind: summary|log|claim|milestone|artifact, key}`(편집 때 고정 스냅샷에 없는 키 422), 출처 없는 문장은 게시 409 `uncited_sentences`(한계·회고의 `reflection`="본인 회고"만 예외), 사용자 글 공개 전 점검 경고(확인 없이 409 `checks_unconfirmed`), 고치면 draft, 읽을 때마다 고정 release를 `servableReleaseSql`로 확인(철회·대체 즉시 "원본 사례를 더 이상 볼 수 없습니다", 작성자에게 "새 버전으로 다시 만들기"), worker `case-studies` 정리 handler(철회·대체된 release의 케이스를 unavailable로 표시), 포트폴리오 판(바꾸지 않는 version, 새 판이 current·이전 판 비공개, 대표 케이스 ≤5, 미리보기), 역량 × 근거 매트릭스(직무 프리셋·직접 입력 ≤12, 근거는 케이스가 인용한 항목만, 종류·개수만 — 점수·색 농도 없음, 경험 근거 역량과 자기 선언 스킬 구분), 익명 공개 프로필 `/u/[handle]`(지금 판만, 이메일·id 없음, 연락 정책 문구만, 후배 기여 개수·4년 타임라인, OG는 이름·한 줄 소개, noindex 기본)·인쇄 보기 `/u/[handle]/print`(A4)·GitHub README 카드, 화면 `/portfolio`(만들기·내 케이스·판·내보내기)·`/portfolio/case-studies/[id]`(편집)·`/portfolio/edition`(판 만들기)([ADR 0014](../docs/adr/0014-case-study-portfolio.md)) |
 | T-15 신고·관리 조치 | 완료 | 신고(로그인한 사람만, 지금 공개인 대상만 — 공개 사례·그 안의 기록/선언/파일·선배 노트·대표 케이스 스터디·공개 프로필, 사유 7종·설명 1000자, 내용 복사 없이 release·version 포인터만, 같은 사람·대상의 처리 전 신고는 하나(200), 시간당 10·하루 30회), 개인정보·저작권 신고의 보류(hold: 처리될 때까지 게시·새 버전 게시 409 `publish_blocked`+`hold_open`, 이미 제공 중인 release는 그대로), 운영자 대기열·상세(대상별 묶음, 공개됐던 내용만 — 신고 때 release 스냅샷·같은 버전의 노트/케이스 글·공개 프로필 필드, 비공개 과제 공간은 운영자도 404), 처리(같은 대상의 신고를 함께 닫고 보류를 풂, 내부 메모 필수·당사자 사유 별도): 제한(restrict: published → restricted, release withdrawn, 해제·되돌림은 draft → 새 후보·동의·게시)·항목 가리기(hide_item: 공개 전체에 적용, 사례·파일·허브·검색·신호·포크·케이스 인용에서 요청마다 제외, "운영 조치로 가려진 항목")·노트/케이스/프로필 숨김, 삭제 없음, 이의제기(당사자·조치마다 한 번, 유지/되돌림), 화면 안 알림(공개 준비·노트·케이스 화면 안내, `/me/moderation-notices`), 신고자는 상태만(`/me/reports`), 감사(id·종류만, 글 없음)·`/operator/audit`, worker `moderation.action`(검색 문서 맞추기), 화면 `/operator`·신고 대화상자([ADR 0015](../docs/adr/0015-reports-moderation-appeals.md)). 자동 임시 숨김은 넣지 않음(ADR 0015) |
 | T-16 runbook·복구·pilot 계측 | 완료 | 탈퇴 정리(유예 7일 뒤 worker, 계정마다 한 트랜잭션: 프로필·세션·로그인 수단·연동·체크인·신호·선배 노트·케이스·판·분석 이벤트·혼자만 쓴 과제 전체와 저장소 파일 삭제, 팀 과제 기록은 "탈퇴한 사용자"로 가명 처리하고 남의 기록에 쓴 메모만 삭제, owner 넘기기, 당사자인 지금 release는 동의 철회처럼 철회, 운영 기록·남의 포크가 가리키면 묘비), 삭제 장부(종류별 개수 + HMAC 대상, 개인정보 없음)·`pnpm ops:reapply-deletions`(복구 뒤 재적용, idempotent)·`pnpm ops:export-ledger`, 점검 모드 `PEERCHIVE_MAINTENANCE`(헬스 체크 밖 전부 503), 주기 정리 10종(만료 업로드 의도·주인 없는 격리 파일·rate limit·nonce·매직링크·세션·디스코드 코드·📌 요청·outbox, cron 설정·배치·안전장치·감사/상태 기록), 백업·복구·복구 연습 스크립트, pilot 분석 이벤트 16종(허용 목록 props·HMAC 주체·같은 트랜잭션·수집 거부와 설정 화면), 운영자 지표 `/operator/metrics`(5 미만 가림)·상세 상태 확인(`/api/v1/health?deep=1`, worker 상태 기록), [운영 runbook](../docs/ops/RUNBOOK.md)([ADR 0016](../docs/adr/0016-deletion-ledger-maintenance-analytics.md)) |
+| D-01/D-02 배포 준비: SMTP 메일·S3 호환 저장소 | 완료(공급자 설정 필요) | 공급자 무관 SMTP transport(nodemailer, TLS 필수·인증서 검증·연결 풀 없음·시간 제한, 한국어 text+HTML 매직링크, `Auto-Submitted`, 발송 실패도 같은 202 + 가린 로그·`mail.send_failed` 감사), S3 호환 driver(AWS S3·R2·MinIO, 비공개 버킷·서버 경유 스트림만, 20MB까지 모아 SHA-256 계산 뒤 조건부 PutObject, copy+delete move, 페이지 넘김 list), production은 smtp·https endpoint·완전한 s3 설정만 허용, 저장소 공통 계약 테스트(filesystem·MinIO), Mailpit·MinIO compose profile, s3일 때 백업은 공급자 쪽([ADR 0017](../docs/adr/0017-smtp-mail-and-s3-storage.md)) |
 
 **Phase 1 백로그(T-01~T-16) 구현 완료.** 실제 배포 전에 남은 과제(자세히는 [runbook §1·§2](../docs/ops/RUNBOOK.md)):
 
@@ -122,13 +123,36 @@ pnpm bot                                      # 선택: 디스코드 봇(토큰 
 pnpm test
 ```
 
-- 로그인: `/login`에 이메일을 넣으면 `pnpm dev` 콘솔에 `[dev-console mail]` 블록으로 로그인 링크가 출력됩니다(개발 전용, 실제 메일 발송 없음).
+- 로그인: `/login`에 이메일을 넣으면 `pnpm dev` 콘솔에 `[dev-console mail]` 블록으로 로그인 링크가 출력됩니다(개발 전용, 실제 메일 발송 없음). 실제 SMTP 경로를 보려면 아래 "SMTP·S3 로컬 시험"을 보세요.
 - 5432 포트가 이미 쓰이고 있으면 `.env`의 `POSTGRES_PORT`와 `DATABASE_URL` 포트를 함께 바꾸고 `docker compose --env-file .env -f ops/docker-compose.yml up -d`로 띄우세요(compose는 기본적으로 `ops/.env`를 읽습니다).
 - `pnpm test`는 `DATABASE_URL`이 없으면 DB 통합 테스트(`packages/db`, `apps/web/test/*.integration.test.ts`, `apps/worker/test/*.integration.test.ts`)를 건너뜁니다. 통합 테스트는 트랜잭션 rollback으로 데이터를 남기지 않습니다. 실행하려면 `DATABASE_URL=postgres://peerchive:peerchive@localhost:5432/peerchive pnpm test`.
 - 공개 검색 결과는 worker가 게시 이벤트로 색인한 뒤에 나옵니다(`pnpm worker`). 과목 허브·사례 페이지·공개 프로필은 worker 없이도 바로 보이고, 철회는 worker와 무관하게 즉시 모든 공개 경로(공개 프로필의 케이스 스터디 포함)에서 사라집니다.
 - 파일을 올리면 worker가 검사해야 "사용 가능"이 됩니다. 검사를 통과한 이미지는 EXIF/GPS/XMP/주석을 지운 내용이 저장되고("메타데이터 제거됨"), PDF는 그대로 두되 문서 속성에 작성자 정보가 있으면 표시·공개 전 경고합니다. 이 기능 전에 올린 이미지가 DB에 있으면 공개 전에 한 번 `NODE_ENV=development pnpm --filter worker backfill-strip`을 실행하세요. `pnpm worker`는 `NODE_ENV=development`로 실행하며 기본 검사기는 개발용 `signature-only`(형식 판별만)입니다. 실제 악성코드 검사를 해 보려면 `docker compose -f ops/docker-compose.yml --profile clamav up -d`(처음엔 서명 DB를 받느라 몇 분 걸림) 뒤 `.env`에 `PEERCHIVE_MALWARE_SCANNER=clamav`.
 - 올린 파일은 저장소 루트의 `.data/objects/`(gitignore 대상)에 무작위 키로 저장됩니다. 웹 서버는 이 디렉터리를 정적으로 제공하지 않습니다.
-- 끝나면 `docker compose -f ops/docker-compose.yml down`(데이터 볼륨 `peerchive-pg-data`는 유지, 지우려면 `down -v`).
+- 끝나면 `docker compose -f ops/docker-compose.yml down`(데이터 볼륨 `peerchive-pg-data`는 유지, 지우려면 `down -v`). profile로 띄운 서비스까지 내리려면 같은 `--profile`을 붙이세요.
+
+### SMTP·S3 로컬 시험(Mailpit·MinIO)
+
+실제 공급자 없이 SMTP transport와 S3 driver를 확인합니다([ADR 0017](../docs/adr/0017-smtp-mail-and-s3-storage.md)). 두 서비스 모두 127.0.0.1에만 열리고 기본 `up`에는 뜨지 않습니다.
+
+```sh
+docker compose --env-file .env -f ops/docker-compose.yml --profile mailpit --profile minio up -d --wait mailpit minio
+# 받은 메일: http://127.0.0.1:8025  /  MinIO 관리 화면: http://127.0.0.1:9001 (.env.example의 로컬 계정)
+```
+
+- 앱에서 쓰기: `.env`에 `PEERCHIVE_MAIL_TRANSPORT=smtp`, `PEERCHIVE_SMTP_URL=smtp://127.0.0.1:1025`, `PEERCHIVE_SMTP_ALLOW_INSECURE=1`, `PEERCHIVE_MAIL_FROM=…`과 `PEERCHIVE_STORAGE_DRIVER=s3`, `PEERCHIVE_S3_*`(MinIO 값, `PEERCHIVE_S3_FORCE_PATH_STYLE=1`)를 넣습니다(.env.example의 주석 블록). 버킷은 미리 만들어 두세요(MinIO 관리 화면 또는 아래 테스트가 `peerchive-test`를 만듦). web·worker는 같은 값을 읽습니다.
+- 통합 테스트: 아래 변수가 있을 때만 실행되고 없으면 건너뜁니다. 주소는 루프백만 받습니다(실제 버킷·메일 서버 보호).
+
+  ```sh
+  DATABASE_URL=postgres://peerchive:peerchive@localhost:5432/peerchive \
+  PEERCHIVE_TEST_MAILPIT_SMTP_URL=smtp://127.0.0.1:1025 PEERCHIVE_TEST_MAILPIT_API_URL=http://127.0.0.1:8025 \
+  PEERCHIVE_TEST_S3_ENDPOINT=http://127.0.0.1:9000 PEERCHIVE_TEST_S3_ACCESS_KEY_ID=peerchive-local PEERCHIVE_TEST_S3_SECRET_ACCESS_KEY=peerchive-local-only \
+  pnpm test
+  ```
+
+  - Mailpit: `apps/web/test/mail-smtp.integration.test.ts`(한국어 text+HTML·헤더·가린 로그, 매직링크 `/auth/verify#token=` 수신 후 로그인, 토큰이 로그에 없음; 매직링크 부분은 DATABASE_URL도 필요).
+  - MinIO: `packages/files/test/s3-storage.test.ts`(저장소 공통 계약 테스트를 filesystem과 같이 실행: 키 검사·크기 한도·SHA-256·범위 읽기·덮어쓰기 move·목록 페이지·멱등 삭제), `apps/web/test/artifacts-s3.integration.test.ts`(업로드 → worker 검사 → clean → 내려받기, DATABASE_URL도 필요). 테스트마다 무작위 prefix를 쓰고 끝나면 지웁니다.
+- 끝나면 `docker compose --env-file .env -f ops/docker-compose.yml --profile mailpit --profile minio stop mailpit minio`.
 
 ## 환경 변수
 
@@ -136,9 +160,17 @@ pnpm test
 |---|---|---|
 | `DATABASE_URL` (`NUXT_DATABASE_URL`) | 없음 | PostgreSQL 접속 문자열(서버 전용) |
 | `NUXT_SITE_ORIGIN` | `http://localhost:3000` | 허용 사이트 origin(쉼표 구분). 첫 항목으로 로그인·초대 링크를 만들고, 상태 변경 API(POST/PATCH/PUT/DELETE)의 `Origin`/`Referer`가 이 목록과 다르면 403. 배포 시 실제 origin으로 꼭 설정 |
-| `NUXT_MAIL_TRANSPORT` | `dev-console` | 현재 `dev-console`(개발 전용)만 있음. production에서는 이 값으로 서버가 시작되지 않음 |
-| `PEERCHIVE_STORAGE_DRIVER` | `filesystem` | 파일 저장소(web·worker 공통). 지금은 filesystem만 있음. production에서는 `PEERCHIVE_ALLOW_FS_STORAGE_IN_PRODUCTION=1` 없이는 web·worker가 시작되지 않음 |
+| `PEERCHIVE_MAIL_TRANSPORT` (`NUXT_MAIL_TRANSPORT`) | `dev-console` | `smtp`(실제 발송) 또는 `dev-console`(개발 전용, 링크를 콘솔에 출력). production에서는 올바르게 설정된 `smtp`가 아니면 서버가 시작되지 않음([ADR 0017](../docs/adr/0017-smtp-mail-and-s3-storage.md)) |
+| `PEERCHIVE_SMTP_URL` | 없음 | `smtps://user:pass@host:465`(암묵적 TLS) 또는 `smtp://user:pass@host:587`(STARTTLS 필수). 사용자·암호는 URL 인코딩. 비밀 저장소에서 주입 |
+| `PEERCHIVE_SMTP_HOST` / `_PORT` / `_SECURE` / `_USER` / `_PASSWORD` | 없음 / 587(SECURE=1이면 465) | URL 대신 나눠 쓸 때(URL과 함께 쓰면 시작 실패) |
+| `PEERCHIVE_SMTP_ALLOW_INSECURE` | 없음 | `1`이면 TLS 없는 SMTP 허용(로컬 Mailpit 전용). production에서는 서버가 시작되지 않음 |
+| `PEERCHIVE_MAIL_FROM` / `PEERCHIVE_MAIL_REPLY_TO` | 없음 | 보내는 주소(`Peerchive <no-reply@도메인>` 또는 주소만, smtp에 필수) / 선택 답장 주소 |
+| `PEERCHIVE_STORAGE_DRIVER` | `filesystem` | 파일 저장소(web·worker·운영 명령 공통). `filesystem` 또는 `s3`(S3 호환: AWS S3·R2·MinIO 등). production에서 filesystem은 `PEERCHIVE_ALLOW_FS_STORAGE_IN_PRODUCTION=1` 없이는 web·worker가 시작되지 않음 |
 | `PEERCHIVE_STORAGE_ROOT` | `.data/objects` | filesystem 저장소 루트. 상대 경로면 저장소 루트 기준 |
+| `PEERCHIVE_S3_ENDPOINT` | 없음(AWS 기본) | s3: endpoint origin(`https://…`, 경로·쿼리·접속 정보 없이). R2·MinIO는 필수. production은 https만 |
+| `PEERCHIVE_S3_REGION` / `PEERCHIVE_S3_BUCKET` | 없음 | s3: 지역(R2는 `auto`) / **비공개** 버킷 이름(필수) |
+| `PEERCHIVE_S3_ACCESS_KEY_ID` / `PEERCHIVE_S3_SECRET_ACCESS_KEY` | 없음 | s3: 이 버킷만 다루는 키(필수, 비밀 저장소에서 주입) |
+| `PEERCHIVE_S3_FORCE_PATH_STYLE` / `PEERCHIVE_S3_PREFIX` | 없음 | s3: `1`이면 경로 방식(MinIO) / 버킷 안의 접두어(예 `peerchive/`, 소문자·숫자·`._-`) |
 | `PEERCHIVE_MALWARE_SCANNER` | `signature-only` | worker 검사기. `clamav` 또는 `signature-only`(개발 전용, production에서 worker가 시작되지 않음) |
 | `CLAMAV_HOST` / `CLAMAV_PORT` | `127.0.0.1` / `3310` | clamd 주소 |
 | `PEERCHIVE_SCAN_CONCURRENCY` | `2` | worker의 동시 검사 수(1–8) |
@@ -155,7 +187,7 @@ pnpm test
 | `PEERCHIVE_BACKUP_DIR` / `PEERCHIVE_BACKUP_RETENTION_DAYS` / `PEERCHIVE_PG_CONTAINER` | `.data/backups` / `14` / 없음 | `ops/backup.sh`·`restore-drill.sh`. 컨테이너 이름을 주면 그 안의 pg_dump·pg_restore·psql을 씀(로컬 개발) |
 | `PEERCHIVE_PUBLIC_INDEXING` | 없음(꺼짐) | `1`이면 공개 JSON·공개 페이지의 `noindex`를 뺍니다(파일럿 기본은 noindex, 공개 파일은 항상 noindex) |
 
-- 빌드한 서버(`node apps/web/.output/server/index.mjs`)는 기본적으로 production으로 동작합니다(Secure 쿠키, dev-console 거부). 로컬에서 빌드 결과를 점검할 때만 `NODE_ENV=development`를 명시하세요.
+- 빌드한 서버(`node apps/web/.output/server/index.mjs`)는 기본적으로 production으로 동작합니다(Secure 쿠키, dev-console 거부, smtp·저장소 설정 검사). 로컬에서 빌드 결과를 점검할 때만 `NODE_ENV=development`를 명시하세요.
 
 ## 그 밖의 명령
 

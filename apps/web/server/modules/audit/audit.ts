@@ -83,6 +83,7 @@ export type AuditAction =
   | 'moderation.reverse'
   | 'appeal.create'
   | 'appeal.decide'
+  | 'mail.send_failed'
 
 export async function recordAudit(
   db: DbExecutor,
@@ -118,6 +119,7 @@ export async function recordAudit(
       | 'report'
       | 'moderation_action'
       | 'appeal'
+      | 'mail'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

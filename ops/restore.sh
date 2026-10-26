@@ -4,6 +4,7 @@
 # 사용: DATABASE_URL=<같은 서버의 아무 DB> [PEERCHIVE_PG_CONTAINER=…] ops/restore.sh --from <백업 디렉터리> --target-db <이름> --storage-dir <디렉터리> [--force]
 #   --target-db    만들 DB 이름(소문자·숫자·_). 이미 있으면 --force 없이는 멈춥니다(--force면 지우고 다시 만듦).
 #   --storage-dir  파일을 풀 디렉터리. 비어 있지 않으면 --force 없이는 멈춥니다(--force면 기존 것을 <디렉터리>.pre-restore-<시각>으로 옮김, 지우지 않음).
+#                  s3 driver로 만든 백업(manifest의 storage=s3-provider-side)은 파일이 없으므로 빈 디렉터리가 됩니다.
 #
 # 복구가 끝나도 바로 트래픽을 열지 마세요: 백업 뒤의 탈퇴 정리를 다시 적용해야 합니다.
 #   1) web은 PEERCHIVE_MAINTENANCE=1로, worker는 끈 채로
@@ -51,4 +52,7 @@ fi
 mkdir -p "$storage_dir"
 tar -C "$storage_dir" -xzf "$from/storage.tar.gz"
 log "storage restored → $storage_dir ($(find "$storage_dir" -type f | wc -l | tr -d ' ') files)"
+if grep -qx 'storage=s3-provider-side' "$from/manifest.txt" 2>/dev/null; then
+  log "note: this backup was taken with the s3 driver — files are not in it. Restore objects from bucket versioning/replication (RUNBOOK §3.4)."
+fi
 log "done in $(elapsed "$started" "$(now_s)")s. Next: keep PEERCHIVE_MAINTENANCE=1, run pnpm ops:reapply-deletions against $target, then reopen traffic."

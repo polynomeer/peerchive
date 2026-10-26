@@ -4,8 +4,8 @@
  * - 키는 서버가 만든 `quarantine/<uuid>`(검사 전 격리) 또는 `clean/<uuid>`(검사 통과)뿐입니다.
  *   원 파일명·사용자 입력으로 키를 만들지 않으며, 형식이 다른 키는 모든 메서드가 거부합니다.
  * - 저장소는 어떤 경우에도 정적으로 공개하지 않습니다. 내용은 권한·검사 상태를 확인한 API만 내려줍니다.
- * - 지금 구현은 파일시스템 driver(fs-storage.ts)뿐이고, 배포 전에 S3 호환(R2) driver를 같은 인터페이스로 추가합니다.
- *   그때 put은 짧은 서명 URL 업로드 + head 확인으로, get은 서명 URL 또는 프록시 스트림으로 바뀔 수 있습니다.
+ * - 구현은 파일시스템 driver(fs-storage.ts, 로컬·단일 서버 pilot)와 S3 호환 driver(s3-storage.ts, ADR 0017)입니다.
+ *   두 driver 모두 내용을 서버가 스트림으로 받고 내려줍니다. 서명 URL 직접 업로드·내려받기는 나중의 최적화입니다.
  */
 import { Readable } from 'node:stream'
 
@@ -43,7 +43,7 @@ export interface ByteRange {
 }
 
 export interface ObjectStorage {
-  /** 'filesystem' 등. 로그·설정 점검용. */
+  /** 'filesystem' 또는 's3'. 로그·설정 점검용. */
   readonly driver: string
   /**
    * 스트림을 키에 씁니다. maxBytes를 넘으면 중단하고 쓰던 내용을 지운 뒤 ObjectTooLargeError를 던집니다.
@@ -58,6 +58,8 @@ export interface ObjectStorage {
   /**
    * 옮기기. 대상이 이미 있으면 원자적으로 덮어씁니다(읽는 쪽은 이전 내용 또는 새 내용 중 하나만 봄). 원본이 없고 대상이
    * 있으면 이미 옮긴 것으로 보고 성공합니다(재실행해도 같은 결과). 메타데이터를 지운 내용으로 clean 키를 바꿀 때 씁니다(writeObject).
+   * s3 driver는 copy 뒤 delete라 잠시 원본과 대상이 함께 있을 수 있습니다(대상 교체 자체는 원자적, 남은 원본은 격리 키라
+   * 내려주지 않고 정리 작업이 지움).
    */
   move(from: ObjectKey, to: ObjectKey): Promise<void>
   /** 지우기. 없어도 오류가 아닙니다. */

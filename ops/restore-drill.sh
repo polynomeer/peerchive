@@ -7,6 +7,7 @@
 #   --from         기본: PEERCHIVE_BACKUP_DIR(기본 .data/backups)의 가장 최근 백업
 #   --ledger-file  재적용에 쓸 장부(기본: 지금 DB에서 내보낸 장부 — 백업 뒤의 정리까지 포함). 백업 안의 장부만 쓰려면 <백업>/ledger.jsonl
 #   --keep         끝나도 임시 DB·저장소를 지우지 않음(조사용)
+#   재적용은 언제나 임시 filesystem 저장소를 봅니다(PEERCHIVE_STORAGE_DRIVER=s3 환경에서도 운영 버킷을 건드리지 않음).
 #   PEERCHIVE_DRILL_DIR  임시 저장소·장부를 둘 곳(기본 TMPDIR). 로컬에서는 NODE_ENV=development를 앞에 붙입니다(재적용 명령의 개발용 pepper·저장소).
 # 단계별 시간과 합계를 출력합니다(RTO 근거). 실패하면 종료 코드 1이고, 임시 DB·저장소는 --keep이 아니면 지웁니다.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -82,10 +83,10 @@ if [[ -z "$ledger" ]]; then
   ledger_jsonl "$source_db" >"$ledger"
   log "ledger: exported from current database $source_db ($(wc -l <"$ledger" | tr -d ' ') entries)"
 fi
-reapply_out="$(cd "$REPO_ROOT" && DATABASE_URL="$(db_url_for "$drill_db")" PEERCHIVE_STORAGE_ROOT="$drill_storage" pnpm --silent ops:reapply-deletions --ledger-file="$ledger" 2>&1)" ||
+reapply_out="$(cd "$REPO_ROOT" && DATABASE_URL="$(db_url_for "$drill_db")" PEERCHIVE_STORAGE_DRIVER=filesystem PEERCHIVE_STORAGE_ROOT="$drill_storage" pnpm --silent ops:reapply-deletions --ledger-file="$ledger" 2>&1)" ||
   { echo "$reapply_out" >&2; die "reapply-deletions failed"; }
 echo "$reapply_out" | grep '\[reapply-deletions\]' || true
-again="$(cd "$REPO_ROOT" && DATABASE_URL="$(db_url_for "$drill_db")" PEERCHIVE_STORAGE_ROOT="$drill_storage" pnpm --silent ops:reapply-deletions --ledger-file="$ledger" 2>&1)"
+again="$(cd "$REPO_ROOT" && DATABASE_URL="$(db_url_for "$drill_db")" PEERCHIVE_STORAGE_DRIVER=filesystem PEERCHIVE_STORAGE_ROOT="$drill_storage" pnpm --silent ops:reapply-deletions --ledger-file="$ledger" 2>&1)"
 echo "$again" | grep -q 'repurged=0' || die "second reapply was not a no-op"
 t_reapply="$(elapsed "$s" "$(now_s)")"
 log "reapply ok (second run no-op) ${t_reapply}s"

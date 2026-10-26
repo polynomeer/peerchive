@@ -20,7 +20,8 @@ import {
 } from '@peerchive/db'
 import { generateToken, looksLikeToken, sha256Hex } from '../security/tokens'
 import { hitRateLimit, type RateLimitRule } from '../security/rate-limit'
-import { maskEmail, type MailTransport } from './mail'
+import { describeMailError, maskEmail, type MailTransport } from './mail'
+import { recordAudit } from '../audit/audit'
 import { createSession, type CreatedSession } from './sessions'
 import { emitAnalytics } from '../analytics/analytics'
 
@@ -73,18 +74,45 @@ export async function requestMagicLink(db: DbExecutor, input: MagicLinkRequest):
     createdAt: now,
   })
 
-  await input.mail.send({
-    to: email,
-    subject: 'Peerchive 로그인 링크',
-    text: [
-      '아래 링크를 열면 Peerchive에 로그인합니다. 링크는 15분 동안 한 번만 쓸 수 있습니다.',
-      '',
-      input.buildVerifyUrl(token),
-      '',
-      '직접 요청하지 않았다면 이 메일을 무시하세요.',
-    ].join('\n'),
-  })
+  // 발송을 기다리지만, 실패해도 응답은 같은 202입니다(계정 열거 방지). 실패는 가린 오류 코드만 로그·감사에 남깁니다.
+  // 재시도 큐(outbox)는 쓰지 않습니다: 링크(토큰 원문)를 DB에 남기게 되고, 사용자가 다시 요청하는 편이 단순합니다(ADR 0017).
+  try {
+    await input.mail.send({ to: email, ...magicLinkMail(input.buildVerifyUrl(token)) })
+  } catch (error) {
+    const { code, responseCode } = describeMailError(error)
+    console.error(`[auth] magic link mail failed (transport=${input.mail.name}, code=${code}, responseCode=${responseCode ?? '-'})`)
+    await recordAudit(db, {
+      actorId: null,
+      action: 'mail.send_failed',
+      targetType: 'mail',
+      metadata: { purpose: 'magic_link', transport: input.mail.name, code, responseCode },
+    }).catch(() => {})
+  }
   return 'accepted'
+}
+
+const escapeHtml = (value: string) =>
+  value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
+
+/** 로그인 링크 메일(일반 텍스트 + 같은 내용의 단순 HTML). 링크는 `/auth/verify#token=…`(fragment) 그대로입니다. */
+export function magicLinkMail(url: string): { subject: string; text: string; html: string } {
+  const intro = '아래 링크를 열면 Peerchive에 로그인합니다. 링크는 15분 동안 한 번만 쓸 수 있습니다.'
+  const outro = '직접 요청하지 않았다면 이 메일을 무시하세요.'
+  const href = escapeHtml(url)
+  return {
+    subject: 'Peerchive 로그인 링크',
+    text: [intro, '', url, '', outro].join('\n'),
+    html: [
+      '<!doctype html>',
+      '<html lang="ko"><head><meta charset="utf-8"><title>Peerchive 로그인 링크</title></head>',
+      '<body style="font-family:sans-serif;line-height:1.6;color:#222">',
+      `<p>${escapeHtml(intro)}</p>`,
+      `<p><a href="${href}">Peerchive에 로그인</a></p>`,
+      `<p style="font-size:13px;color:#555">버튼이 열리지 않으면 이 주소를 복사해 브라우저에 붙여 넣으세요:<br>${href}</p>`,
+      `<p style="font-size:13px;color:#555">${escapeHtml(outro)}</p>`,
+      '</body></html>',
+    ].join('\n'),
+  }
 }
 
 /**

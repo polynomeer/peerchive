@@ -49,6 +49,22 @@ describe('worker configuration', () => {
     expect(ok.scanner.engine).toBe('clamav')
   })
 
+  it('starts in production with a complete https S3 configuration and refuses incomplete or http ones', () => {
+    const s3 = {
+      DATABASE_URL: 'postgres://x@localhost/db',
+      PEERCHIVE_MALWARE_SCANNER: 'clamav',
+      PEERCHIVE_STORAGE_DRIVER: 's3',
+      PEERCHIVE_S3_ENDPOINT: 'https://objects.example.test',
+      PEERCHIVE_S3_REGION: 'auto',
+      PEERCHIVE_S3_BUCKET: 'peerchive-prod',
+      PEERCHIVE_S3_ACCESS_KEY_ID: 'AKIDEXAMPLE',
+      PEERCHIVE_S3_SECRET_ACCESS_KEY: 'secret-value',
+    }
+    expect(loadWorkerConfig(s3).storage.driver).toBe('s3')
+    expect(() => loadWorkerConfig({ ...s3, PEERCHIVE_S3_BUCKET: '' })).toThrow(/PEERCHIVE_S3_BUCKET/)
+    expect(() => loadWorkerConfig({ ...s3, PEERCHIVE_S3_ENDPOINT: 'http://objects.example.test' })).toThrow(/https in production/)
+  })
+
   it('requires DATABASE_URL and a sane concurrency', () => {
     expect(() => loadWorkerConfig({ NODE_ENV: 'development' })).toThrow(/DATABASE_URL/)
     expect(() => loadWorkerConfig({ ...base(), NODE_ENV: 'development', PEERCHIVE_SCAN_CONCURRENCY: '0' })).toThrow()

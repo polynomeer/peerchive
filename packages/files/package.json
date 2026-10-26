@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Peerchive 파일 처리: 오브젝트 저장소 추상화(파일시스템 driver), 파일 형식 판별, 악성코드 검사 어댑터, 검사 작업.",
+  "description": "Peerchive 파일 처리: 오브젝트 저장소 추상화(파일시스템·S3 호환 driver), 파일 형식 판별, 악성코드 검사 어댑터, 검사 작업.",
   "exports": {
     ".": "./src/index.ts"
   },
@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1149.0",
     "@peerchive/db": "workspace:*",
     "@peerchive/domain": "workspace:*"
   },

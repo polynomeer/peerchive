@@ -18,6 +18,7 @@
     "@peerchive/domain": "workspace:*",
     "@peerchive/files": "workspace:*",
     "h3": "1.15.11",
+    "nodemailer": "10.1.0",
     "nuxt": "4.5.2",
     "vue": "3.5.43",
     "zod": "4.6.5"

@@ -1,8 +1,9 @@
 /**
- * worker 설정. 웹앱과 같은 환경 변수(DATABASE_URL, PEERCHIVE_STORAGE_*, PEERCHIVE_MALWARE_SCANNER, CLAMAV_*)를 읽습니다.
+ * worker 설정. 웹앱과 같은 환경 변수(DATABASE_URL, PEERCHIVE_STORAGE_*, PEERCHIVE_S3_*, PEERCHIVE_MALWARE_SCANNER, CLAMAV_*)를 읽습니다.
  *
  * production 판단: NODE_ENV가 development 또는 test가 아니면 production으로 봅니다(배포 때 빠뜨려도 안전한 쪽).
- * production에서는 개발용 검사기(signature-only)와 허용 표시 없는 filesystem 저장소로 시작하지 않습니다(ADR 0007).
+ * production에서는 개발용 검사기(signature-only), 허용 표시 없는 filesystem 저장소, 설정이 빠졌거나 http endpoint인 s3 저장소로
+ * 시작하지 않습니다(ADR 0007·0017).
  */
 import {
   type Env,

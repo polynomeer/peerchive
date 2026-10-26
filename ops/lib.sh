@@ -79,6 +79,11 @@ ledger_jsonl() {
     from deletion_ledger order by purged_at, id"
 }
 
+# 저장소 driver(web·worker와 같은 PEERCHIVE_STORAGE_DRIVER). filesystem이 기본입니다.
+storage_driver() {
+  echo "${PEERCHIVE_STORAGE_DRIVER:-filesystem}"
+}
+
 storage_root() {
   local root="${PEERCHIVE_STORAGE_ROOT:-.data/objects}"
   [[ "$root" = /* ]] || root="$REPO_ROOT/$root"

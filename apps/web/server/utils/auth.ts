@@ -34,11 +34,16 @@ export function primarySiteOrigin(): string {
 
 let mailTransport: MailTransport | undefined
 
-/** 메일 transport(프로세스당 하나). production에서 개발용 transport면 예외. */
+/**
+ * 메일 transport(프로세스당 하나). PEERCHIVE_MAIL_TRANSPORT가 있으면 그것을, 없으면 NUXT_MAIL_TRANSPORT(runtimeConfig)를 씁니다.
+ * production에서는 올바르게 설정된 smtp만 허용하고 그 밖에는 예외(ADR 0017).
+ */
 export function useMailTransport(): MailTransport {
+  const env = (globalThis.process?.env ?? {}) as Record<string, string | undefined>
   mailTransport ??= resolveMailTransport({
-    transport: String(useRuntimeConfig().mailTransport ?? ''),
+    transport: env['PEERCHIVE_MAIL_TRANSPORT']?.trim() || String(useRuntimeConfig().mailTransport ?? ''),
     production: isProduction(),
+    env,
   })
   return mailTransport
 }

@@ -1,5 +1,6 @@
 export * from './storage'
 export * from './fs-storage'
+export * from './s3-storage'
 export * from './sniff'
 export * from './scanner'
 export * from './disposition'
