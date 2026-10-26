@@ -44,6 +44,7 @@ import {
   type DbExecutor,
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
+import { emitAnalytics } from '../analytics/analytics'
 import { checkEvidence, evidenceByRevision, evidenceIdsByRevision, insertEvidence } from '../artifacts/evidence'
 import { checkLogMilestone, milestoneRefsById } from '../milestones/milestones'
 import { type Actor, conflict, forbidden, invalid, notFound } from '../errors'
@@ -397,6 +398,15 @@ export async function insertLog(
     projectId: project.id,
     metadata: { tag },
   })
+  await emitAnalytics(tx, { name: 'log_saved', actorId: actor.userId, projectId: project.id, props: { tag, source: entry.source, revision: false } })
+  if (evidenceIds.length > 0 || content.links.length > 0) {
+    await emitAnalytics(tx, {
+      name: 'evidence_attached',
+      actorId: actor.userId,
+      projectId: project.id,
+      props: { target: 'log', files: evidenceIds.length, links: content.links.length },
+    })
+  }
   return { log: await getLogDto(tx, actor, project, membership, entry.id), created: true }
 }
 
@@ -502,6 +512,12 @@ export async function reviseLog(
       projectId: project.id,
       metadata: { tag, revisionNo },
     })
+    await emitAnalytics(tx, { name: 'log_saved', actorId: actor.userId, projectId: project.id, props: { tag, source: log.entry.source, revision: true } })
+    const addedFiles = evidenceIds.filter((id) => !previousEvidence.includes(id)).length
+    const addedLinks = Math.max(0, content.links.length - previous.links.length)
+    if (addedFiles > 0 || addedLinks > 0) {
+      await emitAnalytics(tx, { name: 'evidence_attached', actorId: actor.userId, projectId: project.id, props: { target: 'log', files: addedFiles, links: addedLinks } })
+    }
     return getLogDto(tx, actor, project, membership, log.entry.id)
   })
 }

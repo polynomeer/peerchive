@@ -48,6 +48,8 @@ const user = (id: string, name: string): typeof users.$inferSelect => ({
   privateEmail: `${S('EMAIL')}-${id}@univ.ac.kr`,
   status: 'active',
   deletionRequestedAt: null,
+  purgedAt: null,
+  analyticsOptOut: false,
   createdAt: T,
   updatedAt: T,
 })

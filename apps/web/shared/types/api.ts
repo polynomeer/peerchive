@@ -28,6 +28,8 @@ export interface MeDto {
   operator: boolean
   /** 운영 조치로 공개 프로필이 숨겨졌는지(T-15). */
   profileHidden: boolean
+  /** pilot 분석 수집을 거부했는지(T-16, 설정 화면). */
+  analyticsOptOut: boolean
 }
 
 /** 누구에게나 주는 공개 프로필 DTO. 이메일·내부 ID·계정 상태 없음. */
@@ -1541,4 +1543,46 @@ export interface OperatorAuditEventDto {
   targetId: string | null
   metadata: Record<string, unknown>
   at: string
+}
+
+// ── 운영: pilot 지표·상태 확인 (T-16, ADR 0016) ─────────────────────────────
+
+export interface RateMetricDto {
+  denominator: number | null
+  numerator: number | null
+  rate: number | null
+}
+
+/** GET /api/v1/operator/metrics. 5 미만인 값은 null(가림). @peerchive/domain PilotMetrics와 같은 모양 + 안내. */
+export interface OperatorMetricsDto {
+  from: string
+  to: string
+  minGroup: number
+  activation: RateMetricDto
+  retention: RateMetricDto
+  caseConversion: RateMetricDto
+  northStar: { planForks: number | null; helpedMarks: number | null; total: number | null }
+  reportExports: { exports: number | null; projects: number | null }
+  portfolioSharers: number | null
+  seniorNotesPublished: number | null
+  writeTimeMedianMinutes: null
+  eventCounts: Record<string, number | null>
+  generatedAt: string
+  notes: string[]
+}
+
+export type HealthCheckStatus = 'ok' | 'error' | 'stale' | 'missing'
+
+/** GET /api/v1/health?deep=1(운영자만). 개수·시각·상태 코드만. */
+export interface DeepHealthDto {
+  status: 'ok' | 'degraded'
+  checkedAt: string
+  flags: { maintenance: boolean; publicReadsDisabled: boolean }
+  db: { status: HealthCheckStatus; latencyMs: number | null }
+  storage: { status: HealthCheckStatus; driver: string; latencyMs: number | null }
+  worker: { status: HealthCheckStatus; lastBeatAt: string | null; ageSeconds: number | null; startedAt: string | null }
+  tasks: Array<{ name: string; lastRunAt: string; status: string; affected: number | null }>
+  outbox: { backlog: number; oldestAgeSeconds: number | null }
+  jobs: { failed: Record<string, number>; deadLetter: Record<string, number>; available: boolean }
+  deletion: { overdue: number; graceDays: number }
 }

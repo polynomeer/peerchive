@@ -39,6 +39,7 @@ import {
   type DbExecutor,
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
+import { emitAnalytics } from '../analytics/analytics'
 import { contentUrlFor } from '../artifacts/artifacts'
 import { type Actor, conflict, forbidden, invalid, notFound, sqlState } from '../errors'
 import { claimedDateSchema, latestAllowedClaimedDate } from '../logs/payloads'
@@ -488,6 +489,7 @@ export async function addSnapshot(
       projectId: project.id,
       metadata: { artifactVersionId: input.artifactVersionId },
     })
+    await emitAnalytics(tx, { name: 'milestone_snapshot_set', actorId: actor.userId, projectId: project.id, props: { retro: project.retroMode } })
     return toMilestoneDto(tx, milestone)
   })
 }

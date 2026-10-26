@@ -43,6 +43,7 @@ import {
   type SeniorNoteOutboxPayload,
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
+import { emitAnalytics } from '../analytics/analytics'
 import { loadCanonicalCourse } from '../catalog/catalog'
 import { type Actor, ServiceError, conflict, forbidden, invalid, notFound, rateLimited } from '../errors'
 import { seniorNoteNotice } from '../moderation/notices'
@@ -318,6 +319,11 @@ export async function publishSeniorNote(
       targetType: 'senior_note',
       targetId: row.id,
       metadata: { courseId: row.courseId, version: row.version, warnings: warnings.length, displayMode: row.displayMode },
+    })
+    await emitAnalytics(tx, {
+      name: 'senior_note_published',
+      actorId: actor.userId,
+      props: { displayMode: row.displayMode, answers: Object.values(row.answers ?? {}).filter((a) => typeof a === 'string' && a.trim()).length },
     })
     return toDto(tx, updated!)
   })

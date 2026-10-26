@@ -115,6 +115,9 @@ class Counter {
   add(kind: string, n: number) {
     if (n > 0) this.counts[kind] = (this.counts[kind] ?? 0) + n
   }
+  total(): number {
+    return Object.values(this.counts).reduce((a, b) => a + b, 0)
+  }
 }
 
 const idsOf = <T extends { id: string }>(rows: T[]) => rows.map((r) => r.id)
@@ -408,6 +411,7 @@ async function leaveTeamProject(tx: DbExecutor, projectId: string, userId: strin
  * 다른 사람의 포크·신고·조치가 공개를 가리켜 지울 수 없으면 내용을 비운 묘비(제목 "삭제된 과제", 스냅샷 {})로 남깁니다.
  */
 async function purgeSoloProject(tx: DbExecutor, projectId: string, userId: string, c: Counter, objectKeys: Set<ObjectKey>, now: Date) {
+  const before = c.total() + objectKeys.size
   const artifactIds = idsOf(await tx.select({ id: artifacts.id }).from(artifacts).where(eq(artifacts.projectId, projectId)))
   const versions = artifactIds.length
     ? await tx.select({ id: artifactVersions.id, key: artifactVersions.objectKey }).from(artifactVersions).where(inArray(artifactVersions.artifactId, artifactIds))
@@ -501,24 +505,41 @@ async function purgeSoloProject(tx: DbExecutor, projectId: string, userId: strin
   } catch (error) {
     if (!isForeignKeyViolation(error)) throw error
     // 운영 기록·다른 사람의 포크가 가리킴: 내용을 비운 묘비로 남깁니다(공개 조회는 published가 아니므로 404).
+    // 이미 묘비면 바뀌는 행이 없어 개수도 늘지 않습니다(재적용 idempotent).
+    let changed = c.total() + objectKeys.size > before
     if (publication && candidateIds.length) {
-      await tx
+      const scrubbed = await tx
         .update(publicationCandidates)
         .set({ snapshot: {}, manifest: {}, selection: {}, refs: {}, checks: [], subjectDigests: {}, termLabel: null })
-        .where(inArray(publicationCandidates.id, candidateIds))
-      await tx.update(consents).set({ note: null }).where(inArray(consents.candidateId, candidateIds))
-      await tx.update(publications).set({ withdrawNote: null, updatedAt: now }).where(eq(publications.id, publication.id))
+        .where(and(inArray(publicationCandidates.id, candidateIds), sql`(${publicationCandidates.snapshot} <> '{}'::jsonb or ${publicationCandidates.selection} <> '{}'::jsonb or ${publicationCandidates.termLabel} is not null)`))
+        .returning({ id: publicationCandidates.id })
+      const notes = await tx
+        .update(consents)
+        .set({ note: null })
+        .where(and(inArray(consents.candidateId, candidateIds), isNotNull(consents.note)))
+        .returning({ id: consents.id })
+      await tx.update(publications).set({ withdrawNote: null }).where(and(eq(publications.id, publication.id), isNotNull(publications.withdrawNote)))
+      changed ||= scrubbed.length + notes.length > 0
     }
-    await tx
+    const tomb = await tx
       .update(projects)
       .set({ title: TOMBSTONE_PROJECT_TITLE, summaryByStudent: null, goal: null, constraints: null, updatedAt: now })
-      .where(eq(projects.id, projectId))
-    await tx
+      .where(
+        and(
+          eq(projects.id, projectId),
+          sql`(${projects.title} <> ${TOMBSTONE_PROJECT_TITLE} or ${projects.summaryByStudent} is not null or ${projects.goal} is not null or ${projects.constraints} is not null)`,
+        ),
+      )
+      .returning({ id: projects.id })
+    const left = await tx
       .update(projectMembers)
       .set({ status: 'removed', updatedAt: now })
       .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, userId), ne(projectMembers.status, 'removed')))
-    c.add('solo_projects', 1)
-    c.add('tombstones', 1)
+      .returning({ id: projectMembers.id })
+    if (changed || tomb.length + left.length > 0) {
+      c.add('solo_projects', 1)
+      c.add('tombstones', 1)
+    }
   }
 }
 

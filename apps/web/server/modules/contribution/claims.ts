@@ -55,6 +55,7 @@ import {
   type DbExecutor,
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
+import { emitAnalytics } from '../analytics/analytics'
 import { contentUrlFor } from '../artifacts/artifacts'
 import { type Actor, ServiceError, conflict, forbidden, invalid, notFound } from '../errors'
 import { summarize } from '../logs/logs'
@@ -510,6 +511,7 @@ export async function createClaim(
       projectId: project.id,
       metadata: { revisionNo: 1, evidenceCount: evidence.length },
     })
+    if (evidence.length > 0) await emitClaimEvidence(tx, actor, project.id, evidence)
     return getClaimDto(tx, actor, project, membership, claim.id)
   })
 }
@@ -564,8 +566,15 @@ export async function reviseClaim(
       projectId: project.id,
       metadata: { revisionNo, evidenceCount: evidence.length },
     })
+    if (!sameEvidence && evidence.length > 0) await emitClaimEvidence(tx, actor, project.id, evidence)
     return getClaimDto(tx, actor, project, membership, claim.id)
   })
+}
+
+/** 선언 근거 이벤트(종류별 개수만). */
+async function emitClaimEvidence(tx: DbExecutor, actor: Actor, projectId: string, evidence: ReadonlyArray<{ artifactVersionId?: string | null }>) {
+  const files = evidence.filter((e) => e.artifactVersionId).length
+  await emitAnalytics(tx, { name: 'evidence_attached', actorId: actor.userId, projectId, props: { target: 'claim', files, logs: evidence.length - files } })
 }
 
 // ── 확인·철회 ────────────────────────────────────────────────────────────
@@ -637,6 +646,7 @@ export async function setEndorsement(
       projectId: project.id,
       metadata: { revisionNo: target.revisionNo, status: input.status, hasNote: input.note !== null },
     })
+    await emitAnalytics(tx, { name: 'claim_endorsed', actorId: actor.userId, projectId: project.id, props: { status: input.status } })
     return getClaimDto(tx, actor, project, membership, claim.id)
   })
 }

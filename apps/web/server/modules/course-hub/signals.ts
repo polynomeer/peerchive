@@ -20,6 +20,7 @@ import {
   usefulnessSignals,
   type DbExecutor,
 } from '@peerchive/db'
+import { emitAnalytics } from '../analytics/analytics'
 import { type Actor, invalid, notFound, rateLimited } from '../errors'
 import { loadServedRelease } from '../publication/public-read'
 import { type RateLimitRule, hitRateLimit } from '../security/rate-limit'
@@ -103,7 +104,7 @@ export async function putSignal(db: DbExecutor, actor: Actor, rawInput: unknown,
   const input = parseInput(signalSchema, rawInput)
   const target = await resolveTarget(db, input, now)
   if (!(await hitRateLimit(db, 'usefulness_signal', actor.userId, SIGNAL_RATE_LIMIT, now))) throw rateLimited()
-  await db
+  const inserted = await db
     .insert(usefulnessSignals)
     .values({
       userId: actor.userId,
@@ -115,6 +116,9 @@ export async function putSignal(db: DbExecutor, actor: Actor, rawInput: unknown,
       createdAt: now,
     })
     .onConflictDoNothing()
+    .returning({ id: usefulnessSignals.id })
+  // 처음 남길 때만(다시 눌러도 같은 신호).
+  if (inserted.length > 0) await emitAnalytics(db, { name: 'usefulness_marked', actorId: actor.userId, props: { target: target.targetKind, kind: input.kind } })
   return stateFor(db, actor, target)
 }
 

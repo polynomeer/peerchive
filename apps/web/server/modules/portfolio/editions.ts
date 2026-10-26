@@ -38,6 +38,7 @@ import {
   type DbExecutor,
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
+import { emitAnalytics } from '../analytics/analytics'
 import { type Actor, invalid, rateLimited } from '../errors'
 import { type RateLimitRule, hitRateLimit } from '../security/rate-limit'
 import { parseInput } from '../validation'
@@ -272,6 +273,11 @@ export async function createEdition(db: DbExecutor, actor: Actor, rawInput: unkn
       targetType: 'portfolio_edition',
       targetId: edition!.id,
       metadata: { version: edition!.version, featured: model.featured.length, competencies: model.competencies.length },
+    })
+    await emitAnalytics(tx, {
+      name: 'portfolio_shared',
+      actorId: actor.userId,
+      props: { featured: model.featured.length, competencies: model.competencies.length, skills: Math.min(edition!.skillsDeclared.length, 20) },
     })
     return toDto(tx, edition!)
   })

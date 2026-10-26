@@ -243,7 +243,7 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         senior_notes: 1,
         case_studies: 1,
         portfolio_editions: 1,
-        notes_scrubbed: 2,
+        notes_scrubbed: 4,
         publications_withdrawn: 3,
         memberships: 1,
         ownership_transfers: 1,

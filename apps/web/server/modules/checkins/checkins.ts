@@ -37,6 +37,7 @@ import {
   type DbExecutor,
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
+import { emitAnalytics } from '../analytics/analytics'
 import { type Actor, invalid } from '../errors'
 import { getLog, insertLog, parseLogInput } from '../logs/logs'
 import { loadReadableProject } from '../projects/access'
@@ -202,6 +203,12 @@ export async function saveMyCheckin(
       targetId: row.id,
       projectId: project.id,
       metadata: { week, promoted: !!log },
+    })
+    await emitAnalytics(tx, {
+      name: 'checkin_submitted',
+      actorId: actor.userId,
+      projectId: project.id,
+      props: { timeBucket: row.timeBucket, difficulty: row.difficulty, shareForStats: row.shareForStats, promoted: !!log, skipReasons: Math.min(row.skipReasons.length, 5) },
     })
     return { checkin: toCheckinDto(row), log, created }
   })

@@ -7,13 +7,14 @@
 | 경로 | 내용 |
 |---|---|
 | `apps/web` | Nuxt 4(Vue 3, TypeScript strict). 화면(`app/`), `/api/v1` 라우트(`server/api`), 서비스 모듈(`server/modules`), 공유 DTO 타입(`shared/types`) |
-| `apps/worker` | 작업 worker(pg-boss, [ADR 0004](../docs/adr/0004-pg-boss-jobs.md)). outbox 전달, 파일 검사 작업, 공개 게시·철회 이벤트(파생 데이터 정리 handler 등록 구조·`publication.derived_cleanup` 감사, [ADR 0012](../docs/adr/0012-publish-withdraw-public-read.md)), 과목 허브 파생 데이터(검색 색인·유용성 신호 정리·선배 노트 색인, [ADR 0013](../docs/adr/0013-course-hub-search-fork.md)), 케이스 스터디 이용 불가 표시(철회·대체된 release, [ADR 0014](../docs/adr/0014-case-study-portfolio.md)), 운영 조치의 검색 문서 맞추기(`moderation.action`, [ADR 0015](../docs/adr/0015-reports-moderation-appeals.md)) |
+| `apps/worker` | 작업 worker(pg-boss, [ADR 0004](../docs/adr/0004-pg-boss-jobs.md)). outbox 전달, 파일 검사 작업, 공개 게시·철회 이벤트(파생 데이터 정리 handler 등록 구조·`publication.derived_cleanup` 감사, [ADR 0012](../docs/adr/0012-publish-withdraw-public-read.md)), 과목 허브 파생 데이터(검색 색인·유용성 신호 정리·선배 노트 색인, [ADR 0013](../docs/adr/0013-course-hub-search-fork.md)), 케이스 스터디 이용 불가 표시(철회·대체된 release, [ADR 0014](../docs/adr/0014-case-study-portfolio.md)), 운영 조치의 검색 문서 맞추기(`moderation.action`, [ADR 0015](../docs/adr/0015-reports-moderation-appeals.md)), 운영 주기 작업(만료 행·격리 파일 정리, 탈퇴 계정 정리·삭제 장부)·상태 기록·재적용 명령([ADR 0016](../docs/adr/0016-deletion-ledger-maintenance-analytics.md)) |
 | `apps/bot` | 디스코드 봇(discord.js gateway, [ADR 0009](../docs/adr/0009-discord-bot-and-checkins.md)). `/log`·📌 수집, 승인 요청 DM, 체크인 알림·주간 요약 게시. 규칙은 웹 서버 내부 API에 있음([설정 안내](bot/README.md)) |
 | `packages/domain` | 런타임 의존성 없는 도메인 규칙: 과제 공간 권한 정책, 빌드 로그 작성·수정·해결 연결 규칙, 공개 상태 전이(게시 중 새 버전 `republish` 포함)·공개 후보 권한·결정적 JSON(manifest 해시)·공개 전 점검 규칙·공개 조회 판정(`canServePublicRelease`/`canServePublicArtifact`), 역할 선언·팀원 확인·기여 장부 기간 규칙, 산출물 업로드·열람 정책과 검사 상태 전이, 마일스톤·할 일·사후 작성 규칙, 주간 체크인 주(서울 ISO 주)·알림 일정·익명 집계(n≥5), 학교·과목 이름 정규화 키·학기 종료 시각·개념 태그 slug·병합 전제 조건·단조 엠바고·적용 엠바고 계산, 과목 허브 작성 자격(`canWriteToCourseHub`)·선배 노트 답 검증·막힘 카드 추출·플랜 포크 허용 목록·검색 문서, 케이스 스터디 템플릿 초안(`generateCaseStudyDraft`)·인용 검증·출처 없는 문장 판정·역량 프리셋·역량 × 근거 개수(`computeCompetencyMatrix`), 신고·운영 조치 규칙(대상별 조치·보류 사유·신고/이의 상태 전이·가린 항목 제외 `redactHiddenItems`) |
 | `packages/db` | Drizzle ORM 스키마, SQL migration(`migrations/`), `createDb(url)`, outbox 주제·payload(`src/outbox.ts`), 운영자 부여 CLI(`scripts/grant-operator.ts`) |
 | `packages/bot-protocol` | 웹 ↔ 봇 내부 API 약속: HMAC-SHA256 요청 서명·검증(시각 차이 5분, nonce)과 요청/응답 타입 |
 | `packages/files` | 오브젝트 저장소 추상화(파일시스템 driver), 파일 형식 판별, 악성코드 검사 어댑터(clamd), 검사 작업, 이미지 메타데이터 제거(EXIF/GPS/XMP/주석, 무손실)·PDF 문서 속성 점검과 backfill([ADR 0007](../docs/adr/0007-file-storage-and-scanning.md)) |
 | `ops/docker-compose.yml` | 로컬 개발용 PostgreSQL 16, 선택 profile `clamav`(clamd) |
+| `ops/backup.sh`·`ops/restore.sh`·`ops/restore-drill.sh` | 백업(pg_dump custom + 파일 tar + 장부 + 행 수 + 체크섬, 보존 기간)·복구(덮어쓰기는 `--force`)·복구 연습(임시 DB, 재적용까지, 시간 출력). 절차는 [운영 runbook](../docs/ops/RUNBOOK.md) |
 
 ## 구현 현황
 
@@ -36,9 +37,18 @@
 | T-13 과목 허브·선배 노트·플랜 포크·검색 | 완료 | 게시 때 release에 정본 과목·학기 표시 기록(스냅샷에 과목이 있고 지금 학기가 같을 때만, 과목 병합 때 release·선배 노트를 정본으로 rehome), 익명 과목 허브 `/c/[id]`(학생 작성 표시, 교수 필드 없음, 지금 게시 중인 release 스냅샷만 — 초안·준비·철회·대체·엠바고 제외를 같은 쿼리에서 확인, 병합된 id는 정본으로): 개념 태그·체감 시간/난이도(`share_for_stats` 체크인만, 5명 미만이면 "아직 데이터가 충분하지 않음")·자주 막히는 지점(스냅샷의 막힘 증상·키워드·시간·해결 여부, 신호 → 최근 순, 사례 페이지 앵커)·선배 노트·공개 사례(학기·수준·팀 크기·마일스톤·막힘·포크 수)·다른 학교에서는(같은 개념 태그), 선배 노트(질문 4개 중 2개 이상·각 1000자, "정답·답안·교수 평가 없음" 확인 필수, 이름/표시명/익명("익명 선배"), 초안 → 공개 전 점검 경고 확인 → 게시, 고치면 draft로, 즉시 철회, 시간당 5회·과목당 3개, 작성 자격은 `canWriteToCourseHub` 한 곳), 유용성 신호("나도 여기서 막혔어요"·"도움됐어요", 사용자·대상·종류마다 하나, 지금 공개인 대상만, 항목별 개수만), 플랜 포크(로그인, 마일스톤 이름·순서·상대 일수와 해결 로그 밖의 참고 링크만 새 비공개 과제로, 공개·사용자마다 한 번, 포크 수 = 사람 수, 시간당 10회), 공개 검색 `/search`(worker가 만드는 검색 문서 + 읽을 때마다 지금 release·노트 version·엠바고와 조인, 탭·과목 필터, 머리말 검색 상자), worker의 `search-index`·`usefulness-signals` 정리 handler와 선배 노트 큐([ADR 0013](../docs/adr/0013-course-hub-search-fork.md)) |
 | T-14 케이스 템플릿 초안·포트폴리오·공개 프로필 | 완료 | 케이스 스터디(지금 게시 중인 release에 팀원 키로 들어 있는 사람만, 익명이던 사람은 `revealSelf: true` 확인 — 다른 팀원 표시는 스냅샷 그대로, release에 고정), 템플릿 초안(생성형 모델 없음, 저장된 스냅샷 글만 고정 문장 틀에 채움: 문제와 결과·내 역할·핵심 결정·막힘과 해결·검증·한계·회고·원본 링크, 내 확인된 선언 먼저·내 결정/검증·참석한 회의·막힘+해결 쌍·회고, 직무별 구역 순서, 결정적), 문장마다 스냅샷 인용 `{releaseVersion, kind: summary|log|claim|milestone|artifact, key}`(편집 때 고정 스냅샷에 없는 키 422), 출처 없는 문장은 게시 409 `uncited_sentences`(한계·회고의 `reflection`="본인 회고"만 예외), 사용자 글 공개 전 점검 경고(확인 없이 409 `checks_unconfirmed`), 고치면 draft, 읽을 때마다 고정 release를 `servableReleaseSql`로 확인(철회·대체 즉시 "원본 사례를 더 이상 볼 수 없습니다", 작성자에게 "새 버전으로 다시 만들기"), worker `case-studies` 정리 handler(철회·대체된 release의 케이스를 unavailable로 표시), 포트폴리오 판(바꾸지 않는 version, 새 판이 current·이전 판 비공개, 대표 케이스 ≤5, 미리보기), 역량 × 근거 매트릭스(직무 프리셋·직접 입력 ≤12, 근거는 케이스가 인용한 항목만, 종류·개수만 — 점수·색 농도 없음, 경험 근거 역량과 자기 선언 스킬 구분), 익명 공개 프로필 `/u/[handle]`(지금 판만, 이메일·id 없음, 연락 정책 문구만, 후배 기여 개수·4년 타임라인, OG는 이름·한 줄 소개, noindex 기본)·인쇄 보기 `/u/[handle]/print`(A4)·GitHub README 카드, 화면 `/portfolio`(만들기·내 케이스·판·내보내기)·`/portfolio/case-studies/[id]`(편집)·`/portfolio/edition`(판 만들기)([ADR 0014](../docs/adr/0014-case-study-portfolio.md)) |
 | T-15 신고·관리 조치 | 완료 | 신고(로그인한 사람만, 지금 공개인 대상만 — 공개 사례·그 안의 기록/선언/파일·선배 노트·대표 케이스 스터디·공개 프로필, 사유 7종·설명 1000자, 내용 복사 없이 release·version 포인터만, 같은 사람·대상의 처리 전 신고는 하나(200), 시간당 10·하루 30회), 개인정보·저작권 신고의 보류(hold: 처리될 때까지 게시·새 버전 게시 409 `publish_blocked`+`hold_open`, 이미 제공 중인 release는 그대로), 운영자 대기열·상세(대상별 묶음, 공개됐던 내용만 — 신고 때 release 스냅샷·같은 버전의 노트/케이스 글·공개 프로필 필드, 비공개 과제 공간은 운영자도 404), 처리(같은 대상의 신고를 함께 닫고 보류를 풂, 내부 메모 필수·당사자 사유 별도): 제한(restrict: published → restricted, release withdrawn, 해제·되돌림은 draft → 새 후보·동의·게시)·항목 가리기(hide_item: 공개 전체에 적용, 사례·파일·허브·검색·신호·포크·케이스 인용에서 요청마다 제외, "운영 조치로 가려진 항목")·노트/케이스/프로필 숨김, 삭제 없음, 이의제기(당사자·조치마다 한 번, 유지/되돌림), 화면 안 알림(공개 준비·노트·케이스 화면 안내, `/me/moderation-notices`), 신고자는 상태만(`/me/reports`), 감사(id·종류만, 글 없음)·`/operator/audit`, worker `moderation.action`(검색 문서 맞추기), 화면 `/operator`·신고 대화상자([ADR 0015](../docs/adr/0015-reports-moderation-appeals.md)). 자동 임시 숨김은 넣지 않음(ADR 0015) |
-| T-16 runbook·복구·pilot 계측 | 다음 | [실행 계획 §4](../docs/planning/DELIVERY_PLAN.md). DB+파일 복구, 삭제 ledger 재적용, 개인정보 없는 분석 이벤트, 운영 대응 runbook |
+| T-16 runbook·복구·pilot 계측 | 완료 | 탈퇴 정리(유예 7일 뒤 worker, 계정마다 한 트랜잭션: 프로필·세션·로그인 수단·연동·체크인·신호·선배 노트·케이스·판·분석 이벤트·혼자만 쓴 과제 전체와 저장소 파일 삭제, 팀 과제 기록은 "탈퇴한 사용자"로 가명 처리하고 남의 기록에 쓴 메모만 삭제, owner 넘기기, 당사자인 지금 release는 동의 철회처럼 철회, 운영 기록·남의 포크가 가리키면 묘비), 삭제 장부(종류별 개수 + HMAC 대상, 개인정보 없음)·`pnpm ops:reapply-deletions`(복구 뒤 재적용, idempotent)·`pnpm ops:export-ledger`, 점검 모드 `PEERCHIVE_MAINTENANCE`(헬스 체크 밖 전부 503), 주기 정리 10종(만료 업로드 의도·주인 없는 격리 파일·rate limit·nonce·매직링크·세션·디스코드 코드·📌 요청·outbox, cron 설정·배치·안전장치·감사/상태 기록), 백업·복구·복구 연습 스크립트, pilot 분석 이벤트 16종(허용 목록 props·HMAC 주체·같은 트랜잭션·수집 거부와 설정 화면), 운영자 지표 `/operator/metrics`(5 미만 가림)·상세 상태 확인(`/api/v1/health?deep=1`, worker 상태 기록), [운영 runbook](../docs/ops/RUNBOOK.md)([ADR 0016](../docs/adr/0016-deletion-ledger-maintenance-analytics.md)) |
 
-화면: `/login`, `/onboarding`(프로필 설정 겸용, 디스코드 연결), `/portfolio`(케이스 스터디 만들기·내 케이스·포트폴리오 판·내보내기), `/portfolio/case-studies/[id]`(케이스 편집: 문장·출처 칩·출처 없음 표시·점검·게시), `/portfolio/edition`(판 만들기: 대표 케이스·역량 × 근거·자기 선언 스킬·미리보기), `/consents`(동의 요청·미리보기·결정, 게시된 공개의 내 동의 철회), `/p/[slug]`(익명 공개 사례, 로그인 불필요, 과목 허브 링크·계획 포크), `/c/[id]`(익명 과목 허브), `/search`(익명 공개 검색, 머리말 검색 상자), `/senior-notes?course=`(선배 노트 쓰기·내 노트 게시·철회), `/projects`(새 과제의 과목 고르기·"지난 과제 되짚기" 선택, "이번 주 체크인" 카드 포함), `/projects/[id]`(엠바고 배지, 개요·과목 정보·주간 체크인·할 일·산출물·마일스톤·빌드 로그·기여·디스코드 연결·멤버), `/projects/[id]/report?from=&to=`(인쇄용 동료평가 리포트), `/projects/[id]/publish`(공개 준비: 수준·고르기·사람 표시·사용 조건·점검·동의 현황·막는 것·미리보기, 게시·공개 상태·철회·게시 이력), `/invite/[token]`, `/u/[handle]`(익명 공개 프로필, T-14), `/u/[handle]/print`(인쇄용 포트폴리오), `/operator`·`/operator/reports/[id]`(운영자 신고 대기열·처리·이의 결정·감사, 운영자가 아니면 404, T-15), `/me/reports`(내 신고 상태), `/me/moderation-notices`(내 게시물 운영 안내·이의제기). 공개 사례·과목 허브 노트·공개 프로필에 신고 대화상자(로그인 후).
+**Phase 1 백로그(T-01~T-16) 구현 완료.** 실제 배포 전에 남은 과제(자세히는 [runbook §1·§2](../docs/ops/RUNBOOK.md)):
+
+- 실제 메일 transport(지금은 dev-console만, production에서 거부)
+- S3 호환 객체 저장소 driver(지금은 filesystem, 단일 서버 예외만)
+- 운영 환경의 ClamAV·백업 일정·다른 장소 사본·복구 연습, pepper·내부 비밀 발급
+- 실제 디스코드 서버에서 봇 확인, 프록시 뒤 신뢰 IP 설정
+- 신고 담당자·당번·대응 시간·파일럿 동의 문구·보존 기간 채우기, 법무·학교 규정 검토
+- 탈퇴 유예 중 되돌리기 화면, 감사 이벤트 보존 정책, E2E 테스트
+
+화면: `/login`, `/onboarding`(프로필 설정 겸용, 디스코드 연결), `/portfolio`(케이스 스터디 만들기·내 케이스·포트폴리오 판·내보내기), `/portfolio/case-studies/[id]`(케이스 편집: 문장·출처 칩·출처 없음 표시·점검·게시), `/portfolio/edition`(판 만들기: 대표 케이스·역량 × 근거·자기 선언 스킬·미리보기), `/consents`(동의 요청·미리보기·결정, 게시된 공개의 내 동의 철회), `/p/[slug]`(익명 공개 사례, 로그인 불필요, 과목 허브 링크·계획 포크), `/c/[id]`(익명 과목 허브), `/search`(익명 공개 검색, 머리말 검색 상자), `/senior-notes?course=`(선배 노트 쓰기·내 노트 게시·철회), `/projects`(새 과제의 과목 고르기·"지난 과제 되짚기" 선택, "이번 주 체크인" 카드 포함), `/projects/[id]`(엠바고 배지, 개요·과목 정보·주간 체크인·할 일·산출물·마일스톤·빌드 로그·기여·디스코드 연결·멤버), `/projects/[id]/report?from=&to=`(인쇄용 동료평가 리포트), `/projects/[id]/publish`(공개 준비: 수준·고르기·사람 표시·사용 조건·점검·동의 현황·막는 것·미리보기, 게시·공개 상태·철회·게시 이력), `/invite/[token]`, `/u/[handle]`(익명 공개 프로필, T-14), `/u/[handle]/print`(인쇄용 포트폴리오), `/operator`·`/operator/reports/[id]`(운영자 신고 대기열·처리·이의 결정·감사, 운영자가 아니면 404, T-15), `/me/reports`(내 신고 상태), `/me/moderation-notices`(내 게시물 운영 안내·이의제기), `/operator/metrics`(운영자 pilot 지표·시스템 상태, T-16). `/onboarding`(프로필 설정)에 "파일럿 사용 기록" 수집 거부 설정(T-16). 공개 사례·과목 허브 노트·공개 프로필에 신고 대화상자(로그인 후).
 
 빌드 로그 API: `POST/GET /api/v1/projects/:id/logs`(목록은 `tag=`·`author=`·`milestone=` 필터), `GET /api/v1/logs/:id`, `GET/POST /api/v1/logs/:id/revisions`(본문에 `evidenceVersionIds[]`, `milestoneId`). 읽을 수 없는 프로젝트·로그는 404, reviewer/viewer의 작성·수정은 403입니다.
 
@@ -74,6 +84,8 @@
 
 운영자 API(운영자가 아니면 403 `operator_only`): `POST /api/v1/operator/schools/:id/merge`·`/operator/courses/:id/merge`·`/operator/concept-tags/:id/merge`(`{into}`, 200 + 정본, 자기 자신 422 `{into: 'self'}`, 없는 대상 422 `{into: 'not_found'}`, 이미 병합 409 `already_merged`, 대상이 병합됨 409 `target_merged`, 다른 학교 과목 409 `different_school`), `PATCH /api/v1/course-terms/:id`(`{endsAt, reason}`, 늘리면 연결된 프로젝트 엠바고도 올림), `POST /api/v1/operator/course-terms/:id/embargoes`(`{until, reason}`, 201), `PATCH /api/v1/operator/projects/:id/embargo`(`{until|null, reason}`, 낮추기만·높이면 422 `{until: 'not_lower'}`, 응답은 적용 엠바고뿐). 모두 감사 이벤트를 남깁니다. 운영자도 비공개 과제 내용 API는 404입니다.
 
+운영 API(T-16, [ADR 0016](../docs/adr/0016-deletion-ledger-maintenance-analytics.md)): `PATCH /api/v1/me/preferences`(`{analyticsOptOut}`, 거부하면 지난 이벤트도 삭제, `/me`의 `analyticsOptOut`), `POST /api/v1/projects/:id/report-exports`(`{from?, to?}`, 리포트 인쇄 표시 — 분석 이벤트만, 204, 멤버 아님 404), `GET /api/v1/operator/metrics?from=&to=`(운영자만·아니면 403 `operator_only`, 서울 날짜 양 끝 포함·기본 28일·최대 366일, 5 미만 null), `GET /api/v1/health?deep=1`(운영자만: 401/403 `operator_only`, 항상 200 + `status: ok|degraded`).
+
 ## 운영(신고 대응, 파일럿 G2)
 
 [실행 계획 §7 G2](../docs/planning/DELIVERY_PLAN.md)의 "신고 담당자·대응 시간" 자리입니다. 값은 파일럿 전에 정해 채웁니다(SLA가 아니라 운영 목표).
@@ -88,6 +100,7 @@
 
 - 운영자 부여·회수는 CLI(`pnpm --filter @peerchive/db grant-operator <email> [--revoke]`)로만 합니다. 운영자는 `/operator`에서 대기열(처리 전은 오래된 것부터)·상세·처리·이의 결정을 하고, 모든 처리는 감사 기록(`/api/v1/operator/audit?target=`)에 남습니다. 운영자도 비공개 과제 공간은 볼 수 없습니다.
 - 조치는 공개 차단뿐입니다(제한·항목 가리기·숨김, 되돌릴 수 있음). 내용 삭제는 이 화면에 없으며 T-16의 삭제 절차·ledger로 따로 합니다.
+- 배포 점검표·게이트 점검·사고 대응·복구 순서·백업 일정·데이터 보존은 [운영 runbook](../docs/ops/RUNBOOK.md)에 있습니다(T-16).
 - **운영 스위치**: `PEERCHIVE_PUBLIC_READS_DISABLED=1`로 web을 재시작하면 `/api/v1/public/**` 전체가 DB를 건드리지 않고 503, 공개 페이지는 "잠시 볼 수 없음"입니다([ADR 0012](../docs/adr/0012-publish-withdraw-public-read.md)). 개별 사례는 스위치 대신 restrict로 막습니다(재시작 없이 즉시). 신고 접수(`POST /api/v1/reports`)는 스위치와 무관하게 계속 받습니다.
 
 ## 준비
@@ -133,6 +146,13 @@ pnpm test
 | `PEERCHIVE_API_BASE_URL` / `PEERCHIVE_SITE_URL` | `http://localhost:3000` | 봇이 부를 웹 서버 주소 / 안내 링크 주소(production에서 API 주소 필수) |
 | `DISCORD_BOT_TOKEN` / `DISCORD_APPLICATION_ID` / `DISCORD_GUILD_ID` | 없음 | 봇 토큰·애플리케이션 id·(개발용) 명령 등록 서버. [apps/bot/README.md](bot/README.md) |
 | `PEERCHIVE_PUBLIC_READS_DISABLED` | 없음(꺼짐) | `1`/`true`/`yes`/`on`이면 공개 조회(`/api/v1/public/**`) 전체가 DB를 건드리지 않고 503, 공개 페이지는 "잠시 볼 수 없음". 권한 누출·파일 공개 오류 때 쓰는 운영 스위치(바꾸려면 재시작) |
+| `PEERCHIVE_MAINTENANCE` | 없음(꺼짐) | `1`이면 web이 `/api/v1/health` 밖 모든 요청을 DB 접근 없이 503(복구 뒤 삭제 재적용 전까지). worker는 경고만 |
+| `PEERCHIVE_ANALYTICS_PEPPER` | 개발: 고정 개발용 값 | 분석 이벤트 HMAC 비밀(web·worker 같은 값). production에서 없거나 32자 미만이면 분석이 꺼짐. 바꾸면 이전 이벤트와 이어지지 않음 |
+| `PEERCHIVE_DELETION_PEPPER` | 개발: 고정 개발용 값 | 삭제 장부 HMAC 비밀(분석 pepper와 다른 값). production에서 없거나 약하면 worker·재적용 명령이 시작하지 않음. **바꾸지 않음** |
+| `PEERCHIVE_DELETION_GRACE_DAYS` | `7` | 탈퇴 요청 뒤 정리까지 일수(0–90, web의 상태 확인도 같은 값) |
+| `PEERCHIVE_OPS_BATCH_SIZE` | `500` | 주기 정리 한 문장의 행 수(10–10000) |
+| `PEERCHIVE_CRON_<작업>` | 작업별(ADR 0016) | 5필드 cron(Asia/Seoul) 또는 `off`. 작업: `UPLOAD_INTENTS`, `ORPHAN_QUARANTINE`, `RATE_LIMIT_BUCKETS`, `INTERNAL_NONCES`, `MAGIC_LINK_TOKENS`, `SESSIONS`, `DISCORD_CODES`, `PIN_REQUESTS`, `OUTBOX`, `ACCOUNT_PURGE` |
+| `PEERCHIVE_BACKUP_DIR` / `PEERCHIVE_BACKUP_RETENTION_DAYS` / `PEERCHIVE_PG_CONTAINER` | `.data/backups` / `14` / 없음 | `ops/backup.sh`·`restore-drill.sh`. 컨테이너 이름을 주면 그 안의 pg_dump·pg_restore·psql을 씀(로컬 개발) |
 | `PEERCHIVE_PUBLIC_INDEXING` | 없음(꺼짐) | `1`이면 공개 JSON·공개 페이지의 `noindex`를 뺍니다(파일럿 기본은 noindex, 공개 파일은 항상 noindex) |
 
 - 빌드한 서버(`node apps/web/.output/server/index.mjs`)는 기본적으로 production으로 동작합니다(Secure 쿠키, dev-console 거부). 로컬에서 빌드 결과를 점검할 때만 `NODE_ENV=development`를 명시하세요.
@@ -148,6 +168,9 @@ pnpm test
 | `pnpm db:generate` | `packages/db/src/schema.ts` 변경을 SQL migration으로 생성 |
 | `pnpm --filter @peerchive/db grant-operator <email> [--revoke]` | 운영자 부여·회수(로그인한 적 있는 활성 사용자, 감사 이벤트 기록). 운영자 권한은 이 CLI로만 바꿉니다. `DATABASE_URL`(없으면 루트 `.env`) 사용 |
 | `pnpm --filter worker backfill-strip [--dry-run] [--batch=100]` | 일회성: 메타데이터 제거 기능 전에 clean이 된 이미지의 메타데이터를 지우고 PDF 문서 속성 점검 결과를 채웁니다([ADR 0007](../docs/adr/0007-file-storage-and-scanning.md) "메타데이터 제거"). 멱등이며 웹·worker와 같은 `DATABASE_URL`·`PEERCHIVE_STORAGE_*`를 읽습니다(로컬은 `NODE_ENV=development`를 앞에 붙임). 처리 전 이미지는 공개 후보(422 `metadata_not_stripped`)·공개 조회(404)에서 빠집니다. 실패가 있으면 종료 코드 1 |
+| `pnpm ops:reapply-deletions [--ledger-file=<path>] [--dry-run]` | 복구한 DB(`DATABASE_URL`)·저장소(`PEERCHIVE_STORAGE_*`)에 삭제 장부를 다시 적용(장부의 HMAC과 맞는 사용자를 다시 정리, 두 번 돌려도 같음). 파일을 주면 그 장부를 대상 장부에도 넣음. 출력은 개수만. 끝나기 전에는 점검 모드를 풀지 마세요 |
+| `pnpm ops:export-ledger --out=<path>` | 삭제 장부를 JSON lines로 내보내기(개인정보 없음, 이미 있는 파일은 덮어쓰지 않음) |
+| `ops/backup.sh` / `ops/restore.sh` / `ops/restore-drill.sh` | 백업 / 복구(`--from --target-db --storage-dir [--force]`) / 복구 연습(임시 DB, 단계별 시간). [runbook §3.3·§5·§6](../docs/ops/RUNBOOK.md) |
 | `pnpm check:archive` | 원본 아카이브 보존 검증(`python3 scripts/check_archive.py`) |
 
 스키마는 migration으로만 바꿉니다. `schema.ts`를 고쳤다면 `pnpm db:generate`로 생성한 SQL을 함께 커밋하세요(CI가 불일치를 검사합니다).

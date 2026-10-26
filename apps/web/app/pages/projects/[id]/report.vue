@@ -32,7 +32,11 @@ const generated = computed(() =>
     ? new Date(data.value.generatedAt).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'long', timeStyle: 'short' })
     : '',
 )
-const printReport = () => window.print()
+const printReport = () => {
+  // 인쇄(PDF로 저장)를 했다는 표시만 남깁니다(pilot 지표 report_exported, 실패해도 인쇄는 그대로).
+  $fetch(`/api/v1/projects/${id.value}/report-exports`, { method: 'POST', body: { ...query.value } }).catch(() => {})
+  window.print()
+}
 </script>
 
 <template>

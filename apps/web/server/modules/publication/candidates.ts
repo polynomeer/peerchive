@@ -70,6 +70,7 @@ import {
   type DbExecutor,
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
+import { emitAnalytics } from '../analytics/analytics'
 import { assertPublishable, getProjectEmbargo, toEmbargoDto } from '../embargo/embargo'
 import { type Actor, ServiceError, conflict, forbidden, invalid, notFound, sqlState } from '../errors'
 import { HANDLE_PATTERN, RESERVED_HANDLES } from '../identity/profiles'
@@ -779,7 +780,26 @@ export async function createCandidate(
       consentSelf: input.consentSelf,
       privateOrigins: options.privateOrigins ?? [],
     })
+    await emitCandidatePrepared(tx, actor, project.id, selection, false)
     return toCandidateDto(tx, actor, candidate, membership, now)
+  })
+}
+
+/** 공개 후보 이벤트(수준·고른 개수만). */
+async function emitCandidatePrepared(tx: DbExecutor, actor: Actor, projectId: string, selection: Selection, derived: boolean) {
+  const n = (list: readonly unknown[] | undefined, max: number) => Math.min(list?.length ?? 0, max)
+  await emitAnalytics(tx, {
+    name: 'candidate_prepared',
+    actorId: actor.userId,
+    projectId,
+    props: {
+      level: selection.level,
+      logs: n(selection.logIds, 1000),
+      claims: n(selection.claimIds, 1000),
+      milestones: n(selection.milestoneIds, 100),
+      files: n(selection.artifactVersionIds, 1000),
+      derived,
+    },
   })
 }
 
@@ -835,6 +855,7 @@ export async function excludeDeclined(
       { ...previous, excludedUserIds: [...new Set([...previous.excludedUserIds, ...declined])] },
       { now, consentSelf: input.consentSelf, privateOrigins: options.privateOrigins ?? [], pins, derivedFrom: candidate },
     )
+    await emitCandidatePrepared(tx, actor, project.id, previous, true)
     return toCandidateDto(tx, actor, next, membership, now)
   })
 }
@@ -935,6 +956,12 @@ export async function decideConsent(
       metadata: { decision: input.decision, candidateVersion: candidate.version },
     })
     const updated = await refreshReadiness(tx, publication, candidate.id, now)
+    await emitAnalytics(tx, {
+      name: 'consent_completed',
+      actorId: actor.userId,
+      projectId: candidate.projectId,
+      props: { decision: input.decision, allGranted: updated.status === 'ready' },
+    })
     return toCandidateDto(tx, actor, updated, visible.membership, now)
   })
 }

@@ -67,7 +67,8 @@ describe.skipIf(!url)('ops cleanup tasks (PostgreSQL)', () => {
   afterAll(async () => {
     await db?.$client.end()
   })
-  const deps = () => ({ storage, batchSize: 2 })
+  // 작은 배치로 반복을 확인합니다. 개발 DB의 다른 만료 행이 많아도 이 테스트의 행이 먼저 처리되도록 아주 오래된 시각을 씁니다.
+  const deps = (batchSize = 2) => ({ storage, batchSize })
 
   async function rollback(fn: (tx: DbExecutor) => Promise<void>) {
     await expect(
@@ -100,7 +101,12 @@ describe.skipIf(!url)('ops cleanup tasks (PostgreSQL)', () => {
       for (const key of keys) await putObject(key)
       const rows = await tx
         .insert(uploadIntents)
-        .values([intent(keys[0]!, ago(2 * HOUR)), intent(keys[1]!, ago(3 * HOUR)), intent(keys[2]!, ago(4 * HOUR)), intent(keys[3]!, ago(10 * 60 * 1000))])
+        .values([
+          intent(keys[0]!, new Date('2000-01-01T00:00:00Z')),
+          intent(keys[1]!, new Date('2000-01-01T00:01:00Z')),
+          intent(keys[2]!, new Date('2000-01-01T00:02:00Z')),
+          intent(keys[3]!, ago(10 * 60 * 1000)),
+        ])
         .returning()
       // 셋째 의도는 완료되어 버전이 같은 격리 키를 이어받았습니다(검사 대기).
       const [artifact] = await tx.insert(artifacts).values({ projectId, uploaderId: userId, title: 'a.png' }).returning()
@@ -197,8 +203,9 @@ describe.skipIf(!url)('ops cleanup tasks (PostgreSQL)', () => {
         { kind: 'link', codeHash: `live-${tag}`, userId, expiresAt: new Date(NOW.getTime() + 60 * 1000) },
       ])
 
+      // 한 실행의 최대 행 수(배치 × 50)가 개발 DB에 남은 다른 만료 행보다 크도록 큰 배치를 씁니다.
       for (const task of [cleanupRateLimitBuckets, cleanupInternalNonces, cleanupMagicLinkTokens, cleanupSessions, cleanupDiscordCodes]) {
-        expect((await task(tx, deps(), NOW)).affected).toBeGreaterThanOrEqual(1)
+        expect((await task(tx, deps(10_000), NOW)).affected).toBeGreaterThanOrEqual(1)
       }
       const keys = (await tx.select({ key: rateLimitBuckets.key }).from(rateLimitBuckets).where(sql`${rateLimitBuckets.key} like ${`%:${tag}`}`)).map((r) => r.key)
       expect(keys).toEqual([`new:${tag}`])
@@ -241,7 +248,7 @@ describe.skipIf(!url)('ops cleanup tasks (PostgreSQL)', () => {
           { topic: 'ops-test', payload: {}, createdAt: ago(40 * DAY), dispatchedAt: null },
         ])
         .returning()
-      expect((await cleanupOutbox(tx, deps(), NOW)).affected).toBeGreaterThanOrEqual(1)
+      expect((await cleanupOutbox(tx, deps(10_000), NOW)).affected).toBeGreaterThanOrEqual(1)
       const left = await tx.select({ id: outboxEvents.id }).from(outboxEvents).where(inArray(outboxEvents.id, rows.map((r) => r.id)))
       expect(left.map((r) => r.id).sort()).toEqual([rows[1]!.id, rows[2]!.id].sort())
     })

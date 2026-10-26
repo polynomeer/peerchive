@@ -33,6 +33,7 @@ import {
   type PublicationOutboxPayload,
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
+import { emitAnalytics } from '../analytics/analytics'
 import { courseLinkForRelease } from '../course-hub/course-link'
 import { assertPublishable, getProjectEmbargo } from '../embargo/embargo'
 import { type Actor, conflict, forbidden, notFound } from '../errors'
@@ -188,6 +189,12 @@ export async function publishCandidate(
       projectId: project.id,
       metadata: { releaseNo: nextRelease, candidateVersion: release!.version, level: release!.level, accessEpoch, replaced: replaced.length > 0 },
     })
+    await emitAnalytics(tx, {
+      name: 'publication_published',
+      actorId: actor.userId,
+      projectId: project.id,
+      props: { level: release!.level, releaseNo: nextRelease, republish: event === 'republish' },
+    })
     return { publication: toPublicationSummary(updated!, release!), release: toReleaseSummary(release!), idempotent: false }
   })
 }
@@ -270,6 +277,7 @@ async function withdrawInTx(tx: DbExecutor, publication: PublicationRow, options
     projectId: publication.projectId,
     metadata: { cause: options.cause, releaseNo, accessEpoch },
   })
+  await emitAnalytics(tx, { name: 'publication_withdrawn', actorId: options.actorId, projectId: publication.projectId, props: { cause: options.cause } })
   return updated!
 }
 

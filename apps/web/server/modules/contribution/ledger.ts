@@ -43,6 +43,7 @@ import {
   users,
   type DbExecutor,
 } from '@peerchive/db'
+import { emitAnalytics } from '../analytics/analytics'
 import { type Actor, invalid } from '../errors'
 import { summarize } from '../logs/logs'
 import { claimedDateSchema } from '../logs/payloads'
@@ -272,4 +273,21 @@ async function nearestMilestone(db: DbExecutor, projectId: string, from: string,
       ),
     )
   return { title: row.title, dueAt: row.dueAt, snapshotsInPeriod: count?.n ?? 0 }
+}
+
+/**
+ * POST /projects/:id/report-exports {from, to} — 동료평가 리포트를 인쇄(PDF로 저장)했다는 표시(T-16 pilot 지표 report_exported).
+ * 멤버만(읽을 수 없으면 404). 저장하는 것은 분석 이벤트(기간 일수)뿐입니다. 204.
+ */
+export async function recordReportExport(db: DbExecutor, actor: Actor, projectId: unknown, rawInput: unknown, now = new Date()): Promise<void> {
+  const query = parseInput(contributionQuerySchema, rawInput)
+  const { from, to } = query.from && query.to ? { from: query.from, to: query.to } : seoulWeek(now)
+  const period = checkPeriod(from, to)
+  if (period !== 'ok') throw invalid({ to: period })
+  await db.transaction(async (tx) => {
+    const { project } = await loadReadableProject(tx, actor, projectId)
+    const { start, end } = periodBounds(from, to)
+    const days = Math.max(1, Math.min(400, Math.round((end.getTime() - start.getTime()) / 86_400_000)))
+    await emitAnalytics(tx, { name: 'report_exported', actorId: actor.userId, projectId: project.id, props: { days } })
+  })
 }

@@ -111,6 +111,7 @@ export async function getMe(db: DbExecutor, actor: Actor): Promise<MeDto> {
     profile: row.profile ? profileFields(row.profile) : null,
     operator: await isOperator(db, row.user.id),
     profileHidden: row.profile?.hiddenAt != null,
+    analyticsOptOut: row.user.analyticsOptOut,
   }
 }
 

@@ -13,6 +13,7 @@
 import { forkPlanFromSnapshot, forkProjectTitle, formatForkReferences, type HubSnapshot } from '@peerchive/domain'
 import { and, eq, planForks, sql, type DbExecutor } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
+import { emitAnalytics } from '../analytics/analytics'
 import { type Actor, notFound, rateLimited } from '../errors'
 import { createMilestone } from '../milestones/milestones'
 import { createProject } from '../projects/projects'
@@ -59,6 +60,7 @@ export async function forkPublication(db: DbExecutor, actor: Actor, slug: unknow
         summaryByStudent: formatForkReferences(plan.references),
       },
       now,
+      'fork',
     )
     for (const milestone of plan.milestones) {
       await createMilestone(tx, actor, project.id, { title: milestone.title, note: milestone.note }, now)
@@ -80,6 +82,12 @@ export async function forkPublication(db: DbExecutor, actor: Actor, slug: unknow
       targetId: project.id,
       projectId: project.id,
       metadata: { sourcePublicationId: publication.id, releaseNo: release.releaseNo!, ...copied },
+    })
+    await emitAnalytics(tx, {
+      name: 'plan_forked',
+      actorId: actor.userId,
+      projectId: publication.projectId,
+      props: { milestones: Math.min(copied.milestones, 100), references: Math.min(copied.references, 1000) },
     })
     return { projectId: project.id, projectPath: projectPath(project.id), created: true, copied }
   })

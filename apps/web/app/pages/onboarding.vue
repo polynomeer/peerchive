@@ -159,5 +159,6 @@ const described = (field: string, hint?: string) =>
     </form>
 
     <DiscordLinkSection v-if="!isNew" />
+    <AnalyticsPreferenceSection v-if="!isNew" />
   </div>
 </template>

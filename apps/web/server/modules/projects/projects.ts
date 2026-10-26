@@ -14,6 +14,7 @@ import { z } from 'zod'
 import { canChangeRetroMode, canEditProject, type ProjectRole } from '@peerchive/domain'
 import { and, desc, eq, sql, courses, projectMembers, projects, schools, type DbExecutor } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
+import { emitAnalytics } from '../analytics/analytics'
 import { loadCanonicalTerm, toCourseDto, toCourseTermDto, toSchoolDto } from '../catalog/catalog'
 import { listCourseTags } from '../catalog/tags'
 import { getProjectEmbargo, nextEmbargoUntil, toEmbargoDto } from '../embargo/embargo'
@@ -126,7 +127,13 @@ async function resolveTermId(db: DbExecutor, termId: string): Promise<string> {
 }
 
 /** 생성자는 같은 트랜잭션에서 active owner 멤버가 됩니다. 학기를 고르면 그 학기 종료까지 엠바고가 걸립니다. */
-export async function createProject(db: DbExecutor, actor: Actor, rawInput: unknown, now = new Date()): Promise<ProjectDetailDto> {
+export async function createProject(
+  db: DbExecutor,
+  actor: Actor,
+  rawInput: unknown,
+  now = new Date(),
+  origin: 'web' | 'fork' = 'web',
+): Promise<ProjectDetailDto> {
   const input = parseInput(createProjectSchema, rawInput)
   return db.transaction(async (tx) => {
     const courseTermId = input.courseTermId ? await resolveTermId(tx, input.courseTermId.toLowerCase()) : null
@@ -154,6 +161,12 @@ export async function createProject(db: DbExecutor, actor: Actor, rawInput: unkn
       targetId: project.id,
       projectId: project.id,
       metadata: { retroMode: project.retroMode, courseTermId, embargoUntil: embargoUntil?.toISOString() ?? null },
+    })
+    await emitAnalytics(tx, {
+      name: 'project_created',
+      actorId: actor.userId,
+      projectId: project.id,
+      props: { kind: project.kind, retro: project.retroMode, withCourse: courseTermId !== null, origin },
     })
     return toProjectDetailDto(tx, project, 'owner', now)
   })

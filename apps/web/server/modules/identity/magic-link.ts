@@ -22,6 +22,7 @@ import { generateToken, looksLikeToken, sha256Hex } from '../security/tokens'
 import { hitRateLimit, type RateLimitRule } from '../security/rate-limit'
 import { maskEmail, type MailTransport } from './mail'
 import { createSession, type CreatedSession } from './sessions'
+import { emitAnalytics } from '../analytics/analytics'
 
 const MINUTE_MS = 60 * 1000
 export const MAGIC_LINK_TTL_MS = 15 * MINUTE_MS
@@ -183,6 +184,7 @@ export async function verifyMagicLink(
       .where(eq(profiles.userId, user.id))
       .limit(1)
     const session = await createSession(tx, user.id, now)
+    await emitAnalytics(tx, { name: 'login_succeeded', actorId: user.id, props: { newUser: isNewUser }, now })
     return { ok: true, userId: user.id, isNewUser, needsOnboarding: !profile, session } as const
   })
 }
