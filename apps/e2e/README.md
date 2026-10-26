@@ -44,7 +44,8 @@ docker compose -f ops/docker-compose.yml down
 | `support/mail.ts` | dev-console 메일 읽기(서버 로그에서 가린 수신 주소로 메일을 찾고 링크를 꺼냄) |
 | `support/api.ts` | 준비 단계용 API 도우미(같은 context의 쿠키와 사이트 `Origin` 헤더 사용). 시험 대상 동작은 화면으로 조작합니다 |
 | `support/scenarios.ts` | 여러 시나리오가 함께 쓰는 "지난 학기 과목에 게시된 사례" 만들기 |
-| `support/db.ts` | E2E DB 직접 작업: 로그인 IP rate limit 카운터 비우기, 운영자 부여 CLI 실행 |
+| `support/db.ts` | E2E DB 직접 작업: 로그인 IP rate limit 카운터 비우기, 운영자 부여 CLI·학교 메일 도메인 등록 CLI 실행 |
+| `support/affiliation.ts` | 학교 메일 인증(C-01): CLI로 학교마다 무작위 도메인 등록, 화면에서 코드 요청 → dev-console 메일에서 6자리 코드 읽기 → 입력 |
 
 ## 설계 결정
 
@@ -52,6 +53,7 @@ docker compose -f ops/docker-compose.yml down
 - **DB 격리**: 개발 DB를 건드리지 않도록 같은 서버의 `peerchive_e2e`를 실행마다 지우고 다시 만듭니다. 이메일·핸들·slug·제목은 모두 무작위라 테스트끼리 겹치지 않고 병렬로 돕니다.
 - **rate limit**: 매직링크 요청은 IP당 15분 20회(ADR 0006)인데 모든 테스트가 같은 루프백 IP로 로그인합니다. 로그인 도우미가 요청 직전에 `magic_link_ip:` 카운터만 지웁니다(이메일당 한도·다른 한도는 그대로).
 - **운영자**: 실제 운영 절차와 같은 `pnpm --filter @peerchive/db grant-operator <email>`를 E2E DB로 실행합니다.
+- **학교 메일 인증**: 도메인 등록은 운영 절차와 같은 `school-email-domain add` CLI, 코드는 로그인 링크처럼 dev-console 메일(서버 로그)에서 읽습니다. 수신 주소가 첫 글자 + 도메인으로 가려지므로 학교마다 무작위 도메인(`e2e<무작위>.ac.kr`)을 등록하고 하위 도메인 주소를 씁니다.
 - **파일 검사**: worker가 signature-only 검사기로 실제 검사 작업을 처리합니다(ClamAV 컨테이너 불필요). PDF는 테스트마다 주석 한 줄을 바꿔 같은 내용 합치기를 피합니다.
 
 ## 시나리오
@@ -63,12 +65,13 @@ docker compose -f ops/docker-compose.yml down
 | `c-claims.spec.ts` | C | 로그 근거 선언 → 팀원 확인 → 수정하면 "본인 설명 · 미확인", owner에게 남의 선언 [고치기] 없음·API 403, 동료평가 리포트 상태 글자 |
 | `d-embargo-consent.spec.ts` | D | 학기 진행 중 과제는 후보 불가(화면·409), 지난 학기 팀 과제는 팀원 동의 전 게시 불가 → 동의 → 게시, 고르지 않은 로그는 공개에 없음, 대체된 후보로 게시 409 |
 | `e-withdraw.spec.ts` | E | 철회 즉시 공개 페이지(HTTP 404)·JSON·파일 404, 공개 프로필의 케이스는 "볼 수 없는 케이스 스터디", 과목 허브에서 빠짐 |
-| `f-course-hub-fork.spec.ts` | F | 익명 과목 허브: 사례·막힘·선배 노트, 워크로드 표 없음(5명 미만), 후배 포크 → 마일스톤만 있는 새 비공개 과제 |
+| `f-course-hub-fork.spec.ts` | F | 선배는 노트 화면 안내 → 학교 메일 인증(화면) 뒤 선배 노트, 익명 과목 허브: 사례·막힘·선배 노트, 워크로드 표 없음(5명 미만), 후배 포크(인증 불필요) → 마일스톤만 있는 새 비공개 과제 |
+| `affiliation.spec.ts` | C-01 | 학교 검색 → 다른 학교 도메인 거부(힌트 없음) → 코드 메일 → 틀린 코드(남은 시도 4회) → 인증 → 졸업생 전환 → 공개 배지는 켤 때만(학과·메일·도메인 없음) → 그 학교 과목만 노트 작성 가능(다른 학교는 안내·API 403) |
 | `g-retrospective.spec.ts` | G | 사후 작성 과제·마일스톤·로그 배지, 기억·파일 기준 날짜, 공개 화면·JSON까지 `사후 작성` |
 | `h-mobile-keyboard.spec.ts` | H | 파일 먼저 → 나중에 설명, 오프라인 저장 실패에도 입력 보존·"오류 — 재시도"·재시도 성공, 새로고침 뒤 입력 복원, 할 일·마일스톤 키보드 순서 변경(포커스 유지) |
 | `i-public-profile.spec.ts` | I | 익명 검토자가 `/u/<handle>`에서 문제·내 역할·근거 칩 → 공개 기록, HTML·JSON·OG·인쇄·README 카드에 이메일·체크인 메모·비공개 로그·내부 id 없음 |
 | `moderation.spec.ts` | T-15 | 신고(화면) → 운영자 "항목 하나 가리기" → 공개 페이지에 "운영 조치로 가려진 항목" |
-| `a11y-and-layout.spec.ts` | 접근성 | 주요 화면 12곳: 보이는 h1 하나, 이름 있는 입력 칸, Tab 포커스 표시(첫 Tab은 건너뛰기 링크), 가로 스크롤 없음 |
+| `a11y-and-layout.spec.ts` | 접근성 | 주요 화면 13곳(학교 인증 화면 포함): 보이는 h1 하나, 이름 있는 입력 칸, Tab 포커스 표시(첫 Tab은 건너뛰기 링크), 가로 스크롤 없음 |
 
 ## 한계
 

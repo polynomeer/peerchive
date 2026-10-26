@@ -16,6 +16,7 @@ const { me, logout } = useAuth()
             <li><NuxtLink to="/consents">동의 요청</NuxtLink></li>
             <li v-if="me.profile"><NuxtLink :to="`/u/${me.profile.handle}`">공개 프로필</NuxtLink></li>
             <li><NuxtLink to="/onboarding">프로필 설정</NuxtLink></li>
+            <li><NuxtLink to="/settings/affiliations">학교 인증</NuxtLink></li>
             <li><NuxtLink to="/me/moderation-notices">알림</NuxtLink></li>
             <li v-if="me.operator"><NuxtLink to="/operator">운영</NuxtLink></li>
             <li>

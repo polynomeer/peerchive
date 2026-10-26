@@ -15,6 +15,8 @@ export interface ProfileFields {
   gradTerm: string | null
   contactPolicy: ContactPolicy
   openToWork: boolean
+  /** 공개 프로필에 학교 인증 배지를 보일지(C-01, 기본 끔). 본인에게만 보이는 설정값입니다. */
+  showAffiliationBadge: boolean
 }
 
 /** 본인에게만 주는 DTO(이메일 포함). */
@@ -685,6 +687,11 @@ export interface ApiErrorData {
   currentVersion?: number
   /** 409 limit_reached일 때 한도. */
   limit?: number
+  /** 403 hub_write_not_allowed가 학교 인증 때문이면 'school_affiliation'과 그 과목의 정본 학교 id(C-01). */
+  requirement?: 'school_affiliation'
+  schoolId?: string | null
+  /** 422 code_mismatch(학교 메일 인증 코드)일 때 남은 시도 횟수. */
+  attemptsLeft?: number
   /** 409 in_use(마일스톤 삭제)일 때 그 마일스톤을 가리키는 로그 수(이전 revision 포함). */
   logCount?: number
   /** 409 not_current(이전 선언 revision에 확인)일 때 현재 revision id. */
@@ -1384,6 +1391,76 @@ export interface PublicPortfolioProfileDto extends PortfolioViewDto {
   /** 후배 기여: 개수만, 순위 없음. */
   juniorContribution: { planForks: number; seniorNotes: number }
   timeline: PublicTimelineItemDto[]
+  /** 학교 인증 배지(C-01). 본인이 켰을 때만, active 인증의 학교 이름 + 졸업생 여부. 학과·메일·도메인 없음. */
+  affiliationBadges: PublicAffiliationBadgeDto[]
+}
+
+// ── 학교 메일 인증 (C-01, ADR 0018) ──────────────────────────────────────
+
+export type AffiliationStanding = 'student' | 'alumni'
+export type AffiliationStatus = 'pending' | 'active' | 'revoked' | 'expired'
+export type AffiliationRevokedReason = 'user_removed' | 'operator' | 'merged_duplicate'
+
+/** 내 학교 인증(본인에게만). 메일 주소는 저장하지 않으므로 없고, 도메인만 있습니다. */
+export interface AffiliationDto {
+  id: string
+  school: SchoolDto
+  emailDomain: string
+  standing: AffiliationStanding
+  /** 자기 신고 학과(공개하지 않음). */
+  departmentLabel: string | null
+  status: AffiliationStatus
+  verifiedAt: string | null
+  revokedAt: string | null
+  revokedReason: AffiliationRevokedReason | null
+  /** pending일 때 지금 코드의 만료 시각·남은 시도 횟수. */
+  code: { expiresAt: string; attemptsLeft: number } | null
+  createdAt: string
+  updatedAt: string
+}
+
+/** GET /me/affiliations. */
+export interface AffiliationListDto {
+  items: AffiliationDto[]
+  /** 공개 프로필 배지 설정(프로필이 없으면 false). */
+  showBadge: boolean
+  /** 과목 허브 작성에 학교 인증이 필요한지(서버 정책, 기본 true). */
+  hubRequiresAffiliation: boolean
+}
+
+/** 운영자 목록: 사용자 id·학교·도메인·상태만(학과·재학 상태·메일 없음). */
+export interface OperatorAffiliationDto {
+  id: string
+  userId: string
+  school: SchoolDto
+  emailDomain: string
+  status: AffiliationStatus
+  verifiedAt: string | null
+  revokedAt: string | null
+}
+
+export interface SchoolEmailDomainDto {
+  id: string
+  schoolId: string
+  domain: string
+  createdAt: string
+}
+
+/** GET /me/hub-write?course= — 과목 허브 작성 가능 여부(화면 안내용). */
+export interface HubWriteEligibilityDto {
+  /** 정본 과목 id. */
+  courseId: string
+  allowed: boolean
+  /** 막힌 이유가 학교 인증이면 'school_affiliation'(그 학교 메일로 인증하면 쓸 수 있음). */
+  requirement: 'school_affiliation' | null
+  /** 과목의 정본 학교. */
+  school: SchoolDto
+}
+
+export interface PublicAffiliationBadgeDto {
+  /** 예: "한빛대학교 인증", "한빛대학교 인증 · 졸업생". */
+  label: string
+  alumni: boolean
 }
 
 // ── 신고·운영 조치·이의제기 (T-15, ADR 0015) ─────────────────────────────

@@ -8,6 +8,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
+  affiliationCodes,
   analyticsEvents,
   and,
   artifactVersions,
@@ -21,6 +22,7 @@ import {
   endorsements,
   eq,
   hashSubject,
+  institutionAffiliations,
   integrations,
   logEntries,
   logRevisions,
@@ -220,7 +222,23 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       .values({ userId: U.id, publicationId: teamPub.publication.id, releaseId: teamPub.release.id, releaseVersion: 1, memberKey: 'm_a', selfAnonymous: false, jobTarget: 'backend', title: '내 케이스' })
       .returning()
     await tx.insert(portfolioEditions).values({ userId: U.id, version: 1, headline: '포트폴리오' })
-    return { U, T, X, solo, soloLog, soloFile, soloPub, forkedSolo, forkedPub, xProject, team, uTeamLog, tTeamLog, teamFile, teamPub, note: note!, caseStudy: caseStudy! }
+    // 학교 메일 인증(C-01): active 하나 + 코드가 남은 pending 하나. T의 인증은 그대로 남아야 합니다.
+    const hex = () => id().replace(/-/g, '').repeat(2)
+    const [school2] = await tx.insert(schools).values({ name: `학교 ${id()}`, nameKey: `school-${id()}` }).returning()
+    const [activeAff, pendingAff, tAff] = await tx
+      .insert(institutionAffiliations)
+      .values([
+        { userId: U.id, schoolId: school!.id, emailHash: hex(), emailDomain: 'u.ac.kr', standing: 'alumni', departmentLabel: '비밀학과', status: 'active', verifiedAt: NOW },
+        { userId: U.id, schoolId: school2!.id, emailHash: hex(), emailDomain: 'u.ac.kr', standing: 'student', status: 'pending' },
+        { userId: T.id, schoolId: school!.id, emailHash: hex(), emailDomain: 'u.ac.kr', standing: 'student', status: 'active', verifiedAt: NOW },
+      ])
+      .returning()
+    await tx.insert(affiliationCodes).values([
+      { affiliationId: activeAff!.id, codeHash: hex(), expiresAt: NOW, usedAt: NOW },
+      { affiliationId: pendingAff!.id, codeHash: hex(), expiresAt: NOW },
+    ])
+    return {
+      tAffiliationId: tAff!.id, U, T, X, solo, soloLog, soloFile, soloPub, forkedSolo, forkedPub, xProject, team, uTeamLog, tTeamLog, teamFile, teamPub, note: note!, caseStudy: caseStudy! }
   }
 
   const count = async (tx: DbExecutor, table: Parameters<DbExecutor['select']>[0] extends never ? never : any, where: any) =>
@@ -243,6 +261,8 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         senior_notes: 1,
         case_studies: 1,
         portfolio_editions: 1,
+        institution_affiliations: 2,
+        affiliation_codes: 2,
         notes_scrubbed: 4,
         publications_withdrawn: 3,
         memberships: 1,
@@ -267,9 +287,11 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         [caseStudies, eq(caseStudies.userId, w.U.id)],
         [portfolioEditions, eq(portfolioEditions.userId, w.U.id)],
         [analyticsEvents, eq(analyticsEvents.actorHash, hashSubject(ANALYTICS_PEPPER, w.U.id))],
+        [institutionAffiliations, eq(institutionAffiliations.userId, w.U.id)],
       ] as const) {
         expect(await count(tx, table, where)).toBe(0)
       }
+      expect(await count(tx, institutionAffiliations, eq(institutionAffiliations.id, w.tAffiliationId))).toBe(1)
 
       // 혼자 과제 1: 행·파일 모두 없음.
       expect(await count(tx, projects, eq(projects.id, w.solo.id))).toBe(0)

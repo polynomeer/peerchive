@@ -158,6 +158,11 @@ const described = (field: string, hint?: string) =>
       </div>
     </form>
 
+    <section v-if="!isNew" class="card" aria-labelledby="affiliation-link-heading">
+      <h2 id="affiliation-link-heading">학교 인증</h2>
+      <p class="hint">학교 메일로 인증하면 그 학교 과목 허브에 선배 노트를 쓸 수 있습니다. 위의 "학교 (선택)" 칸은 인증과 관계없습니다.</p>
+      <p><NuxtLink to="/settings/affiliations">학교 메일 인증 관리</NuxtLink></p>
+    </section>
     <DiscordLinkSection v-if="!isNew" />
     <AnalyticsPreferenceSection v-if="!isNew" />
   </div>

@@ -11,6 +11,11 @@ import { createHash, createHmac } from 'node:crypto'
 
 export const ANALYTICS_PEPPER_ENV = 'PEERCHIVE_ANALYTICS_PEPPER'
 export const DELETION_PEPPER_ENV = 'PEERCHIVE_DELETION_PEPPER'
+/**
+ * 학교 메일 인증(C-01, ADR 0018): 학교 메일 주소·인증 코드의 HMAC 비밀. 바꾸면 이미 인증된 주소의 중복 확인(한 주소 한 계정)이
+ * 이전 행과 맞지 않으므로 바꾸지 않습니다. production에서 없거나 약하면 web이 시작하지 않습니다.
+ */
+export const AFFILIATION_PEPPER_ENV = 'PEERCHIVE_AFFILIATION_PEPPER'
 
 /** worker 프로세스의 상태 기록 이름(worker_heartbeats.name). 주기 작업은 `task:<이름>`입니다. */
 export const WORKER_HEARTBEAT_NAME = 'worker'
@@ -19,6 +24,7 @@ export const taskHeartbeatName = (task: string) => `task:${task}`
 const DEV_PEPPERS: Record<string, string> = {
   [ANALYTICS_PEPPER_ENV]: 'dev-only-analytics-pepper-not-for-real-data',
   [DELETION_PEPPER_ENV]: 'dev-only-deletion-pepper-not-for-real-data',
+  [AFFILIATION_PEPPER_ENV]: 'dev-only-affiliation-pepper-not-for-real-data',
 }
 
 type Env = Readonly<Record<string, string | undefined>>
@@ -34,7 +40,7 @@ export function isWeakPepper(value: string): boolean {
 }
 
 /** pepper 값. production에서 없거나 약하면 null. */
-export function resolvePepper(env: Env, name: typeof ANALYTICS_PEPPER_ENV | typeof DELETION_PEPPER_ENV): string | null {
+export function resolvePepper(env: Env, name: typeof ANALYTICS_PEPPER_ENV | typeof DELETION_PEPPER_ENV | typeof AFFILIATION_PEPPER_ENV): string | null {
   const value = env[name]?.trim() ?? ''
   if (isProductionMode(env)) return value && !isWeakPepper(value) ? value : null
   return value || DEV_PEPPERS[name]!

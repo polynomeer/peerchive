@@ -8,6 +8,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
+  affiliationCodes,
   artifactVersions,
   artifacts,
   auditEvents,
@@ -17,11 +18,13 @@ import {
   discordPinRequests,
   eq,
   inArray,
+  institutionAffiliations,
   internalRequestNonces,
   magicLinkTokens,
   outboxEvents,
   projects,
   rateLimitBuckets,
+  schools,
   sessions,
   sql,
   uploadIntents,
@@ -33,6 +36,7 @@ import {
 import { createFilesystemStorage, newQuarantineKey, type ObjectKey, type ObjectStorage } from '@peerchive/files'
 import {
   RETENTION,
+  cleanupAffiliationCodes,
   cleanupDiscordCodes,
   cleanupInternalNonces,
   cleanupMagicLinkTokens,
@@ -215,6 +219,45 @@ describe.skipIf(!url)('ops cleanup tasks (PostgreSQL)', () => {
       )
       expect((await tx.select().from(sessions).where(eq(sessions.userId, userId))).map((r) => r.id)).toEqual([`live-${tag}`])
       expect((await tx.select().from(discordCodes).where(eq(discordCodes.userId, userId))).map((r) => r.codeHash)).toEqual([`live-${tag}`])
+    })
+  })
+
+  it('expires school-mail requests with no usable code left (dropping the email hash) and deletes old codes, leaving active rows alone', async () => {
+    await rollback(async (tx) => {
+      const { userId } = await userAndProject(tx)
+      const hex = () => id().replace(/-/g, '').repeat(2)
+      const newSchool = async () => (await tx.insert(schools).values({ name: `학교 ${id()}`, nameKey: `s-${id()}` }).returning())[0]!.id
+      const base = { userId, emailHash: '', emailDomain: 'u.ac.kr', standing: 'student' as const }
+      const [stale, locked, fresh, active] = await tx
+        .insert(institutionAffiliations)
+        .values([
+          { ...base, schoolId: await newSchool(), emailHash: hex(), status: 'pending' },
+          { ...base, schoolId: await newSchool(), emailHash: hex(), status: 'pending' },
+          { ...base, schoolId: await newSchool(), emailHash: hex(), status: 'pending' },
+          { ...base, schoolId: await newSchool(), emailHash: hex(), status: 'active', verifiedAt: ago(10 * DAY) },
+        ])
+        .returning()
+      const [, , freshCode, usedOld] = await tx
+        .insert(affiliationCodes)
+        .values([
+          { affiliationId: stale!.id, codeHash: hex(), expiresAt: ago(2 * HOUR), createdAt: ago(3 * HOUR) },
+          { affiliationId: locked!.id, codeHash: hex(), expiresAt: new Date(NOW.getTime() + 5 * 60 * 1000), attempts: 5 },
+          { affiliationId: fresh!.id, codeHash: hex(), expiresAt: new Date(NOW.getTime() + 5 * 60 * 1000) },
+          { affiliationId: active!.id, codeHash: hex(), expiresAt: ago(10 * DAY), usedAt: ago(10 * DAY) },
+        ])
+        .returning()
+      // 잠긴 코드는 유예 1시간 기준으로 보지 않고(쓸 수 없음) 바로 만료 대상입니다.
+      expect((await cleanupAffiliationCodes(tx, deps(10_000), NOW)).affected).toBeGreaterThanOrEqual(3)
+      const rows = await tx.select().from(institutionAffiliations).where(eq(institutionAffiliations.userId, userId))
+      const byId = new Map(rows.map((r) => [r.id, r]))
+      expect(byId.get(stale!.id)).toMatchObject({ status: 'expired', emailHash: null })
+      expect(byId.get(locked!.id)).toMatchObject({ status: 'expired', emailHash: null })
+      expect(byId.get(fresh!.id)).toMatchObject({ status: 'pending' })
+      expect(byId.get(fresh!.id)!.emailHash).not.toBeNull()
+      expect(byId.get(active!.id)).toMatchObject({ status: 'active' })
+      const codes = await tx.select({ id: affiliationCodes.id }).from(affiliationCodes).where(inArray(affiliationCodes.affiliationId, rows.map((r) => r.id)))
+      expect(codes.map((c) => c.id)).not.toContain(usedOld!.id)
+      expect(codes.map((c) => c.id)).toContain(freshCode!.id)
     })
   })
 

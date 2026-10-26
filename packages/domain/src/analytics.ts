@@ -1,7 +1,7 @@
 /**
  * pilot 분석 이벤트 규칙 (DELIVERY_PLAN §6 측정 계획, SYSTEM_DESIGN §14 관측, T-16, ADR 0016).
  *
- * - 이벤트 이름은 DELIVERY_PLAN §6의 최소 분석 이벤트 15개 + `login_succeeded`(활성화 지표의 가입 시점)입니다.
+ * - 이벤트 이름은 DELIVERY_PLAN §6의 최소 분석 이벤트 15개 + `login_succeeded`(활성화 지표의 가입 시점) + `affiliation_verified`(C-01, props는 standing만)입니다.
  * - props는 이벤트마다 허용 목록(ANALYTICS_PROP_SPECS)의 키만, 값은 정해진 enum 문자열·참거짓·범위 안의 정수만 받습니다.
  *   자유 문자열 필드는 없으므로 과제 본문·제목·파일 이름·URL·이메일·검색어가 들어갈 자리가 없습니다(§6 "본문·파일 내용·검색 원문·연락처 없음").
  *   목록 밖의 키·값이 하나라도 있으면 sanitizeAnalyticsProps가 거부하고, 웹 emitter는 그 이벤트를 버립니다(일부만 저장하지 않음).
@@ -26,6 +26,7 @@ export const ANALYTICS_EVENT_NAMES = [
   'senior_note_published',
   'portfolio_shared',
   'login_succeeded',
+  'affiliation_verified',
 ] as const
 export type AnalyticsEventName = (typeof ANALYTICS_EVENT_NAMES)[number]
 
@@ -78,6 +79,8 @@ export const ANALYTICS_PROP_SPECS: Readonly<Record<AnalyticsEventName, Readonly<
   senior_note_published: { displayMode: enumOf(['name', 'display', 'anonymous']), answers: count(4) },
   portfolio_shared: { featured: count(5), competencies: count(12), skills: count(20) },
   login_succeeded: { newUser: bool },
+  // 학교 메일 인증 성공(C-01). 학교 id·도메인은 넣지 않습니다(작은 학교는 학교만으로 사람을 좁힐 수 있음). 재학/졸업생 구분만.
+  affiliation_verified: { standing: enumOf(['student', 'alumni']) },
 }
 
 export function isAnalyticsEventName(value: unknown): value is AnalyticsEventName {

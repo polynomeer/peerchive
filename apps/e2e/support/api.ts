@@ -143,12 +143,12 @@ export async function waitForClean(api: Api, artifactId: string): Promise<void> 
 export async function courseTerm(
   api: Api,
   term: { year: number; semester: 'spring' | 'summer' | 'fall' | 'winter' },
-): Promise<{ schoolId: string; courseId: string; termId: string; courseTitle: string }> {
-  const school = await api.post<{ id: string }>('/api/v1/schools', { name: `E2E대학교 ${rand()}`, confirmNew: true })
+): Promise<{ schoolId: string; schoolName: string; courseId: string; termId: string; courseTitle: string }> {
+  const school = await api.post<{ id: string; name: string }>('/api/v1/schools', { name: `E2E대학교 ${rand()}`, confirmNew: true })
   const courseTitle = `E2E 과목 ${rand()}`
   const course = await api.post<{ id: string }>(`/api/v1/schools/${school.id}/courses`, { title: courseTitle, confirmNew: true })
   const created = await api.post<{ term: { id: string } }>(`/api/v1/courses/${course.id}/terms`, term)
-  return { schoolId: school.id, courseId: course.id, termId: created.term.id, courseTitle }
+  return { schoolId: school.id, schoolName: school.name, courseId: course.id, termId: created.term.id, courseTitle }
 }
 
 /** 이미 끝난 학기(엠바고 없음). */

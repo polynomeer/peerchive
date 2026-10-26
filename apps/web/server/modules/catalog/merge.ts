@@ -4,6 +4,9 @@
  * 전략: 한 트랜잭션에서 원본을 가리키던 행을 정본으로 다시 가리키게 하고(eager re-pointing), 원본에는 merged_into를 남깁니다.
  * 행은 지우지 않습니다(연결 행 course_concept_tags만 옮긴 뒤 원본 연결을 지움).
  * - 학교: 원본 학교의 과목 → 정본 학교. 같은 이름 과목이 모이면 운영자가 과목을 이어서 병합합니다.
+ *   학교 메일 도메인(school_email_domains)과 학교 메일 인증(institution_affiliations)도 정본으로 옮깁니다(C-01, ADR 0018). 한 사용자가 두 학교 모두에
+ *   진행 중(pending·active) 인증이 있으면 정본 쪽을 남기고 원본 쪽을 revoked(merged_duplicate)로 끝냅니다(정본 쪽이 pending이고 원본이 active면
+ *   원본을 남기고 정본 쪽 요청을 만료).
  * - 과목: 같은 학교끼리만(다르면 409 different_school — 학교를 먼저 병합). 원본 과목의 학기는 정본 과목으로 옮기고,
  *   정본에 같은 (연도, 학기)가 있으면 원본 학기를 그 학기로 병합해 프로젝트·학기 엠바고를 옮깁니다. 옮겨진 프로젝트의
  *   embargo_until은 단조 규칙대로 max(지금 값, 정본 학기 종료·학기 엠바고)입니다. 개념 태그 연결도 정본으로 옮깁니다.
@@ -22,10 +25,13 @@ import {
   courses,
   embargoes,
   eq,
+  inArray,
+  institutionAffiliations,
   isNull,
   ne,
   projects,
   publicationCandidates,
+  schoolEmailDomains,
   schools,
   seniorNotes,
   sql,
@@ -89,6 +95,43 @@ export async function mergeSchool(db: DbExecutor, actor: Actor, sourceId: unknow
     throwMergeError(checkMerge(source, target))
 
     const moved = await tx.update(courses).set({ schoolId: target.id }).where(eq(courses.schoolId, source.id)).returning({ id: courses.id })
+    // 학교 메일 인증: 같은 사용자가 두 학교 모두에 진행 중 인증이 있으면 하나만 남깁니다(사용자·학교당 진행 중 하나 — 부분 unique).
+    const open = inArray(institutionAffiliations.status, ['pending', 'active'])
+    const sourceOpen = await tx.select().from(institutionAffiliations).where(and(eq(institutionAffiliations.schoolId, source.id), open)).for('update')
+    const targetOpen = sourceOpen.length
+      ? await tx
+          .select()
+          .from(institutionAffiliations)
+          .where(and(eq(institutionAffiliations.schoolId, target.id), open, inArray(institutionAffiliations.userId, sourceOpen.map((r) => r.userId))))
+          .for('update')
+      : []
+    let affiliationsClosed = 0
+    for (const src of sourceOpen) {
+      const twin = targetOpen.find((t) => t.userId === src.userId)
+      if (!twin) continue
+      // active가 pending보다 우선, 둘 다 같으면 정본 쪽을 남깁니다.
+      const closeSource = !(src.status === 'active' && twin.status === 'pending')
+      const loser = closeSource ? src : twin
+      await tx
+        .update(institutionAffiliations)
+        .set(
+          loser.status === 'active'
+            ? { status: 'revoked', emailHash: null, revokedAt: now, revokedReason: 'merged_duplicate', updatedAt: now }
+            : { status: 'expired', emailHash: null, updatedAt: now },
+        )
+        .where(eq(institutionAffiliations.id, loser.id))
+      affiliationsClosed++
+    }
+    const affiliationsMoved = await tx
+      .update(institutionAffiliations)
+      .set({ schoolId: target.id })
+      .where(eq(institutionAffiliations.schoolId, source.id))
+      .returning({ id: institutionAffiliations.id })
+    const domainsMoved = await tx
+      .update(schoolEmailDomains)
+      .set({ schoolId: target.id })
+      .where(eq(schoolEmailDomains.schoolId, source.id))
+      .returning({ id: schoolEmailDomains.id })
     await tx.update(schools).set({ mergedInto: target.id }).where(eq(schools.mergedInto, source.id))
     await tx.update(schools).set({ mergedInto: target.id, mergedAt: now }).where(eq(schools.id, source.id))
     await recordAudit(tx, {
@@ -96,7 +139,13 @@ export async function mergeSchool(db: DbExecutor, actor: Actor, sourceId: unknow
       action: 'school.merge',
       targetType: 'school',
       targetId: source.id,
-      metadata: { into: target.id, coursesMoved: moved.length },
+      metadata: {
+        into: target.id,
+        coursesMoved: moved.length,
+        affiliationsMoved: affiliationsMoved.length,
+        affiliationsClosed,
+        emailDomainsMoved: domainsMoved.length,
+      },
     })
     return toSchoolDto(target)
   })

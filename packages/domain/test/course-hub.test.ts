@@ -3,6 +3,7 @@ import {
   ANONYMOUS_SENIOR_LABEL,
   type HubSnapshot,
   canWriteToCourseHub,
+  hubWriteDecision,
   extractStuckItems,
   forkPlanFromSnapshot,
   forkProjectTitle,
@@ -75,14 +76,27 @@ const snapshot: HubSnapshot = {
 }
 
 describe('canWriteToCourseHub (policy seam)', () => {
-  it('allows any active logged-in user on a canonical course, and nothing else', () => {
-    const course = { id: 'c', mergedInto: null }
-    expect(canWriteToCourseHub({ status: 'active' }, course)).toBe(true)
-    expect(canWriteToCourseHub({ status: 'suspended' }, course)).toBe(false)
-    expect(canWriteToCourseHub({ status: 'deleted' }, course)).toBe(false)
+  const course = { id: 'c', mergedInto: null, schoolId: 's1' }
+  const verified = { status: 'active' as const, activeSchoolIds: ['s1'] }
+
+  it('requires an active user, a canonical course and an active school-mail affiliation with the course school', () => {
+    expect(canWriteToCourseHub(verified, course)).toBe(true)
+    expect(hubWriteDecision(verified, course)).toEqual({ ok: true })
+    expect(hubWriteDecision({ status: 'active' }, course)).toEqual({ ok: false, reason: 'affiliation_required' })
+    expect(hubWriteDecision({ status: 'active', activeSchoolIds: ['s2'] }, course)).toEqual({ ok: false, reason: 'affiliation_required' })
+    expect(hubWriteDecision(verified, { id: 'c', mergedInto: null })).toEqual({ ok: false, reason: 'affiliation_required' })
+    expect(hubWriteDecision({ ...verified, status: 'suspended' }, course)).toEqual({ ok: false, reason: 'inactive_user' })
+    expect(canWriteToCourseHub({ ...verified, status: 'deleted' }, course)).toBe(false)
     expect(canWriteToCourseHub(null, course)).toBe(false)
-    expect(canWriteToCourseHub({ status: 'active' }, { id: 'c', mergedInto: 'd' })).toBe(false)
-    expect(canWriteToCourseHub({ status: 'active' }, null)).toBe(false)
+    expect(hubWriteDecision(verified, { ...course, mergedInto: 'd' })).toEqual({ ok: false, reason: 'not_canonical' })
+    expect(canWriteToCourseHub(verified, null)).toBe(false)
+  })
+
+  it('can drop the affiliation requirement (local/dev policy flag) but never the user/course checks', () => {
+    const open = { requireAffiliation: false }
+    expect(canWriteToCourseHub({ status: 'active' }, course, open)).toBe(true)
+    expect(canWriteToCourseHub({ status: 'suspended' }, course, open)).toBe(false)
+    expect(canWriteToCourseHub({ status: 'active' }, { ...course, mergedInto: 'd' }, open)).toBe(false)
   })
 })
 

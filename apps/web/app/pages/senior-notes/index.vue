@@ -3,7 +3,7 @@
  * 내 선배 노트(T-13, PROOFU_EVOLUTION_PLAN §8.3). `?course=<과목 id>`로 오면 그 과목에 새 노트를 쓸 수 있습니다.
  * 노트는 초안으로 저장되고, 공개 전 점검 경고를 확인한 뒤 게시합니다. 게시·철회는 작성자만, 철회는 즉시 공개에서 사라집니다.
  */
-import type { PublicCourseHubDto, SeniorNoteDto } from '~~/shared/types/api'
+import type { HubWriteEligibilityDto, PublicCourseHubDto, SeniorNoteDto } from '~~/shared/types/api'
 
 definePageMeta({ middleware: 'auth' })
 
@@ -13,6 +13,15 @@ const courseId = computed(() => (typeof route.query.course === 'string' ? route.
 const { data: course } = await useAsyncData(
   () => `senior-note-course:${courseId.value}`,
   () => (courseId.value ? $fetch<PublicCourseHubDto>(`/api/v1/public/courses/${encodeURIComponent(courseId.value)}`).catch(() => null) : Promise.resolve(null)),
+  { watch: [courseId] },
+)
+// 과목 허브 작성 자격(C-01): 그 학교 메일 인증이 없으면 폼 대신 인증 안내를 보여 줍니다(서버도 403으로 막음).
+const { data: eligibility } = await useAsyncData(
+  () => `hub-write:${courseId.value}`,
+  () =>
+    courseId.value
+      ? useRequestFetch()<HubWriteEligibilityDto>('/api/v1/me/hub-write', { query: { course: courseId.value } }).catch(() => null)
+      : Promise.resolve(null),
   { watch: [courseId] },
 )
 const { data: notes, refresh } = await useAsyncData(
@@ -75,7 +84,22 @@ async function withdraw(note: SeniorNoteDto) {
     <section v-if="courseId" aria-labelledby="new-note">
       <template v-if="course">
         <h2 id="new-note">새 노트: {{ course.course.school.name }} · {{ course.course.title }} <span class="badge">학생 작성</span></h2>
-        <SeniorNoteForm :course-id="course.course.id" @saved="onSaved" />
+        <div v-if="eligibility && !eligibility.allowed" class="notice" role="note">
+          <template v-if="eligibility.requirement === 'school_affiliation'">
+            <p><strong>이 학교 메일로 인증하면 선배 노트를 쓸 수 있습니다.</strong></p>
+            <p class="small">
+              과목 허브는 누구나 읽을 수 있지만, 글은 {{ eligibility.school.name }} 메일로 인증한 재학생·졸업생만 씁니다.
+              인증 메일 주소·학번·학과는 공개되지 않습니다.
+            </p>
+            <p>
+              <NuxtLink :to="affiliationPageLink(eligibility.school, `/senior-notes?course=${course.course.id}`)">
+                {{ eligibility.school.name }} 메일로 인증하기
+              </NuxtLink>
+            </p>
+          </template>
+          <p v-else>지금 계정으로는 이 과목 허브에 쓸 수 없습니다.</p>
+        </div>
+        <SeniorNoteForm v-else :course-id="course.course.id" @saved="onSaved" />
         <p class="small"><NuxtLink :to="`/c/${course.course.id}`">과목 페이지로 돌아가기</NuxtLink></p>
       </template>
       <p v-else class="notice error">과목을 찾을 수 없습니다.</p>

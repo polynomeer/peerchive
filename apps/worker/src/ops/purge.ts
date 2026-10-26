@@ -3,7 +3,7 @@
  *
  * 탈퇴 요청(T-02)은 계정을 deleted로 바꾸고 세션을 끊기만 합니다. 유예 기간(기본 7일)이 지나면 이 작업이 한 트랜잭션에서 정리합니다.
  *
- * 지우는 것(그 사람만의 자료): 프로필, 세션, 로그인 수단, 그 주소의 매직링크 토큰, 외부 연동(디스코드 id), 디스코드 코드·📌 요청,
+ * 지우는 것(그 사람만의 자료): 프로필, 세션, 로그인 수단, 그 주소의 매직링크 토큰, 외부 연동(디스코드 id), 학교 메일 인증·인증 코드(C-01), 디스코드 코드·📌 요청,
  * 주간 체크인(모든 과제), 유용성 신호, 선배 노트(철회 + 삭제), 케이스 스터디·포트폴리오 판, 분석 이벤트, 업로드 의도,
  * **혼자만 쓴 과제 전체**(다른 사람이 멤버였던 적 없는 과제: 로그·할 일·마일스톤·선언·체크인·디스코드 연결·파일과 저장소 파일·공개·후보).
  *
@@ -20,6 +20,7 @@
  */
 import {
   PUBLICATION_WITHDRAWN_TOPIC,
+  affiliationCodes,
   analyticsEvents,
   and,
   appeals,
@@ -43,6 +44,7 @@ import {
   eq,
   hashSubject,
   inArray,
+  institutionAffiliations,
   integrations,
   invitations,
   isNotNull,
@@ -167,6 +169,15 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
     c.add('magic_link_tokens', (await tx.delete(magicLinkTokens).where(inArray(magicLinkTokens.email, emails)).returning({ id: magicLinkTokens.id })).length)
     c.add('profile', (await tx.delete(profiles).where(eq(profiles.userId, userId)).returning({ id: profiles.userId })).length)
     c.add('integrations', (await tx.delete(integrations).where(eq(integrations.userId, userId)).returning({ id: integrations.id })).length)
+    // 학교 메일 인증(C-01): 코드 → 소속 순서(외래 키). 이력(학교·도메인·인증 시각)도 그 사람만의 자료라 남기지 않습니다.
+    const affiliationIds = idsOf(await tx.select({ id: institutionAffiliations.id }).from(institutionAffiliations).where(eq(institutionAffiliations.userId, userId)))
+    if (affiliationIds.length) {
+      c.add('affiliation_codes', (await tx.delete(affiliationCodes).where(inArray(affiliationCodes.affiliationId, affiliationIds)).returning({ id: affiliationCodes.id })).length)
+      c.add(
+        'institution_affiliations',
+        (await tx.delete(institutionAffiliations).where(inArray(institutionAffiliations.id, affiliationIds)).returning({ id: institutionAffiliations.id })).length,
+      )
+    }
     c.add('discord_codes', (await tx.delete(discordCodes).where(eq(discordCodes.userId, userId)).returning({ id: discordCodes.id })).length)
     c.add(
       'discord_pin_requests',

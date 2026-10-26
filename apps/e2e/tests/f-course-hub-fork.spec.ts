@@ -2,9 +2,12 @@
  * 시나리오 F. 후배의 과목 탐색과 플랜 포크(DELIVERY_PLAN §5, T-13).
  * 비로그인 방문자가 과목 페이지에서 공개 사례·막힘·선배 노트를 봅니다. 통계 동의자가 5명 미만이면 워크로드 분포는 나오지 않습니다.
  * 로그인한 후배가 포크하면 마일스톤만 있는 새 비공개 과제가 생기고 로그·파일·막힘 해결 내용은 복사되지 않습니다.
+ * 선배 노트는 그 학교 메일로 인증한 계정만 씁니다(C-01): 선배는 노트 화면의 안내를 따라 화면에서 학교 메일을 인증한 뒤 씁니다.
+ * 후배의 포크(읽기·계획 복사)에는 인증이 필요 없습니다.
  */
 import type { ArtifactDto, LogPageDto, MilestoneDto, ProjectDetailDto } from '../../web/shared/types/api'
 import { rand } from '../support/api'
+import { requestAndVerify, schoolMailbox } from '../support/affiliation'
 import { expect, test } from '../support/fixtures'
 import { publishCase } from '../support/scenarios'
 
@@ -12,6 +15,18 @@ test('F: 익명 과목 허브(사례·막힘·선배 노트, 워크로드 숨김
   const senior = await newUser('sena')
   const milestones = [`기획 ${rand(2)}`, `중간발표 ${rand(2)}`, `최종제출 ${rand(2)}`]
   const pub = await publishCase(senior, { stuck: true, withPdf: true, milestones })
+
+  // 선배 노트를 쓰려면 그 학교 메일 인증이 필요합니다: 노트 화면 → 안내 링크 → 학교가 미리 골라진 인증 화면 → 코드 입력 → 돌아가기.
+  const mailbox = schoolMailbox(pub.schoolId)
+  await senior.page.goto(`/senior-notes?course=${pub.courseId}`)
+  await expect(senior.page.getByText('이 학교 메일로 인증하면 선배 노트를 쓸 수 있습니다.')).toBeVisible()
+  await expect(senior.page.getByRole('button', { name: '초안 저장' })).toHaveCount(0)
+  await senior.page.getByRole('link', { name: `${pub.schoolName} 메일로 인증하기` }).click()
+  await senior.page.waitForURL(/\/settings\/affiliations\?/)
+  await requestAndVerify(senior.page, mailbox.email)
+  await senior.page.getByRole('link', { name: '선배 노트 쓰러 돌아가기' }).click()
+  await senior.page.waitForURL(new RegExp(`/senior-notes\\?course=${pub.courseId}$`))
+  await expect(senior.page.getByRole('button', { name: '초안 저장' })).toBeVisible()
 
   // 선배 노트(준비 단계라 API)
   const noteAnswer = `첫 주에 ERD부터 합의하세요 ${rand()}`

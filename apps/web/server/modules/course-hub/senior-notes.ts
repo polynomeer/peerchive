@@ -1,7 +1,8 @@
 /**
  * 선배 노트 (T-13, PROOFU_EVOLUTION_PLAN §8.3·§8.6, supply-kit §2, SYSTEM_DESIGN §6.2 SeniorNote, ADR 0013).
  *
- * - 작성: 로그인 + `canWriteToCourseHub`(지금은 active 사용자면 됨; 학교 인증·허브 개방 조건을 넣을 자리). 병합된 과목 id면 정본에 씁니다.
+ * - 작성: 로그인 + `canWriteToCourseHub`(active 사용자 + 그 과목 학교의 active 학교 메일 인증, C-01·ADR 0018; 허브 개방 조건을 넣을 자리).
+ *   인증이 없으면 403 `hub_write_not_allowed` + `requirement: 'school_affiliation'`·`schoolId`(화면이 인증 페이지로 안내). 병합된 과목 id면 정본에 씁니다.
  *   "정답·답안·교수 개인 평가 없음" 확인(noAnswersConfirmed: true)이 필수이고, 질문 4개 중 2개 이상 답해야 합니다(각 1000자).
  *   만들기는 사용자별 한도(시간당 5회)와 사용자·과목당 3개 한도가 있습니다.
  * - 수정(PATCH)·게시·철회는 작성자만(다른 사람에게는 404 — 초안의 존재를 드러내지 않음). 수정은 expectedVersion(409 version_conflict).
@@ -18,7 +19,7 @@ import {
   SENIOR_NOTE_PER_COURSE_LIMIT,
   SENIOR_NOTE_TERM_LABEL_MAX,
   SENIOR_NOTE_TIME_BUCKETS,
-  canWriteToCourseHub,
+  hubWriteDecision,
   normalizeLabel,
   normalizeSeniorNoteAnswers,
   runPublicationChecks,
@@ -43,6 +44,8 @@ import {
   type SeniorNoteOutboxPayload,
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
+import { activeAffiliationSchoolIds } from '../affiliation/affiliations'
+import { hubWritePolicy } from '../affiliation/config'
 import { emitAnalytics } from '../analytics/analytics'
 import { loadCanonicalCourse } from '../catalog/catalog'
 import { type Actor, ServiceError, conflict, forbidden, invalid, notFound, rateLimited } from '../errors'
@@ -50,7 +53,7 @@ import { seniorNoteNotice } from '../moderation/notices'
 import { isUuid } from '../projects/access'
 import { type RateLimitRule, hitRateLimit } from '../security/rate-limit'
 import { parseInput } from '../validation'
-import type { PublicationCheckDto, SeniorNoteDto } from '../../../shared/types/api'
+import type { HubWriteEligibilityDto, PublicationCheckDto, SeniorNoteDto } from '../../../shared/types/api'
 
 /** 선배 노트 만들기 한도(사용자별, 시간당). */
 export const SENIOR_NOTE_CREATE_RATE_LIMIT: RateLimitRule = { limit: 5, windowMs: 60 * 60 * 1000 }
@@ -160,6 +163,51 @@ async function toDto(db: DbExecutor, row: NoteRow): Promise<SeniorNoteDto> {
   }
 }
 
+/** 작성 자격 판정(만들기·게시·화면 안내 공통). 과목은 정본·과목 학교는 병합을 따라간 정본입니다. */
+async function writeDecision(tx: DbExecutor, actor: Actor, course: { id: string; mergedInto: string | null; schoolId: string }) {
+  const [user] = await tx.select({ status: users.status }).from(users).where(eq(users.id, actor.userId)).limit(1)
+  const [school] = await tx
+    .select({ id: sql<string>`coalesce(${schools.mergedInto}, ${schools.id})` })
+    .from(schools)
+    .where(eq(schools.id, course.schoolId))
+    .limit(1)
+  const decision = hubWriteDecision(
+    user ? { status: user.status, activeSchoolIds: await activeAffiliationSchoolIds(tx, actor.userId) } : null,
+    { id: course.id, mergedInto: course.mergedInto, schoolId: school?.id ?? null },
+    hubWritePolicy(),
+  )
+  return { decision, schoolId: school?.id ?? null }
+}
+
+/**
+ * 작성 자격 확인(만들기·게시 때 모두). 과목은 정본이어야 하고, 정책상 요구하면 그 과목 학교(정본)의 active 학교 메일 인증이 있어야 합니다.
+ * 인증이 없어서 막히면 화면이 인증 페이지로 안내할 수 있게 requirement·schoolId를 싣습니다.
+ */
+async function assertCanWrite(tx: DbExecutor, actor: Actor, course: { id: string; mergedInto: string | null; schoolId: string }): Promise<void> {
+  const { decision, schoolId } = await writeDecision(tx, actor, course)
+  if (decision.ok) return
+  if (decision.reason === 'affiliation_required') {
+    throw new ServiceError('FORBIDDEN', 'hub_write_not_allowed', undefined, { requirement: 'school_affiliation', schoolId })
+  }
+  throw forbidden('hub_write_not_allowed')
+}
+
+/**
+ * GET /me/hub-write?course= — 이 과목 허브에 쓸 수 있는지(화면 안내용). 404(없는 과목).
+ * `requirement: 'school_affiliation'`이면 그 학교(정본) 메일로 인증하면 쓸 수 있습니다.
+ */
+export async function getHubWriteEligibility(db: DbExecutor, actor: Actor, courseId: unknown): Promise<HubWriteEligibilityDto> {
+  const course = await loadCanonicalCourse(db, courseId)
+  const { decision, schoolId } = await writeDecision(db, actor, course)
+  const [school] = schoolId ? await db.select({ id: schools.id, name: schools.name }).from(schools).where(eq(schools.id, schoolId)).limit(1) : []
+  return {
+    courseId: course.id,
+    allowed: decision.ok,
+    requirement: !decision.ok && decision.reason === 'affiliation_required' ? 'school_affiliation' : null,
+    school: school ?? { id: course.schoolId, name: '' },
+  }
+}
+
 const outboxPayload = (row: NoteRow): SeniorNoteOutboxPayload => ({ seniorNoteId: row.id, courseId: row.courseId, version: row.version })
 
 // ── 만들기 ───────────────────────────────────────────────────────────────
@@ -177,8 +225,7 @@ export async function createSeniorNote(
   const answers = parseAnswers(input.answers)
   checkDisplay(input.displayMode, input.displayName)
   return db.transaction(async (tx) => {
-    const [user] = await tx.select({ status: users.status }).from(users).where(eq(users.id, actor.userId)).limit(1)
-    if (!canWriteToCourseHub(user ?? null, course)) throw forbidden('hub_write_not_allowed')
+    await assertCanWrite(tx, actor, course)
     if (!(await hitRateLimit(tx, 'senior_note_create', actor.userId, SENIOR_NOTE_CREATE_RATE_LIMIT, now))) throw rateLimited()
     // 같은 사용자의 동시 만들기를 직렬화해 과목당 한도를 지킵니다.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`senior-note:${actor.userId}:${course.id}`}))`)
@@ -296,10 +343,14 @@ export async function publishSeniorNote(
     if (row.status === 'hidden') throw conflict('hidden')
     if (row.version !== input.expectedVersion) throw conflict('version_conflict', { currentVersion: row.version })
     if (row.status === 'published') return toDto(tx, row)
-    // 작성 자격은 게시 때도 다시 봅니다(정지·탈퇴 계정, 나중에 더할 학교 인증 조건).
-    const [user] = await tx.select({ status: users.status }).from(users).where(eq(users.id, actor.userId)).limit(1)
-    const [course] = await tx.select({ id: courses.id, mergedInto: courses.mergedInto }).from(courses).where(eq(courses.id, row.courseId)).limit(1)
-    if (!canWriteToCourseHub(user ?? null, course ?? null)) throw forbidden('hub_write_not_allowed')
+    // 작성 자격은 게시 때도 다시 봅니다(정지·탈퇴 계정, 학교 인증 해제·취소).
+    const [course] = await tx
+      .select({ id: courses.id, mergedInto: courses.mergedInto, schoolId: courses.schoolId })
+      .from(courses)
+      .where(eq(courses.id, row.courseId))
+      .limit(1)
+    if (!course) throw forbidden('hub_write_not_allowed')
+    await assertCanWrite(tx, actor, course)
     const displayNameSnapshot = await displaySnapshot(tx, actor.userId, row.displayMode, row.displayNameSnapshot)
     const warnings = warningsFor({ ...row, displayNameSnapshot })
     if (warnings.length > 0 && !input.confirmWarnings) {

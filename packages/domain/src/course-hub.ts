@@ -4,8 +4,8 @@
  *
  * - 이 파일의 함수는 모두 **공개 release 스냅샷**(또는 게시된 선배 노트)만 입력으로 받습니다. 비공개 작업 테이블을 보지 않습니다.
  *   스냅샷 타입은 웹의 PublicSnapshot과 같은 모양의 필요한 부분만 구조적으로 선언합니다(런타임 의존성 없음).
- * - 과목 허브 작성 자격은 `canWriteToCourseHub` 한 곳에서 판정합니다. 지금은 로그인한 active 사용자면 됩니다.
- *   나중에 학교 인증 작성자·허브 단계적 개방(PROOFU_EVOLUTION_PLAN §8.6 초안)을 넣을 자리입니다.
+ * - 과목 허브 작성 자격은 `canWriteToCourseHub`(`hubWriteDecision`) 한 곳에서 판정합니다. active 사용자 + 그 과목 학교의 active 학교 메일 인증
+ *   (C-01, ADR 0018). 허브 단계적 개방(PROOFU_EVOLUTION_PLAN §8.6 초안)도 여기에 더합니다.
  * - 교수 실명·평가 필드는 다루지 않습니다(§8.6).
  */
 import type { CheckItem } from './publication-checks'
@@ -14,22 +14,60 @@ import type { CheckItem } from './publication-checks'
 
 export interface HubWriter {
   status: 'active' | 'suspended' | 'deleted'
+  /**
+   * 이 사용자의 active 학교 메일 인증이 가리키는 **정본** 학교 id들(C-01, ADR 0018). 호출자가 병합을 따라가 정본으로 넘깁니다.
+   * 없으면 인증 없음으로 봅니다.
+   */
+  activeSchoolIds?: readonly string[]
 }
 
 export interface HubCourse {
   id: string
   /** 병합된 과목이면 정본 id. 호출자는 정본을 넘깁니다. */
   mergedInto: string | null
+  /** 과목의 정본 학교 id. 인증을 요구하면 필요합니다(없으면 쓸 수 없음). */
+  schoolId?: string | null
 }
 
+export interface HubWritePolicy {
+  /**
+   * 그 과목 학교의 active 학교 메일 인증을 요구할지(PROOFU_EVOLUTION_PLAN §8.6 "과목 허브 작성은 학교 인증 계정만").
+   * 기본 true. false는 로컬·개발용이며 production 서버는 false로 시작하지 않습니다(PEERCHIVE_HUB_REQUIRE_AFFILIATION, ADR 0018).
+   */
+  requireAffiliation: boolean
+}
+
+export const DEFAULT_HUB_WRITE_POLICY: HubWritePolicy = { requireAffiliation: true }
+
+export type HubWriteDecision =
+  | { ok: true }
+  | { ok: false; reason: 'inactive_user' | 'not_canonical' | 'affiliation_required' }
+
 /**
- * 과목 허브(선배 노트 등)에 쓸 수 있는지. 지금은 로그인한 active 사용자 + 정본 과목이면 true입니다.
- * 학교 인증 작성자 확인·허브 개방 기준(공개 사례·노트 수) 같은 조건은 이 함수에만 더합니다.
+ * 과목 허브(선배 노트 등)에 쓸 수 있는지와 그 이유. active 사용자 + 정본 과목 + (정책상 요구하면) 그 과목 학교의 active 학교 메일 인증.
+ * 허브 개방 기준(공개 사례·노트 수) 같은 조건도 이 함수에만 더합니다. 읽기·포크·유용성 신호는 작성이 아니므로 이 판정을 쓰지 않습니다.
  */
-export function canWriteToCourseHub(user: HubWriter | null | undefined, course: HubCourse | null | undefined): boolean {
-  if (!user || user.status !== 'active') return false
-  if (!course || course.mergedInto !== null) return false
-  return true
+export function hubWriteDecision(
+  user: HubWriter | null | undefined,
+  course: HubCourse | null | undefined,
+  policy: HubWritePolicy = DEFAULT_HUB_WRITE_POLICY,
+): HubWriteDecision {
+  if (!user || user.status !== 'active') return { ok: false, reason: 'inactive_user' }
+  if (!course || course.mergedInto !== null) return { ok: false, reason: 'not_canonical' }
+  if (policy.requireAffiliation) {
+    const schoolId = course.schoolId
+    if (!schoolId || !(user.activeSchoolIds ?? []).includes(schoolId)) return { ok: false, reason: 'affiliation_required' }
+  }
+  return { ok: true }
+}
+
+/** `hubWriteDecision(...).ok`. */
+export function canWriteToCourseHub(
+  user: HubWriter | null | undefined,
+  course: HubCourse | null | undefined,
+  policy: HubWritePolicy = DEFAULT_HUB_WRITE_POLICY,
+): boolean {
+  return hubWriteDecision(user, course, policy).ok
 }
 
 // ── 선배 노트 ────────────────────────────────────────────────────────────

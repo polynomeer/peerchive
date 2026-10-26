@@ -4,6 +4,7 @@
  * - 로그인 IP rate limit(15분 20회, ADR 0006): 모든 테스트가 같은 루프백 IP로 로그인하므로, 링크를 요청하기 전에
  *   `magic_link_ip:` 카운터만 지웁니다(이메일별 카운터·다른 한도는 그대로).
  * - 운영자 부여: 실제 운영 절차와 같은 CLI(`pnpm --filter @peerchive/db grant-operator`)를 E2E DB로 실행합니다.
+ * - 학교 메일 도메인 등록(C-01): 파일럿 전 운영 절차와 같은 CLI(`pnpm --filter @peerchive/db school-email-domain add`)를 E2E DB로 실행합니다.
  */
 import { execFileSync } from 'node:child_process'
 import postgres from 'postgres'
@@ -22,6 +23,14 @@ export async function resetLoginIpRateLimit(): Promise<void> {
 
 export function grantOperator(email: string): void {
   execFileSync('pnpm', ['--filter', '@peerchive/db', 'grant-operator', email], {
+    cwd: REPO_ROOT,
+    env: { ...process.env, DATABASE_URL: e2eDatabaseUrl() },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+}
+
+export function registerSchoolDomain(schoolId: string, domain: string): void {
+  execFileSync('pnpm', ['--filter', '@peerchive/db', 'school-email-domain', 'add', schoolId, domain], {
     cwd: REPO_ROOT,
     env: { ...process.env, DATABASE_URL: e2eDatabaseUrl() },
     stdio: ['ignore', 'pipe', 'pipe'],

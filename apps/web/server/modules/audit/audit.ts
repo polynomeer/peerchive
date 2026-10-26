@@ -84,6 +84,12 @@ export type AuditAction =
   | 'appeal.create'
   | 'appeal.decide'
   | 'mail.send_failed'
+  | 'affiliation.verify'
+  | 'affiliation.update'
+  | 'affiliation.remove'
+  | 'affiliation.revoke'
+  | 'school_email_domain.add'
+  | 'school_email_domain.remove'
 
 export async function recordAudit(
   db: DbExecutor,
@@ -120,6 +126,7 @@ export async function recordAudit(
       | 'moderation_action'
       | 'appeal'
       | 'mail'
+      | 'affiliation'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

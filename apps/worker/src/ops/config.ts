@@ -21,6 +21,7 @@ export const OPS_TASK_NAMES = [
   'discord-codes',
   'pin-requests',
   'outbox',
+  'affiliation-codes',
   'account-purge',
 ] as const
 export type OpsTaskName = (typeof OPS_TASK_NAMES)[number]
@@ -36,6 +37,7 @@ export const DEFAULT_CRONS: Record<OpsTaskName, string> = {
   'discord-codes': '17 * * * *',
   'pin-requests': '*/10 * * * *',
   outbox: '41 4 * * *',
+  'affiliation-codes': '27 * * * *',
   'account-purge': '*/30 * * * *',
 }
 

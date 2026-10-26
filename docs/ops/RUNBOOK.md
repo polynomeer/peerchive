@@ -1,6 +1,6 @@
 # Peerchive 운영 runbook (파일럿)
 
-제한된 파일럿(학생 50명·과제 20개 수준, SYSTEM_DESIGN §14)을 한 사람이 운영한다는 전제의 절차서입니다. 결정 배경은 [ADR 0016](../adr/0016-deletion-ledger-maintenance-analytics.md)(탈퇴 정리·삭제 장부·점검 모드·분석), [ADR 0017](../adr/0017-smtp-mail-and-s3-storage.md)(SMTP 메일·S3 호환 저장소), [ADR 0012](../adr/0012-publish-withdraw-public-read.md)(공개 읽기 운영 스위치), [ADR 0015](../adr/0015-reports-moderation-appeals.md)(신고·조치)를 보세요. 값·명령은 [apps/README.md](../../apps/README.md)의 환경 변수 표와 같습니다.
+제한된 파일럿(학생 50명·과제 20개 수준, SYSTEM_DESIGN §14)을 한 사람이 운영한다는 전제의 절차서입니다. 결정 배경은 [ADR 0016](../adr/0016-deletion-ledger-maintenance-analytics.md)(탈퇴 정리·삭제 장부·점검 모드·분석), [ADR 0018](../adr/0018-school-affiliation.md)(학교 메일 인증), [ADR 0017](../adr/0017-smtp-mail-and-s3-storage.md)(SMTP 메일·S3 호환 저장소), [ADR 0012](../adr/0012-publish-withdraw-public-read.md)(공개 읽기 운영 스위치), [ADR 0015](../adr/0015-reports-moderation-appeals.md)(신고·조치)를 보세요. 값·명령은 [apps/README.md](../../apps/README.md)의 환경 변수 표와 같습니다.
 
 목표 값은 SLA가 아니라 검증할 설계 목표입니다. 호스팅 공급자·가격은 정하지 않았습니다(DELIVERY_PLAN §10). `<…>` 자리는 파일럿 전에 채웁니다.
 
@@ -16,7 +16,8 @@
 | 파일 저장소 | `PEERCHIVE_STORAGE_DRIVER=s3` + `PEERCHIVE_S3_ENDPOINT`(https)·`_REGION`·`_BUCKET`·`_ACCESS_KEY_ID`·`_SECRET_ACCESS_KEY`(·`_FORCE_PATH_STYLE`·`_PREFIX`), web·worker 같은 값. 설정이 빠졌거나 http endpoint면 web·worker가 시작하지 않음. 공급자 쪽: 비공개 버킷·버전 관리·전용 키(아래 §1.1). 단일 서버 파일럿만 `PEERCHIVE_ALLOW_FS_STORAGE_IN_PRODUCTION=1` + 백업 대상 디스크 | **구현됨 — 공급자 설정 필요** |
 | 악성코드 검사 | `PEERCHIVE_MALWARE_SCANNER=clamav` + `CLAMAV_HOST/PORT`(signature-only는 production에서 worker가 거부). clamd 서명 갱신 확인 | 운영자 확인 |
 | 디스코드 | `PEERCHIVE_INTERNAL_SECRET`(32자 이상 무작위, web·bot 같은 값), `DISCORD_BOT_TOKEN`, 슬래시 명령 등록. 실제 디스코드 연동은 미검증 | 미검증 |
-| pepper | `PEERCHIVE_ANALYTICS_PEPPER`, `PEERCHIVE_DELETION_PEPPER` 각각 `openssl rand -hex 32`, 서로 다름. **삭제 pepper는 바꾸지 않음**(재적용이 장부를 못 맞춤). 없으면 분석은 꺼지고 worker는 시작하지 않음 | 운영자 확인 |
+| pepper | `PEERCHIVE_ANALYTICS_PEPPER`, `PEERCHIVE_DELETION_PEPPER`, `PEERCHIVE_AFFILIATION_PEPPER`(web만) 각각 `openssl rand -hex 32`, 서로 다름. **삭제·학교 인증 pepper는 바꾸지 않음**(재적용이 장부를, 한 주소 한 계정 확인이 이전 인증을 못 맞춤). 없으면 분석은 꺼지고 worker는 시작하지 않으며, 학교 인증 pepper가 없으면 web이 시작하지 않음 | 운영자 확인 |
+| 학교 메일 인증(C-01) | `PEERCHIVE_HUB_REQUIRE_AFFILIATION`은 비우거나 `1`(production에서 `0`이면 web이 시작하지 않음). **파일럿 학교마다 메일 도메인 등록**(아래 §4.1) — 등록 전에는 그 학교 학생이 인증할 수 없어 선배 노트를 쓸 수 없음 | 절차 |
 | 탈퇴 유예 | `PEERCHIVE_DELETION_GRACE_DAYS`(기본 7). web·worker 같은 값 | 기본값 |
 | 공개 색인 | `PEERCHIVE_PUBLIC_INDEXING`은 파일럿 동안 끔(noindex) | 기본값 |
 | 프록시 | 프록시·로드밸런서 뒤라면 `PEERCHIVE_TRUSTED_PROXIES`에 프록시 CIDR을 설정(설정하지 않으면 X-Forwarded-For를 무시하고 소켓 주소만 사용). 잘못된 CIDR이 있으면 production에서 서버가 뜨지 않음 | 구현됨 — 배포 환경 CIDR 설정 필요 |
@@ -139,6 +140,23 @@
 4. 확인: `/operator/metrics`의 "정리가 늦은 탈퇴 계정"이 0인지. 0이 아니면 worker 로그의 `account purge failed`를 봅니다.
 5. 공개 사례의 당사자였다면 그 release는 철회되고, 팀은 그 사람을 뺀 새 후보를 만들 수 있습니다.
 
+### 4.1 학교 메일 인증 운영(C-01, ADR 0018)
+
+**파일럿 전: 학교 메일 도메인 등록.** 학생이 만든 학교(ADR 0010)에 운영자가 그 학교의 공식 메일 도메인을 붙여야 학교 메일 인증이 됩니다.
+
+1. 학교 id 찾기: 운영자로 로그인해 `GET /api/v1/schools?q=<학교 이름>`(병합된 학교면 정본 id가 나옴). 같은 학교가 여러 이름으로 있으면 먼저 병합(`POST /api/v1/operator/schools/:id/merge`)합니다.
+2. 등록: `pnpm --filter @peerchive/db school-email-domain add <schoolId> <domain>`(또는 `POST /api/v1/operator/schools/:id/email-domains {domain}`). 학교 공식 안내로 도메인을 확인합니다(예: 학생 메일이 `stu.<학교>.ac.kr`이면 `<학교>.ac.kr`을 등록하면 하위 도메인도 인정). `ac.kr` 같은 공용 접미사·웹메일·다른 학교 도메인과 겹치는 값은 거부됩니다.
+3. 확인: `pnpm --filter @peerchive/db school-email-domain list <schoolId>`. 실제 학교 메일 한 곳으로 `/settings/affiliations`에서 코드 수신·인증을 확인합니다(스팸함 포함).
+4. 잘못 등록했으면 `school-email-domain remove <schoolId> <domain>`. 이미 인증된 소속은 그대로이므로, 잘못된 도메인으로 인증된 계정은 아래 취소로 정리합니다.
+
+**인증 취소(사칭·잘못된 도메인·학교 요청).**
+
+1. 대상 찾기: `GET /api/v1/operator/affiliations?schoolId=<id>` 또는 `?userId=<id>`(사용자 id·학교·도메인·상태·시각만 보임. 메일 주소는 저장돼 있지 않아 운영자도 볼 수 없음).
+2. 취소: `POST /api/v1/operator/affiliations/:id/revoke {"reason": "<사유>"}` → 그 소속은 revoked, 다음 요청부터 그 학교 과목 허브에 쓸 수 없음(초안 게시도 막힘). 이미 게시된 선배 노트는 남으므로, 내용 문제는 신고·조치(T-15) 절차로 따로 처리합니다. 사유는 감사 기록(`affiliation.revoke`)에 남습니다.
+3. 같은 주소로 다시 인증하는 것은 막지 않습니다(ADR 0018 한계). 반복되면 계정 조치를 검토합니다.
+
+**학생 문의.** "코드가 안 와요" → §3.8과 같은 메일 점검 + 주소별 한도(시간당 3회, 넘으면 응답은 같고 발송만 안 함). "다른 계정에서 인증됐다고 나와요(`email_in_use`)" → 그 주소의 다른 계정에서 해제(`/settings/affiliations`)하거나, 본인 확인 뒤 운영자가 그 소속을 취소합니다. "졸업해서 메일이 없어졌어요" → 인증은 그대로 유지되고 졸업생으로 바꿀 수 있습니다(재인증 없음).
+
 ## 5. 백업 일정과 보존
 
 | 대상 | 방법 | 주기 | 보존 |
@@ -187,6 +205,8 @@ RTO 목표 4시간 대비 로컬 연습은 수 초입니다. 운영 데이터 �
 | 업로드 의도 | 15분 유효, 만료 1시간 뒤 삭제 + 격리 파일 | `upload-intents` 15분마다 |
 | 주인 없는 격리 파일 | 24시간 | `orphan-quarantine` 매시 |
 | outbox(전달 완료) | 30일 | `outbox` 매일 |
+| 학교 메일 인증 코드 | 10분 유효(5번 틀리면 잠김), 쓰였거나 만료된 지 하루 뒤 삭제. 쓸 코드가 없어진 지 1시간 지난 요청은 expired(메일 해시 삭제) | `affiliation-codes` 매시 |
+| 학교 메일 인증(소속) | 메일 주소는 저장하지 않음(해시·도메인만). active는 해제·취소·탈퇴까지, 끝난 행은 해시 없이 이력만 | 탈퇴 정리 때 삭제 |
 | 탈퇴 계정 자료 | 요청 뒤 7일(유예) | `account-purge` 30분마다 |
 | 삭제 장부 | 무기한(개인정보 없음, 재적용에 필요) | 없음 |
 | 분석 이벤트 | 파일럿 기간 `<기간>`, 수집 거부·탈퇴 때 삭제 | 수동(`<절차>`) |

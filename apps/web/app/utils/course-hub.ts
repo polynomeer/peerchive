@@ -40,7 +40,7 @@ export const SEARCH_KIND_LABELS: Record<SearchKind, string> = {
 
 export const COURSE_HUB_ERROR_MESSAGES: Record<string, string> = {
   unauthenticated: '로그인이 필요합니다.',
-  hub_write_not_allowed: '지금 계정으로는 이 과목 허브에 쓸 수 없습니다.',
+  hub_write_not_allowed: '이 학교 메일로 인증하면 선배 노트를 쓸 수 있습니다.',
   limit_reached: '이 과목에는 노트를 더 만들 수 없습니다(과목당 3개).',
   rate_limited: '잠시 뒤 다시 시도하세요(요청이 너무 많습니다).',
   version_conflict: '그 사이 노트가 바뀌었습니다. 새로 불러온 뒤 다시 시도하세요.',
@@ -52,6 +52,16 @@ export const COURSE_HUB_ERROR_MESSAGES: Record<string, string> = {
 
 export function courseHubErrorMessage(code: string): string {
   return COURSE_HUB_ERROR_MESSAGES[code] ?? '요청을 처리하지 못했습니다. 잠시 뒤 다시 시도하세요.'
+}
+
+/** 학교 인증 페이지 주소. 학교를 미리 고르고, 인증 뒤 돌아올 곳(사이트 안 경로만)을 넘깁니다. */
+export function affiliationPageLink(school?: { id: string; name: string } | null, returnTo?: string): string {
+  const query = new URLSearchParams()
+  if (school?.id) query.set('school', school.id)
+  if (school?.name) query.set('schoolName', school.name)
+  if (returnTo) query.set('return', returnTo)
+  const qs = query.toString()
+  return `/settings/affiliations${qs ? `?${qs}` : ''}`
 }
 
 /** 과목 허브의 노트 앵커. */

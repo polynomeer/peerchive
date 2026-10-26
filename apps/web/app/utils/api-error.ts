@@ -4,13 +4,15 @@ export interface ApiError {
   status: number
   code: string
   fields: Record<string, string>
+  /** 오류 응답의 나머지 값(예: requirement·schoolId·attemptsLeft). */
+  data: ApiErrorData
 }
 
 /** $fetch 오류를 상태 코드·이유 코드·필드별 코드로 풉니다. */
 export function apiError(error: unknown): ApiError {
   const e = error as { statusCode?: number; status?: number; data?: { data?: ApiErrorData } }
   const data = e?.data?.data
-  return { status: e?.statusCode ?? e?.status ?? 0, code: data?.code ?? 'unknown', fields: data?.fields ?? {} }
+  return { status: e?.statusCode ?? e?.status ?? 0, code: data?.code ?? 'unknown', fields: data?.fields ?? {}, data: data ?? { code: 'unknown' } }
 }
 
 const FIELD_MESSAGES: Record<string, string> = {
@@ -40,6 +42,8 @@ const FIELD_MESSAGES: Record<string, string> = {
   metadata_not_stripped: '메타데이터(위치 정보 등)를 아직 지우지 않은 이전 이미지가 있습니다. 정리 작업 뒤 다시 시도하세요.',
   mismatch: '그 사이 마일스톤 목록이 바뀌었습니다. 최신 목록을 확인한 뒤 다시 시도하세요.',
   duplicate: '같은 항목이 두 번 들어 있습니다.',
+  domain_not_allowed: '이 학교에 등록된 메일 도메인이 아닙니다. 학교에서 받은 메일 주소인지 확인하세요.',
+  code_mismatch: '인증 코드가 맞지 않습니다.',
 }
 
 export function fieldMessage(code: string | undefined): string | undefined {

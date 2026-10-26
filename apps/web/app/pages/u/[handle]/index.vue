@@ -97,6 +97,9 @@ const years = computed(() => {
           <a :href="`/api/v1/public/profiles/${profile.handle}/readme-card.md`">GitHub README 카드(마크다운)</a>
         </p>
         <p v-if="profile.schoolLabel" class="small muted">학교(본인 입력): {{ profile.schoolLabel }}</p>
+        <ul v-if="profile.affiliationBadges.length" class="plain actions small" aria-label="학교 인증">
+          <li v-for="badge in profile.affiliationBadges" :key="badge.label"><span class="badge">✓ {{ badge.label }}</span></li>
+        </ul>
       </header>
 
       <PortfolioView :view="profile" id-prefix="pf" />

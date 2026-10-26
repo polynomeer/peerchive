@@ -47,3 +47,17 @@ export async function waitForMagicLink(email: string, after: number, timeoutMs =
   }
   throw new Error(`로그인 메일을 찾지 못했습니다: ${maskEmail(email)} (${SERVER_LOG})`)
 }
+
+/** `after`개 다음에 온 학교 메일 인증 코드(6자리)를 기다립니다(C-01, 본문 `인증 코드: 123456`). */
+export async function waitForAffiliationCode(email: string, after: number, timeoutMs = 10_000): Promise<string> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const blocks = blocksFor(email)
+    if (blocks.length > after) {
+      const match = /인증 코드: (\d{6})/.exec(blocks[after]!)
+      if (match) return match[1]!
+    }
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  throw new Error(`인증 코드 메일을 찾지 못했습니다: ${maskEmail(email)} (${SERVER_LOG})`)
+}

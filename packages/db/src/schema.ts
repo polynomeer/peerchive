@@ -33,6 +33,9 @@
  * 케이스 스터디·공개 프로필의 운영 숨김(case_studies.hidden_at·profiles.hidden_at). 결정은 ADR 0015.
  * T-16(0015 migration): 탈퇴 계정 정리(users.purged_at)·삭제 장부(deletion_ledger, 개인정보 없음), 분석 수집 거부(users.analytics_opt_out),
  * pilot 분석 이벤트(analytics_events, 허용 목록 props만), worker 상태 기록(worker_heartbeats). 결정은 ADR 0016.
+ * C-01(0016 migration): 학교 메일 도메인(school_email_domains, 운영자 등록), 기관 소속 인증(institution_affiliations: 메일 주소 대신
+ * HMAC·도메인만, 자기 신고 학과·재학/졸업생, 상태 이력)과 인증 코드(affiliation_codes, HMAC·10분·5회), 공개 프로필 배지 선택
+ * (profiles.show_affiliation_badge), 분석 이벤트 affiliation_verified. 결정은 ADR 0018.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -180,7 +183,16 @@ export const analyticsEventName = pgEnum('analytics_event_name', [
   'senior_note_published',
   'portfolio_shared',
   'login_succeeded',
+  'affiliation_verified',
 ])
+/** 기관 종류(C-01). 지금은 대학만. P2에서 bootcamp 등을 더합니다(SYSTEM_DESIGN §6.7.2 이관 원칙, ADR 0018). */
+export const institutionKind = pgEnum('institution_kind', ['university'])
+/** 소속 인증 수단(C-01). 지금은 학교 메일만. P2에서 invite_code·cohort_approval·certificate_check를 더합니다. */
+export const affiliationMethod = pgEnum('affiliation_method', ['email'])
+/** 재학생/졸업생(자기 선언). 재학생 → 졸업생으로만 바꿀 수 있습니다. */
+export const affiliationStanding = pgEnum('affiliation_standing', ['student', 'alumni'])
+/** pending(코드 대기) → active(인증) / expired(만료·시도 초과·새 요청으로 대체) / revoked(본인 해제·운영자 취소). */
+export const affiliationStatus = pgEnum('affiliation_status', ['pending', 'active', 'revoked', 'expired'])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -291,6 +303,8 @@ export const profiles = pgTable(
     openToWork: boolean('open_to_work').notNull().default(false),
     /** 운영 조치로 공개 프로필을 숨긴 시각(T-15). 숨김이면 /u/:handle·README 카드·이전 공개 프로필 API가 404입니다. 계정·과제 공간은 그대로입니다. */
     hiddenAt: timestamp('hidden_at', { withTimezone: true }),
+    /** 공개 프로필에 학교 인증 배지("○○대학교 인증", 졸업생이면 "졸업생")를 보일지(C-01, 기본 끔). 학과·메일·도메인은 어떤 경우에도 공개하지 않습니다. */
+    showAffiliationBadge: boolean('show_affiliation_badge').notNull().default(false),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -321,7 +335,7 @@ export const operators = pgTable('operators', {
  * 학교(학생 입력, "학생 작성"). 같은 학교가 여러 이름으로 들어오면 운영자가 병합합니다(merged_into, 삭제 없음).
  * name_key는 @peerchive/domain의 labelKey(공백·대소문자·구두점 무시)이며 pg_trgm 유사도 검색에 씁니다.
  * 정본(merged_into가 null)끼리는 name_key가 겹치지 않습니다.
- * 학교 메일 인증·공식 페이지(PROOFU_EVOLUTION_PLAN §8.6, §8.9.3)는 다음 slice에서 이 행에 붙입니다.
+ * 학교 메일 인증(C-01)은 school_email_domains·institution_affiliations가 이 행을 가리킵니다(ADR 0018). 공식 페이지(§8.9.3)는 아직 없습니다.
  */
 export const schools = pgTable(
   'schools',
@@ -2032,5 +2046,111 @@ export const workerHeartbeats = pgTable(
   (t) => [
     check('worker_heartbeats_name_check', sql`${t.name} ~ '^[a-z0-9:_.-]{1,60}$'`),
     check('worker_heartbeats_details_object_check', sql`jsonb_typeof(${t.details}) = 'object'`),
+  ],
+)
+
+// ── 학교 메일 인증 (C-01, PROOFU_EVOLUTION_PLAN §8.6, SYSTEM_DESIGN §6.7 SchoolAffiliation·§6.7.2 이관 원칙, ADR 0018) ─────────────
+
+/**
+ * 학교 메일 도메인. 운영자만 등록·삭제합니다(API·CLI, 감사 기록). 메일 도메인이 이 값과 같거나 그 하위 도메인이면(`yu.ac.kr` → `stu.yu.ac.kr`)
+ * 그 학교 메일로 봅니다. domain은 소문자 ASCII(IDN은 punycode)이며 전체에서 하나입니다(한 도메인은 한 학교). 학교 병합 때 정본으로 옮깁니다.
+ */
+export const schoolEmailDomains = pgTable(
+  'school_email_domains',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    schoolId: uuid('school_id')
+      .notNull()
+      .references(() => schools.id),
+    domain: text('domain').notNull(),
+    /** 등록한 운영자. CLI로 등록하면 null(운영 콘솔). */
+    addedBy: uuid('added_by').references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('school_email_domains_domain_key').on(t.domain),
+    index('school_email_domains_school_id_idx').on(t.schoolId),
+    check('school_email_domains_domain_check', sql`${t.domain} ~ '^[a-z0-9]([a-z0-9.-]{1,251})[a-z0-9]$' and ${t.domain} like '%.%'`),
+  ],
+)
+
+/**
+ * 기관 소속 인증(SYSTEM_DESIGN의 SchoolAffiliation = InstitutionAffiliation의 대학·메일 사례). 이관 원칙대로 처음부터 institution_* 이름과
+ * kind·method 열을 두되, 기관 테이블은 아직 없으므로 기존 schools를 가리킵니다(P2에서 schools를 기관으로 일반화, ADR 0018).
+ *
+ * - **메일 주소를 저장하지 않습니다.** HMAC-SHA256(PEERCHIVE_AFFILIATION_PEPPER, 정규화한 주소)과 도메인만 둡니다. 인증 코드는 요청 즉시 보내고
+ *   주소는 메모리에서만 씁니다. 해제·취소·만료되면 email_hash도 지웁니다(학교·도메인·인증 시각 이력만 남음).
+ * - 같은 학교 메일 주소는 active 행 하나에서만 인증됩니다(email_hash 부분 unique). 한 사용자·학교마다 진행 중(pending/active) 행은 하나입니다.
+ * - 졸업 뒤 메일이 없어져도 active를 유지합니다(주기적 재인증 없음). standing은 자기 선언(student → alumni만).
+ * - department_label은 자기 신고 학과(선택, 40자)이며 공개 DTO·운영자 목록에 싣지 않습니다. 학번은 받지 않습니다.
+ * - 과목 허브 작성 자격(canWriteToCourseHub)은 이 표의 active 행으로 판정합니다.
+ */
+export const institutionAffiliations = pgTable(
+  'institution_affiliations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    institutionKind: institutionKind('institution_kind').notNull().default('university'),
+    /** 정본 학교. 학교 병합 때 정본으로 옮깁니다. */
+    schoolId: uuid('school_id')
+      .notNull()
+      .references(() => schools.id),
+    method: affiliationMethod('method').notNull().default('email'),
+    /** 정규화한 학교 메일 주소의 HMAC(hex 64). pending·active일 때만 있고 해제·취소·만료되면 null. */
+    emailHash: text('email_hash'),
+    /** 메일 도메인(소문자 ASCII). 본인·운영자에게만 보입니다. */
+    emailDomain: text('email_domain').notNull(),
+    standing: affiliationStanding('standing').notNull(),
+    /** 자기 신고 학과(선택, 정규화, 40자). 공개하지 않습니다. */
+    departmentLabel: text('department_label'),
+    status: affiliationStatus('status').notNull().default('pending'),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    /** user_removed(본인 해제) / operator(운영자 취소, 사유는 감사 기록) / merged_duplicate(학교 병합으로 겹침). */
+    revokedReason: text('revoked_reason'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('institution_affiliations_email_hash_active_key').on(t.emailHash).where(sql`${t.status} = 'active'`),
+    uniqueIndex('institution_affiliations_user_school_open_key').on(t.userId, t.schoolId).where(sql`${t.status} in ('pending', 'active')`),
+    index('institution_affiliations_user_id_idx').on(t.userId),
+    index('institution_affiliations_school_id_idx').on(t.schoolId),
+    check('institution_affiliations_email_hash_check', sql`${t.emailHash} is null or ${t.emailHash} ~ '^[0-9a-f]{64}$'`),
+    check('institution_affiliations_open_hash_check', sql`${t.status} not in ('pending', 'active') or ${t.emailHash} is not null`),
+    check('institution_affiliations_active_verified_check', sql`${t.status} <> 'active' or ${t.verifiedAt} is not null`),
+    check('institution_affiliations_revoked_check', sql`${t.status} <> 'revoked' or (${t.revokedAt} is not null and ${t.revokedReason} is not null)`),
+    check(
+      'institution_affiliations_department_label_check',
+      sql`${t.departmentLabel} is null or char_length(${t.departmentLabel}) between 1 and 40`,
+    ),
+    check('institution_affiliations_email_domain_check', sql`char_length(${t.emailDomain}) between 3 and 253`),
+    check('institution_affiliations_revoked_reason_check', sql`${t.revokedReason} is null or ${t.revokedReason} in ('user_removed', 'operator', 'merged_duplicate')`),
+  ],
+)
+
+/**
+ * 학교 메일 인증 코드(6자리). 원문 대신 HMAC(pepper, 소속 id + 코드)만 저장하고, 10분 뒤 만료, 틀린 시도 5회면 잠깁니다(소속 행 expired).
+ * 한 번 쓰면 used_at. worker 주기 작업이 오래된 행을 지웁니다.
+ */
+export const affiliationCodes = pgTable(
+  'affiliation_codes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    affiliationId: uuid('affiliation_id')
+      .notNull()
+      .references(() => institutionAffiliations.id),
+    codeHash: text('code_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    attempts: integer('attempts').notNull().default(0),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('affiliation_codes_affiliation_id_idx').on(t.affiliationId),
+    check('affiliation_codes_code_hash_check', sql`${t.codeHash} ~ '^[0-9a-f]{64}$'`),
+    check('affiliation_codes_attempts_check', sql`${t.attempts} between 0 and 5`),
   ],
 )

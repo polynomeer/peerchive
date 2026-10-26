@@ -64,6 +64,8 @@ export const profileInputSchema = z.object({
     .transform((value) => (value ? value : null)),
   contactPolicy: z.enum(['closed', 'on_request', 'open'], { error: 'invalid' }).optional(),
   openToWork: z.boolean({ error: 'invalid' }).optional(),
+  /** 공개 프로필에 학교 인증 배지를 보일지(C-01, 기본 false). */
+  showAffiliationBadge: z.boolean({ error: 'invalid' }).optional(),
 })
 export type ProfileInput = z.input<typeof profileInputSchema>
 /** 누구에게나 주는 공개 프로필 DTO. */
@@ -78,6 +80,7 @@ function profileFields(row: ProfileRow): ProfileFields {
     gradTerm: row.gradTerm,
     contactPolicy: row.contactPolicy,
     openToWork: row.openToWork,
+    showAffiliationBadge: row.showAffiliationBadge,
   }
 }
 
@@ -151,6 +154,7 @@ export async function upsertProfile(db: DbExecutor, actor: Actor, rawInput: unkn
         ...(input.gradTerm !== undefined && { gradTerm: input.gradTerm }),
         ...(input.contactPolicy !== undefined && { contactPolicy: input.contactPolicy }),
         ...(input.openToWork !== undefined && { openToWork: input.openToWork }),
+        ...(input.showAffiliationBadge !== undefined && { showAffiliationBadge: input.showAffiliationBadge }),
       }
       if (!current.hasProfile) {
         await tx.insert(profiles).values({ userId: actor.userId, handle: input.handle!, ...fields })

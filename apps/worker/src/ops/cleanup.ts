@@ -13,6 +13,7 @@ import {
   auditEvents,
   discordPinRequests,
   eq,
+  institutionAffiliations,
   inArray,
   lt,
   ne,
@@ -47,6 +48,10 @@ export const RETENTION = {
   discordCodeRetentionMs: DAY_MS,
   /** 전달을 마친 outbox 행은 30일 뒤 지웁니다. */
   outboxRetentionMs: 30 * DAY_MS,
+  /** 학교 메일 인증(C-01): 코드가 만료(또는 잠김)된 지 1시간 지난 pending 요청은 expired로 바꾸고 메일 해시를 지웁니다. */
+  affiliationPendingGraceMs: HOUR_MS,
+  /** 쓰였거나 만료된 학교 메일 인증 코드는 하루 뒤 지웁니다. */
+  affiliationCodeRetentionMs: DAY_MS,
 } as const
 
 /** 한 번의 실행에서 최대 배치 수(그 뒤는 다음 주기). */
@@ -216,6 +221,33 @@ export const cleanupOutbox = (db: DbExecutor, deps: CleanupDeps, now: Date) =>
     deps.batchSize,
   )
 
+/**
+ * 학교 메일 인증(C-01, ADR 0018): 쓸 수 있는 코드가 없어진 지 1시간 지난 pending 요청을 expired로 바꾸고(메일 해시 삭제 — 주소 HMAC을 오래 두지 않음),
+ * 쓰였거나 만료된 지 하루 지난 코드 행을 지웁니다. active·revoked 행은 건드리지 않습니다.
+ */
+export async function cleanupAffiliationCodes(db: DbExecutor, deps: CleanupDeps, now: Date): Promise<TaskOutcome> {
+  const graceCutoff = new Date(now.getTime() - RETENTION.affiliationPendingGraceMs).toISOString()
+  const expired = await db
+    .update(institutionAffiliations)
+    .set({ status: 'expired', emailHash: null, updatedAt: now })
+    .where(
+      and(
+        eq(institutionAffiliations.status, 'pending'),
+        sql`not exists (select 1 from affiliation_codes c where c.affiliation_id = ${institutionAffiliations.id}
+          and c.used_at is null and c.attempts < 5 and c.expires_at > ${graceCutoff}::timestamptz)`,
+      ),
+    )
+    .returning({ id: institutionAffiliations.id })
+  const cutoff = new Date(now.getTime() - RETENTION.affiliationCodeRetentionMs).toISOString()
+  const codes = await deleteInBatches(
+    db,
+    t('affiliation_codes'),
+    sql`(used_at < ${cutoff}::timestamptz or expires_at < ${cutoff}::timestamptz)`,
+    deps.batchSize,
+  )
+  return { affected: expired.length + codes.affected, batches: codes.batches + 1 }
+}
+
 export type CleanupTask = (db: DbExecutor, deps: CleanupDeps, now: Date) => Promise<TaskOutcome>
 
 export const CLEANUP_TASKS: Record<Exclude<OpsTaskName, 'account-purge'>, CleanupTask> = {
@@ -228,6 +260,7 @@ export const CLEANUP_TASKS: Record<Exclude<OpsTaskName, 'account-purge'>, Cleanu
   'discord-codes': cleanupDiscordCodes,
   'pin-requests': cleanupPinRequests,
   outbox: cleanupOutbox,
+  'affiliation-codes': cleanupAffiliationCodes,
 }
 
 /**

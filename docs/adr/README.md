@@ -18,8 +18,9 @@ Peerchive 신규 앱(`apps/`, `packages/`)의 기술 결정을 짧게 남깁니�
 | [0010](0010-catalog-merge-and-embargo.md) | 학교·과목·개념 태그 정규화와 엠바고: 운영자 테이블 + 즉시 다시 가리키는 병합 + 단조 엠바고 | 채택 |
 | [0011](0011-publication-snapshot-and-consent.md) | 공개 후보와 동의: 저장된 공개 스냅샷 + manifest 해시에 묶인 동의 | 채택 |
 | [0012](0012-publish-withdraw-public-read.md) | 게시·철회·익명 공개 조회: 트랜잭션 재검사 + 요청마다 DB 상태 확인(no-store) + 운영 스위치 | 채택 |
-| [0013](0013-course-hub-search-fork.md) | 과목 허브·선배 노트·플랜 포크·유용성 신호·검색: 공개 release만 읽는 허브 + 상태 조인으로만 읽는 파생 색인 + 계획 허용 목록 포크 | 채택 |
+| [0013](0013-course-hub-search-fork.md) | 과목 허브·선배 노트·플랜 포크·유용성 신호·검색: 공개 release만 읽는 허브 + 상태 조인으로만 읽는 파생 색인 + 계획 허용 목록 포크 | 채택(작성 자격은 0018로 보완) |
 | [0014](0014-case-study-portfolio.md) | 케이스 스터디·포트폴리오 판·공개 프로필: 게시된 release에 고정한 템플릿 초안 + 문장마다 스냅샷 인용 + 바꾸지 않는 판 + 읽을 때마다 원본 확인 | 채택 |
 | [0015](0015-reports-moderation-appeals.md) | 신고·보류·운영 조치·이의제기: 로그인 신고 + 공개 차단만 하는 조치(항목 가리기 포함) + 요청마다 확인하는 읽기 + 조치마다 한 번의 이의제기 | 채택 |
 | [0016](0016-deletion-ledger-maintenance-analytics.md) | 탈퇴 정리·삭제 장부·점검 모드·pilot 분석: 유예 뒤 한 트랜잭션 정리(팀 기록은 가명 처리) + HMAC 장부 재적용 + 헬스 체크만 여는 점검 모드 + 허용 목록 이벤트 | 채택 |
 | [0017](0017-smtp-mail-and-s3-storage.md) | 배포 준비: 공급자 무관 SMTP 메일 transport(TLS 필수·실패해도 같은 202) + S3 호환 저장소 driver(비공개 버킷·서버 경유 스트림·공급자 쪽 파일 백업) | 채택 |
+| [0018](0018-school-affiliation.md) | 학교 메일 인증·학과 자기 신고: institution_affiliations(HMAC만, 주소 미저장) + 운영자 등록 도메인 + 열거 안전 코드 흐름 + 과목 허브 작성 자격 | 채택 |

@@ -4,7 +4,7 @@
  * (서비스 안의 transaction()은 savepoint가 됩니다).
  */
 import { expect } from 'vitest'
-import { createDb, profiles, users, type Database, type DbExecutor } from '@peerchive/db'
+import { createDb, institutionAffiliations, profiles, users, type Database, type DbExecutor } from '@peerchive/db'
 import { ServiceError, type ServiceErrorCode } from '../server/modules/errors'
 
 export const databaseUrl = process.env.DATABASE_URL
@@ -69,3 +69,30 @@ export async function expectServiceError(
 
 export const minutes = (n: number) => n * 60 * 1000
 export const days = (n: number) => n * 24 * 60 * 60 * 1000
+
+/**
+ * 학교 메일 인증 fixture(C-01): 그 학교의 active 소속을 바로 넣습니다(코드 흐름 자체는 affiliation.integration.test.ts).
+ * 과목 허브에 선배 노트를 쓰는 테스트가 씁니다. 메일 해시는 무작위 값입니다.
+ */
+export async function verifiedAffiliation(
+  db: DbExecutor,
+  userId: string,
+  schoolId: string,
+  overrides: { standing?: 'student' | 'alumni'; departmentLabel?: string | null; verifiedAt?: Date } = {},
+): Promise<{ id: string }> {
+  const [row] = await db
+    .insert(institutionAffiliations)
+    .values({
+      userId,
+      schoolId,
+      emailHash: crypto.randomUUID().replace(/-/g, '').repeat(2),
+      emailDomain: 'fixture.ac.kr',
+      standing: overrides.standing ?? 'student',
+      departmentLabel: overrides.departmentLabel ?? null,
+      status: 'active',
+      verifiedAt: overrides.verifiedAt ?? new Date('2026-09-01T00:00:00Z'),
+    })
+    .returning({ id: institutionAffiliations.id })
+  if (!row) throw new Error('affiliation not inserted')
+  return row
+}

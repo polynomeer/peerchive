@@ -16,8 +16,8 @@ const at = (days: number) => new Date(T0.getTime() + days * DAY)
 const hex = (n: number) => n.toString(16).padStart(64, '0')
 
 describe('analytics allowlist', () => {
-  it('covers the DELIVERY_PLAN §6 events plus login_succeeded', () => {
-    expect(ANALYTICS_EVENT_NAMES).toHaveLength(16)
+  it('covers the DELIVERY_PLAN §6 events plus login_succeeded and affiliation_verified', () => {
+    expect(ANALYTICS_EVENT_NAMES).toHaveLength(17)
     expect(Object.keys(ANALYTICS_PROP_SPECS).sort()).toEqual([...ANALYTICS_EVENT_NAMES].sort())
     expect(isAnalyticsEventName('log_saved')).toBe(true)
     expect(isAnalyticsEventName('page_view')).toBe(false)
@@ -44,6 +44,10 @@ describe('analytics allowlist', () => {
     expect(sanitizeAnalyticsProps('checkin_submitted', { difficulty: 6 })).toEqual({ ok: false, violations: ['difficulty'] })
     expect(sanitizeAnalyticsProps('checkin_submitted', { difficulty: 2.5 })).toEqual({ ok: false, violations: ['difficulty'] })
     expect(sanitizeAnalyticsProps('login_succeeded', { newUser: 'yes' })).toEqual({ ok: false, violations: ['newUser'] })
+    // 학교 메일 인증: 재학/졸업생만, 학교 id·도메인 같은 키는 거부.
+    expect(sanitizeAnalyticsProps('affiliation_verified', { standing: 'alumni' })).toEqual({ ok: true, props: { standing: 'alumni' } })
+    expect(sanitizeAnalyticsProps('affiliation_verified', { standing: 'professor' })).toEqual({ ok: false, violations: ['standing'] })
+    expect(sanitizeAnalyticsProps('affiliation_verified', { schoolId: 'x', domain: 'yu.ac.kr' })).toEqual({ ok: false, violations: ['domain', 'schoolId'] })
     expect(sanitizeAnalyticsProps('project_created', { title: SENTINEL, url: 'https://x.test', email: 'a@b.c' })).toEqual({
       ok: false,
       violations: ['email', 'title', 'url'],

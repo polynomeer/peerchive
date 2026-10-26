@@ -53,7 +53,7 @@ import { createCandidate } from '../server/modules/publication/candidates'
 import { createPublicKillSwitch, isAnonymousPublicRequest, isPublicPagePath } from '../server/modules/publication/public-http'
 import { getPublicPublication } from '../server/modules/publication/public-read'
 import { publishCandidate, withdrawPublication } from '../server/modules/publication/releases'
-import { closeTestDb, createUser, databaseUrl, expectServiceError, minutes, withRollback } from './helpers'
+import { closeTestDb, createUser, databaseUrl, expectServiceError, minutes, verifiedAffiliation, withRollback } from './helpers'
 
 const T0 = new Date('2026-11-02T09:00:00Z')
 const at = (n: number) => new Date(T0.getTime() + minutes(n))
@@ -312,6 +312,7 @@ describe.skipIf(!databaseUrl)('course hub (PostgreSQL)', () => {
       await tx.insert(operators).values({ userId: operator.id })
       const a = await courseFixture(tx, owner.id)
       const b = await courseFixture(tx, owner.id, a.schoolId)
+      await verifiedAffiliation(tx, owner.id, a.schoolId)
       const caseB = await publishCase(tx, { owner: owner.id, termId: b.term.id, title: '병합될 과목 사례' })
       const note = await createSeniorNote(tx, { userId: owner.id }, b.course.id, NOTE_INPUT, at(7))
       await publishSeniorNote(tx, { userId: owner.id }, note.id, { expectedVersion: 1 }, at(8))
@@ -373,7 +374,9 @@ describe.skipIf(!databaseUrl)('course hub (PostgreSQL)', () => {
       const author = await createUser(tx, { displayName: '박선배' })
       const stranger = await createUser(tx)
       const suspended = await createUser(tx, { status: 'suspended' })
-      const { course } = await courseFixture(tx, author.id)
+      const { course, schoolId } = await courseFixture(tx, author.id)
+      await verifiedAffiliation(tx, author.id, schoolId)
+      await verifiedAffiliation(tx, suspended.id, schoolId)
       const actor = { userId: author.id }
 
       const confirmMissing = await expectServiceError(createSeniorNote(tx, actor, course.id, { ...NOTE_INPUT, noAnswersConfirmed: false }, at(1)), 'VALIDATION')
@@ -473,7 +476,8 @@ describe.skipIf(!databaseUrl)('course hub (PostgreSQL)', () => {
       const owner = await createUser(tx)
       const reader = await createUser(tx)
       const reader2 = await createUser(tx)
-      const { course, term } = await courseFixture(tx, owner.id)
+      const { course, term, schoolId } = await courseFixture(tx, owner.id)
+      await verifiedAffiliation(tx, owner.id, schoolId)
       const live = await publishCase(tx, { owner: owner.id, termId: term.id })
       const hub = await getPublicCourseHub(tx, course.id, at(10))
       const key = hub.stuckItems[0]!.key
@@ -606,7 +610,8 @@ describe.skipIf(!databaseUrl)('course hub (PostgreSQL)', () => {
     await withRollback(async (tx) => {
       const owner = await createUser(tx)
       const t = token()
-      const { course, term } = await courseFixture(tx, owner.id)
+      const { course, term, schoolId } = await courseFixture(tx, owner.id)
+      await verifiedAffiliation(tx, owner.id, schoolId)
       const other = await courseFixture(tx, owner.id)
       const live = await publishCase(tx, { owner: owner.id, termId: term.id, title: `파이프 셸 ${t}` })
       const otherCase = await publishCase(tx, { owner: owner.id, termId: other.term.id, title: `파이프 셸 ${t} 다른 과목` })

@@ -28,6 +28,7 @@ import {
 } from '@peerchive/db'
 import { notFound } from '../errors'
 import { HANDLE_PATTERN, toPublicProfileDto } from '../identity/profiles'
+import { publicAffiliationBadges } from '../affiliation/affiliations'
 import { loadCurrentEditionModel } from './editions'
 import { loadCaseStudiesWithRelease } from './release-scope'
 import { buildPortfolioView, isPubliclyVisible } from './view'
@@ -105,6 +106,8 @@ export async function getPublicPortfolioProfile(db: DbExecutor, rawHandle: unkno
     edition: current ? { version: current.edition.version, createdAt: current.edition.createdAt.toISOString() } : null,
     juniorContribution: { planForks: forks, seniorNotes: notes },
     timeline: timeline.map(({ sort: _sort, ...item }) => item),
+    // 학교 인증 배지(C-01): 본인이 켰을 때만. 학과·메일·도메인은 싣지 않습니다.
+    affiliationBadges: await publicAffiliationBadges(db, row.userId, row.profile.showAffiliationBadge),
   }
 }
 

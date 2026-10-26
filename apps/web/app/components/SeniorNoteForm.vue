@@ -19,6 +19,8 @@ const form = reactive({
 })
 const errors = ref<Record<string, string>>({})
 const message = ref('')
+/** 학교 인증이 없어 막혔을 때 인증 페이지 링크(C-01). */
+const affiliationLink = ref<string | null>(null)
 const saving = ref(false)
 const idBase = computed(() => (props.note ? `note-${props.note.id}` : 'note-new'))
 const filled = computed(() => SENIOR_NOTE_QUESTIONS.filter((q) => form.answers[q].trim()).length)
@@ -38,6 +40,7 @@ function body() {
 async function save() {
   errors.value = {}
   message.value = ''
+  affiliationLink.value = null
   saving.value = true
   try {
     const note = props.note
@@ -48,6 +51,10 @@ async function save() {
     const e = apiError(error)
     errors.value = e.fields
     message.value = e.status === 422 ? '입력한 내용을 확인하세요.' : courseHubErrorMessage(e.code)
+    affiliationLink.value =
+      e.code === 'hub_write_not_allowed' && e.data.requirement === 'school_affiliation'
+        ? affiliationPageLink(e.data.schoolId ? { id: e.data.schoolId, name: '' } : null, props.courseId ? `/senior-notes?course=${props.courseId}` : undefined)
+        : null
   } finally {
     saving.value = false
   }
@@ -65,7 +72,7 @@ const fieldError = (key: string) => fieldMessage(errors.value[key])
           {{ SENIOR_NOTE_DISPLAY_LABELS[mode] }}
         </label>
       </div>
-      <p class="hint">익명이어도 운영자는 신고 처리를 위해 작성자를 알 수 있습니다. 학번·학과는 공개되지 않습니다.</p>
+      <p class="hint">익명이어도 운영자는 신고 처리를 위해 작성자를 알 수 있습니다. 학교 인증은 작성 자격 확인에만 쓰며 학번·학과·인증 메일은 공개되지 않습니다.</p>
     </fieldset>
     <div v-if="form.displayMode === 'display'" class="field">
       <label :for="`${idBase}-display`">표시명</label>
@@ -98,7 +105,10 @@ const fieldError = (key: string) => fieldMessage(errors.value[key])
     </label>
     <p v-if="errors.noAnswersConfirmed" class="field-error">{{ fieldError('noAnswersConfirmed') }}</p>
     <p v-if="editing && note?.status === 'published'" class="notice">공개 중인 노트를 고치면 다시 게시할 때까지 공개에서 내려갑니다.</p>
-    <p v-if="message" class="notice error" role="alert">{{ message }}</p>
+    <p v-if="message" class="notice error" role="alert">
+      {{ message }}
+      <NuxtLink v-if="affiliationLink" :to="affiliationLink">학교 메일 인증하기</NuxtLink>
+    </p>
     <p class="actions">
       <button type="submit" :disabled="saving || (!editing && !form.confirmed)">{{ editing ? '고친 내용 저장' : '초안 저장' }}</button>
       <button v-if="editing" type="button" class="secondary" @click="emit('cancel')">취소</button>

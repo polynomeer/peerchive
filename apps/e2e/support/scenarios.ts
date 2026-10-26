@@ -24,6 +24,8 @@ export interface PublishedCase {
   title: string
   courseId: string
   courseTitle: string
+  schoolId: string
+  schoolName: string
   progressText: string
   stuckSymptom: string | null
   claimText: string
@@ -74,6 +76,8 @@ export async function publishCase(
     title,
     courseId: term.courseId,
     courseTitle: term.courseTitle,
+    schoolId: term.schoolId,
+    schoolName: term.schoolName,
     progressText,
     stuckSymptom,
     claimText,
