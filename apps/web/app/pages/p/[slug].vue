@@ -118,6 +118,7 @@ const fileUrl = (versionId: string) =>
         :snapshot="data.snapshot"
         :file-url="data.level === 'full' ? fileUrl : undefined"
         :hidden-items="data.hiddenItems"
+        :title-level="1"
         id-prefix="public"
       />
       <section class="fork-box" aria-labelledby="fork-title">

@@ -21,6 +21,8 @@ const props = defineProps<{
   idPrefix?: string
   /** 운영 조치로 가린 항목의 원래 자리(T-15). */
   hiddenItems?: HiddenItemPlaceholderDto[]
+  /** 제목 수준. 공개 사례 페이지(/p)처럼 이 보기가 화면의 주 내용이면 1(화면의 유일한 h1), 다른 화면에 끼워 넣으면 기본 2. */
+  titleLevel?: 1 | 2
 }>()
 
 type Row<T> = { hidden: false; item: T } | { hidden: true; key: string }
@@ -81,7 +83,7 @@ const CLAIM_STATUS: Record<'unconfirmed' | 'confirmed' | 'disputed', string> = {
   <article class="public-snapshot" :aria-labelledby="`${base}-title`">
     <header class="snapshot-header">
       <p v-if="preview" class="badge preview-badge">미리보기 · 아직 공개되지 않음</p>
-      <h2 :id="`${base}-title`" class="snapshot-title">{{ snapshot.title }}</h2>
+      <component :is="titleLevel === 1 ? 'h1' : 'h2'" :id="`${base}-title`" class="snapshot-title">{{ snapshot.title }}</component>
       <p class="actions">
         <span class="badge">{{ LEVEL_LABELS[snapshot.level] }}</span>
         <span v-if="snapshot.retrospective" class="badge retro">사후 작성</span>
