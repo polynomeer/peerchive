@@ -1,5 +1,6 @@
 import type { H3Event } from 'h3'
 import { parseAllowedOrigins } from '../modules/security/csrf'
+import { parseTrustedProxies, resolveClientIp, type TrustedProxies } from '../modules/security/client-ip'
 import { type MailTransport, resolveMailTransport } from '../modules/identity/mail'
 import { SESSION_COOKIE_NAME, type SessionUser } from '../modules/identity/sessions'
 import type { Actor } from '../modules/errors'
@@ -73,7 +74,30 @@ export function requireActor(event: H3Event): Actor {
   return { userId: auth.user.id }
 }
 
-/** 요청 IP. 프록시 뒤 배포 시 신뢰할 프록시 설정을 추가해야 합니다(TODO). */
+let trustedProxies: TrustedProxies | undefined
+
+/**
+ * 신뢰 프록시 목록(PEERCHIVE_TRUSTED_PROXIES, 쉼표 구분 CIDR). 프로세스당 한 번 해석합니다.
+ * 잘못된 항목이 있으면 production에서는 예외(server/plugins/trusted-proxies.ts에서 시작 시 확인).
+ */
+export function useTrustedProxies(): TrustedProxies {
+  if (!trustedProxies) {
+    const { proxies, invalid } = parseTrustedProxies(globalThis.process?.env?.['PEERCHIVE_TRUSTED_PROXIES'])
+    if (invalid.length > 0) {
+      const message = `PEERCHIVE_TRUSTED_PROXIES has ${invalid.length} invalid entr${invalid.length === 1 ? 'y' : 'ies'}`
+      if (isProduction()) throw new Error(message)
+      console.warn(`[security] ${message}; ignored`)
+    }
+    trustedProxies = proxies
+  }
+  return trustedProxies
+}
+
+/** 요청 IP(요청 한도 키 전용). 신뢰 프록시 뒤에서만 X-Forwarded-For를 봅니다(modules/security/client-ip.ts). */
 export function requestIp(event: H3Event): string {
-  return getRequestIP(event, { xForwardedFor: false }) ?? 'unknown'
+  return resolveClientIp({
+    remoteAddress: event.node.req.socket?.remoteAddress,
+    forwardedFor: getRequestHeader(event, 'x-forwarded-for'),
+    proxies: useTrustedProxies(),
+  })
 }

@@ -19,7 +19,7 @@
 | pepper | `PEERCHIVE_ANALYTICS_PEPPER`, `PEERCHIVE_DELETION_PEPPER` 각각 `openssl rand -hex 32`, 서로 다름. **삭제 pepper는 바꾸지 않음**(재적용이 장부를 못 맞춤). 없으면 분석은 꺼지고 worker는 시작하지 않음 | 운영자 확인 |
 | 탈퇴 유예 | `PEERCHIVE_DELETION_GRACE_DAYS`(기본 7). web·worker 같은 값 | 기본값 |
 | 공개 색인 | `PEERCHIVE_PUBLIC_INDEXING`은 파일럿 동안 끔(noindex) | 기본값 |
-| 프록시 | 프록시 뒤라면 신뢰 프록시 설정 전에는 IP rate limit이 프록시 IP 기준(ADR 0006) | 미구현 |
+| 프록시 | 프록시·로드밸런서 뒤라면 `PEERCHIVE_TRUSTED_PROXIES`에 프록시 CIDR을 설정(설정하지 않으면 X-Forwarded-For를 무시하고 소켓 주소만 사용). 잘못된 CIDR이 있으면 production에서 서버가 뜨지 않음 | 구현됨 — 배포 환경 CIDR 설정 필요 |
 | 운영자 | `pnpm --filter @peerchive/db grant-operator <email>`로 최소 두 사람 | 운영자 확인 |
 | 백업 | 아래 §5 일정이 실제로 돌고 복구 연습이 통과 | 절차 |
 | worker 상태 | `/operator/metrics`의 시스템 상태가 정상(worker 기록 3분 이내, dead-letter 없음) | 절차 |

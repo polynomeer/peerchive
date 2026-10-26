@@ -45,7 +45,7 @@
 - 실제 메일 transport(지금은 dev-console만, production에서 거부)
 - S3 호환 객체 저장소 driver(지금은 filesystem, 단일 서버 예외만)
 - 운영 환경의 ClamAV·백업 일정·다른 장소 사본·복구 연습, pepper·내부 비밀 발급
-- 실제 디스코드 서버에서 봇 확인, 프록시 뒤 신뢰 IP 설정
+- 실제 디스코드 서버에서 봇 확인, 배포 환경의 `PEERCHIVE_TRUSTED_PROXIES` CIDR 설정
 - 신고 담당자·당번·대응 시간·파일럿 동의 문구·보존 기간 채우기, 법무·학교 규정 검토
 - 탈퇴 유예 중 되돌리기 화면, 감사 이벤트 보존 정책, E2E 테스트
 
