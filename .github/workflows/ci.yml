@@ -81,3 +81,51 @@ jobs:
       # 파일 처리 단위 테스트와 worker(outbox 전달·pg-boss 큐) 통합 테스트.
       - run: pnpm --filter @peerchive/files test
       - run: pnpm --filter worker test
+
+  # 브라우저 E2E(Playwright, Chromium만, apps/e2e/README.md). 처음에는 정보용으로 두고 실패해도 CI를 막지 않습니다
+  # (continue-on-error). 몇 주 동안 안정적이면 continue-on-error를 지워 필수 검사로 바꿉니다.
+  e2e:
+    name: e2e (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    services:
+      postgres:
+        image: postgres:16.10-alpine
+        env:
+          POSTGRES_USER: peerchive
+          POSTGRES_PASSWORD: peerchive
+          POSTGRES_DB: peerchive
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U peerchive -d peerchive"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      # CI 전용 일회성 컨테이너 자격 증명입니다(비밀값 아님). E2E는 DB 이름만 peerchive_e2e로 바꿔 새로 만듭니다.
+      DATABASE_URL: postgres://peerchive:peerchive@localhost:5432/peerchive
+      PEERCHIVE_E2E_WORKERS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter web build
+      - name: Install Chromium
+        run: pnpm --filter e2e exec playwright install --with-deps chromium
+      - run: pnpm e2e
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: |
+            apps/e2e/test-results/
+            apps/e2e/playwright-report/
+            apps/e2e/.e2e-state/*.log
+          include-hidden-files: true
+          retention-days: 7

@@ -1,0 +1,5 @@
+# Playwright 산출물(실패 시 trace·스크린샷)과 실행 중 상태(서버 로그·PID)
+test-results/
+playwright-report/
+blob-report/
+.e2e-state/
