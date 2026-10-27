@@ -10,8 +10,11 @@
  * - 페르소나(S-01, ADR 0028): handle은 실명·표시명 프로필 어느 쪽이든 됩니다. 상대 프로필 링크는 본인이 연결을 켰을 때만 공개 API가
  *   `linkedPersona`로 주며, 이 화면은 그 필드 말고는 상대 프로필을 알 길이 없습니다(HTML·payload·OG에 0건). 표시명 프로필에는 대표 케이스·
  *   타임라인·후배 기여가 없고, 표시명 프로필 신고는 S-07에서 엽니다.
+ * - 과제 수행 목록(S-03, ADR 0031): 공개 API는 늘 비로그인으로 판정하므로 SSR에는 전체 공개일 때만 들어갑니다. 그렇지 않으면 화면이 뜬 뒤
+ *   브라우저에서만 `/api/v1/profiles/:handle`(세션을 읽음)을 불러 로그인·같은 기관·본인 범위의 목록을 붙입니다 — 보는 사람에 따라 달라지는
+ *   내용이 SSR HTML·payload에 들어가지 않습니다. 과목·학기·제목만, 엠바고 중이면 제목 없이.
  */
-import type { PublicPortfolioProfileDto } from '~~/shared/types/api'
+import type { PublicPortfolioProfileDto, PublicProfileWithProjectsDto, PublicProjectListingDto } from '~~/shared/types/api'
 import type { ReportChoice } from '~/utils/moderation'
 
 definePageMeta({ layout: 'public' })
@@ -63,6 +66,19 @@ const reportTargets = computed<ReportChoice[]>(() => {
       })),
   ]
 })
+
+// 과제 수행 목록: SSR(비로그인 판정)에 없으면 브라우저에서 보는 사람 기준으로 한 번 더 묻습니다.
+const viewerProjects = ref<PublicProjectListingDto[] | null>(null)
+onMounted(async () => {
+  if (!profile.value || profile.value.projects !== null || profile.value.kind !== 'real') return
+  try {
+    const res = await $fetch<PublicProfileWithProjectsDto>(`/api/v1/profiles/${encodeURIComponent(profile.value.handle)}`)
+    viewerProjects.value = res.projects
+  } catch {
+    viewerProjects.value = null
+  }
+})
+const projects = computed(() => profile.value?.projects ?? viewerProjects.value)
 
 const years = computed(() => {
   const groups = new Map<number, PublicPortfolioProfileDto['timeline']>()
@@ -119,6 +135,19 @@ const years = computed(() => {
           공개한 계획을 포크한 사람 {{ profile.juniorContribution.planForks }}명 · 이름으로 남긴 선배 노트 {{ profile.juniorContribution.seniorNotes }}개
         </p>
         <p class="hint">개수만 보여 주며 순위를 매기지 않습니다.</p>
+      </section>
+
+      <section v-if="projects && projects.length" aria-labelledby="projects-heading">
+        <h2 id="projects-heading">과제 수행 목록</h2>
+        <ul class="small">
+          <li v-for="(p, i) in projects" :key="i">
+            <template v-if="p.courseTitle">{{ p.courseTitle }}</template><template v-else>과목 미연결 과제</template>
+            <template v-if="p.termLabel"> · {{ p.termLabel }}</template>
+            <template v-if="p.title"> · {{ p.title }}</template>
+            <span v-else class="muted"> · 제목 비공개 기간(엠바고)</span>
+          </li>
+        </ul>
+        <p class="hint">본인이 고른 과제의 과목·학기·제목만 보입니다. 과제 기록은 공개 사례로 게시된 것만 볼 수 있습니다.</p>
       </section>
 
       <section v-if="years.length" aria-labelledby="timeline-heading">

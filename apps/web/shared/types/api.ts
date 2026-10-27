@@ -84,6 +84,70 @@ export interface MyPersonasDto {
   identityLink: { visible: boolean; changedAt: string } | null
 }
 
+// ── 항목별 공개 범위·과제 수행 목록 (S-03, ADR 0031) ──────────────────────
+
+export type VisibilityItemKind = 'project_list' | 'posts' | 'notes_and_studies' | 'follow_lists'
+export type VisibilityAudience = 'public' | 'signed_in' | 'same_institution' | 'approved_followers' | 'private'
+
+/** 항목 하나의 공개 범위(본인에게만). */
+export interface VisibilitySettingDto {
+  itemKind: VisibilityItemKind
+  /** 저장한 값, 없으면 기본값. */
+  audience: VisibilityAudience
+  /** 저장한 행이 없어 기본값을 쓰는 중인지(기본값은 계정 공개 설정을 따라 바뀜). */
+  isDefault: boolean
+  /** 실제로 적용하는 값(비공개 계정은 approved_followers 이하로 좁힘). */
+  effective: VisibilityAudience
+  /** 이 항목·페르소나가 받는 값. follow_lists는 public·private, 표시명 페르소나의 project_list는 private만. */
+  allowed: VisibilityAudience[]
+}
+
+/** GET·PUT /personas/:id/visibility — 페르소나의 항목별 공개 범위(본인에게만). 공개 사례·케이스 스터디는 항목이 아닙니다(공개 절차로만). */
+export interface PersonaVisibilityDto {
+  personaId: string
+  kind: PersonaKind
+  accountPrivacy: PersonaAccountPrivacy
+  items: VisibilitySettingDto[]
+}
+
+/** 공개 프로필의 과제 수행 목록 한 줄. 과목·학기·제목뿐이고, 엠바고 중이면 제목이 null입니다. 다른 멤버·로그·파일·id 없음. */
+export interface PublicProjectListingDto {
+  courseTitle: string | null
+  termLabel: string | null
+  title: string | null
+}
+
+export type ProjectListingBlock = 'anonymous_study' | 'display_study'
+
+/** 과제 수행 목록 고르기 화면의 과제 한 줄(본인에게만). */
+export interface MyProjectListingDto {
+  projectId: string
+  /** 본인에게는 엠바고 중에도 보입니다(공개 프로필에서는 제목 없이). */
+  title: string
+  courseTitle: string | null
+  termLabel: string | null
+  embargoActive: boolean
+  listed: boolean
+  /** 올릴 수 없는 이유(익명·표시명 스터디 방의 기록). */
+  block: ProjectListingBlock | null
+}
+
+/** GET /personas/:id/project-listings — 실명 페르소나의 과제 수행 목록 고르기(본인에게만). */
+export interface MyProjectListingsDto {
+  personaId: string
+  /** 과제 수행 목록의 지금 적용 공개 범위. */
+  audience: VisibilityAudience
+  projects: MyProjectListingDto[]
+}
+
+/** 로그인 상태를 반영한 과제 수행 목록(`GET /profiles/:handle`이 함께 실음). 볼 수 없으면 null. */
+export interface ProfileProjectsDto {
+  projects: PublicProjectListingDto[] | null
+}
+
+/** GET /profiles/:handle — 공개 DTO + 보는 사람 기준 과제 수행 목록(S-03). */
+export type PublicProfileWithProjectsDto = PublicProfileDto & ProfileProjectsDto
+
 /**
  * 사후 작성 표시(PROOFU_EVOLUTION_PLAN §6.7, DELIVERY_PLAN 시나리오 G). 프로젝트·로그·마일스톤·스냅샷 DTO는 모두 이 필드를 가집니다.
  * 공개 DTO(T-11/T-12)는 이 DTO들에서 만들어지므로 이 표시를 빼지 말고 그대로 옮겨야 합니다.
@@ -1488,6 +1552,11 @@ export interface PublicPortfolioProfileDto extends PortfolioViewDto {
   kind: PersonaKind
   /** 연결을 켠 상대 페르소나(S-01). 꺼져 있으면 null. */
   linkedPersona: PublicLinkedPersonaDto | null
+  /**
+   * 과제 수행 목록(S-03). 공개 경로는 늘 비로그인으로 판정하므로 `project_list`가 전체 공개일 때만 배열, 아니면 null.
+   * 표시명 프로필은 늘 null(과제 수행 목록은 실명 페르소나만, ADR 0031).
+   */
+  projects: PublicProjectListingDto[] | null
 }
 
 // ── 학교 메일 인증 (C-01, ADR 0018) ──────────────────────────────────────

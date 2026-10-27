@@ -50,8 +50,10 @@ import {
   planForks,
   personaActivities,
   personas,
+  visibilitySettings,
   portfolioEditions,
   profiles,
+  projectListings,
   projectMembers,
   projects,
   publicationCandidates,
@@ -227,6 +229,12 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
 
     // 팀 과제: U가 owner, T가 editor
     const team = await project(tx, U.id, '팀 캡스톤', [{ userId: T.id, role: 'editor' }])
+    // 항목별 공개 범위·과제 수행 목록(S-03): U의 실명 페르소나가 혼자 과제·팀 과제를 올려 둠.
+    await tx.insert(visibilitySettings).values({ personaId: realPersona!.id, itemKind: 'project_list', audience: 'public' })
+    for (const p of [solo, team]) {
+      const [m] = await tx.select({ id: projectMembers.id }).from(projectMembers).where(and(eq(projectMembers.projectId, p.id), eq(projectMembers.userId, U.id)))
+      await tx.insert(projectListings).values({ projectMemberId: m!.id, personaId: realPersona!.id, userId: U.id })
+    }
     const uTeamLog = await log(tx, team.id, U.id, 'U가 쓴 팀 로그')
     const tTeamLog = await log(tx, team.id, T.id, 'T가 쓴 팀 로그')
     const teamFile = await file(tx, team.id, U.id)
@@ -287,6 +295,8 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         profile: 2,
         personas: 2,
         identity_links: 1,
+        visibility_settings: 1,
+        project_listings: 2,
         sessions: 1,
         auth_accounts: 1,
         magic_link_tokens: 1,
@@ -316,6 +326,7 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         [profiles, eq(profiles.personaId, w.displayPersonaId)],
         [personas, eq(personas.userId, w.U.id)],
         [identityLinks, eq(identityLinks.userId, w.U.id)],
+        [projectListings, eq(projectListings.userId, w.U.id)],
         [sessions, eq(sessions.userId, w.U.id)],
         [authAccounts, eq(authAccounts.userId, w.U.id)],
         [magicLinkTokens, eq(magicLinkTokens.email, w.U.email)],

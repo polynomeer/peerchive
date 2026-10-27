@@ -88,6 +88,7 @@ const err = (field: string) => fieldMessage(errors.value[field])
     <p v-if="!real" class="notice error">먼저 <NuxtLink to="/onboarding">실명 프로필</NuxtLink>을 만드세요.</p>
     <template v-else>
       <p class="small">실명 프로필: <NuxtLink :to="`/u/${real.handle}`">{{ real.displayName }} @{{ real.handle }}</NuxtLink> (<NuxtLink to="/onboarding">고치기</NuxtLink>)</p>
+      <p class="small">항목별 공개 범위와 과제 수행 목록은 <NuxtLink to="/settings/visibility">공개 범위</NuxtLink>에서 고릅니다.</p>
 
       <section aria-labelledby="display-heading">
         <h2 id="display-heading">{{ display ? '표시명 프로필 고치기' : '표시명 프로필 만들기' }}</h2>

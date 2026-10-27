@@ -96,6 +96,10 @@ export const personaStatus = pgEnum('persona_status', ['active', 'deactivated'])
  * 커뮤니티 댓글·막힘 Q&A·스터디 기록 안의 로그는 원천이 아닙니다(투영 경로 자체가 없음).
  */
 export const personaActivitySource = pgEnum('persona_activity_source', ['publication_release', 'senior_note', 'study_release', 'profile_post', 'community_post'])
+/** 공개 범위 항목(S-03, @peerchive/domain VISIBILITY_ITEM_KINDS). 공개 사례·케이스 스터디는 항목이 아닙니다(공개 절차로만, §8.3 불변조건 2). */
+export const visibilityItemKind = pgEnum('visibility_item_kind', ['project_list', 'posts', 'notes_and_studies', 'follow_lists'])
+/** 공개 범위 단계(S-03, @peerchive/domain VISIBILITY_AUDIENCES). public ⊃ signed_in ⊃ same_institution ⊃ approved_followers ⊃ private. */
+export const visibilityAudience = pgEnum('visibility_audience', ['public', 'signed_in', 'same_institution', 'approved_followers', 'private'])
 export const contactPolicy = pgEnum('contact_policy', ['closed', 'on_request', 'open'])
 export const semester = pgEnum('semester', ['spring', 'summer', 'fall', 'winter'])
 /** 과제 종류. study는 스터디 방의 기록(C-08, ADR 0026): 스터디 방이 기록을 켜면 만들어지는 내부 과제 공간이고 멤버십은 방에서 파생됩니다. */
@@ -454,6 +458,8 @@ export const personas = pgTable(
     // profiles의 (persona_id, persona_kind, handle)·(persona_id, user_id), identity_links·portfolio_editions의 (persona_id, user_id) 복합 외래 키 대상.
     unique('personas_id_kind_handle_key').on(t.id, t.kind, t.handle),
     unique('personas_id_user_key').on(t.id, t.userId),
+    // project_listings의 (persona_id, persona_kind) 복합 외래 키 대상(S-03): 과제 수행 목록은 실명 페르소나에만.
+    unique('personas_id_kind_key').on(t.id, t.kind),
     check('personas_handle_format_check', sql`${t.handle} ~ '^[a-z0-9-]{3,30}$'`),
     check(
       'personas_display_name_check',
@@ -802,6 +808,62 @@ export const projectMembers = pgTable(
   (t) => [
     unique('project_members_project_id_user_id_key').on(t.projectId, t.userId),
     index('project_members_user_id_idx').on(t.userId),
+    // project_listings의 (project_member_id, user_id) 복합 외래 키 대상(S-03): 목록 행의 멤버와 페르소나 주인이 같은 사람임을 DB가 보장합니다.
+    unique('project_members_id_user_key').on(t.id, t.userId),
+  ],
+)
+
+// ── 항목별 공개 범위·과제 수행 목록 (S-03, SYSTEM_DESIGN §6.7.1, ADR 0031) ──
+
+/**
+ * 항목별 공개 범위(S-03, SYSTEM_DESIGN §6.7.1 VisibilitySetting, ADR 0031). 페르소나·항목마다 하나이며, **행이 없으면 기본값**
+ * (@peerchive/domain defaultAudience: project_list = private, 글·노트는 공개 계정 signed_in / 비공개 계정 approved_followers, 팔로우 목록 private)을
+ * 계산해 씁니다. 바꾼 항목만 행으로 남습니다. 비공개 계정은 저장 값과 관계없이 approved_followers 이하로 좁혀 적용합니다(effectiveAudience).
+ * 공개 사례·케이스 스터디는 이 표의 항목이 아니라서 이 설정으로 넓힐 수 없습니다.
+ */
+export const visibilitySettings = pgTable(
+  'visibility_settings',
+  {
+    personaId: uuid('persona_id')
+      .notNull()
+      .references(() => personas.id),
+    itemKind: visibilityItemKind('item_kind').notNull(),
+    audience: visibilityAudience('audience').notNull(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    primaryKey({ name: 'visibility_settings_pkey', columns: [t.personaId, t.itemKind] }),
+    check('visibility_settings_follow_lists_check', sql`${t.itemKind} <> 'follow_lists' or ${t.audience} in ('public', 'private')`),
+  ],
+)
+
+/**
+ * 과제 수행 목록(S-03, SYSTEM_DESIGN §6.7.1 ProjectListing, ADR 0031). 멤버가 직접 고른 과제만 실명 페르소나의 공개 프로필에 나옵니다.
+ * - 노출 필드는 과목·학기·`projects.title`뿐이고, 엠바고 중이면 제목 없이 과목·학기만입니다(읽을 때마다 계산).
+ * - **실명 페르소나만**(persona_kind check): 표시명 프로필에 팀 과제를 올리면 팀원이 두 프로필을 이을 수 있습니다(ADR 0028·0031).
+ * - user_id는 두 복합 외래 키로 멤버십의 주인 = 페르소나의 주인을 DB가 보장하려고 둔 사본입니다(공개 DTO에는 싣지 않음).
+ * - 숨기면 hidden_at을 채우고(행은 남김), 다시 보이면 shown_at을 새로 쓰고 hidden_at을 비웁니다. 익명 스터디 방 과제 거부와 active 멤버 조건은
+ *   애플리케이션(@peerchive/domain listingBlock)이 쓸 때와 읽을 때 모두 확인합니다.
+ */
+export const projectListings = pgTable(
+  'project_listings',
+  {
+    projectMemberId: uuid('project_member_id').notNull(),
+    personaId: uuid('persona_id').notNull(),
+    personaKind: personaKind('persona_kind').notNull().default('real'),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    shownAt: timestamp('shown_at', { withTimezone: true }).notNull().defaultNow(),
+    hiddenAt: timestamp('hidden_at', { withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ name: 'project_listings_pkey', columns: [t.projectMemberId, t.personaId] }),
+    index('project_listings_persona_idx').on(t.personaId).where(sql`${t.hiddenAt} is null`),
+    check('project_listings_real_persona_check', sql`${t.personaKind} = 'real'`),
+    foreignKey({ name: 'project_listings_member_fk', columns: [t.projectMemberId, t.userId], foreignColumns: [projectMembers.id, projectMembers.userId] }),
+    foreignKey({ name: 'project_listings_persona_fk', columns: [t.personaId, t.userId], foreignColumns: [personas.id, personas.userId] }),
+    foreignKey({ name: 'project_listings_persona_kind_fk', columns: [t.personaId, t.personaKind], foreignColumns: [personas.id, personas.kind] }),
   ],
 )
 

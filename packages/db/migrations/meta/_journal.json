@@ -197,6 +197,13 @@
       "when": 1793113790283,
       "tag": "0027_identity_boundary",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1793117098606,
+      "tag": "0028_visibility_settings",
+      "breakpoints": true
     }
   ]
 }

@@ -16,8 +16,11 @@
  *   후배 기여는 계정 단위 기록(공개 사례에 계정 표시 이름이 있음)이라 비워 둡니다 — 이것만으로도 두 프로필이 이어지기 때문입니다.
  * - 상대 페르소나는 `linkedPersona` 한 필드에만, 연결 플래그가 켜져 있을 때만(`canSeeIdentityLink`, 공개 경로는 늘 "본인 아님") 싣습니다.
  *   꺼져 있으면 상대 페르소나의 handle·이름·id·소개가 이 DTO(그리고 이것만 그리는 HTML·OG·인쇄 보기·README 카드)에 없습니다.
+ *
+ * 과제 수행 목록(S-03, ADR 0031): `projects`는 `canViewPersonaItem('project_list')`를 비로그인으로 판정해 통과할 때만(전체 공개) 싣습니다.
+ * 공개 사례·타임라인은 공개 범위 설정과 무관하게 공개 절차를 거친 것만입니다(설정으로 넓힐 수 없음, §8.3 불변조건 2).
  */
-import { CASE_SECTIONS, clipText } from '@peerchive/domain'
+import { ANONYMOUS_VIEWER, CASE_SECTIONS, clipText } from '@peerchive/domain'
 import {
   and,
   caseStudies,
@@ -32,6 +35,7 @@ import {
 import { toPublicProfileDto } from '../identity/profile-input'
 import { publicAffiliationBadges } from '../affiliation/affiliations'
 import { linkedPersonaFor, resolvePublicPersona } from '../social/personas'
+import { visiblePersonaProjects } from '../social/visibility'
 import { loadCurrentEditionModel } from './editions'
 import { loadCaseStudiesWithRelease } from './release-scope'
 import { buildPortfolioView, isPubliclyVisible } from './view'
@@ -107,6 +111,8 @@ export async function getPublicPortfolioProfile(db: DbExecutor, rawHandle: unkno
     affiliationBadges: await publicAffiliationBadges(db, userId, profile.showAffiliationBadge),
     kind: persona.kind,
     linkedPersona: await linkedPersonaFor(db, persona, { isOwner: false }),
+    // 과제 수행 목록(S-03): 공개 경로는 늘 비로그인으로 판정 — `project_list`가 전체 공개일 때만. 과목·학기·제목뿐, 엠바고 중이면 제목 없음.
+    projects: await visiblePersonaProjects(db, persona, ANONYMOUS_VIEWER, now),
   }
 }
 
@@ -117,7 +123,8 @@ export function escapeMarkdown(text: string): string {
 
 /**
  * GitHub 프로필 README용 마크다운 카드(§10.6). 공개 프로필과 같은 데이터만: 이름·한 줄 소개, 볼 수 있는 대표 케이스의 제목과 한 줄 요약
- * (첫 "문제와 결과" 문장), 공개 프로필·사례 링크, 연결을 켠 상대 페르소나 링크(S-01). 볼 수 없는 케이스는 빼고, 이메일·id는 없습니다.
+ * (첫 "문제와 결과" 문장), 공개 프로필·사례 링크, 연결을 켠 상대 페르소나 링크(S-01), 전체 공개한 과제 수행 목록(S-03). 볼 수 없는 케이스는 빼고,
+ * 이메일·id는 없습니다.
  */
 export function formatReadmeCard(profile: PublicPortfolioProfileDto, origin: string): string {
   const base = origin.replace(/\/+$/, '')
@@ -131,6 +138,16 @@ export function formatReadmeCard(profile: PublicPortfolioProfileDto, origin: str
     lines.push(`- [${escapeMarkdown(c.title)}](${base}${c.path})${summary}`)
   }
   if (cases.length) lines.push('')
+  // 과제 수행 목록(S-03): 공개 DTO에 있을 때만(전체 공개). 과목·학기·제목, 엠바고 중이면 제목 없이.
+  const listed = profile.projects ?? []
+  if (listed.length) {
+    lines.push('과제 수행 목록:')
+    for (const p of listed) {
+      const parts = [p.courseTitle, p.termLabel, p.title].filter((x): x is string => !!x).map((x) => escapeMarkdown(x))
+      lines.push(`- ${parts.length ? parts.join(' · ') : '과목 미연결 과제'}${p.title === null ? ' (제목 비공개 기간)' : ''}`)
+    }
+    lines.push('')
+  }
   // 연결 플래그가 켜져 있을 때만(공개 DTO에 linkedPersona가 있을 때만) 상대 프로필 링크를 붙입니다(S-01).
   const linked = profile.linkedPersona
   if (linked) lines.push(`${linked.kind === 'real' ? '실명 프로필' : '표시명 프로필'}: [${escapeMarkdown(linked.displayName)} @${linked.handle}](${base}/u/${linked.handle})`, '')

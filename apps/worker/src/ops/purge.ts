@@ -88,6 +88,7 @@ import {
   portfolioEditions,
   portfolioItems,
   profiles,
+  projectListings,
   projectMembers,
   projects,
   publicationCandidates,
@@ -105,6 +106,7 @@ import {
   uploadIntents,
   usefulnessSignals,
   users,
+  visibilitySettings,
   weeklyCheckins,
   type DbExecutor,
   type PublicationOutboxPayload,
@@ -244,6 +246,9 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
       // S-02(ADR 0029): 페르소나 활동은 지우고, 글·댓글에 고정한 작성 시점 페르소나는 비웁니다(고정 열 트리거가 null로 비우는 것만 허용).
       // 글·댓글 행 자체는 위 커뮤니티 정리 규칙대로 남습니다(표시명·실명 글은 읽을 때 "탈퇴한 사용자").
       c.add('persona_activities', (await tx.delete(personaActivities).where(inArray(personaActivities.personaId, personaIds)).returning({ id: personaActivities.id })).length)
+      // S-03(ADR 0031): 항목별 공개 범위와 과제 수행 목록 행(그 사람의 선택일 뿐이라 남기지 않음). 과제·멤버십은 아래 규칙대로.
+      c.add('visibility_settings', (await tx.delete(visibilitySettings).where(inArray(visibilitySettings.personaId, personaIds)).returning({ id: visibilitySettings.personaId })).length)
+      c.add('project_listings', (await tx.delete(projectListings).where(inArray(projectListings.personaId, personaIds)).returning({ id: projectListings.personaId })).length)
       const postRefs = await tx.update(communityPosts).set({ personaId: null }).where(inArray(communityPosts.personaId, personaIds)).returning({ id: communityPosts.id })
       const commentRefs = await tx
         .update(communityComments)
@@ -873,6 +878,10 @@ async function purgeSoloProject(tx: DbExecutor, projectId: string, userId: strin
         }
         await sp.delete(publications).where(eq(publications.id, publication.id))
       }
+      // 이미 나간 다른 멤버가 이 과제를 과제 수행 목록에 남겨 두었을 수 있습니다(읽을 때는 active가 아니라 안 보임): 멤버십보다 먼저 지웁니다.
+      await sp
+        .delete(projectListings)
+        .where(inArray(projectListings.projectMemberId, sp.select({ id: projectMembers.id }).from(projectMembers).where(eq(projectMembers.projectId, projectId))))
       await sp.delete(projectMembers).where(eq(projectMembers.projectId, projectId))
       // 혼자 남았던 스터디 기록(C-08): 방(보관됨)과의 연결을 먼저 지웁니다.
       await sp.delete(studyRecords).where(eq(studyRecords.projectId, projectId))

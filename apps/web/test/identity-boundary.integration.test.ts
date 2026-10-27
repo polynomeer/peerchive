@@ -257,8 +257,8 @@ const sha256 = (s: string) => createHash('sha256').update(s).digest('hex')
 // ── DB: social 역할 ───────────────────────────────────────────────────────
 
 const SOCIAL_ROLE = 'peerchive_social'
-/** social 읽기 경로가 쓰는 테이블(migration 0027 peerchive_apply_social_grants). */
-const SOCIAL_READ_TABLES = ['personas', 'profiles', 'identity_links', 'persona_activities']
+/** social 읽기 경로가 쓰는 테이블(migration 0027·0028 peerchive_apply_social_grants). 과제·학기·과목·엠바고·학교 인증은 열 단위 SELECT(S-03 테스트). */
+const SOCIAL_READ_TABLES = ['personas', 'profiles', 'identity_links', 'persona_activities', 'visibility_settings', 'project_listings']
 
 describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
   afterAll(closeTestDb)

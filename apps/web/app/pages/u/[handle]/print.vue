@@ -5,6 +5,7 @@
  * - 공개 프로필과 같은 공개 조회 API만 부릅니다(쿠키 없음). 그래서 인쇄물에도 공개 프로필에 없는 정보(이메일·내부 id·비공개 기록)가 없습니다.
  * - 링크는 종이에서도 따라갈 수 있게 주소를 함께 적습니다.
  * - 상대 페르소나(S-01)는 본인이 연결을 켰을 때만(`linkedPersona`) 주소를 적습니다. 꺼져 있으면 인쇄물에도 0건입니다.
+ * - 과제 수행 목록(S-03)은 공개 API가 싣는 경우(전체 공개)에만 적습니다. 인쇄물은 로그인 상태를 반영하지 않습니다.
  */
 import type { PublicPortfolioProfileDto } from '~~/shared/types/api'
 
@@ -53,6 +54,14 @@ const printPage = () => window.print()
           <p class="report-small">연락: {{ profile.contactText }}</p>
         </header>
         <PortfolioView :view="profile" print id-prefix="print" />
+        <section v-if="profile.projects && profile.projects.length" class="report-member">
+          <h2>과제 수행 목록</h2>
+          <ul class="report-small">
+            <li v-for="(p, i) in profile.projects" :key="i">
+              {{ p.courseTitle ?? '과목 미연결 과제' }}<template v-if="p.termLabel"> · {{ p.termLabel }}</template><template v-if="p.title"> · {{ p.title }}</template><template v-else> · 제목 비공개 기간(엠바고)</template>
+            </li>
+          </ul>
+        </section>
         <section v-if="profile.timeline.length" class="report-member">
           <h2>과제 타임라인</h2>
           <ul class="report-small">
