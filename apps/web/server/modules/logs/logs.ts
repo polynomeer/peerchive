@@ -49,7 +49,8 @@ import { checkEvidence, evidenceByRevision, evidenceIdsByRevision, insertEvidenc
 import { checkLogMilestone, milestoneRefsById } from '../milestones/milestones'
 import { type Actor, conflict, forbidden, invalid, notFound } from '../errors'
 import { parseInput } from '../validation'
-import { type ProjectRow, isUuid, loadPersonMask, loadReadableProject } from '../projects/access'
+import { type ProjectRow, isUuid, loadReadableProject } from '../projects/access'
+import { type MemberRefs, loadMemberRefs } from '../projects/member-refs'
 import {
   type LogContent,
   createLogSchema,
@@ -125,6 +126,22 @@ export function summarize(tag: LogTag, body: string, payload: Record<string, unk
   return line.length > SUMMARY_MAX ? `${line.slice(0, SUMMARY_MAX - 1)}…` : line
 }
 
+/**
+ * 응답에 싣는 payload. 회의 참석자는 DB에 실제 사용자 id로 저장되어 있으므로 멤버 참조로 바꿉니다(익명 스터디 기록, ADR 0026 부록).
+ */
+export function payloadForViewer(tag: LogTag, payload: Record<string, unknown>, refs: MemberRefs): LogPayload {
+  if (tag !== 'meeting' || !refs.pseudonymous || !Array.isArray(payload.attendees)) return payload as LogPayload
+  return { ...payload, attendees: (payload.attendees as unknown[]).map((a) => (typeof a === 'string' ? refs.ref(a) : a)) } as unknown as LogPayload
+}
+
+/** 입력 payload의 회의 참석자(멤버 참조)를 실제 사용자 id로. 모르는 참조는 422 `payload.attendees: not_member`. */
+function resolvePayload(tag: LogTag, content: LogContent, refs: MemberRefs): LogContent {
+  if (tag !== 'meeting') return content
+  const attendees = (content.payload as { attendees?: string[] }).attendees
+  if (!attendees?.length) return content
+  return { ...content, payload: { ...content.payload, attendees: [...new Set(refs.resolveAll(attendees, 'payload.attendees'))] } as LogContent['payload'] }
+}
+
 function toRef(log: LoadedLog): LogRefDto {
   return {
     id: log.entry.id,
@@ -176,11 +193,11 @@ async function toLogDtos(
           .where(inArray(tasks.logEntryId, taskSourced))
       : Promise.resolve([]),
   ])
-  // 익명 스터디 기록(C-08)은 다른 멤버 이름을 "스터디 멤버 N"으로 가립니다.
-  const mask = await loadPersonMask(db, project, actor.userId)
+  // 익명 스터디 기록(C-08, ADR 0026 부록)은 다른 멤버를 "스터디 멤버 N"과 가명 키로 가립니다.
+  const refs = await loadMemberRefs(db, project, actor.userId)
   const masked = (row: Parameters<typeof toLoaded>[0]): LoadedLog => {
     const loaded = toLoaded(row)
-    return { ...loaded, author: mask(loaded.author) }
+    return { ...loaded, author: refs.person(loaded.author) }
   }
   const taskByLog = new Map<string, TaskRefDto>(
     sourceTasks.flatMap((row) => (row.logEntryId ? [[row.logEntryId, { id: row.id, title: row.title }] as const] : [])),
@@ -198,10 +215,10 @@ async function toLogDtos(
     projectId: log.entry.projectId,
     tag: log.entry.tag,
     source: log.entry.source,
-    author: mask(log.author),
+    author: refs.person(log.author),
     revisionNo: log.revision.revisionNo,
     body: log.revision.body,
-    payload: log.revision.payload as LogPayload,
+    payload: payloadForViewer(log.entry.tag, log.revision.payload, refs),
     links: log.revision.links,
     claimedDate: log.revision.claimedDate,
     createdAt: log.entry.createdAt.toISOString(),
@@ -358,7 +375,8 @@ export async function insertLog(
   now: Date,
 ): Promise<CreatedLog> {
   if (!canWriteLog({ userId: actor.userId }, project, membership)) throw forbidden()
-  const { tag, content, evidenceIds, clientId } = parsed
+  const { tag, evidenceIds, clientId } = parsed
+  const content = resolvePayload(tag, parsed.content, await loadMemberRefs(tx, project, actor.userId))
 
   const replay = async (): Promise<CreatedLog | null> => {
     if (!clientId) return null
@@ -492,7 +510,7 @@ export async function reviseLog(
       previous.claimedDate,
     )
     if (!checked.content) throw invalid(checked.fields)
-    const content = checked.content
+    const content = resolvePayload(tag, checked.content, await loadMemberRefs(tx, project, actor.userId))
     const previousEvidence = (await evidenceIdsByRevision(tx, [current.id])).get(current.id) ?? []
     const evidenceIds =
       input.evidenceVersionIds === undefined ? previousEvidence : (input.evidenceVersionIds ?? [])
@@ -560,7 +578,11 @@ export async function listLogs(
 
   const conditions = [eq(logEntries.projectId, project.id)]
   if (query.tag) conditions.push(eq(logEntries.tag, query.tag))
-  if (query.author) conditions.push(eq(logEntries.authorId, query.author))
+  if (query.author) {
+    // 작성자 필터도 멤버 참조(익명 스터디 기록은 가명 키). 모르는 참조는 422.
+    const [author] = (await loadMemberRefs(db, project, actor.userId)).resolveAll([query.author], 'author')
+    conditions.push(eq(logEntries.authorId, author!))
+  }
   if (query.milestone) conditions.push(eq(logRevisions.milestoneId, query.milestone.toLowerCase()))
   if (cursor) {
     conditions.push(
@@ -588,7 +610,8 @@ export async function getLog(db: DbExecutor, actor: Actor, logId: unknown): Prom
 
 /** 모든 revision(오래된 순). 정정 이력은 숨기지 않습니다. */
 export async function listLogRevisions(db: DbExecutor, actor: Actor, logId: unknown): Promise<LogRevisionDto[]> {
-  const { log } = await loadReadableLog(db, actor, logId)
+  const { project, log } = await loadReadableLog(db, actor, logId)
+  const refs = await loadMemberRefs(db, project, actor.userId)
   const rows = await db
     .select()
     .from(logRevisions)
@@ -602,7 +625,7 @@ export async function listLogRevisions(db: DbExecutor, actor: Actor, logId: unkn
     revisionNo: row.revisionNo,
     tag: row.tag,
     body: row.body,
-    payload: row.payload as LogPayload,
+    payload: payloadForViewer(row.tag, row.payload, refs),
     links: row.links,
     claimedDate: row.claimedDate,
     resolvesEntryId: row.resolvesEntryId,

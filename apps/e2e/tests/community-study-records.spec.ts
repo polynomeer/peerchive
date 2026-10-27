@@ -122,6 +122,13 @@ test('C-08: 익명 스터디 방의 기록은 이름을 가리고 포트폴리�
   await expect(item).toContainText(/스터디 멤버 \d/)
   await expect(item).not.toContainText(member.displayName)
   await expectNoHorizontalScroll(owner.page)
+  // 기록 API 응답에도 멤버의 실제 사용자 id가 없음(과제별 가명 키 sm_…, ADR 0026 부록)
+  const recordMembers = await owner.api.get<Array<{ userId: string }>>(`/api/v1/projects/${projectId}/members`)
+  expect(recordMembers.map((m) => m.userId)).toContain(owner.id)
+  expect(recordMembers.filter((m) => m.userId !== owner.id).every((m) => /^sm_[0-9a-f]{16}$/.test(m.userId))).toBe(true)
+  for (const path of ['members', 'logs', 'tasks', 'contribution', 'publication']) {
+    expect(JSON.stringify(await owner.api.get(`/api/v1/projects/${projectId}/${path}`))).not.toContain(member.id)
+  }
 
   // 이름 노출 후보는 422, 모두 익명으로 공개
   expect((await owner.api.raw('POST', `/api/v1/projects/${projectId}/publication-candidates`, {

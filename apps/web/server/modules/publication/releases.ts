@@ -38,6 +38,7 @@ import { courseLinkForRelease } from '../course-hub/course-link'
 import { assertPublishable, getProjectEmbargo } from '../embargo/embargo'
 import { type Actor, conflict, forbidden, notFound } from '../errors'
 import { findMembership, isUuid, loadReadableProject } from '../projects/access'
+import { type MemberRefs, loadMemberRefs } from '../projects/member-refs'
 import { parseInput } from '../validation'
 import {
   type CandidateRow,
@@ -122,17 +123,19 @@ export async function publishCandidate(
     const refreshed = await refreshReadiness(tx, publication, candidate.id, now)
     const embargo = await getProjectEmbargo(tx, project.id, now)
     const { ctx, inactiveSubjectIds } = await readinessContext(tx, refreshed, now)
+    // 409 publish_blocked의 당사자도 멤버 참조로(익명 스터디 기록은 가명 키, ADR 0026 부록).
+    const refs = await loadMemberRefs(tx, project, actor.userId)
     const event: PublicationEvent = publication.status === 'published' ? 'republish' : 'publish'
     const result = transition(publication.status, event, { ...ctx, embargoUntil: embargo.until })
     if (!result.ok) {
       if (result.error.code === 'INVALID_TRANSITION') {
         // 공개는 ready가 아닌데 후보는 열려 있음(동의·파일 조건 미충족으로 awaiting_consent에 머묾).
         const pending = transition('ready', 'publish', { ...ctx, embargoUntil: embargo.until })
-        throw blockedError(pending.ok || pending.error.code !== 'PRECONDITION_FAILED' ? [] : pending.error.blockers, refreshed, ctx, inactiveSubjectIds)
+        throw blockedError(pending.ok || pending.error.code !== 'PRECONDITION_FAILED' ? [] : pending.error.blockers, refreshed, ctx, inactiveSubjectIds, refs)
       }
-      throw blockedError(result.error.blockers, refreshed, ctx, inactiveSubjectIds)
+      throw blockedError(result.error.blockers, refreshed, ctx, inactiveSubjectIds, refs)
     }
-    if (refreshed.status !== 'ready') throw blockedError([], refreshed, ctx, inactiveSubjectIds)
+    if (refreshed.status !== 'ready') throw blockedError([], refreshed, ctx, inactiveSubjectIds, refs)
 
     const [{ nextRelease }] = (await tx
       .select({ nextRelease: sql<number>`coalesce(max(${publicationCandidates.releaseNo}), 0)::int + 1` })
@@ -204,9 +207,10 @@ function blockedError(
   candidate: CandidateRow,
   ctx: Awaited<ReturnType<typeof readinessContext>>['ctx'],
   inactiveSubjectIds: ReadonlySet<string>,
+  refs: MemberRefs,
 ) {
   const statusBy = new Map<string, ConsentStatus>((ctx.consents ?? []).map((c) => [c.subjectId, c.status]))
-  const dtos = toBlockerDtos(blockers, statusBy, inactiveSubjectIds)
+  const dtos = toBlockerDtos(blockers, statusBy, inactiveSubjectIds, refs)
   return conflict('publish_blocked', {
     candidateStatus: candidate.status,
     blockers: dtos.map((b) => ({ ...b }) as Record<string, string>),

@@ -17,7 +17,8 @@ import { and, asc, eq, sql, profiles, projectMembers, projects, users, type DbEx
 import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, forbidden, invalid, notFound } from '../errors'
 import { parseInput } from '../validation'
-import { assertNotStudyManaged, findMembership, isUuid, loadPersonMask, loadReadableProject } from './access'
+import { assertNotStudyManaged, findMembership, isUuid, loadReadableProject } from './access'
+import { loadMemberRefs } from './member-refs'
 import type { MemberDto } from '../../../shared/types/api'
 
 export type { MemberDto }
@@ -48,9 +49,16 @@ export async function listMembers(db: DbExecutor, actor: Actor, projectId: unkno
     .leftJoin(profiles, eq(profiles.userId, projectMembers.userId))
     .where(and(eq(projectMembers.projectId, project.id), eq(projectMembers.status, 'active')))
     .orderBy(sql`case ${projectMembers.role} when 'owner' then 0 when 'editor' then 1 when 'reviewer' then 2 else 3 end`, asc(projectMembers.createdAt))
-  // 익명 스터디 기록(C-08)은 다른 멤버 이름을 가립니다.
-  const mask = await loadPersonMask(db, project, actor.userId)
-  return rows.map((row) => mask({ ...row, joinedAt: row.joinedAt.toISOString() }))
+  // 익명 스터디 기록(C-08, ADR 0026 부록)은 다른 멤버의 이름과 id를 가리고, 가입 시각도 싣지 않으며 가입 순서로 늘어놓지 않습니다
+  // (방 멤버 목록의 가입 순서·시각과 맞춰 보지 못하게). 순서는 역할, 그 안에서 가린 이름.
+  const refs = await loadMemberRefs(db, project, actor.userId)
+  const dtos = rows.map((row) => {
+    const self = row.userId === actor.userId
+    return refs.person({ ...row, joinedAt: refs.pseudonymous && !self ? null : row.joinedAt.toISOString() })
+  })
+  if (!refs.pseudonymous) return dtos
+  const rank = { owner: 0, editor: 1, reviewer: 2, viewer: 3 } as const
+  return dtos.sort((x, y) => rank[x.role] - rank[y.role] || x.displayName.localeCompare(y.displayName, 'ko', { numeric: true }) || (x.userId < y.userId ? -1 : 1))
 }
 
 /** 역할 변경 대상(본인·owner가 아닌 active 멤버)을 찾습니다. 없으면 404, owner/본인이면 409. */

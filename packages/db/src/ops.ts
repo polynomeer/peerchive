@@ -16,6 +16,11 @@ export const DELETION_PEPPER_ENV = 'PEERCHIVE_DELETION_PEPPER'
  * 이전 행과 맞지 않으므로 바꾸지 않습니다. production에서 없거나 약하면 web이 시작하지 않습니다.
  */
 export const AFFILIATION_PEPPER_ENV = 'PEERCHIVE_AFFILIATION_PEPPER'
+/**
+ * 익명 스터디 기록의 멤버 가명 키(ADR 0026 부록): 과제 id + 사용자 id의 HMAC 비밀. 저장하지 않는 응답용 키라 바꿀 수 있습니다
+ * (바꾸면 열려 있던 화면의 키가 맞지 않아 다시 불러와야 함). production에서 없거나 약하면 web이 시작하지 않습니다.
+ */
+export const MEMBER_REF_PEPPER_ENV = 'PEERCHIVE_MEMBER_REF_PEPPER'
 
 /** worker 프로세스의 상태 기록 이름(worker_heartbeats.name). 주기 작업은 `task:<이름>`입니다. */
 export const WORKER_HEARTBEAT_NAME = 'worker'
@@ -25,6 +30,7 @@ const DEV_PEPPERS: Record<string, string> = {
   [ANALYTICS_PEPPER_ENV]: 'dev-only-analytics-pepper-not-for-real-data',
   [DELETION_PEPPER_ENV]: 'dev-only-deletion-pepper-not-for-real-data',
   [AFFILIATION_PEPPER_ENV]: 'dev-only-affiliation-pepper-not-for-real-data',
+  [MEMBER_REF_PEPPER_ENV]: 'dev-only-member-ref-pepper-not-for-real-data',
 }
 
 type Env = Readonly<Record<string, string | undefined>>
@@ -40,7 +46,7 @@ export function isWeakPepper(value: string): boolean {
 }
 
 /** pepper 값. production에서 없거나 약하면 null. */
-export function resolvePepper(env: Env, name: typeof ANALYTICS_PEPPER_ENV | typeof DELETION_PEPPER_ENV | typeof AFFILIATION_PEPPER_ENV): string | null {
+export function resolvePepper(env: Env, name: typeof ANALYTICS_PEPPER_ENV | typeof DELETION_PEPPER_ENV | typeof AFFILIATION_PEPPER_ENV | typeof MEMBER_REF_PEPPER_ENV): string | null {
   const value = env[name]?.trim() ?? ''
   if (isProductionMode(env)) return value && !isWeakPepper(value) ? value : null
   return value || DEV_PEPPERS[name]!

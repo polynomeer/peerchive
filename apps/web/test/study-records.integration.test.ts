@@ -339,7 +339,10 @@ describe.skipIf(!databaseUrl)('C-08 study records (PostgreSQL)', () => {
       for (const m of members.filter((x) => x.userId !== w.b.userId)) {
         expect(m.displayName).toMatch(/^스터디 멤버 \d$/)
         expect(m.handle).toBeNull()
+        // 다른 멤버의 id도 과제별 가명 키(ADR 0026 부록)
+        expect(m.userId).toMatch(/^sm_[0-9a-f]{16}$/)
       }
+      expect(seenByOwner.author.userId).toMatch(/^sm_[0-9a-f]{16}$/)
       expect(JSON.stringify(members)).not.toMatch(/방장김|멤버이/)
 
       const slug = `anon-${rand().slice(0, 8)}`
@@ -351,7 +354,8 @@ describe.skipIf(!databaseUrl)('C-08 study records (PostgreSQL)', () => {
         tx,
         w.owner,
         projectId,
-        { level: 'summary', title: '익명 스터디', summary: '요약', slug, logIds: [log.id], exposure: { [w.a.userId]: 'anonymous' }, consentSelf: true },
+        // 노출 방식의 키는 멤버 가명 키(ADR 0026 부록): 방장이 보는 a의 키
+        { level: 'summary', title: '익명 스터디', summary: '요약', slug, logIds: [log.id], exposure: { [seenByOwner.author.userId]: 'anonymous' }, consentSelf: true },
         at(4),
         ORIGINS,
       )

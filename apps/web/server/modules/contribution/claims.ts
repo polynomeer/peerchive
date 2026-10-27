@@ -60,7 +60,8 @@ import { contentUrlFor } from '../artifacts/artifacts'
 import { type Actor, ServiceError, conflict, forbidden, invalid, notFound } from '../errors'
 import { summarize } from '../logs/logs'
 import { parseInput } from '../validation'
-import { type ProjectRow, isUuid, loadPersonMask, loadReadableProject } from '../projects/access'
+import { type ProjectRow, isUuid, loadReadableProject } from '../projects/access'
+import { loadMemberRefs } from '../projects/member-refs'
 import type {
   ClaimDto,
   ClaimEvidenceDto,
@@ -359,12 +360,13 @@ async function toClaimDtos(
   rows: SelectedClaim[],
 ): Promise<ClaimDto[]> {
   const revisionIds = rows.map((row) => row.revision.id)
-  const [evidence, loaded, mask] = await Promise.all([
+  const [evidence, loaded, refs] = await Promise.all([
     evidenceByRevision(db, revisionIds),
     endorsementsByRevision(db, revisionIds),
-    // 익명 스터디 기록(C-08)은 다른 멤버 이름을 가립니다.
-    loadPersonMask(db, project, actor.userId),
+    // 익명 스터디 기록(C-08, ADR 0026 부록)은 다른 멤버의 이름과 id를 가립니다.
+    loadMemberRefs(db, project, actor.userId),
   ])
+  const mask = refs.person
   const viewer = { userId: actor.userId }
   return rows.map(({ claim, revision, displayName, handle, memberStatus }) => {
     const domainClaim = {
@@ -452,14 +454,19 @@ export async function listClaims(db: DbExecutor, actor: Actor, projectId: unknow
 
 /** 모든 revision(오래된 순)과 각 revision에 붙은 확인. 정정 이력은 숨기지 않습니다. */
 export async function listClaimRevisions(db: DbExecutor, actor: Actor, claimId: unknown): Promise<ClaimRevisionDto[]> {
-  const { claim } = await loadReadableClaim(db, actor, claimId)
+  const { project, claim } = await loadReadableClaim(db, actor, claimId)
   const rows = await db
     .select()
     .from(claimRevisions)
     .where(eq(claimRevisions.claimId, claim.id))
     .orderBy(asc(claimRevisions.revisionNo))
   const ids = rows.map((row) => row.id)
-  const [evidence, loaded] = await Promise.all([evidenceByRevision(db, ids), endorsementsByRevision(db, ids)])
+  const [evidence, loaded, refs] = await Promise.all([
+    evidenceByRevision(db, ids),
+    endorsementsByRevision(db, ids),
+    // 익명 스터디 기록(C-08, ADR 0026 부록)은 이력의 근거 작성자·확인한 사람도 가립니다.
+    loadMemberRefs(db, project, actor.userId),
+  ])
   return rows.map((row) => {
     const own = loaded.filter((e) => e.revisionId === row.id && e.endorserId !== claim.userId)
     return {
@@ -467,8 +474,8 @@ export async function listClaimRevisions(db: DbExecutor, actor: Actor, claimId: 
       revisionNo: row.revisionNo,
       text: row.text,
       recordedAt: row.recordedAt.toISOString(),
-      evidence: evidence.get(row.id) ?? [],
-      endorsements: own.map((e) => e.dto),
+      evidence: (evidence.get(row.id) ?? []).map((e) => (e.kind === 'log' ? { ...e, author: refs.person(e.author) } : e)),
+      endorsements: own.map((e) => ({ ...e.dto, endorser: refs.person(e.dto.endorser) })),
       status: revisionStatus(claim, row.id, own.map(toDomainEndorsement)),
       current: row.id === claim.currentRevisionId,
     }

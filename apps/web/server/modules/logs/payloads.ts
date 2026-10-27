@@ -9,6 +9,7 @@
 import { z } from 'zod'
 import { BODY_REQUIRED_TAGS, LOG_TAGS, type LogTag } from '@peerchive/domain'
 import { issuesToFields } from '../validation'
+import { memberRefSchema } from '../projects/member-refs'
 import type { LogLinkDto, LogPayload } from '../../../shared/types/api'
 
 export const BODY_MAX = 5000
@@ -88,9 +89,10 @@ const PAYLOAD_SCHEMAS = {
   meeting: z.strictObject(
     {
       // 같은 프로젝트 멤버인지는 서비스가 확인합니다. 중복은 하나로 합칩니다.
-      attendees: list(z.uuid({ error: 'invalid' }), 20)
+      // 사용자 id 또는 멤버 가명 키(익명 스터디 기록, ADR 0026 부록 — 서비스가 실제 id로 바꿈).
+      attendees: list(memberRefSchema, 20)
         .default([])
-        .transform((ids) => [...new Set(ids.map((id) => id.toLowerCase()))]),
+        .transform((ids) => [...new Set(ids)]),
       decisions: list(text(500), 20).default([]),
       followUps: list(text(500), 20).default([]),
     },
@@ -191,7 +193,8 @@ export const reviseLogSchema = z.object({
 /** 목록 조회 쿼리. */
 export const listLogsQuerySchema = z.object({
   tag: z.enum(LOG_TAGS, { error: 'invalid' }).optional(),
-  author: z.uuid({ error: 'invalid' }).optional(),
+  /** 작성자(사용자 id 또는 멤버 가명 키). */
+  author: memberRefSchema.optional(),
   /** 현재 revision이 이 마일스톤에 속한 로그만(T-06). */
   milestone: z.uuid({ error: 'invalid' }).optional(),
   cursor: z.string({ error: 'invalid' }).max(200, { error: 'invalid' }).optional(),

@@ -48,7 +48,8 @@ import { type Actor, invalid } from '../errors'
 import { summarize } from '../logs/logs'
 import { claimedDateSchema } from '../logs/payloads'
 import { parseInput } from '../validation'
-import { loadPersonMask, loadReadableProject } from '../projects/access'
+import { loadReadableProject } from '../projects/access'
+import { loadMemberRefs } from '../projects/member-refs'
 import { projectClaimDtos } from './claims'
 import {
   CONTRIBUTION_DISCLAIMER,
@@ -167,8 +168,8 @@ export async function getContribution(
       .where(and(eq(roleClaims.projectId, project.id), inPeriod(claimRevisions.recordedAt))),
   ])
   // 익명 스터디 기록(C-08)은 다른 멤버 이름을 가립니다(이름순 정렬도 가린 이름 기준).
-  const mask = await loadPersonMask(db, project, actor.userId)
-  const members = rawMembers.map(mask)
+  const refs = await loadMemberRefs(db, project, actor.userId)
+  const members = rawMembers.map(refs.maskName)
 
   const tally = new Map<string, Omit<LedgerMemberDto, 'member' | 'active' | 'claims'>>()
   const entry = (userId: string) => {
@@ -234,16 +235,17 @@ export async function getContribution(
     period: { from, to, timeZone: 'Asia/Seoul', weekNo: projectWeekNo(project.createdAt, from, to) },
     generatedAt: now.toISOString(),
     members: included.map((m) => ({
-      member: { userId: m.userId, displayName: m.displayName, handle: m.handle },
+      // 응답에는 멤버 참조(익명 스터디 기록은 가명 키, ADR 0026 부록). 선언 DTO의 작성자도 같은 참조입니다.
+      member: refs.person({ userId: m.userId, displayName: m.displayName, handle: m.handle }),
       active: m.status === 'active',
       ...(tally.get(m.userId) ?? entry(m.userId)),
-      claims: claims.filter((c) => c.author.userId === m.userId),
+      claims: claims.filter((c) => c.author.userId === refs.ref(m.userId)),
     })),
     unresolvedStuck: unresolved.map(
       (row): UnresolvedStuckDto => ({
         id: row.id,
         summary: summarize('stuck', row.body, row.payload),
-        author: mask({ userId: row.authorId, displayName: row.displayName, handle: row.handle }),
+        author: refs.person({ userId: row.authorId, displayName: row.displayName, handle: row.handle }),
         createdAt: row.createdAt.toISOString(),
         openDays: openDays(row.createdAt, asOf),
       }),

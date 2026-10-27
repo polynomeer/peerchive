@@ -101,7 +101,7 @@ export function studyExposureAllowed(nameMode: NameMode | null, exposure: Readon
 
 /**
  * 익명 스터디 기록 안에서 사람 이름을 가리는 표. 본인은 자기 이름, 다른 사람은 과제 멤버가 된 순서대로 "스터디 멤버 N".
- * `orderedUserIds`는 과제 멤버를 만든 순서(같으면 id)입니다. 목록에 없는 사람(예: 오래전 정리된 계정)은 번호 없이 "스터디 멤버".
+ * `orderedUserIds`의 순서가 번호입니다(웹은 과제별 멤버 가명 키 순서 — 가입 순서와 잇지 않음, ADR 0026 부록). 목록에 없는 사람(예: 오래전 정리된 계정)은 번호 없이 "스터디 멤버".
  */
 export function studyMemberLabels(orderedUserIds: readonly string[]): (userId: string) => string {
   const index = new Map(orderedUserIds.map((id, i) => [id, i + 1]))

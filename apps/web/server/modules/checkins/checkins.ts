@@ -40,7 +40,8 @@ import { recordAudit } from '../audit/audit'
 import { emitAnalytics } from '../analytics/analytics'
 import { type Actor, invalid } from '../errors'
 import { getLog, insertLog, parseLogInput } from '../logs/logs'
-import { loadPersonMask, loadReadableProject } from '../projects/access'
+import { loadReadableProject } from '../projects/access'
+import { loadMemberRefs } from '../projects/member-refs'
 import { parseInput } from '../validation'
 import { checkinClientId } from '../discord/client-id'
 import type {
@@ -239,11 +240,12 @@ export async function listCheckins(
   ])
   const byUser = new Map(rows.map((row) => [row.userId, row]))
   // 익명 스터디 기록(C-08)은 다른 멤버 이름을 가립니다(이름순 정렬도 가린 이름 기준).
-  const mask = await loadPersonMask(db, project, actor.userId)
-  const entries: TeamCheckinEntryDto[] = orderMembersByName(members.map(mask)).map((member) => {
+  const refs = await loadMemberRefs(db, project, actor.userId)
+  const entries: TeamCheckinEntryDto[] = orderMembersByName(members.map(refs.maskName)).map((member) => {
     const row = byUser.get(member.userId)
     return {
-      member: { userId: member.userId, displayName: member.displayName, handle: member.handle },
+      // 응답에는 멤버 참조(익명 스터디 기록은 가명 키, ADR 0026 부록).
+      member: refs.person({ userId: member.userId, displayName: member.displayName, handle: member.handle }),
       submitted: !!row,
       timeBucket: row?.timeBucket ?? null,
       difficulty: row?.difficulty ?? null,

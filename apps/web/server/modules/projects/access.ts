@@ -2,8 +2,8 @@
  * 프로젝트 접근 컨텍스트 로딩. 모든 프로젝트 서비스는 여기서 시작합니다.
  * 존재하지 않거나 읽을 수 없는 프로젝트는 똑같이 NOT_FOUND(404)입니다(§8).
  */
-import { canReadProjectWorkspace, studyMemberLabels, type Membership } from '@peerchive/domain'
-import { and, asc, eq, institutionAffiliations, projectMembers, projects, schools, sql, type DbExecutor } from '@peerchive/db'
+import { canReadProjectWorkspace, type Membership } from '@peerchive/domain'
+import { and, eq, institutionAffiliations, projectMembers, projects, schools, sql, type DbExecutor } from '@peerchive/db'
 import { type Actor, conflict, notFound } from '../errors'
 
 export type ProjectRow = typeof projects.$inferSelect
@@ -81,45 +81,5 @@ export function assertNotStudyManaged(project: Pick<ProjectRow, 'kind'>): void {
   if (project.kind === 'study') throw conflict('study_managed')
 }
 
-/** 익명 스터디 방의 기록인지(과제 행에 옮겨 둔 방 이름 표시 방식). */
-export const isAnonymousStudyProject = (project: Pick<ProjectRow, 'kind' | 'studyNameMode'>): boolean =>
-  project.kind === 'study' && project.studyNameMode === 'anonymous'
-
-export interface PersonRef {
-  userId: string
-  displayName: string
-  handle: string | null
-}
-
-/** 사람 표시를 바꾸는 함수. 익명 스터디 기록이 아니면 그대로 돌려줍니다. */
-export type PersonMask = <T extends PersonRef>(person: T) => T
-
-const identity: PersonMask = (person) => person
-
-/**
- * 익명 스터디 기록 안에서 사람 이름 가리기(ADR 0026). 본인은 그대로, 다른 사람은 과제 멤버가 된 순서대로 "스터디 멤버 N"(handle 없음).
- * 로그 작성자·할 일 담당자·파일 올린 사람·멤버 목록·역할 선언·기여 장부·체크인이 같은 표를 씁니다. 익명 스터디가 아니면 아무것도 읽지 않습니다.
- * 사용자 id는 바꾸지 않습니다(본인 표시·수정 권한·필터에 씀). id에서 이름을 찾을 길은 과제 안에서는 이 표뿐입니다.
- */
-export async function loadPersonMask(
-  db: DbExecutor,
-  project: Pick<ProjectRow, 'id' | 'kind' | 'studyNameMode'> | string,
-  viewerId: string,
-): Promise<PersonMask> {
-  let row: Pick<ProjectRow, 'id' | 'kind' | 'studyNameMode'> | undefined
-  if (typeof project === 'string') {
-    ;[row] = await db
-      .select({ id: projects.id, kind: projects.kind, studyNameMode: projects.studyNameMode })
-      .from(projects)
-      .where(eq(projects.id, project))
-      .limit(1)
-  } else row = project
-  if (!row || !isAnonymousStudyProject(row)) return identity
-  const members = await db
-    .select({ userId: projectMembers.userId })
-    .from(projectMembers)
-    .where(eq(projectMembers.projectId, row.id))
-    .orderBy(asc(projectMembers.createdAt), asc(projectMembers.id))
-  const label = studyMemberLabels(members.map((m) => m.userId))
-  return <T extends PersonRef>(person: T): T => (person.userId === viewerId ? person : { ...person, displayName: label(person.userId), handle: null })
-}
+// 익명 스터디 기록의 이름·id 가리기는 member-refs.ts(`loadMemberRefs`, ADR 0026 부록).
+export { isAnonymousStudyProject } from './member-refs'

@@ -57,7 +57,8 @@ import { z } from 'zod'
 import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, forbidden, gone, invalid, notFound, tooLarge } from '../errors'
 import { parseInput } from '../validation'
-import { type ProjectRow, findMembership, isUuid, loadPersonMask, loadReadableProject } from '../projects/access'
+import { type ProjectRow, findMembership, isUuid, loadReadableProject } from '../projects/access'
+import { loadMemberRefs } from '../projects/member-refs'
 import type {
   ArtifactDto,
   ArtifactVersionDto,
@@ -114,10 +115,10 @@ async function toArtifactDtos(
     .where(inArray(artifactVersions.artifactId, rows.map((row) => row.id)))
     .orderBy(desc(artifactVersions.versionNo))
   const byArtifact = new Map<string, ArtifactVersionDto[]>()
-  // 익명 스터디 기록(C-08)은 다른 멤버 이름을 가립니다.
-  const mask = await loadPersonMask(db, project, actor.userId)
+  // 익명 스터디 기록(C-08, ADR 0026 부록)은 다른 멤버의 이름과 id를 가립니다.
+  const refs = await loadMemberRefs(db, project, actor.userId)
   for (const { version, displayName, handle } of versions) {
-    const dto = toVersionDto(version, mask({ userId: version.uploaderId, displayName, handle }))
+    const dto = toVersionDto(version, refs.person({ userId: version.uploaderId, displayName, handle }))
     byArtifact.set(version.artifactId, [...(byArtifact.get(version.artifactId) ?? []), dto])
   }
   const canUpload = canUploadArtifact({ userId: actor.userId }, project, membership)

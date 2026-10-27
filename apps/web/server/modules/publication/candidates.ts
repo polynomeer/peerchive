@@ -77,7 +77,8 @@ import { assertPublishable, getProjectEmbargo, toEmbargoDto } from '../embargo/e
 import { type Actor, ServiceError, conflict, forbidden, invalid, notFound, sqlState } from '../errors'
 import { HANDLE_PATTERN, RESERVED_HANDLES } from '../identity/profiles'
 import { summarize } from '../logs/logs'
-import { type PersonMask, type ProjectRow, findMembership, isUuid, loadPersonMask, loadReadableProject } from '../projects/access'
+import { type ProjectRow, findMembership, isUuid, loadReadableProject } from '../projects/access'
+import { type MemberRefs, loadMemberRefs, memberRefSchema } from '../projects/member-refs'
 import { parseInput } from '../validation'
 import { publicationNotices } from '../moderation/notices'
 import { buildManifest, canonicalHash, checkItemsFor, publicKeyFor } from './manifest'
@@ -184,7 +185,8 @@ export const createCandidateSchema = z
     milestoneIds: uuidList(12),
     artifactVersionIds: uuidList(50),
     claimIds: uuidList(100),
-    exposure: z.record(z.uuid({ error: 'invalid' }), z.enum(['name', 'anonymous'], { error: 'invalid' }), { error: 'invalid' }).default({}),
+    /** 키는 멤버 참조(사용자 id 또는 익명 스터디 기록의 가명 키, ADR 0026 부록 — 서비스가 실제 id로 바꿈). */
+    exposure: z.record(memberRefSchema, z.enum(['name', 'anonymous'], { error: 'invalid' }), { error: 'invalid' }).default({}),
     usageTerms: z.record(z.uuid({ error: 'invalid' }), usageSchema, { error: 'invalid' }).default({}),
     /** 후보를 만드는 사람이 자기 관련 공개에 동의하는지. 체크하지 않으면 pending으로 남습니다. */
     consentSelf: z.boolean({ error: 'invalid' }).default(false),
@@ -495,13 +497,15 @@ export function toBlockerDtos(
   blockers: readonly PublicationBlocker[],
   consentStatusBy: ReadonlyMap<string, ConsentStatus>,
   inactiveSubjectIds: ReadonlySet<string>,
+  refs: Pick<MemberRefs, 'ref'>,
 ): PublicationBlockerDto[] {
   const out: PublicationBlockerDto[] = []
   for (const b of blockers) {
+    // 당사자는 멤버 참조로(익명 스터디 기록은 가명 키, ADR 0026 부록).
     if (b.kind === 'consent_missing') {
-      if (inactiveSubjectIds.has(b.subjectId)) out.push({ kind: 'subject_inactive', userId: b.subjectId })
-      else out.push({ kind: 'consent_missing', userId: b.subjectId, status: consentStatusBy.get(b.subjectId) ?? 'pending' })
-    } else if (b.kind === 'consent_stale') out.push({ kind: 'consent_stale', userId: b.subjectId })
+      if (inactiveSubjectIds.has(b.subjectId)) out.push({ kind: 'subject_inactive', userId: refs.ref(b.subjectId) })
+      else out.push({ kind: 'consent_missing', userId: refs.ref(b.subjectId), status: consentStatusBy.get(b.subjectId) ?? 'pending' })
+    } else if (b.kind === 'consent_stale') out.push({ kind: 'consent_stale', userId: refs.ref(b.subjectId) })
     else if (b.kind === 'file_not_clean') out.push({ kind: 'file_not_clean', artifactVersionId: b.artifactVersionId, scanStatus: b.scanStatus })
     else if (b.kind === 'hold_open') out.push({ kind: 'hold_open' })
     else if (b.kind === 'embargo_active') out.push({ kind: 'embargo_active', until: b.until.toISOString() })
@@ -774,6 +778,13 @@ export async function createCandidate(
     const { project, membership } = await loadReadableProject(tx, actor, projectId, { lock: true })
     if (!canPreparePublication({ userId: actor.userId }, project, membership)) throw forbidden()
     await assertPublishable(tx, actor, project.id, now)
+    // 익명 스터디 기록의 이름 노출은 키를 보기 전에 422 anonymous_study(ADR 0026). 그다음 멤버 참조를 실제 id로(모르면 422 not_member).
+    if (!studyExposureAllowed(project.kind === 'study' ? project.studyNameMode : null, input.exposure)) throw invalid({ exposure: 'anonymous_study' })
+    const refs = await loadMemberRefs(tx, project, actor.userId)
+    const exposureEntries = Object.entries(input.exposure)
+    const exposureIds = refs.resolveAll(exposureEntries.map(([key]) => key), 'exposure')
+    const exposure = Object.fromEntries(exposureEntries.map(([, mode], i) => [exposureIds[i]!, mode]))
+    if (Object.keys(exposure).length !== exposureEntries.length) throw invalid({ exposure: 'invalid' })
     const selection: Selection = {
       level: input.level,
       title: input.title,
@@ -783,7 +794,7 @@ export async function createCandidate(
       milestoneIds: input.milestoneIds,
       artifactVersionIds: input.artifactVersionIds,
       claimIds: input.claimIds,
-      exposure: lowerKeys(input.exposure),
+      exposure: lowerKeys(exposure),
       usageTerms: lowerKeys(input.usageTerms) as Record<string, UsageTerms>,
       excludedUserIds: [],
     }
@@ -995,8 +1006,8 @@ export async function listMyConsentRequests(db: DbExecutor, actor: Actor): Promi
     )
     .orderBy(desc(publicationCandidates.createdAt))
   // 익명 스터디 기록(C-08)은 요청한 사람 이름도 가립니다.
-  const masks = new Map<string, PersonMask>()
-  for (const { candidate } of rows) if (!masks.has(candidate.projectId)) masks.set(candidate.projectId, await loadPersonMask(db, candidate.projectId, actor.userId))
+  const masks = new Map<string, MemberRefs>()
+  for (const { candidate } of rows) if (!masks.has(candidate.projectId)) masks.set(candidate.projectId, await loadMemberRefs(db, candidate.projectId, actor.userId))
   return rows.map(({ consent, candidate, projectTitle, requestedBy }) => ({
     candidateId: candidate.id,
     projectId: candidate.projectId,
@@ -1006,7 +1017,7 @@ export async function listMyConsentRequests(db: DbExecutor, actor: Actor): Promi
     manifestHash: candidate.manifestHash,
     scope: consent.scope,
     requestedAt: consent.createdAt.toISOString(),
-    requestedBy: masks.get(candidate.projectId)!({ userId: candidate.createdBy, displayName: requestedBy.trim() || '이름 미설정', handle: null }).displayName,
+    requestedBy: masks.get(candidate.projectId)!.maskName({ userId: candidate.createdBy, displayName: requestedBy.trim() || '이름 미설정', handle: null }).displayName,
     previewUrl: `/consents?candidate=${candidate.id}`,
   }))
 }
@@ -1060,9 +1071,9 @@ export async function getPublicationState(db: DbExecutor, actor: Actor, projectI
 }
 
 async function publicationOptions(db: DbExecutor, project: ProjectRow, actor: Actor): Promise<PublicationOptionsDto> {
-  // 익명 스터디 기록(C-08)은 다른 멤버 이름을 가립니다.
-  const mask = await loadPersonMask(db, project, actor.userId)
-  const author = (userId: string, displayName: string, handle: string | null) => mask({ userId, displayName, handle })
+  // 익명 스터디 기록(C-08, ADR 0026 부록)은 다른 멤버의 이름과 id를 가립니다(노출 방식 선택지의 키도 가명 키).
+  const refs = await loadMemberRefs(db, project, actor.userId)
+  const author = (userId: string, displayName: string, handle: string | null) => refs.person({ userId, displayName, handle })
   const [logRows, milestoneRows, snapshotCounts, claimRows, versionRows, memberRows] = await Promise.all([
     db
       .select({ entry: logEntries, revision: logRevisions, displayName: users.displayName, handle: profiles.handle })
@@ -1144,7 +1155,10 @@ async function publicationOptions(db: DbExecutor, project: ProjectRow, actor: Ac
       uploader: author(version.uploaderId, displayName, handle),
     })),
     members: memberRows
-      .map((m) => ({ userId: m.userId, displayName: mask({ userId: m.userId, displayName: m.displayName, handle: null }).displayName, status: m.status }))
+      .map((m) => {
+        const { userId, displayName } = refs.person({ userId: m.userId, displayName: m.displayName, handle: null })
+        return { userId, displayName, status: m.status }
+      })
       .sort((a, b) => a.displayName.localeCompare(b.displayName, 'ko') || (a.userId < b.userId ? -1 : 1)),
     licenses: [...LICENSE_ALLOWLIST],
   }
@@ -1191,7 +1205,9 @@ export async function toCandidateDto(
   ])
   if (!publication) throw notFound()
   // 익명 스터디 기록(C-08)은 당사자 이름도 "스터디 멤버 N"으로 가립니다(본인은 그대로).
-  const mask = await loadPersonMask(db, candidate.projectId, actor.userId)
+  // 당사자·만든 사람·막는 것·선택(노출 방식·제외한 사람)의 사람 참조도 멤버 참조로(ADR 0026 부록).
+  const people = await loadMemberRefs(db, candidate.projectId, actor.userId)
+  const mask = people.maskName
   const keyByUser = new Map(Object.entries(refs.members).map(([key, userId]) => [userId, key]))
   const memberByKey = new Map(snapshot.members.map((m) => [m.key, m]))
 
@@ -1200,7 +1216,7 @@ export async function toCandidateDto(
       const key = keyByUser.get(consent.subjectUserId) ?? null
       const member = key ? memberByKey.get(key) : undefined
       return {
-        userId: consent.subjectUserId,
+        userId: people.ref(consent.subjectUserId),
         displayName: mask({ userId: consent.subjectUserId, displayName: displayName.trim() || '이름 미설정', handle: null }).displayName,
         active: memberStatus === 'active',
         memberKey: key,
@@ -1222,7 +1238,7 @@ export async function toCandidateDto(
   } else {
     const statusBy = new Map(subjectRows.map((r) => [r.consent.subjectUserId, r.consent.status]))
     const readiness = await readinessBlockers(db, candidate, now)
-    blockers.push(...toBlockerDtos(readiness.blockers, statusBy, readiness.inactiveSubjectIds))
+    blockers.push(...toBlockerDtos(readiness.blockers, statusBy, readiness.inactiveSubjectIds, people))
     // 엠바고는 ready 판정에는 들어가지 않지만 게시를 막으므로 함께 보여 줍니다.
     if (embargo.active && embargo.until) blockers.push({ kind: 'embargo_active', until: embargo.until.toISOString() })
   }
@@ -1244,7 +1260,7 @@ export async function toCandidateDto(
     title: snapshot.title,
     manifestHash: candidate.manifestHash,
     createdAt: candidate.createdAt.toISOString(),
-    createdBy: { userId: candidate.createdBy, displayName: mask({ userId: candidate.createdBy, displayName: creator?.displayName.trim() || '이름 미설정', handle: null }).displayName },
+    createdBy: { userId: people.ref(candidate.createdBy), displayName: mask({ userId: candidate.createdBy, displayName: creator?.displayName.trim() || '이름 미설정', handle: null }).displayName },
     readyAt: candidate.readyAt?.toISOString() ?? null,
     supersededAt: candidate.supersededAt?.toISOString() ?? null,
     derivedFromId: candidate.derivedFromId,
@@ -1252,7 +1268,13 @@ export async function toCandidateDto(
     checks,
     subjects,
     blockers,
-    selection,
+    selection: people.pseudonymous
+      ? {
+          ...selection,
+          exposure: Object.fromEntries(Object.entries(selection.exposure).map(([userId, mode]) => [people.ref(userId), mode])),
+          excludedUserIds: selection.excludedUserIds.map(people.ref),
+        }
+      : selection,
     myConsent: (mine?.status as ConsentStatus | undefined) ?? null,
     canDecide: open && mine !== null,
     canExcludeDeclined:

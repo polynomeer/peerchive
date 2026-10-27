@@ -40,7 +40,8 @@ import { type Actor, conflict, forbidden, invalid, notFound } from '../errors'
 import { insertLog, parseLogInput } from '../logs/logs'
 import { claimedDateSchema } from '../logs/payloads'
 import { parseInput } from '../validation'
-import { type PersonMask, type ProjectRow, isUuid, loadPersonMask, loadReadableProject } from '../projects/access'
+import { type ProjectRow, isUuid, loadReadableProject } from '../projects/access'
+import { type MemberRefs, loadMemberRefs, memberRefSchema } from '../projects/member-refs'
 import type { LogTag, TaskCompleteDto, TaskConvertDto, TaskDto } from '../../../shared/types/api'
 
 export type { TaskDto }
@@ -72,10 +73,8 @@ const note = z
   .transform((value) => (value ? value : null))
 
 const dueAt = claimedDateSchema.nullish().transform((value) => value ?? null)
-const assigneeId = z
-  .uuid({ error: 'invalid' })
-  .nullish()
-  .transform((id) => (id ? id.toLowerCase() : null))
+/** 담당자: 사용자 id 또는 멤버 가명 키(익명 스터디 기록, ADR 0026 부록 — 서비스가 실제 id로 바꿈). */
+const assigneeId = memberRefSchema.nullish().transform((id) => id ?? null)
 const status = z.enum(TASK_STATUSES, { error: requiredOr('invalid') })
 const expectedVersion = z
   .number({ error: requiredOr('invalid') })
@@ -132,7 +131,7 @@ interface SelectedTask {
   logTag: LogTag | null
 }
 
-function toTaskDto(row: SelectedTask, mask: PersonMask): TaskDto {
+function toTaskDto(row: SelectedTask, refs: MemberRefs): TaskDto {
   const { task } = row
   return {
     id: task.id,
@@ -142,13 +141,13 @@ function toTaskDto(row: SelectedTask, mask: PersonMask): TaskDto {
     status: task.status,
     position: task.position,
     assignee: task.assigneeId
-      ? mask({ userId: task.assigneeId, displayName: row.assigneeName ?? '', handle: row.assigneeHandle })
+      ? refs.person({ userId: task.assigneeId, displayName: row.assigneeName ?? '', handle: row.assigneeHandle })
       : null,
     dueAt: task.dueAt,
     completedAt: task.completedAt?.toISOString() ?? null,
-    completedBy: task.completedBy,
+    completedBy: refs.refOrNull(task.completedBy),
     log: task.logEntryId && row.logTag ? { id: task.logEntryId, tag: row.logTag } : null,
-    createdBy: task.createdBy,
+    createdBy: refs.ref(task.createdBy),
     version: task.version,
     createdAt: task.createdAt.toISOString(),
     updatedAt: task.updatedAt.toISOString(),
@@ -163,15 +162,15 @@ async function projectTasks(db: DbExecutor, actor: Actor, projectId: string, onl
   const rows = await selectTasks(db)
     .where(and(...conditions))
     .orderBy(asc(tasks.status), asc(tasks.position))
-  // 익명 스터디 기록(C-08)은 다른 멤버 이름을 가립니다.
-  const mask = await loadPersonMask(db, projectId, actor.userId)
-  return rows.map((row) => toTaskDto(row, mask))
+  // 익명 스터디 기록(C-08, ADR 0026 부록)은 다른 멤버의 이름과 id를 가립니다.
+  const refs = await loadMemberRefs(db, projectId, actor.userId)
+  return rows.map((row) => toTaskDto(row, refs))
 }
 
 async function getTaskDto(db: DbExecutor, actor: Actor, taskId: string): Promise<TaskDto> {
   const [row] = await selectTasks(db).where(eq(tasks.id, taskId)).limit(1)
   if (!row) throw notFound()
-  return toTaskDto(row, await loadPersonMask(db, row.task.projectId, actor.userId))
+  return toTaskDto(row, await loadMemberRefs(db, row.task.projectId, actor.userId))
 }
 
 /**
@@ -191,6 +190,13 @@ async function loadReadableTask(db: DbExecutor, actor: Actor, taskId: unknown, o
 
 function assertCanManage(actor: Actor, project: ProjectRow, membership: Membership) {
   if (!canManageTasks({ userId: actor.userId }, project, membership)) throw forbidden()
+}
+
+/** 입력 담당자 참조 → 실제 사용자 id(모르는 참조는 422 `assigneeId: not_member`). */
+async function resolveAssignee(db: DbExecutor, actor: Actor, project: ProjectRow, value: string | null | undefined): Promise<string | null | undefined> {
+  if (!value) return value
+  const [id] = (await loadMemberRefs(db, project, actor.userId)).resolveAll([value], 'assigneeId')
+  return id!
 }
 
 /** 담당자는 이 프로젝트의 active 멤버(역할 무관)여야 합니다. 프로젝트 행을 잠근 트랜잭션에서 부릅니다. */
@@ -292,10 +298,11 @@ export async function createTask(
   rawInput: unknown,
   now = new Date(),
 ): Promise<TaskDto> {
-  const input = parseInput(createTaskSchema, rawInput)
+  const parsed = parseInput(createTaskSchema, rawInput)
   return db.transaction(async (tx) => {
     const { project, membership } = await loadReadableProject(tx, actor, projectId, { lock: true })
     assertCanManage(actor, project, membership)
+    const input = { ...parsed, assigneeId: (await resolveAssignee(tx, actor, project, parsed.assigneeId)) ?? null }
     await checkAssignee(tx, project.id, input.assigneeId)
     const { total, open } = await countTasks(tx, project.id)
     if (total >= TASK_LIMIT) throw conflict('limit_reached', { limit: TASK_LIMIT })
@@ -337,10 +344,11 @@ export async function updateTask(
   rawInput: unknown,
   now = new Date(),
 ): Promise<TaskDto> {
-  const input = parseInput(updateTaskSchema, rawInput)
+  const parsed = parseInput(updateTaskSchema, rawInput)
   return db.transaction(async (tx) => {
     const { project, membership, task } = await loadReadableTask(tx, actor, taskId, { lock: true })
     assertCanManage(actor, project, membership)
+    const input = { ...parsed, ...(parsed.assigneeId !== undefined && { assigneeId: (await resolveAssignee(tx, actor, project, parsed.assigneeId)) ?? null }) }
     if (task.version !== input.expectedVersion) throw conflict('version_conflict', { currentVersion: task.version })
     if (input.assigneeId !== undefined && input.assigneeId !== task.assigneeId) {
       await checkAssignee(tx, project.id, input.assigneeId)

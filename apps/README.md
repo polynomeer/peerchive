@@ -214,6 +214,7 @@ docker compose --env-file .env -f ops/docker-compose.yml --profile mailpit --pro
 | `PEERCHIVE_ANALYTICS_PEPPER` | 개발: 고정 개발용 값 | 분석 이벤트 HMAC 비밀(web·worker 같은 값). production에서 없거나 32자 미만이면 분석이 꺼짐. 바꾸면 이전 이벤트와 이어지지 않음 |
 | `PEERCHIVE_DELETION_PEPPER` | 개발: 고정 개발용 값 | 삭제 장부 HMAC 비밀(분석 pepper와 다른 값). production에서 없거나 약하면 worker·재적용 명령이 시작하지 않음. **바꾸지 않음** |
 | `PEERCHIVE_AFFILIATION_PEPPER` | 개발: 고정 개발용 값 | 학교 메일 주소·인증 코드 HMAC 비밀(C-01, 분석·삭제 pepper와 다른 값). production에서 없거나 32자 미만·자리표시면 web이 시작하지 않음. **바꾸지 않음**(한 주소 한 계정 확인이 이전 행과 맞지 않게 됨) |
+| `PEERCHIVE_MEMBER_REF_PEPPER` | 개발: 고정 개발용 값 | 익명 스터디 기록의 멤버 가명 키(`sm_…`) HMAC 비밀([ADR 0026](../docs/adr/0026-study-records.md) 부록, 다른 pepper와 다른 값). production에서 없거나 32자 미만·자리표시면 web이 시작하지 않음. 저장하지 않는 키라 바꿀 수 있음(열린 화면은 새로 고침) |
 | `PEERCHIVE_HUB_REQUIRE_AFFILIATION` | `1` | `1`: 선배 노트 만들기·게시에 그 과목 학교의 학교 메일 인증 필요. `0`: 로컬·개발 전용(인증 없이 작성). production에서 `0`이거나 1/0이 아니면 web이 시작하지 않음 |
 | `PEERCHIVE_DELETION_GRACE_DAYS` | `7` | 탈퇴 요청 뒤 정리까지 일수(0–90, web의 상태 확인도 같은 값) |
 | `PEERCHIVE_OPS_BATCH_SIZE` | `500` | 주기 정리 한 문장의 행 수(10–10000) |

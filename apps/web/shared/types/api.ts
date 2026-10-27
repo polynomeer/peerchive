@@ -152,12 +152,14 @@ export interface ProjectDetailDto extends ProjectDto {
 
 /** 같은 프로젝트 멤버에게만 주는 DTO. 이메일 없음. */
 export interface MemberDto {
+  /** 사용자 id. 익명 스터디 기록에서 다른 멤버는 과제별 가명 키(`sm_…`, ADR 0026 부록). 이하 과제 DTO의 사람 참조 모두 같음. */
   userId: string
   displayName: string
   handle: string | null
   role: ProjectRole
   partLabel: string | null
-  joinedAt: string
+  /** 익명 스터디 기록에서 다른 멤버는 null(방 멤버 목록과 맞춰 보지 못하게, ADR 0026 부록). */
+  joinedAt: string | null
 }
 
 export type InvitationStatus = 'pending' | 'used' | 'expired' | 'revoked'
