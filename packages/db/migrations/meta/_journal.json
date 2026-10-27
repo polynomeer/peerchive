@@ -162,6 +162,13 @@
       "when": 1793082850554,
       "tag": "0022_recruitments",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1793085033229,
+      "tag": "0023_archive_transfers",
+      "breakpoints": true
     }
   ]
 }

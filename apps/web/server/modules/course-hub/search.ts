@@ -5,13 +5,14 @@
  * - 검색 문서(search_documents)는 worker가 게시 이벤트로 만드는 **파생 데이터**입니다. 공개 여부의 근거로 쓰지 않습니다.
  * - 모든 쿼리는 원본 행과 조인해 **같은 쿼리에서** 지금 공개인지 확인합니다:
  *   사례·막힘 = 문서의 release가 지금 release이고 공개·release가 published이며 엠바고가 없음(`servableReleaseSql`),
- *   노트 = 노트가 published이고 문서를 만든 version과 지금 version이 같음.
+ *   노트 = 노트가 published이고 문서를 만든 version과 지금 version이 같음, 막힘 Q&A(C-09) = 항목이 published.
  *   그래서 철회 직후 정리 handler가 아직 돌지 않아 문서 행이 남아 있어도 결과에 나오지 않습니다.
  * - 일치: 정규화한 글의 부분 일치(ILIKE, 한국어 두 글자 검색어도 됨) 또는 pg_trgm 단어 유사도(`<%`). 유사도 순 → 최근 순.
  */
 import { SEARCH_KINDS, SEARCH_QUERY_MAX, normalizeSearchText, type SearchKind } from '@peerchive/domain'
 import {
   and,
+  courseQaItems,
   courses,
   desc,
   eq,
@@ -29,6 +30,7 @@ import { loadCanonicalCourse } from '../catalog/catalog'
 import { ServiceError, invalid } from '../errors'
 import { hiddenStuckSql } from '../moderation/hidden-items'
 import { isUuid } from '../projects/access'
+import { publicQaPath } from './course-qa'
 import { publicCasePath, publicStuckPath } from './hub'
 import { courseScopeSql, servableReleaseSql } from './public-scope'
 import type { PublicSearchDto, SearchResultDto } from '../../../shared/types/api'
@@ -157,6 +159,29 @@ async function searchNotes(db: DbExecutor, query: SearchQuery): Promise<SearchRe
   })
 }
 
+/** 막힘 Q&A(C-09): 문서가 남아 있어도 항목이 지금 published일 때만(철회·숨김은 같은 쿼리에서 빠짐). */
+async function searchQa(db: DbExecutor, query: SearchQuery): Promise<SearchResultDto[]> {
+  const rows = await db
+    .select({ id: courseQaItems.id, courseId: courseQaItems.courseId, title: searchDocuments.title, snippet: searchDocuments.snippet })
+    .from(searchDocuments)
+    .innerJoin(courseQaItems, eq(courseQaItems.id, searchDocuments.courseQaItemId))
+    .where(
+      and(
+        eq(searchDocuments.kind, 'qa'),
+        eq(courseQaItems.status, 'published'),
+        matchSql(query.q),
+        query.courseId ? sql`${courseQaItems.courseId} in ${courseScopeSql(query.courseId)}` : undefined,
+      ),
+    )
+    .orderBy(desc(scoreSql(query.q)), desc(courseQaItems.publishedAt), searchDocuments.id)
+    .limit(SEARCH_RESULT_LIMIT)
+  const labels = await courseLabels(db, rows.map((r) => r.courseId))
+  return rows.map((r) => {
+    const course = labels.get(r.courseId) ?? null
+    return { kind: 'qa' as const, title: r.title, snippet: r.snippet, path: publicQaPath(course?.id ?? r.courseId, r.id), course }
+  })
+}
+
 /** GET /public/search — 검색어가 비면 빈 결과. 형식 오류 422(q too_long, type·course invalid). 없는 과목이면 빈 결과. */
 export async function searchPublic(db: DbExecutor, rawQuery: Record<string, unknown>, now = new Date()): Promise<PublicSearchDto> {
   const parsed = parseQuery(rawQuery)
@@ -175,5 +200,6 @@ export async function searchPublic(db: DbExecutor, rawQuery: Record<string, unkn
   const releaseKinds = (['case', 'stuck'] as const).filter((k) => !query.type || query.type === k)
   if (releaseKinds.length > 0) results.push(...(await searchReleases(db, query, [...releaseKinds], now)))
   if (!query.type || query.type === 'note') results.push(...(await searchNotes(db, query)))
+  if (!query.type || query.type === 'qa') results.push(...(await searchQa(db, query)))
   return { q: query.q, type: query.type, courseId, results }
 }

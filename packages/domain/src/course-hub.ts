@@ -311,19 +311,21 @@ export function forkProjectTitle(originalTitle: string, max = 120): string {
 
 // ── 유용성 신호 ──────────────────────────────────────────────────────────
 
-export const SIGNAL_TARGET_KINDS = ['stuck_item', 'senior_note'] as const
+/** C-09(ADR 0025): 막힘 Q&A(course_qa)도 대상입니다(항목별 개수만). */
+export const SIGNAL_TARGET_KINDS = ['stuck_item', 'senior_note', 'course_qa'] as const
 export type SignalTargetKind = (typeof SIGNAL_TARGET_KINDS)[number]
 export const SIGNAL_KINDS = ['me_too', 'helped'] as const
 export type SignalKind = (typeof SIGNAL_KINDS)[number]
 
-/** 막힘 카드는 "나도 여기서 막혔어요"·"도움됐어요", 선배 노트는 "도움됐어요"만. */
+/** 막힘 카드·막힘 Q&A는 "나도 여기서 막혔어요"·"도움됐어요", 선배 노트는 "도움됐어요"만. */
 export function isAllowedSignal(target: SignalTargetKind, kind: SignalKind): boolean {
-  return target === 'stuck_item' ? true : kind === 'helped'
+  return target === 'senior_note' ? kind === 'helped' : true
 }
 
 // ── 검색 색인(파생 데이터) ────────────────────────────────────────────────
 
-export const SEARCH_KINDS = ['case', 'stuck', 'note'] as const
+/** qa: 막힘 Q&A(C-09, ADR 0025). */
+export const SEARCH_KINDS = ['case', 'stuck', 'note', 'qa'] as const
 export type SearchKind = (typeof SEARCH_KINDS)[number]
 export const SEARCH_QUERY_MAX = 100
 export const SEARCH_SNIPPET_MAX = 200

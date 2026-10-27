@@ -18,6 +18,7 @@ import {
 import {
   and,
   caseStudies,
+  courseQaItems,
   courses,
   eq,
   inArray,
@@ -70,6 +71,8 @@ export interface TargetPointer {
   communityCommentId: string | null
   communityRecruitmentId: string | null
   communityApplicationId: string | null
+  /** 막힘 Q&A(C-09). */
+  courseQaItemId: string | null
 }
 
 const empty = (targetType: ReportTargetType, identity: ReportTargetIdentity): TargetPointer => ({
@@ -89,6 +92,7 @@ const empty = (targetType: ReportTargetType, identity: ReportTargetIdentity): Ta
   communityCommentId: null,
   communityRecruitmentId: null,
   communityApplicationId: null,
+  courseQaItemId: null,
 })
 
 const slug = z.string({ error: 'invalid' }).trim().toLowerCase().min(3, { error: 'invalid' }).max(60, { error: 'invalid' })
@@ -104,6 +108,7 @@ const refSchemas = {
   senior_note: z.object({ noteId: z.uuid({ error: 'invalid' }).transform((id) => id.toLowerCase()) }),
   case_study: z.object({ handle, anchor: z.string({ error: 'invalid' }).regex(/^case-[1-5]$/, { error: 'invalid' }) }),
   profile: z.object({ handle }),
+  course_qa: z.object({ qaId: z.uuid({ error: 'invalid' }).transform((id) => id.toLowerCase()) }),
 } as const
 
 function parseRef<T extends keyof typeof refSchemas>(type: T, raw: unknown): z.output<(typeof refSchemas)[T]> {
@@ -195,6 +200,17 @@ export async function resolvePublicTarget(db: DbExecutor, type: ReportTargetType
       if (!note) throw notFound()
       return { ...empty(type, { type, seniorNoteId: note.id }), seniorNoteId: note.id, noteVersion: note.version }
     }
+    // 막힘 Q&A(C-09): 지금 게시 중인 것만(공개 대상, 로그인한 누구나).
+    case 'course_qa': {
+      const ref = parseRef('course_qa', rawRef)
+      const [qa] = await db
+        .select({ id: courseQaItems.id })
+        .from(courseQaItems)
+        .where(and(eq(courseQaItems.id, ref.qaId), eq(courseQaItems.status, 'published')))
+        .limit(1)
+      if (!qa) throw notFound()
+      return { ...empty(type, { type, courseQaId: qa.id }), courseQaItemId: qa.id }
+    }
     case 'case_study': {
       const ref = parseRef('case_study', rawRef)
       const owner = await publicProfileUser(db, ref.handle)
@@ -245,6 +261,7 @@ export async function affectedUserIds(
     | 'communityCommentId'
     | 'communityRecruitmentId'
     | 'communityApplicationId'
+    | 'courseQaItemId'
   >,
 ): Promise<string[]> {
   switch (target.targetType) {
@@ -278,6 +295,16 @@ export async function affectedUserIds(
     }
     case 'profile':
       return target.profileUserId ? [target.profileUserId] : []
+    // 막힘 Q&A(C-09): 질문한 사람·답한 사람(탈퇴 정리 뒤에는 빔).
+    case 'course_qa': {
+      if (!target.courseQaItemId) return []
+      const [row] = await db
+        .select({ askerId: courseQaItems.askerId, answererId: courseQaItems.answererId })
+        .from(courseQaItems)
+        .where(eq(courseQaItems.id, target.courseQaItemId))
+        .limit(1)
+      return row ? [...new Set([row.askerId, row.answererId].filter((id): id is string => !!id))] : []
+    }
   }
 }
 
@@ -300,6 +327,11 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
     [...new Set(targets.map((t) => t.communityRecruitmentId).filter((id): id is string => !!id))],
     [...new Set(targets.map((t) => t.communityApplicationId).filter((id): id is string => !!id))],
   )
+  const qaIds = [...new Set(targets.map((t) => t.courseQaItemId).filter((id): id is string => !!id))]
+  const qaRows = qaIds.length
+    ? await db.select({ id: courseQaItems.id, title: courses.title }).from(courseQaItems).innerJoin(courses, eq(courses.id, courseQaItems.courseId)).where(inArray(courseQaItems.id, qaIds))
+    : []
+  const qaCourseBy = new Map(qaRows.map((r) => [r.id, r.title]))
   const [pubRows, noteRows, caseRows] = await Promise.all([
     pubIds.length ? db.select({ id: publications.id, slug: publications.slug }).from(publications).where(inArray(publications.id, pubIds)) : [],
     noteIds.length
@@ -355,6 +387,9 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
       case 'community_application':
         label = `지원 메시지 · ${recruitmentBy.get(t.communityApplicationId ?? '') ?? '모집'}`
         break
+      case 'course_qa':
+        label = `막힘 Q&A · ${qaCourseBy.get(t.courseQaItemId ?? '') ?? '과목'}`
+        break
     }
     out.set(t.targetKey, label)
   }
@@ -365,7 +400,14 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
 export function pointerOf(
   row: Omit<
     TargetPointer,
-    'noteVersion' | 'caseStudyVersion' | 'communitySpaceId' | 'communityPostId' | 'communityCommentId' | 'communityRecruitmentId' | 'communityApplicationId'
+    | 'noteVersion'
+    | 'caseStudyVersion'
+    | 'communitySpaceId'
+    | 'communityPostId'
+    | 'communityCommentId'
+    | 'communityRecruitmentId'
+    | 'communityApplicationId'
+    | 'courseQaItemId'
   > & {
     noteVersion?: number | null
     caseStudyVersion?: number | null
@@ -374,6 +416,7 @@ export function pointerOf(
     communityCommentId?: string | null
     communityRecruitmentId?: string | null
     communityApplicationId?: string | null
+    courseQaItemId?: string | null
   },
 ): TargetPointer {
   return {
@@ -393,6 +436,7 @@ export function pointerOf(
     communityCommentId: row.communityCommentId ?? null,
     communityRecruitmentId: row.communityRecruitmentId ?? null,
     communityApplicationId: row.communityApplicationId ?? null,
+    courseQaItemId: row.courseQaItemId ?? null,
   }
 }
 

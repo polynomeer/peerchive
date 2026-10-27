@@ -153,11 +153,13 @@ export const seniorNoteStatus = pgEnum('senior_note_status', ['draft', 'publishe
 /** 선배 노트의 대략 총 소요 시간(supply-kit §2): ~10h / ~20h / ~40h / 40h+. */
 export const seniorNoteTimeBucket = pgEnum('senior_note_time_bucket', ['lt10h', 'lt20h', 'lt40h', 'forty_plus'])
 /** 유용성 신호의 대상: 공개 사례의 막힘 카드(공개·로그 키) / 게시된 선배 노트. */
-export const signalTargetKind = pgEnum('signal_target_kind', ['stuck_item', 'senior_note'])
+export const signalTargetKind = pgEnum('signal_target_kind', ['stuck_item', 'senior_note', 'course_qa'])
 /** 유용성 신호 종류: 나도 여기서 막혔어요 / 도움됐어요. */
 export const signalKind = pgEnum('signal_kind', ['me_too', 'helped'])
 /** 검색 문서 종류(파생 데이터): 공개 사례 / 막힘 카드 / 선배 노트. */
-export const searchDocKind = pgEnum('search_doc_kind', ['case', 'stuck', 'note'])
+export const searchDocKind = pgEnum('search_doc_kind', ['case', 'stuck', 'note', 'qa'])
+/** 막힘 Q&A(C-09, ADR 0025) 상태. */
+export const courseQaStatus = pgEnum('course_qa_status', ['published', 'withdrawn', 'hidden'])
 /** 케이스 스터디 지원 직무(T-14). */
 export const caseJobTarget = pgEnum('case_job_target', ['backend', 'frontend', 'data', 'pm', 'design', 'general'])
 /** 케이스 스터디 상태(T-14): 초안 → 게시 → (원본 release 철회·대체 시) 이용 불가. 이용 불가는 되돌리지 않습니다. */
@@ -174,6 +176,7 @@ export const reportTargetType = pgEnum('report_target_type', [
   'community_comment',
   'community_recruitment',
   'community_application',
+  'course_qa',
 ])
 /** 신고 사유(T-15, REPORT_REASONS). 개인정보·저작권은 공개 사례에 보류를 겁니다. */
 export const reportReason = pgEnum('report_reason', ['personal_info', 'answer_sharing', 'copyright', 'harassment', 'false_claim', 'spam', 'other'])
@@ -195,6 +198,7 @@ export const moderationActionKind = pgEnum('moderation_action_kind', [
   'sanction',
   'hide_recruitment',
   'hide_application',
+  'hide_qa',
 ])
 /** 공개 사례 안에서 가릴 수 있는 항목(T-15, HIDDEN_ITEM_KINDS). */
 export const hiddenItemKind = pgEnum('hidden_item_kind', ['log', 'claim', 'artifact'])
@@ -232,6 +236,9 @@ export const analyticsEventName = pgEnum('analytics_event_name', [
   'recruitment_created',
   'application_submitted',
   'recruitment_closed',
+  'archive_transfer_requested',
+  'archive_transfer_completed',
+  'course_qa_published',
 ])
 /** 기관 종류(C-01). 지금은 대학만. P2에서 bootcamp 등을 더합니다(SYSTEM_DESIGN §6.7.2 이관 원칙, ADR 0018). */
 export const institutionKind = pgEnum('institution_kind', ['university'])
@@ -274,6 +281,9 @@ export const communityNoticeKind = pgEnum('community_notice_kind', [
   'recruitment_invited',
   'recruitment_not_selected',
   'recruitment_cancelled',
+  'archive_consent_requested',
+  'archive_transfer_done',
+  'archive_transfer_cancelled',
 ])
 /** 커뮤니티 글·댓글 상태(C-04). auto_hidden은 C-06(신고 누적 임시 숨김)이 씁니다. */
 export const communityItemStatus = pgEnum('community_item_status', ['published', 'deleted_by_author', 'hidden', 'auto_hidden'])
@@ -291,6 +301,8 @@ export const recruitmentKind = pgEnum('recruitment_kind', ['team', 'study'])
 export const recruitmentStatus = pgEnum('recruitment_status', ['open', 'closed', 'cancelled'])
 /** 지원 상태(C-07): 검토 중 → 선정 / 선정되지 않음(사유 없음) / 지원 취소. */
 export const applicationStatus = pgEnum('application_status', ['pending', 'accepted', 'declined', 'withdrawn'])
+export const archiveTransferTarget = pgEnum('archive_transfer_target', ['course_qa', 'stuck_log', 'senior_note'])
+export const archiveTransferStatus = pgEnum('archive_transfer_status', ['awaiting_consent', 'done', 'cancelled'])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -1606,6 +1618,58 @@ export const seniorNotes = pgTable(
 )
 
 /**
+ * 막힘 Q&A(C-09, PROOFU_EVOLUTION_PLAN §8.5·§8.9.8, ADR 0025). 커뮤니티 질문 게시판의 질문 + 채택된 답변을 **두 사람의 동의를 받아 복사한**
+ * 아카이브 행입니다(원 글은 커뮤니티에 그대로 남음).
+ * - **커뮤니티 테이블을 가리키지 않습니다**(외래 키 없음): 공개 읽기(과목 허브·검색·신호)는 이 행만 읽고 커뮤니티 테이블과 조인할 길이 없습니다.
+ *   어느 옮기기 요청에서 왔는지는 커뮤니티 쪽 archive_transfers.course_qa_item_id가 이 행을 가리키고, 여기에는 불투명한 transfer_id(외래 키 없음,
+ *   공개 응답에 싣지 않음)만 둡니다.
+ * - 글: 요청 때 얼린 질문 제목·본문·답변(복사본). 이름: 각자 고른 표시(asker_label·answerer_label, 익명이면 "질문한 학생"/"답한 학생").
+ * - asker_id·answerer_id: 철회 권한(두 사람 모두 언제든)·운영 조치 안내·탈퇴 정리에만 씁니다. 공개 응답에 싣지 않습니다.
+ * - 상태: published(공개) / withdrawn(당사자 철회·탈퇴 정리, 글을 비울 수 있음) / hidden(운영 조치 hide_qa). 공개 읽기는 published만 같은 쿼리에서 봅니다.
+ */
+export const courseQaItems = pgTable(
+  'course_qa_items',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** 정본 과목. 과목 병합 때 정본으로 옮깁니다. */
+    courseId: uuid('course_id')
+      .notNull()
+      .references(() => courses.id),
+    questionTitle: text('question_title').notNull(),
+    questionBody: text('question_body').notNull(),
+    answerBody: text('answer_body').notNull(),
+    askerLabel: text('asker_label').notNull(),
+    askerAnonymous: boolean('asker_anonymous').notNull(),
+    answererLabel: text('answerer_label').notNull(),
+    answererAnonymous: boolean('answerer_anonymous').notNull(),
+    askerId: uuid('asker_id').references(() => users.id),
+    answererId: uuid('answerer_id').references(() => users.id),
+    status: courseQaStatus('status').notNull().default('published'),
+    /** 어느 옮기기에서 왔는지(불투명한 id, 외래 키 없음). */
+    transferId: uuid('transfer_id').notNull().unique(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    publishedAt: timestamp('published_at', { withTimezone: true }).notNull(),
+    withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
+    /** asker / answerer / account_deleted. */
+    withdrawnBy: text('withdrawn_by'),
+  },
+  (t) => [
+    index('course_qa_items_course_published_idx').on(t.courseId, t.publishedAt.desc()),
+    index('course_qa_items_asker_idx').on(t.askerId),
+    index('course_qa_items_answerer_idx').on(t.answererId),
+    check(
+      'course_qa_items_content_check',
+      sql`(char_length(${t.questionTitle}) between 1 and 120 and char_length(${t.questionBody}) between 1 and 10000 and char_length(${t.answerBody}) between 1 and 3000)
+        or (${t.status}::text = 'withdrawn' and ${t.questionTitle} = '' and ${t.questionBody} = '' and ${t.answerBody} = '')`,
+    ),
+    check('course_qa_items_labels_check', sql`char_length(${t.askerLabel}) between 1 and 40 and char_length(${t.answererLabel}) between 1 and 40`),
+    check('course_qa_items_withdrawn_check', sql`(${t.status}::text = 'withdrawn') = (${t.withdrawnAt} is not null)`),
+    check('course_qa_items_withdrawn_by_check', sql`${t.withdrawnBy} is null or ${t.withdrawnBy} in ('asker', 'answerer', 'account_deleted')`),
+  ],
+)
+
+/**
  * 유용성 신호("나도 여기서 막혔어요"·"도움됐어요"). 사용자·대상·종류마다 하나. 항목별 개수로만 쓰고 작성자별로 합산하지 않습니다.
  * 대상: 막힘 카드(publication_id + 스냅샷 로그 키, 키는 공개마다 안정됨) 또는 선배 노트. 대상이 지금 공개일 때만 남길 수 있고,
  * 읽기는 지금 공개인 대상만 셉니다. 철회되면 worker 정리 handler가 지웁니다(늦어도 읽기에는 보이지 않음).
@@ -1621,6 +1685,8 @@ export const usefulnessSignals = pgTable(
     publicationId: uuid('publication_id').references(() => publications.id),
     itemKey: text('item_key'),
     seniorNoteId: uuid('senior_note_id').references(() => seniorNotes.id),
+    /** 막힘 Q&A(C-09). */
+    courseQaItemId: uuid('course_qa_item_id').references(() => courseQaItems.id),
     kind: signalKind('kind').notNull(),
     createdAt: createdAt(),
   },
@@ -1633,10 +1699,14 @@ export const usefulnessSignals = pgTable(
       .where(sql`${t.targetKind} = 'senior_note'`),
     index('usefulness_signals_publication_idx').on(t.publicationId, t.itemKey),
     index('usefulness_signals_note_idx').on(t.seniorNoteId),
+    // C-09: 막힘 Q&A 신호(사람·항목·종류마다 하나). 부분 조건에 새 enum 값을 쓰지 않으려고 열로 거릅니다.
+    uniqueIndex('usefulness_signals_qa_key').on(t.userId, t.courseQaItemId, t.kind).where(sql`${t.courseQaItemId} is not null`),
+    index('usefulness_signals_qa_idx').on(t.courseQaItemId),
     check(
       'usefulness_signals_target_check',
-      sql`(${t.targetKind} = 'stuck_item' and ${t.publicationId} is not null and ${t.itemKey} is not null and ${t.seniorNoteId} is null)
-        or (${t.targetKind} = 'senior_note' and ${t.seniorNoteId} is not null and ${t.publicationId} is null and ${t.itemKey} is null)`,
+      sql`(${t.targetKind} = 'stuck_item' and ${t.publicationId} is not null and ${t.itemKey} is not null and ${t.seniorNoteId} is null and ${t.courseQaItemId} is null)
+        or (${t.targetKind} = 'senior_note' and ${t.seniorNoteId} is not null and ${t.publicationId} is null and ${t.itemKey} is null and ${t.courseQaItemId} is null)
+        or (${t.targetKind}::text = 'course_qa' and ${t.courseQaItemId} is not null and ${t.publicationId} is null and ${t.itemKey} is null and ${t.seniorNoteId} is null)`,
     ),
     check('usefulness_signals_item_key_check', sql`${t.itemKey} is null or char_length(${t.itemKey}) between 1 and 40`),
   ],
@@ -1695,6 +1765,8 @@ export const searchDocuments = pgTable(
     itemKey: text('item_key'),
     seniorNoteId: uuid('senior_note_id').references(() => seniorNotes.id),
     noteVersion: integer('note_version'),
+    /** 막힘 Q&A 문서(C-09). 검색은 이 행이 published일 때만 보여 줍니다. */
+    courseQaItemId: uuid('course_qa_item_id').references(() => courseQaItems.id),
     title: text('title').notNull(),
     snippet: text('snippet').notNull(),
     /** 정규화한 검색 대상 글(@peerchive/domain normalizeSearchText). */
@@ -1705,13 +1777,15 @@ export const searchDocuments = pgTable(
     uniqueIndex('search_documents_case_key').on(t.releaseId).where(sql`${t.kind} = 'case'`),
     uniqueIndex('search_documents_stuck_key').on(t.releaseId, t.itemKey).where(sql`${t.kind} = 'stuck'`),
     uniqueIndex('search_documents_note_key').on(t.seniorNoteId).where(sql`${t.kind} = 'note'`),
+    uniqueIndex('search_documents_qa_key').on(t.courseQaItemId).where(sql`${t.courseQaItemId} is not null`),
     index('search_documents_publication_idx').on(t.publicationId),
     index('search_documents_search_text_trgm_idx').using('gin', t.searchText.op('gin_trgm_ops')),
     check(
       'search_documents_target_check',
       sql`(${t.kind} in ('case', 'stuck') and ${t.publicationId} is not null and ${t.releaseId} is not null and ${t.seniorNoteId} is null
           and ((${t.kind} = 'case') = (${t.itemKey} is null)))
-        or (${t.kind} = 'note' and ${t.seniorNoteId} is not null and ${t.noteVersion} is not null and ${t.publicationId} is null and ${t.releaseId} is null)`,
+        or (${t.kind} = 'note' and ${t.seniorNoteId} is not null and ${t.noteVersion} is not null and ${t.publicationId} is null and ${t.releaseId} is null)
+        or (${t.kind}::text = 'qa' and ${t.courseQaItemId} is not null and ${t.publicationId} is null and ${t.releaseId} is null and ${t.seniorNoteId} is null)`,
     ),
   ],
 )
@@ -1918,6 +1992,8 @@ export const moderationActions = pgTable(
     /** 모집 글·지원 메시지 가리기(hide_recruitment·hide_application, C-07). */
     communityRecruitmentId: uuid('community_recruitment_id').references((): AnyPgColumn => recruitments.id),
     communityApplicationId: uuid('community_application_id').references((): AnyPgColumn => recruitmentApplications.id),
+    /** 막힘 Q&A 숨기기(hide_qa, C-09). */
+    courseQaItemId: uuid('course_qa_item_id').references((): AnyPgColumn => courseQaItems.id),
     internalNote: text('internal_note').notNull(),
     publicReason: text('public_reason'),
     notifyOwner: boolean('notify_owner').notNull().default(false),
@@ -1942,6 +2018,7 @@ export const moderationActions = pgTable(
     index('moderation_actions_community_comment_idx').on(t.communityCommentId),
     index('moderation_actions_community_recruitment_idx').on(t.communityRecruitmentId),
     index('moderation_actions_community_application_idx').on(t.communityApplicationId),
+    index('moderation_actions_course_qa_idx').on(t.courseQaItemId),
     check('moderation_actions_outcome_check', sql`${t.outcome} in ('resolved', 'dismissed') and (${t.outcome} = 'resolved' or ${t.kind} = 'none')`),
     check('moderation_actions_internal_note_check', sql`char_length(${t.internalNote}) between 1 and 1000`),
     check('moderation_actions_public_reason_check', sql`${t.publicReason} is null or char_length(${t.publicReason}) between 1 and 300`),
@@ -1956,6 +2033,7 @@ export const moderationActions = pgTable(
     check('moderation_actions_comment_check', sql`${t.kind}::text <> 'hide_comment' or ${t.communityCommentId} is not null`),
     check('moderation_actions_recruitment_check', sql`${t.kind}::text <> 'hide_recruitment' or ${t.communityRecruitmentId} is not null`),
     check('moderation_actions_application_check', sql`${t.kind}::text <> 'hide_application' or ${t.communityApplicationId} is not null`),
+    check('moderation_actions_course_qa_check', sql`${t.kind}::text <> 'hide_qa' or ${t.courseQaItemId} is not null`),
     // C-06: 방 운영진 가리기·제재는 글 또는 댓글 하나를 가리키고 공간 id는 비웁니다(방장이 당사자가 되지 않게, ADR 0023).
     check(
       'moderation_actions_community_item_check',
@@ -1999,6 +2077,8 @@ export const reports = pgTable(
     /** 신고한 모집 글·지원 메시지(C-07). 지원 메시지는 그 모집의 모집자만 신고합니다. 내용은 복사하지 않습니다. */
     communityRecruitmentId: uuid('community_recruitment_id').references((): AnyPgColumn => recruitments.id),
     communityApplicationId: uuid('community_application_id').references((): AnyPgColumn => recruitmentApplications.id),
+    /** 신고한 막힘 Q&A(C-09). 내용은 복사하지 않습니다. */
+    courseQaItemId: uuid('course_qa_item_id').references((): AnyPgColumn => courseQaItems.id),
     reason: reportReason('reason').notNull(),
     details: text('details'),
     status: reportStatus('status').notNull().default('open'),
@@ -2029,7 +2109,8 @@ export const reports = pgTable(
         or (${t.targetType}::text = 'community_post' and ${t.communityPostId} is not null)
         or (${t.targetType}::text = 'community_comment' and ${t.communityCommentId} is not null)
         or (${t.targetType}::text = 'community_recruitment' and ${t.communityRecruitmentId} is not null)
-        or (${t.targetType}::text = 'community_application' and ${t.communityApplicationId} is not null)`,
+        or (${t.targetType}::text = 'community_application' and ${t.communityApplicationId} is not null)
+        or (${t.targetType}::text = 'course_qa' and ${t.courseQaItemId} is not null)`,
     ),
   ],
 )
@@ -2550,6 +2631,8 @@ export const communityNotices = pgTable(
     nameModeChangeId: uuid('name_mode_change_id').references(() => nameModeChanges.id),
     /** 새 댓글 알림(post_commented, C-04)의 글. */
     postId: uuid('post_id').references((): AnyPgColumn => communityPosts.id),
+    /** 아카이브로 옮기기 알림(C-09: 동의 요청·끝남·취소)의 요청. payload는 옮길 곳 종류만. */
+    archiveTransferId: uuid('archive_transfer_id').references((): AnyPgColumn => archiveTransfers.id),
     payload: jsonb('payload').$type<Record<string, string | boolean | number>>().notNull().default({}),
     createdAt: createdAt(),
     readAt: timestamp('read_at', { withTimezone: true }),
@@ -2567,6 +2650,8 @@ export const communityNotices = pgTable(
     // C-07: 공간 소식 또는 모집 알림 중 하나 이상(모집 알림은 사람·모집·종류마다 한 행).
     check('community_notices_subject_check', sql`${t.spaceId} is not null or ${t.recruitmentId} is not null`),
     uniqueIndex('community_notices_recruitment_kind_user_key').on(t.recruitmentId, t.kind, t.userId).where(sql`${t.recruitmentId} is not null`),
+    // C-09: 옮기기 알림은 요청·사람·종류마다 한 행.
+    uniqueIndex('community_notices_transfer_kind_user_key').on(t.archiveTransferId, t.kind, t.userId).where(sql`${t.archiveTransferId} is not null`),
   ],
 )
 
@@ -2597,6 +2682,10 @@ export const communityPosts = pgTable(
     title: text('title').notNull(),
     body: text('body').notNull(),
     status: communityItemStatus('status').notNull().default('published'),
+    /**
+     * 채택된 답변(C-09, ADR 0025): 질문 게시판 글의 글쓴이가 고른 이 글의 최상위 댓글 하나(서비스가 확인). 고정 열 트리거(0020)는 이 열을 막지 않습니다.
+     */
+    acceptedCommentId: uuid('accepted_comment_id').references((): AnyPgColumn => communityComments.id),
     editedAt: timestamp('edited_at', { withTimezone: true }),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     version: integer('version').notNull().default(1),
@@ -2928,5 +3017,124 @@ export const recruitmentApplications = pgTable(
     check('recruitment_applications_cases_check', sql`cardinality(${t.caseSlugs}) <= 3`),
     check('recruitment_applications_handle_check', sql`${t.profileHandle} is null or ${t.profileHandle} ~ '^[a-z0-9-]{3,30}$'`),
     check('recruitment_applications_decided_check', sql`(${t.status}::text = 'pending') = (${t.decidedAt} is null)`),
+  ],
+)
+
+// C-09: 아카이브로 옮기기(ADR 0025). 커뮤니티 글·댓글을 가리키므로 커뮤니티 구역에 둡니다(C-05 경계 검사가 자동으로 덮음).
+// 방향은 커뮤니티 → 아카이브뿐입니다: 이 행이 아카이브 쪽 복사본(course_qa_items·senior_notes·log_entries)을 가리키고, 아카이브 테이블은 이 행이나
+// 다른 커뮤니티 테이블을 가리키지 않습니다(공개 읽기 경로가 커뮤니티 테이블에 닿을 길이 없음).
+
+/**
+ * 아카이브로 옮기기 요청(C-09, SYSTEM_DESIGN §6.7 ArchiveTransfer).
+ * - source: 원 글(source_post_id)과, 답변을 옮기면 채택된 답변(source_comment_id). 원 글은 커뮤니티에 그대로 남고 열람 범위도 바뀌지 않습니다.
+ * - snapshot: 요청 때 얼린 복사할 글({questionTitle, questionBody, answerBody}). 동의는 content_hash(@peerchive/domain archiveHashInput →
+ *   canonicalJson → SHA-256)에 묶입니다. 끝나거나(done) 취소되면(cancelled) snapshot을 null로 지웁니다(해시만 남김).
+ * - 동의: archive_transfer_consents(사람마다 한 행). 모두 같은 해시로 동의하면 같은 트랜잭션에서 복사본을 만들고 done.
+ * - 대상: course_qa → course_qa_item_id, stuck_log → stuck_log_id(+ solution_log_id), senior_note → senior_note_id(초안).
+ * - 취소: cancel_reason(@peerchive/domain ARCHIVE_CANCEL_REASONS). 14일(expires_at)이 지나면 읽거나 쓸 때 expired로 닫습니다.
+ * - 같은 글·대상의 진행 중 요청은 하나(부분 unique, 조건은 enum 리터럴 대신 닫힌 시각 열로).
+ * - 이름 표시 페르소나(SYSTEM_DESIGN §6.7.1 persona_id)는 S-01에서 더합니다. 지금은 동의 행의 display_mode·display_label이 복사본 이름입니다.
+ */
+export const archiveTransfers = pgTable(
+  'archive_transfers',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    target: archiveTransferTarget('target').notNull(),
+    status: archiveTransferStatus('status').notNull().default('awaiting_consent'),
+    spaceId: uuid('space_id')
+      .notNull()
+      .references(() => communitySpaces.id),
+    sourcePostId: uuid('source_post_id')
+      .notNull()
+      .references(() => communityPosts.id),
+    sourceCommentId: uuid('source_comment_id').references(() => communityComments.id),
+    initiatorId: uuid('initiator_id')
+      .notNull()
+      .references(() => users.id),
+    /** 정본 과목(course_qa·senior_note). */
+    courseId: uuid('course_id').references(() => courses.id),
+    /** 질문한 사람의 비공개 과제(stuck_log). */
+    projectId: uuid('project_id').references(() => projects.id),
+    /** stuck_log의 막힘 시간 구간(로그 payload.timeBucket). */
+    timeBucket: text('time_bucket'),
+    snapshot: jsonb('snapshot').$type<{ questionTitle: string; questionBody: string; answerBody: string | null }>(),
+    contentHash: text('content_hash').notNull(),
+    cancelReason: text('cancel_reason'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    courseQaItemId: uuid('course_qa_item_id').references(() => courseQaItems.id),
+    seniorNoteId: uuid('senior_note_id').references(() => seniorNotes.id),
+    stuckLogId: uuid('stuck_log_id').references(() => logEntries.id),
+    solutionLogId: uuid('solution_log_id').references(() => logEntries.id),
+  },
+  (t) => [
+    uniqueIndex('archive_transfers_open_key').on(t.sourcePostId, t.target).where(sql`${t.completedAt} is null and ${t.cancelledAt} is null`),
+    index('archive_transfers_post_idx').on(t.sourcePostId),
+    index('archive_transfers_comment_idx').on(t.sourceCommentId),
+    index('archive_transfers_initiator_idx').on(t.initiatorId, t.createdAt),
+    check('archive_transfers_hash_check', sql`${t.contentHash} ~ '^[0-9a-f]{64}$'`),
+    check(
+      'archive_transfers_status_check',
+      sql`(${t.status}::text = 'awaiting_consent' and ${t.completedAt} is null and ${t.cancelledAt} is null and ${t.snapshot} is not null)
+        or (${t.status}::text = 'done' and ${t.completedAt} is not null and ${t.cancelledAt} is null and ${t.snapshot} is null)
+        or (${t.status}::text = 'cancelled' and ${t.cancelledAt} is not null and ${t.completedAt} is null and ${t.snapshot} is null and ${t.cancelReason} is not null)`,
+    ),
+    check(
+      'archive_transfers_cancel_reason_check',
+      sql`${t.cancelReason} is null or ${t.cancelReason} in ('cancelled_by_initiator', 'declined', 'expired', 'source_unavailable', 'answer_changed', 'account_deleted', 'target_unavailable')`,
+    ),
+    check(
+      'archive_transfers_target_check',
+      sql`(${t.target}::text = 'course_qa' and ${t.courseId} is not null and ${t.projectId} is null and ${t.sourceCommentId} is not null)
+        or (${t.target}::text = 'stuck_log' and ${t.projectId} is not null and ${t.courseId} is null and ${t.timeBucket} is not null)
+        or (${t.target}::text = 'senior_note' and ${t.courseId} is not null and ${t.projectId} is null and ${t.sourceCommentId} is null)`,
+    ),
+    check(
+      'archive_transfers_result_check',
+      sql`${t.status}::text <> 'done'
+        or (${t.target}::text = 'course_qa' and ${t.courseQaItemId} is not null)
+        or (${t.target}::text = 'stuck_log' and ${t.stuckLogId} is not null)
+        or (${t.target}::text = 'senior_note' and ${t.seniorNoteId} is not null)`,
+    ),
+    check('archive_transfers_time_bucket_check', sql`${t.timeBucket} is null or ${t.timeBucket} in ('lt30m', 'lt2h', 'half_day', 'day_plus')`),
+  ],
+)
+
+/**
+ * 옮기기 동의(C-09). 요청에 필요한 사람마다 한 행(질문한 사람·답한 사람·작성자). 요청한 사람의 행은 요청 때 granted.
+ * - content_hash: 동의할 때 본 내용의 해시(요청의 content_hash와 같아야 복사됨). display_*: 막힘 Q&A에 쓸 자기 이름(각자 고름).
+ * - 요청한 사람에게 상대의 행은 상태만 보입니다(답한 사람이 누구인지·무엇을 골랐는지는 응답에 없음).
+ */
+export const archiveTransferConsents = pgTable(
+  'archive_transfer_consents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    transferId: uuid('transfer_id')
+      .notNull()
+      .references(() => archiveTransfers.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    /** asker / answerer / author. */
+    role: text('role').notNull(),
+    /** pending / granted / declined. */
+    status: text('status').notNull().default('pending'),
+    displayMode: communityNameMode('display_mode'),
+    displayLabel: text('display_label'),
+    contentHash: text('content_hash'),
+    createdAt: createdAt(),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('archive_transfer_consents_transfer_user_key').on(t.transferId, t.userId),
+    index('archive_transfer_consents_user_idx').on(t.userId, t.status),
+    check('archive_transfer_consents_role_check', sql`${t.role} in ('asker', 'answerer', 'author')`),
+    check('archive_transfer_consents_status_check', sql`${t.status} in ('pending', 'granted', 'declined')`),
+    check('archive_transfer_consents_decided_check', sql`(${t.status} = 'pending') = (${t.decidedAt} is null)`),
+    check('archive_transfer_consents_granted_check', sql`${t.status} <> 'granted' or ${t.contentHash} is not null`),
+    check('archive_transfer_consents_label_check', sql`${t.displayLabel} is null or char_length(${t.displayLabel}) between 1 and 40`),
   ],
 )

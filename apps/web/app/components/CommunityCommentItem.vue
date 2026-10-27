@@ -3,10 +3,11 @@
  * 커뮤니티 댓글 하나(+ 답글 한 단계)(C-04, ADR 0022). 작성자는 이름·`글쓴이`·`익명N`으로만 보이고 사람 id·프로필 링크가 없습니다.
  * 고치기·지우기는 내 댓글에만, 공감·신고는 남의 게시 중인 댓글에만 보입니다. 서버 응답(스레드 전체)을 부모에게 올려 다시 그립니다.
  * 방 운영진이면(spaceHiddenIds가 null이 아님, C-06) 가리기·되돌리기·제재 요청 도구가 보입니다.
+ * 질문 게시판(C-09): 채택된 답변에는 "채택된 답변" 표시가 붙고(작성자 표시는 그대로), 글쓴이(canAccept)는 최상위 댓글을 채택하거나 풉니다.
  */
 import type { CommunityCommentDto, CommunityPostDto, CommunityReactionDto } from '~~/shared/types/api'
 
-const props = defineProps<{ comment: CommunityCommentDto; postId: string; official: boolean; spaceHiddenIds?: string[] | null }>()
+const props = defineProps<{ comment: CommunityCommentDto; postId: string; official: boolean; spaceHiddenIds?: string[] | null; canAccept?: boolean }>()
 const emit = defineEmits<{ thread: [CommunityPostDto]; error: [string]; status: [string]; modChanged: [] }>()
 
 const c = computed(() => props.comment)
@@ -74,6 +75,22 @@ async function reply() {
   }
 }
 
+async function setAccepted(on: boolean) {
+  if (!on && !window.confirm('채택을 풀까요? 이 답변을 옮기던 진행 중 요청은 취소됩니다.')) return
+  busy.value = true
+  try {
+    emit(
+      'thread',
+      await $fetch<CommunityPostDto>(`/api/v1/community/posts/${props.postId}/accepted-answer`, on ? { method: 'PUT', body: { commentId: c.value.id } } : { method: 'DELETE' }),
+    )
+    emit('status', on ? '이 답변을 채택했습니다.' : '채택을 풀었습니다.')
+  } catch (e) {
+    fail(e)
+  } finally {
+    busy.value = false
+  }
+}
+
 async function toggleReaction() {
   busy.value = true
   try {
@@ -92,6 +109,7 @@ async function toggleReaction() {
       <strong class="comment-author">{{ c.author.label ?? '' }}</strong>
       <span v-if="c.author.schoolVerified"> · 학교 인증</span>
       <span v-if="c.author.mine" class="badge">내 댓글</span>
+      <span v-if="c.accepted" class="badge accepted" data-testid="accepted-badge">채택된 답변</span>
       <span class="muted"> · {{ communityTimeText(c) }}<template v-if="c.edited"> · 수정됨</template></span>
     </p>
     <template v-if="editing">
@@ -123,6 +141,17 @@ async function toggleReaction() {
       </button>
       <span v-else-if="c.status === 'published'" class="muted">공감 {{ reaction.count }}</span>
       <button v-if="c.canReply" type="button" class="link-button" :aria-expanded="replying" @click="replying = !replying">답글</button>
+      <button
+        v-if="canAccept && !c.parentId && c.status === 'published' && !c.accepted"
+        type="button"
+        class="link-button"
+        :disabled="busy"
+        :data-testid="`accept-${c.id}`"
+        @click="setAccepted(true)"
+      >
+        이 답변 채택
+      </button>
+      <button v-if="canAccept && c.accepted" type="button" class="link-button" :disabled="busy" @click="setAccepted(false)">채택 풀기</button>
       <button v-if="c.canEdit" type="button" class="link-button" @click="startEdit">고치기</button>
       <button v-if="c.canDelete" type="button" class="link-button" :disabled="busy" @click="remove">지우기</button>
       <ReportButton

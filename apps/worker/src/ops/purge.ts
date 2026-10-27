@@ -24,6 +24,9 @@
  */
 import {
   PUBLICATION_WITHDRAWN_TOPIC,
+  archiveTransferConsents,
+  archiveTransfers,
+  courseQaItems,
   affiliationCodes,
   analyticsEvents,
   and,
@@ -330,6 +333,7 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
 async function purgeCommunity(tx: DbExecutor, userId: string, c: Counter, now: Date): Promise<void> {
   // 모집·지원(C-07, ADR 0024)을 초대 삭제(아래·과제 정리)보다 먼저: 지원 행이 초대를 가리키므로.
   await purgeRecruitments(tx, userId, c, now)
+  await purgeArchiveTransfers(tx, userId, c, now)
   const owned = await tx
     .select({ spaceId: spaceMemberships.spaceId })
     .from(spaceMemberships)
@@ -506,6 +510,92 @@ async function purgeRecruitments(tx: DbExecutor, userId: string, c: Counter, now
     .returning({ id: recruitments.id })
   c.add('recruitment_texts', cleared.length)
 }
+
+/**
+ * 아카이브로 옮기기·막힘 Q&A 정리(C-09, ADR 0025).
+ * - 그 사람이 요청했거나 동의해야 하는 진행 중 요청: account_deleted로 취소하고 스냅샷 글을 지움(남은 당사자에게 취소 알림, 웹 cancelInTx와 같은 알림 행).
+ * - 그 사람이 **요청한** 옮기기 행(모든 상태)은 동의 행·알림과 함께 지웁니다(그 사람의 요청 기록이고, 복사본인 과제 로그·선배 노트 초안이
+ *   아래 정리에서 지워질 때 외래 키가 막지 않게). 막힘 Q&A 복사본은 transfer_id(외래 키 없음)만 남습니다.
+ * - 남의 요청에 남은 그 사람의 동의 행: 고른 이름(display_label)만 비움(행·상태는 요청의 기록이라 남김).
+ * - 그 사람이 질문했거나 답한 막힘 Q&A: 철회(withdrawn, account_deleted) + 질문·답변 글을 모두 비우고, 그 사람 칸은 null·이름은 "탈퇴한 사용자"로.
+ *   상대의 글만 남겨 두면 대화가 성립하지 않고 탈퇴한 사람의 질문·답변 맥락이 남으므로 항목 전체를 내립니다(상대는 철회됨으로 봄).
+ *   검색 문서·신호는 같은 트랜잭션에서 지웁니다(공개 읽기는 이미 status로 막힘). 신고·조치가 가리킬 수 있어 행은 남깁니다.
+ */
+async function purgeArchiveTransfers(tx: DbExecutor, userId: string, c: Counter, now: Date): Promise<void> {
+  const involved = await tx
+    .select({ id: archiveTransfers.id, spaceId: archiveTransfers.spaceId, target: archiveTransfers.target })
+    .from(archiveTransfers)
+    .where(
+      and(
+        eq(archiveTransfers.status, 'awaiting_consent'),
+        or(
+          eq(archiveTransfers.initiatorId, userId),
+          sql`exists (select 1 from ${archiveTransferConsents} atc where atc.transfer_id = ${archiveTransfers.id} and atc.user_id = ${userId})`,
+        ),
+      ),
+    )
+    .for('update')
+  for (const t of involved) {
+    await tx
+      .update(archiveTransfers)
+      .set({ status: 'cancelled', cancelReason: 'account_deleted', cancelledAt: now, snapshot: null, updatedAt: now })
+      .where(eq(archiveTransfers.id, t.id))
+    await tx.execute(sql`
+      insert into community_notices (user_id, space_id, kind, archive_transfer_id, payload, created_at)
+      select atc.user_id, ${t.spaceId}, 'archive_transfer_cancelled', ${t.id}, ${JSON.stringify({ target: t.target })}::jsonb, ${now.toISOString()}::timestamptz
+      from archive_transfer_consents atc join users u on u.id = atc.user_id
+      where atc.transfer_id = ${t.id} and atc.user_id <> ${userId} and u.status = 'active'
+      on conflict (archive_transfer_id, kind, user_id) where archive_transfer_id is not null do nothing`)
+  }
+  c.add('archive_transfers_cancelled', involved.length)
+  const mine = idsOf(await tx.select({ id: archiveTransfers.id }).from(archiveTransfers).where(eq(archiveTransfers.initiatorId, userId)))
+  if (mine.length) {
+    await tx.delete(communityNotices).where(inArray(communityNotices.archiveTransferId, mine))
+    await tx.delete(archiveTransferConsents).where(inArray(archiveTransferConsents.transferId, mine))
+    c.add('archive_transfers', (await tx.delete(archiveTransfers).where(inArray(archiveTransfers.id, mine)).returning({ id: archiveTransfers.id })).length)
+  }
+  c.add(
+    'archive_transfer_consent_labels',
+    (
+      await tx
+        .update(archiveTransferConsents)
+        .set({ displayLabel: null })
+        .where(and(eq(archiveTransferConsents.userId, userId), isNotNull(archiveTransferConsents.displayLabel)))
+        .returning({ id: archiveTransferConsents.id })
+    ).length,
+  )
+  const qa = await tx
+    .select({ id: courseQaItems.id, askerId: courseQaItems.askerId, answererId: courseQaItems.answererId })
+    .from(courseQaItems)
+    .where(or(eq(courseQaItems.askerId, userId), eq(courseQaItems.answererId, userId)))
+    .for('update')
+  if (qa.length === 0) return
+  const ids = idsOf(qa)
+  await tx.delete(searchDocuments).where(inArray(searchDocuments.courseQaItemId, ids))
+  await tx.delete(usefulnessSignals).where(inArray(usefulnessSignals.courseQaItemId, ids))
+  for (const item of qa) {
+    const asker = item.askerId === userId
+    const answerer = item.answererId === userId
+    await tx
+      .update(courseQaItems)
+      .set({
+        status: 'withdrawn',
+        withdrawnAt: sql`coalesce(${courseQaItems.withdrawnAt}, ${now.toISOString()}::timestamptz)`,
+        withdrawnBy: sql`coalesce(${courseQaItems.withdrawnBy}, 'account_deleted')`,
+        questionTitle: '',
+        questionBody: '',
+        answerBody: '',
+        ...(asker && { askerId: null, askerLabel: WITHDRAWN_QA_LABEL, askerAnonymous: true }),
+        ...(answerer && { answererId: null, answererLabel: WITHDRAWN_QA_LABEL, answererAnonymous: true }),
+        updatedAt: now,
+      })
+      .where(eq(courseQaItems.id, item.id))
+  }
+  c.add('course_qa_items', qa.length)
+}
+
+/** 탈퇴 정리한 막힘 Q&A의 그 사람 이름 자리. */
+const WITHDRAWN_QA_LABEL = '탈퇴한 사용자'
 
 const truncateToMinute = (date: Date) => new Date(Math.floor(date.getTime() / 60_000) * 60_000)
 

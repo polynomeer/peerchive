@@ -5,6 +5,7 @@
  * - 과목·학교·태그·노트는 학생이 쓴 내용입니다("학생 작성"). 교수 실명·평가는 다루지 않습니다.
  * - 병합된 과목 id로 들어오면 정본 주소로 바꿉니다. 파일럿 동안 기본 noindex.
  * - 신호 버튼·선배 노트 쓰기·신고(T-15)는 화면이 뜬 뒤 클라이언트에서 로그인 여부를 확인합니다.
+ * - 막힘 Q&A(C-09): 커뮤니티 질문과 채택된 답변을 두 사람의 동의로 옮긴 복사본입니다. 각자 고른 이름만 보이고 원 글로 가는 링크는 없습니다.
  */
 import type { PublicCourseHubDto } from '~~/shared/types/api'
 
@@ -136,6 +137,32 @@ const difficultyText = computed(() => {
         <p v-else class="muted">아직 공개된 막힘 기록이 없습니다.</p>
       </section>
 
+      <section aria-labelledby="hub-qa" data-testid="hub-qa">
+        <h2 id="hub-qa">막힘 Q&amp;A</h2>
+        <p class="hint">
+          커뮤니티 질문 게시판의 질문과 채택된 답변을, 질문한 학생과 답한 학생이 모두 동의해 옮긴 것입니다. 이름은 두 사람이 각자 고른 대로 보입니다. 원리·접근 위주
+          답변을 권장하며 과제 정답 공유는 허용하지 않습니다.
+        </p>
+        <ul v-if="data.qaItems.length" class="plain hub-list">
+          <li v-for="qa in data.qaItems" :id="`qa-${qa.id}`" :key="qa.id" class="hub-card">
+            <p class="hub-card-title">Q. {{ qa.questionTitle }}</p>
+            <p class="small muted"><strong>{{ qa.asker }}</strong> · <span class="badge">학생 작성</span></p>
+            <p class="pre qa-text">{{ qa.questionBody }}</p>
+            <p class="small muted"><strong>A. {{ qa.answerer }}</strong></p>
+            <p class="pre qa-text">{{ qa.answerBody }}</p>
+            <SignalButtons :target="{ kind: 'course_qa', qaId: qa.id }" :counts="qa.signals" :kinds="['me_too', 'helped']" />
+            <p class="small">
+              <ReportButton
+                :targets="[{ id: 'qa', label: `막힘 Q&A(${qa.questionTitle})`, targetType: 'course_qa', targetRef: { qaId: qa.id } }]"
+                :id-prefix="`qa-${qa.id}`"
+                :label="'이 Q&A 신고'"
+              />
+            </p>
+          </li>
+        </ul>
+        <p v-else class="muted">아직 막힘 Q&amp;A가 없습니다.</p>
+      </section>
+
       <section aria-labelledby="hub-notes">
         <h2 id="hub-notes">선배 노트</h2>
         <p class="hint">과목을 마친 학생이 후배에게 남긴 짧은 회고입니다.</p>
@@ -201,3 +228,9 @@ const difficultyText = computed(() => {
     </template>
   </div>
 </template>
+
+<style scoped>
+.qa-text {
+  overflow-wrap: anywhere;
+}
+</style>

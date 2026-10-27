@@ -7,12 +7,14 @@
  *   (읽기에서 이미 빠지고, 되돌리면 그대로 다시 셈).
  * - 되돌림(reversed): 그 공개의 지금 release를 다시 색인(빠진 문서만 다시 만듦), 노트는 지금 published·version이면 다시 색인.
  * - 공개 제한(restrict)은 웹이 `publication.withdrawn`(cause restricted)도 남기므로 여기서는 할 일이 없습니다. 케이스·프로필 숨김도 파생 데이터가 없습니다.
+ * - 막힘 Q&A 숨기기(hide_qa, C-09): 숨겨져 있으면 검색 문서 삭제, 되돌려 published면 다시 색인.
  * 판정은 이벤트가 아니라 지금 행 상태로 하므로 늦거나 중복돼도 결과가 같습니다(idempotent).
  */
 import type { PgBoss } from 'pg-boss'
 import {
   MODERATION_ACTION_TOPIC,
   and,
+  courseQaItems,
   eq,
   moderationActions,
   publicationCandidates,
@@ -22,7 +24,7 @@ import {
   type DbExecutor,
   type ModerationActionOutboxPayload,
 } from '@peerchive/db'
-import { handleSeniorNotePublished, searchIndexHandler } from './course-hub-derived'
+import { handleCourseQaPublished, handleSeniorNotePublished, searchIndexHandler } from './course-hub-derived'
 import { PUBLICATION_QUEUE_OPTIONS } from './publication-events'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -64,6 +66,13 @@ export async function handleModerationAction(db: DbExecutor, data: unknown): Pro
       return deleted.length
     }
     if (note.status === 'published') return handleSeniorNotePublished(db, { seniorNoteId: note.id, courseId: note.courseId, version: note.version })
+  }
+  if (action.kind === 'hide_qa' && action.courseQaItemId) {
+    const [qa] = await db.select().from(courseQaItems).where(eq(courseQaItems.id, action.courseQaItemId)).limit(1)
+    if (!qa) return 0
+    if (qa.status === 'published') return handleCourseQaPublished(db, { courseQaItemId: qa.id, courseId: qa.courseId })
+    const deleted = await db.delete(searchDocuments).where(eq(searchDocuments.courseQaItemId, qa.id)).returning({ id: searchDocuments.id })
+    return deleted.length
   }
   return 0
 }

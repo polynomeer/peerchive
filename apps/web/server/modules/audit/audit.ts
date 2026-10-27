@@ -131,6 +131,8 @@ export type AuditAction =
   | 'community.recruitment_close'
   | 'community.recruitment_cancel'
   | 'community.course_team_finding'
+  | 'course_qa.publish'
+  | 'course_qa.withdraw'
 
 export async function recordAudit(
   db: DbExecutor,
@@ -175,6 +177,7 @@ export async function recordAudit(
       | 'community_application'
       | 'community_sanction'
       | 'community_sanction_request'
+      | 'course_qa'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

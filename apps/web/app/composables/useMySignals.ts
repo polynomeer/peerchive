@@ -1,9 +1,16 @@
 import type { MySignalDto, SignalKind } from '~~/shared/types/api'
 
-export type SignalTarget = { kind: 'stuck_item'; slug: string; itemKey: string } | { kind: 'senior_note'; noteId: string }
+export type SignalTarget =
+  | { kind: 'stuck_item'; slug: string; itemKey: string }
+  | { kind: 'senior_note'; noteId: string }
+  | { kind: 'course_qa'; qaId: string }
 
 export const signalKey = (target: SignalTarget, kind: SignalKind) =>
-  target.kind === 'stuck_item' ? `s:${target.slug}:${target.itemKey}:${kind}` : `n:${target.noteId}:${kind}`
+  target.kind === 'stuck_item'
+    ? `s:${target.slug}:${target.itemKey}:${kind}`
+    : target.kind === 'senior_note'
+      ? `n:${target.noteId}:${kind}`
+      : `q:${target.qaId}:${kind}`
 
 /**
  * 공개 페이지(과목 허브)의 "내 신호" 상태(T-13). SSR에서는 로그인 상태를 읽지 않으므로(공개 페이지 규칙) 화면이 뜬 뒤
@@ -23,7 +30,9 @@ export function useMySignals() {
       mine.value = rows.map((r) =>
         r.target === 'stuck_item'
           ? signalKey({ kind: 'stuck_item', slug: r.slug, itemKey: r.itemKey }, r.kind)
-          : signalKey({ kind: 'senior_note', noteId: r.noteId }, r.kind),
+          : r.target === 'senior_note'
+            ? signalKey({ kind: 'senior_note', noteId: r.noteId }, r.kind)
+            : signalKey({ kind: 'course_qa', qaId: r.qaId }, r.kind),
       )
     } catch {
       mine.value = []

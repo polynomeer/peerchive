@@ -198,6 +198,9 @@ describe('signals and search documents', () => {
     expect(isAllowedSignal('stuck_item', 'helped')).toBe(true)
     expect(isAllowedSignal('senior_note', 'helped')).toBe(true)
     expect(isAllowedSignal('senior_note', 'me_too')).toBe(false)
+    // C-09: 막힘 Q&A는 막힘 카드처럼 두 신호 모두
+    expect(isAllowedSignal('course_qa', 'me_too')).toBe(true)
+    expect(isAllowedSignal('course_qa', 'helped')).toBe(true)
   })
 
   it('indexes the case and each stuck card from the snapshot only', () => {

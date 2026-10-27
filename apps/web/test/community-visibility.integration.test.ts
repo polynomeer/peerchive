@@ -184,8 +184,17 @@ describe('C-05 community tables come from the schema section (source)', () => {
         // C-07: 모집·지원도 같은 구역(자동으로 덮임)
         'recruitments',
         'recruitment_applications',
+        // C-09: 아카이브로 옮기기 요청·동의(커뮤니티 글·댓글을 가리키므로 같은 구역, 자동으로 덮임)
+        'archive_transfers',
+        'archive_transfer_consents',
       ]),
     )
+    // C-09(ADR 0025): 막힘 Q&A 복사본은 아카이브 쪽(과목 허브 구역) 테이블이고 커뮤니티 테이블을 가리키지 않습니다.
+    // 공개 읽기 경로(과목 허브·검색·신호)가 이 테이블만 읽어도 커뮤니티 테이블에 닿을 길이 없게 합니다.
+    expect(COMMUNITY_SQL.has('course_qa_items')).toBe(false)
+    const qaBlock = readFileSync(SCHEMA, 'utf8').split(/\nexport const /).find((b) => b.startsWith("courseQaItems = pgTable("))!
+    expect(qaBlock).toBeTruthy()
+    for (const t of COMMUNITY) expect(qaBlock, `course_qa_items → ${t.sqlName}`).not.toMatch(new RegExp(`\\b(${t.exportName}|${t.sqlName})\\b`))
     // 다른 구역에 커뮤니티처럼 보이는 테이블이 있으면 경계 검사에서 빠지므로 실패합니다(C-04: posts·comments는 커뮤니티 구역에).
     const misplaced = TABLES.filter((t) => !t.community && COMMUNITY_LIKE_SQL.test(t.sqlName)).map((t) => t.sqlName)
     expect(misplaced).toEqual([])
@@ -265,7 +274,7 @@ describe('C-05 module boundary: only the community module reads community tables
 
 // ── 분석 허용 목록 ─────────────────────────────────────────────────────────
 
-const COMMUNITY_EVENT = /^(space_|name_mode_|post_|comment_|community_|board_|reaction_|thread_|recruitment_)/
+const COMMUNITY_EVENT = /^(space_|name_mode_|post_|comment_|community_|board_|reaction_|thread_|recruitment_|archive_)/
 const FORBIDDEN_PROP_KEY = /(id|name|slug|title|body|text|description|content|email|handle|school|board|space|post|comment|url|token)/i
 
 describe('C-05 analytics: community events carry codes only', () => {

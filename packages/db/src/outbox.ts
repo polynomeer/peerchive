@@ -45,3 +45,13 @@ export interface ModerationActionOutboxPayload {
   actionId: string
   phase: 'applied' | 'reversed'
 }
+
+/** 막힘 Q&A 게시(C-09, ADR 0025). worker가 검색 문서를 만듭니다(지금도 published일 때만). */
+export const COURSE_QA_PUBLISHED_TOPIC = 'course_qa.published'
+/** 막힘 Q&A 철회(당사자 철회·탈퇴 정리). worker가 검색 문서·유용성 신호를 지웁니다. 공개 읽기는 이 이벤트를 기다리지 않습니다(status 확인). */
+export const COURSE_QA_WITHDRAWN_TOPIC = 'course_qa.withdrawn'
+
+export interface CourseQaOutboxPayload {
+  courseQaItemId: string
+  courseId: string
+}

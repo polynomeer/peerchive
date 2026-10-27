@@ -3,6 +3,7 @@
  * C-04(ADR 0022): 내 글의 새 댓글(`post_commented`, 글·사람마다 읽기 전까지 한 행, payload는 개수만)도 같은 목록에 나옵니다(posts.ts가 넣음).
  * C-06(ADR 0023): 내 글·댓글의 임시 숨김(`item_auto_hidden`)·복원(`item_restored`, payload는 대상 종류만)도 같은 목록입니다(moderation.ts가 넣음).
  * C-07(ADR 0024): 모집 선정(초대 받기)·선정되지 않음·모집 취소(payload는 모집 종류만, 공간 없이 recruitment_id)도 같은 목록입니다(recruitments.ts가 넣음).
+ * C-09(ADR 0025): 아카이브로 옮기기 동의 요청·끝남·취소(payload는 옮길 곳 종류만, 누가 요청·거절했는지 없음, archive-transfers.ts가 넣음).
  *
  * - 받는 사람: 알림을 만드는 순간 그 공간의 active 멤버이면서 계정이 active인 사람(나감·내보냄·승인 대기·탈퇴 요청 제외). 나중에 들어온 사람은
  *   알림 대신 공간 화면의 배너로 봅니다.
@@ -13,6 +14,9 @@
  */
 import { z } from 'zod'
 import {
+  type ArchiveNoticeKind,
+  archiveNoticeText,
+  sanitizeArchiveNoticePayload,
   type NameModeNoticeKind,
   type NameModeNoticePayload,
   canReadSpace,
@@ -96,6 +100,22 @@ export async function listMyCommunityNotices(db: DbExecutor, actor: Actor): Prom
       continue
     }
     const space = r.spaceId ? (readable.get(r.spaceId) ?? null) : null
+    if (r.kind === 'archive_consent_requested' || r.kind === 'archive_transfer_done' || r.kind === 'archive_transfer_cancelled') {
+      // 옮기기(C-09): 옮길 곳 종류와 고정 문장만. 요청 주소는 지금 읽을 수 있는 공간일 때만(화면이 열 때 다시 판정).
+      const payload = sanitizeArchiveNoticePayload(r.payload)
+      if (!payload || !r.archiveTransferId) continue
+      items.push({
+        id: r.id,
+        kind: r.kind,
+        space,
+        transferId: space ? r.archiveTransferId : null,
+        target: payload.target,
+        text: archiveNoticeText(r.kind as ArchiveNoticeKind, payload),
+        createdAt: r.createdAt.toISOString(),
+        readAt: r.readAt?.toISOString() ?? null,
+      })
+      continue
+    }
     if (r.kind === 'item_auto_hidden' || r.kind === 'item_restored') {
       const payload = sanitizeItemReviewPayload(r.payload)
       if (!payload) continue

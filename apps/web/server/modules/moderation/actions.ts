@@ -14,6 +14,7 @@
  * | space_hide(C-06, 방 운영진이 community 모듈에서 만듦) | — | 다른 가리기가 없으면 hidden → published |
  * | sanction(C-06, 운영자가 community 모듈에서 발급) | — | 제재 revoked(쓰기 제한 풀림) |
  * | hide_recruitment·hide_application(C-07) | 모집 글 hidden_at(모집자 외 404·지원 받지 않음) / 지원 메시지 message_hidden_at(모집자에게 자리 표시) | 가림을 풂 |
+ * | hide_qa(C-09) | 막힘 Q&A published → hidden | hidden → published(당사자가 그사이 철회했으면 그대로 withdrawn) |
  *
  * 공개 읽기는 이 상태를 요청마다 읽으므로 커밋 즉시 효력이 있습니다(worker 무관). outbox `moderation.action`은 worker가 검색 문서 같은 남은 사본을
  * 맞추는 데만 씁니다. 삭제 조치는 없습니다(차단 ≠ 삭제).
@@ -23,6 +24,7 @@ import {
   MODERATION_ACTION_TOPIC,
   and,
   caseStudies,
+  courseQaItems,
   eq,
   isNull,
   moderationActions,
@@ -74,6 +76,7 @@ function auditTarget(
     | 'communityCommentId'
     | 'communityRecruitmentId'
     | 'communityApplicationId'
+    | 'courseQaItemId'
   >,
 ) {
   switch (action.targetType) {
@@ -96,6 +99,8 @@ function auditTarget(
       return { targetType: 'case_study' as const, targetId: action.caseStudyId }
     case 'profile':
       return { targetType: 'user' as const, targetId: action.profileUserId }
+    case 'course_qa':
+      return { targetType: 'course_qa' as const, targetId: action.courseQaItemId }
   }
 }
 
@@ -148,6 +153,12 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
     if (!note) throw notFound()
     if (note.status !== 'published') throw conflict('target_not_public')
   }
+  if (input.kind === 'hide_qa') {
+    if (!target.courseQaItemId) throw notFound()
+    const [qa] = await tx.select().from(courseQaItems).where(eq(courseQaItems.id, target.courseQaItemId)).limit(1).for('update')
+    if (!qa) throw notFound()
+    if (qa.status !== 'published') throw conflict('target_not_public')
+  }
   if (input.kind === 'hide_case_study') {
     const [cs] = await tx.select().from(caseStudies).where(eq(caseStudies.id, target.caseStudyId!)).limit(1).for('update')
     if (!cs) throw notFound()
@@ -186,6 +197,7 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
       communityCommentId: target.communityCommentId,
       communityRecruitmentId: target.communityRecruitmentId,
       communityApplicationId: target.communityApplicationId,
+      courseQaItemId: target.courseQaItemId,
       internalNote: input.internalNote,
       publicReason: input.publicReason,
       notifyOwner: input.notifyOwner,
@@ -215,6 +227,9 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
       })
       // 제공하는 내용이 바뀌었으므로 파일 ETag·캐시 키를 바꿉니다.
       await tx.update(publications).set({ accessEpoch: publication!.accessEpoch + 1, updatedAt: now }).where(eq(publications.id, publication!.id))
+      break
+    case 'hide_qa':
+      await tx.update(courseQaItems).set({ status: 'hidden', updatedAt: now }).where(eq(courseQaItems.id, target.courseQaItemId!))
       break
     case 'hide_note':
       await tx.update(seniorNotes).set({ status: 'hidden', updatedAt: now }).where(eq(seniorNotes.id, target.seniorNoteId!))
@@ -288,6 +303,12 @@ export async function undoModeration(
         .update(seniorNotes)
         .set({ status: 'published', updatedAt: now })
         .where(and(eq(seniorNotes.id, action.seniorNoteId!), eq(seniorNotes.status, 'hidden')))
+      break
+    case 'hide_qa':
+      await tx
+        .update(courseQaItems)
+        .set({ status: 'published', updatedAt: now })
+        .where(and(eq(courseQaItems.id, action.courseQaItemId!), eq(courseQaItems.status, 'hidden')))
       break
     case 'hide_case_study':
       await tx.update(caseStudies).set({ hiddenAt: null, updatedAt: now }).where(eq(caseStudies.id, action.caseStudyId!))

@@ -36,6 +36,7 @@ export const SEARCH_KIND_LABELS: Record<SearchKind, string> = {
   case: '공개 사례',
   stuck: '막힘',
   note: '선배 노트',
+  qa: '막힘 Q&A',
 }
 
 export const COURSE_HUB_ERROR_MESSAGES: Record<string, string> = {
@@ -48,6 +49,7 @@ export const COURSE_HUB_ERROR_MESSAGES: Record<string, string> = {
   not_published: '게시되지 않은 노트입니다.',
   hidden: '운영자가 숨긴 노트는 고칠 수 없습니다.',
   not_found: '찾을 수 없습니다. 공개가 철회되었을 수 있습니다.',
+  validation_failed: '입력을 확인하세요. 선배 노트는 질문 4개 중 2개 이상 답해야 게시할 수 있습니다(커뮤니티에서 옮겨 온 초안은 고쳐서 답을 더하세요).',
 }
 
 export function courseHubErrorMessage(code: string): string {

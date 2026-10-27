@@ -2,7 +2,7 @@
  * 유용성 신호 (T-13, PROOFU_EVOLUTION_PLAN §8.2 4번·§8.5, SYSTEM_DESIGN §6.2 UsefulnessSignal, ADR 0013).
  *
  * - `PUT /signals`(남기기, idempotent)·`DELETE /signals`(거두기): 로그인 필수. 대상은 **지금 공개**여야 합니다
- *   (막힘 카드: 지금 게시 중인 release 스냅샷에 그 키의 🧱막힘이 있음 / 선배 노트: published). 아니면 404.
+ *   (막힘 카드: 지금 게시 중인 release 스냅샷에 그 키의 🧱막힘이 있음 / 선배 노트: published / 막힘 Q&A(C-09): published). 아니면 404.
  * - 사용자·대상·종류마다 하나(DB 부분 unique). 항목별 개수만 보여 주고 작성자별로 합산하지 않습니다.
  * - 대상이 철회되면 읽기는 그 대상을 고르지 않으므로 신호도 보이지 않고, worker 정리 handler가 행을 지웁니다.
  */
@@ -10,6 +10,7 @@ import { z } from 'zod'
 import { SIGNAL_KINDS, extractStuckItems, isAllowedSignal, type HubSnapshot } from '@peerchive/domain'
 import {
   and,
+  courseQaItems,
   eq,
   inArray,
   projects,
@@ -45,6 +46,10 @@ export const signalSchema = z.object({
         kind: z.literal('senior_note'),
         noteId: z.uuid({ error: requiredOr('invalid') }).transform((id) => id.toLowerCase()),
       }),
+      z.object({
+        kind: z.literal('course_qa'),
+        qaId: z.uuid({ error: requiredOr('invalid') }).transform((id) => id.toLowerCase()),
+      }),
     ],
     { error: requiredOr('invalid') },
   ),
@@ -54,6 +59,7 @@ export const signalSchema = z.object({
 type ResolvedTarget =
   | { targetKind: 'stuck_item'; publicationId: string; itemKey: string }
   | { targetKind: 'senior_note'; seniorNoteId: string }
+  | { targetKind: 'course_qa'; courseQaItemId: string }
 
 /** 대상이 지금 공개인지 확인하고 저장 키로 바꿉니다. 아니면 404. */
 async function resolveTarget(db: DbExecutor, input: z.output<typeof signalSchema>, now: Date): Promise<ResolvedTarget> {
@@ -63,6 +69,15 @@ async function resolveTarget(db: DbExecutor, input: z.output<typeof signalSchema
     const key = input.target.itemKey
     if (!served || !extractStuckItems(served.snapshot as unknown as HubSnapshot).some((item) => item.key === key)) throw notFound()
     return { targetKind: 'stuck_item', publicationId: served.publication.id, itemKey: key }
+  }
+  if (input.target.kind === 'course_qa') {
+    const [qa] = await db
+      .select({ id: courseQaItems.id })
+      .from(courseQaItems)
+      .where(and(eq(courseQaItems.id, input.target.qaId), eq(courseQaItems.status, 'published')))
+      .limit(1)
+    if (!qa) throw notFound()
+    return { targetKind: 'course_qa', courseQaItemId: qa.id }
   }
   const [note] = await db
     .select({ id: seniorNotes.id })
@@ -80,7 +95,9 @@ const targetWhere = (target: ResolvedTarget) =>
         eq(usefulnessSignals.publicationId, target.publicationId),
         eq(usefulnessSignals.itemKey, target.itemKey),
       )
-    : and(eq(usefulnessSignals.targetKind, 'senior_note'), eq(usefulnessSignals.seniorNoteId, target.seniorNoteId))
+    : target.targetKind === 'senior_note'
+      ? and(eq(usefulnessSignals.targetKind, 'senior_note'), eq(usefulnessSignals.seniorNoteId, target.seniorNoteId))
+      : eq(usefulnessSignals.courseQaItemId, target.courseQaItemId)
 
 async function stateFor(db: DbExecutor, actor: Actor, target: ResolvedTarget): Promise<SignalStateDto> {
   const rows = await db
@@ -112,6 +129,7 @@ export async function putSignal(db: DbExecutor, actor: Actor, rawInput: unknown,
       publicationId: target.targetKind === 'stuck_item' ? target.publicationId : null,
       itemKey: target.targetKind === 'stuck_item' ? target.itemKey : null,
       seniorNoteId: target.targetKind === 'senior_note' ? target.seniorNoteId : null,
+      courseQaItemId: target.targetKind === 'course_qa' ? target.courseQaItemId : null,
       kind: input.kind,
       createdAt: now,
     })
@@ -152,8 +170,15 @@ export async function listMySignals(db: DbExecutor, actor: Actor, now = new Date
       ),
     )
     .limit(1000)
+  const qa = await db
+    .select({ qaId: usefulnessSignals.courseQaItemId, kind: usefulnessSignals.kind })
+    .from(usefulnessSignals)
+    .innerJoin(courseQaItems, eq(courseQaItems.id, usefulnessSignals.courseQaItemId))
+    .where(and(eq(usefulnessSignals.userId, actor.userId), eq(courseQaItems.status, 'published')))
+    .limit(1000)
   return [
     ...stuck.map((r) => ({ target: 'stuck_item' as const, slug: r.slug, itemKey: r.itemKey!, kind: r.kind })),
     ...notes.map((r) => ({ target: 'senior_note' as const, noteId: r.noteId!, kind: r.kind })),
+    ...qa.map((r) => ({ target: 'course_qa' as const, qaId: r.qaId!, kind: r.kind })),
   ]
 }

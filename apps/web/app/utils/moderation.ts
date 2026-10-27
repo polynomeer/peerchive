@@ -37,6 +37,7 @@ export const REPORT_TARGET_LABELS: Record<ReportTargetType, string> = {
   community_comment: '커뮤니티 댓글',
   community_recruitment: '모집 글',
   community_application: '지원 메시지',
+  course_qa: '막힘 Q&A',
 }
 
 export const REPORTER_STATUS_LABELS: Record<MyReportDto['status'], string> = {
@@ -61,6 +62,7 @@ export const ACTION_LABELS: Record<ModerationActionKind, string> = {
   sanction: '이용 제한(제재)',
   hide_recruitment: '모집 글 가리기',
   hide_application: '지원 메시지 가리기',
+  hide_qa: '막힘 Q&A 숨기기',
 }
 
 /** 당사자에게 보이는 조치 설명. */
@@ -78,6 +80,7 @@ export const NOTICE_TITLES: Record<Exclude<ModerationActionKind, 'none'>, string
   sanction: '커뮤니티 이용 제한',
   hide_recruitment: '운영 조치로 가려진 모집 글',
   hide_application: '운영 조치로 가려진 지원 메시지',
+  hide_qa: '운영 조치로 숨겨진 막힘 Q&A',
 }
 
 export const APPEAL_STATUS_LABELS: Record<AppealStatus, string> = {

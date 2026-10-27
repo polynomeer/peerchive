@@ -29,6 +29,11 @@ import {
   RECRUITMENT_CAPACITY_MAX,
   APPLICATION_MESSAGE_MAX,
   APPLICATION_CASES_MAX,
+  ARCHIVE_TARGET_LABELS,
+  ARCHIVE_STATUS_LABELS,
+  ARCHIVE_CANCEL_REASON_LABELS,
+  ARCHIVED_MARKER_TEXT,
+  COURSE_QA_ANONYMOUS_LABELS,
 } from '@peerchive/domain'
 import type { CommunityItemStatus, SpaceStatus } from '~~/shared/types/api'
 import { formatDateTime } from './build-log'
@@ -61,6 +66,11 @@ export {
   RECRUITMENT_CAPACITY_MAX,
   APPLICATION_MESSAGE_MAX,
   APPLICATION_CASES_MAX,
+  ARCHIVE_TARGET_LABELS,
+  ARCHIVE_STATUS_LABELS,
+  ARCHIVE_CANCEL_REASON_LABELS,
+  ARCHIVED_MARKER_TEXT,
+  COURSE_QA_ANONYMOUS_LABELS,
 }
 
 /** 글·댓글 상태(운영 화면). */
@@ -144,6 +154,43 @@ export const COMMUNITY_ERROR_MESSAGES: Record<string, string> = {
   not_selected: '선정된 지원자만 초대를 받을 수 있습니다.',
   not_closed: '모집이 마감된 뒤에 초대를 받을 수 있습니다.',
   invitation_unavailable: '지금은 초대를 받을 수 없습니다(모집자가 더는 운영하지 않거나 공간이 닫혔습니다).',
+  // C-09 채택된 답변·아카이브로 옮기기
+  not_question_board: '질문 게시판의 글에서만 할 수 있습니다.',
+  comment_not_open: '지워졌거나 가려진 댓글은 채택할 수 없습니다.',
+  source_not_open: '지워졌거나 가려진 글은 옮길 수 없습니다.',
+  no_accepted_answer: '먼저 답변 하나를 채택하세요.',
+  transfer_pending: '같은 곳으로 옮기는 요청이 이미 진행 중입니다.',
+  already_transferred: '이 글은 이미 막힘 Q&A로 옮겨져 있습니다.',
+  hub_write_not_allowed: '이 과목 학교의 메일로 인증해야 과목 허브로 옮길 수 있습니다.',
+  checks_unconfirmed: '공개 전 점검 경고가 있습니다. 내용을 확인한 뒤 "경고를 확인했습니다"에 체크하세요.',
+  limit_reached: '이 과목에는 선배 노트를 더 만들 수 없습니다(과목당 3개).',
+  already_decided: '이미 동의 여부를 정했습니다.',
+  stale_content: '옮길 내용이 바뀌었습니다. 새로 불러온 뒤 다시 확인하세요.',
+}
+
+/** 옮기기 입력 오류(422 필드별). */
+export const ARCHIVE_FIELD_ERRORS: Record<string, string> = {
+  'courseId:required': '과목을 고르세요.',
+  'courseId:not_found': '과목을 찾을 수 없습니다.',
+  'courseId:other_school': '이 공간의 학교 과목만 고를 수 있습니다.',
+  'projectId:required': '과제를 고르세요.',
+  'projectId:not_found': '과제를 찾을 수 없습니다.',
+  'projectId:not_writable': '내가 owner·editor인 과제만 고를 수 있습니다.',
+  'displayMode:required': '복사본에 보일 이름을 고르세요.',
+  'displayMode:real_name_required': '실명을 고르려면 커뮤니티 화면에서 실명(선택)을 먼저 입력하세요.',
+  'displayMode:display_name_missing': '계정 표시명이 비어 있습니다.',
+  'displayName:required': '표시명을 입력하세요.',
+  'timeBucket:required': '막혔던 시간을 고르세요.',
+  'notAnswerConfirmed:confirm_required': '답변이 과제 답 자체가 아님을 확인해 주세요.',
+  'noAnswersConfirmed:confirm_required': '정답·답안·교수 개인 평가가 없음을 확인해 주세요.',
+  'answerKey:required': '글을 넣을 질문을 고르세요.',
+  'source:too_long': '원 글이 너무 길어 이 곳으로 옮길 수 없습니다.',
+  'contentHash:required': '옮길 내용을 다시 불러온 뒤 시도하세요.',
+}
+
+export function archiveFieldErrors(fields: Record<string, string> | undefined): string[] {
+  if (!fields) return []
+  return Object.entries(fields).map(([k, v]) => ARCHIVE_FIELD_ERRORS[`${k}:${v}`] ?? '입력한 내용을 확인하세요.')
 }
 
 export function communityErrorMessage(code: string): string {

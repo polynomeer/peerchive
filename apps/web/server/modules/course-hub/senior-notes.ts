@@ -11,6 +11,8 @@
  *   `confirmWarnings: true` 없이는 409 `checks_unconfirmed`(+경고). 경고는 막지 않고 확인을 받습니다(판단은 학생).
  * - 철회: 작성자가 언제든, 즉시. 공개 읽기는 status = 'published'만 보므로 커밋 즉시 사라집니다. 검색 문서·신호 정리는 worker.
  * - 작성자 표시: 계정 이름 / 표시명 / 익명("익명 선배"). 공개 응답에는 작성자 id가 없고, 운영자는 감사 기록(actor)으로만 압니다.
+ * - C-09(ADR 0025): 커뮤니티 글을 옮겨 만든 초안(`createSeniorNoteDraftFromTransfer`)은 답이 하나뿐일 수 있습니다. 게시할 때 답 2개 이상을 다시
+ *   확인합니다(422 `answers: too_few`). 작성 자격·과목당 한도·만들기 한도는 직접 만들기와 같습니다.
  */
 import { z } from 'zod'
 import {
@@ -183,7 +185,7 @@ async function writeDecision(tx: DbExecutor, actor: Actor, course: { id: string;
  * 작성 자격 확인(만들기·게시 때 모두). 과목은 정본이어야 하고, 정책상 요구하면 그 과목 학교(정본)의 active 학교 메일 인증이 있어야 합니다.
  * 인증이 없어서 막히면 화면이 인증 페이지로 안내할 수 있게 requirement·schoolId를 싣습니다.
  */
-async function assertCanWrite(tx: DbExecutor, actor: Actor, course: { id: string; mergedInto: string | null; schoolId: string }): Promise<void> {
+export async function assertCanWrite(tx: DbExecutor, actor: Actor, course: { id: string; mergedInto: string | null; schoolId: string }): Promise<void> {
   const { decision, schoolId } = await writeDecision(tx, actor, course)
   if (decision.ok) return
   if (decision.reason === 'affiliation_required') {
@@ -258,6 +260,49 @@ export async function createSeniorNote(
     })
     return toDto(tx, row!)
   })
+}
+
+/**
+ * 커뮤니티 글에서 옮겨 온 선배 노트 초안(C-09, 옮기기 트랜잭션 안에서). 글 본문을 고른 질문 하나의 답으로 넣습니다(1000자 이하는 호출자가 확인).
+ * 작성 자격(403 hub_write_not_allowed)·만들기 한도(429)·과목당 3개(409 limit_reached)는 직접 만들기와 같습니다. 정본 과목 id를 넘기세요.
+ */
+export async function createSeniorNoteDraftFromTransfer(
+  tx: DbExecutor,
+  actor: Actor,
+  course: { id: string; mergedInto: string | null; schoolId: string },
+  input: { answerKey: keyof SeniorNoteAnswers; body: string; displayMode: NoteRow['displayMode']; displayName: string | null },
+  now: Date,
+): Promise<SeniorNoteDto> {
+  checkDisplay(input.displayMode, input.displayName)
+  await assertCanWrite(tx, actor, course)
+  if (!(await hitRateLimit(tx, 'senior_note_create', actor.userId, SENIOR_NOTE_CREATE_RATE_LIMIT, now))) throw rateLimited()
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`senior-note:${actor.userId}:${course.id}`}))`)
+  const [{ count } = { count: 0 }] = await tx
+    .select({ count: sql<number>`count(*)::int` })
+    .from(seniorNotes)
+    .where(and(eq(seniorNotes.authorId, actor.userId), eq(seniorNotes.courseId, course.id), ne(seniorNotes.status, 'hidden')))
+  if (count >= SENIOR_NOTE_PER_COURSE_LIMIT) throw conflict('limit_reached', { limit: SENIOR_NOTE_PER_COURSE_LIMIT })
+  const [row] = await tx
+    .insert(seniorNotes)
+    .values({
+      courseId: course.id,
+      authorId: actor.userId,
+      displayMode: input.displayMode,
+      displayNameSnapshot: await displaySnapshot(tx, actor.userId, input.displayMode, input.displayName),
+      answers: { [input.answerKey]: input.body },
+      noAnswersConfirmed: true,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning()
+  await recordAudit(tx, {
+    actorId: actor.userId,
+    action: 'senior_note.create',
+    targetType: 'senior_note',
+    targetId: row!.id,
+    metadata: { courseId: course.id, displayMode: input.displayMode, transferred: true },
+  })
+  return toDto(tx, row!)
 }
 
 /** 작성자의 노트를 잠그고 읽습니다. 작성자가 아니면 404. */
@@ -343,6 +388,9 @@ export async function publishSeniorNote(
     if (row.status === 'hidden') throw conflict('hidden')
     if (row.version !== input.expectedVersion) throw conflict('version_conflict', { currentVersion: row.version })
     if (row.status === 'published') return toDto(tx, row)
+    // 옮겨 온 초안(C-09)은 답이 하나일 수 있습니다: 게시 전에 답 2개 이상을 다시 확인합니다.
+    const answersCheck = normalizeSeniorNoteAnswers(row.answers)
+    if (!answersCheck.ok) throw invalid(answersCheck.fields)
     // 작성 자격은 게시 때도 다시 봅니다(정지·탈퇴 계정, 학교 인증 해제·취소).
     const [course] = await tx
       .select({ id: courses.id, mergedInto: courses.mergedInto, schoolId: courses.schoolId })

@@ -48,6 +48,7 @@ import {
   releaseHiddenItems,
   reports,
   seniorNotes,
+  courseQaItems,
   sql,
   users,
   type DbExecutor,
@@ -56,6 +57,7 @@ import { recordAudit } from '../audit/audit'
 import { communityItemStatuses, operatorCommunityItem, operatorRecruitmentItem, operatorSpaceContent } from '../community/reporting'
 import { requireOperator } from '../catalog/operators'
 import { publicNotePath } from '../course-hub/search'
+import { publicQaPath, toPublicCourseQa } from '../course-hub/course-qa'
 import { toPublicSeniorNote } from '../course-hub/hub'
 import { type Actor, conflict, invalid, notFound } from '../errors'
 import { toPublicProfileDto } from '../identity/profiles'
@@ -228,6 +230,16 @@ async function contentFor(db: DbExecutor, report: ReportRow, now: Date): Promise
           : unavailable('신고 이후 노트가 고쳐지거나 내려가 신고 때 공개된 글을 볼 수 없습니다.'),
         publicPath: note?.status === 'published' ? publicNotePath(note.courseId, note.id) : null,
         servedNow: note?.status === 'published',
+      }
+    }
+    case 'course_qa': {
+      // 막힘 Q&A(C-09): 아카이브 쪽 복사본만 읽습니다(커뮤니티 원 글은 열지 않음). 당사자가 철회했으면 글이 비었을 수 있음.
+      const [qa] = await db.select().from(courseQaItems).where(eq(courseQaItems.id, report.courseQaItemId!)).limit(1)
+      if (!qa || qa.status === 'withdrawn') return { content: unavailable('당사자가 막힘 Q&A를 철회했습니다.'), publicPath: null, servedNow: false }
+      return {
+        content: { kind: 'course_qa', qa: toPublicCourseQa(qa, { meToo: 0, helped: 0 }), status: qa.status },
+        publicPath: qa.status === 'published' ? publicQaPath(qa.courseId, qa.id) : null,
+        servedNow: qa.status === 'published',
       }
     }
     case 'case_study': {

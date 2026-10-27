@@ -7,6 +7,7 @@
  * - 공개 사례·막힘 카드: 이 과목(정본 + 병합된 id)에 연결된 **지금 게시 중인 release의 저장된 스냅샷**만(`servableReleaseSql`:
  *   공개·release 게시 상태, 지금 release, 엠바고 없음을 같은 쿼리에서 확인). 초안·준비·철회·대체·엠바고 중인 것은 나오지 않습니다.
  * - 선배 노트: status = 'published'만. 작성자 id는 싣지 않습니다.
+ * - 막힘 Q&A(C-09, ADR 0025): course_qa_items의 status = 'published'만(복사한 글과 고른 이름뿐, 커뮤니티 테이블과 조인하지 않음).
  * - 유용성 신호: 위에서 고른 공개 항목에 대해서만 항목별 개수. 작성자별 합계는 만들지 않습니다.
  * - 워크로드 분포: 이 과목 학기에 연결된 프로젝트의 체크인 중 `share_for_stats = true`만, 동의한 사람이 5명 미만이면 null
  *   (@peerchive/domain aggregateCheckinStats). 개인을 구분할 값은 결과에 없습니다.
@@ -46,6 +47,7 @@ import { loadCanonicalCourse } from '../catalog/catalog'
 import { listCourseTags } from '../catalog/tags'
 import { notFound } from '../errors'
 import { loadHiddenItems, redactSnapshot } from '../moderation/hidden-items'
+import { publishedCourseQa } from './course-qa'
 import { courseScopeSql, servableReleaseSql } from './public-scope'
 import type {
   ConceptTagDto,
@@ -315,6 +317,7 @@ export async function getPublicCourseHub(db: DbExecutor, courseId: unknown, now 
     cases,
     stuckItems,
     seniorNotes: noteRows.map((n) => toPublicSeniorNote(n, noteSignals.get(n.id) ?? emptyCounts())),
+    qaItems: await publishedCourseQa(db, course.id),
     workload: await workloadFor(db, course.id),
     otherSchools,
   }

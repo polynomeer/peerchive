@@ -826,7 +826,7 @@ export type PublicationCheckRule =
 export interface PublicationCheckDto {
   rule: PublicationCheckRule
   location: {
-    kind: 'title' | 'summary' | 'log' | 'claim' | 'milestone' | 'artifact' | 'senior_note' | 'case_study' | 'portfolio'
+    kind: 'title' | 'summary' | 'log' | 'claim' | 'milestone' | 'artifact' | 'senior_note' | 'case_study' | 'portfolio' | 'course_qa'
     key?: string
     field: string
   }
@@ -1057,7 +1057,7 @@ export type SeniorNoteTimeBucket = 'lt10h' | 'lt20h' | 'lt40h' | 'forty_plus'
 export type SeniorNoteQuestion = 'firstWeek' | 'timeSink' | 'differently' | 'wishKnew'
 export type SeniorNoteAnswers = Partial<Record<SeniorNoteQuestion, string>>
 export type SignalKind = 'me_too' | 'helped'
-export type SearchKind = 'case' | 'stuck' | 'note'
+export type SearchKind = 'case' | 'stuck' | 'note' | 'qa'
 
 /** 항목별 유용성 신호 수(작성자별 합계는 없음). */
 export interface SignalCountsDto {
@@ -1130,8 +1130,43 @@ export interface PublicCourseHubDto {
   cases: CourseHubCaseDto[]
   stuckItems: CourseHubStuckDto[]
   seniorNotes: PublicSeniorNoteDto[]
+  /** 막힘 Q&A(C-09): 게시된 것만. 복사한 글과 각자 고른 이름뿐(사람 id·원 글 정보 없음). */
+  qaItems: PublicCourseQaDto[]
   workload: CourseHubWorkloadDto
   otherSchools: CourseHubRelatedDto[]
+}
+
+/** 공개 막힘 Q&A(C-09, ADR 0025). 커뮤니티 질문·채택된 답변을 두 사람의 동의로 복사한 것. */
+export interface PublicCourseQaDto {
+  id: string
+  questionTitle: string
+  questionBody: string
+  answerBody: string
+  /** 질문한 사람이 고른 이름(익명이면 "질문한 학생"). */
+  asker: string
+  askerAnonymous: boolean
+  /** 답한 사람이 고른 이름(익명이면 "답한 학생"). */
+  answerer: string
+  answererAnonymous: boolean
+  publishedAt: string
+  signals: SignalCountsDto
+}
+
+export type CourseQaStatus = 'published' | 'withdrawn' | 'hidden'
+
+/** 당사자(질문한 사람·답한 사람)에게 보이는 막힘 Q&A(GET /me/course-qa). 상대가 누구인지는 없습니다. */
+export interface MyCourseQaDto {
+  id: string
+  course: { id: string; title: string; schoolName: string }
+  questionTitle: string
+  role: 'asker' | 'answerer'
+  /** 내가 고른 이름. */
+  myLabel: string
+  status: CourseQaStatus
+  publishedAt: string
+  withdrawnAt: string | null
+  /** 게시 중이면 과목 허브의 위치. */
+  path: string | null
 }
 
 /** 작성자에게만 주는 선배 노트(초안 포함). */
@@ -1177,6 +1212,7 @@ export interface SignalStateDto {
 export type MySignalDto =
   | { target: 'stuck_item'; slug: string; itemKey: string; kind: SignalKind }
   | { target: 'senior_note'; noteId: string; kind: SignalKind }
+  | { target: 'course_qa'; qaId: string; kind: SignalKind }
 
 export interface SearchResultDto {
   kind: SearchKind
@@ -1478,6 +1514,7 @@ export type ReportTargetType =
   | 'community_comment'
   | 'community_recruitment'
   | 'community_application'
+  | 'course_qa'
 export type ReportReason = 'personal_info' | 'answer_sharing' | 'copyright' | 'harassment' | 'false_claim' | 'spam' | 'other'
 export type ReportStatus = 'open' | 'in_review' | 'resolved' | 'dismissed'
 export type ModerationActionKind =
@@ -1498,6 +1535,8 @@ export type ModerationActionKind =
   /** C-07: 모집 글 가리기·지원 메시지 가리기. */
   | 'hide_recruitment'
   | 'hide_application'
+  /** C-09: 막힘 Q&A 숨기기. */
+  | 'hide_qa'
 export type HiddenItemKind = 'log' | 'claim' | 'artifact'
 export type AppealStatus = 'open' | 'upheld' | 'reversed'
 
@@ -1516,6 +1555,8 @@ export type ReportTargetRef =
   /** 모집 글(C-07): 볼 수 있는 가려지지 않은 모집. 지원 메시지: 그 모집의 모집자만. */
   | { recruitmentId: string }
   | { applicationId: string }
+  /** 막힘 Q&A(C-09): 게시 중인 것만. */
+  | { qaId: string }
 
 export interface HiddenItemPlaceholderDto {
   kind: HiddenItemKind
@@ -1625,6 +1666,8 @@ export type OperatorTargetContentDto =
   | { kind: 'community_post' | 'community_comment'; item: OperatorCommunityItemDto }
   /** 모집 글·지원 메시지(C-07) 하나만. 모집자·지원자 id와 지원자 목록은 운영자에게도 싣지 않습니다. */
   | { kind: 'community_recruitment' | 'community_application'; recruitmentItem: OperatorRecruitmentItemDto }
+  /** 막힘 Q&A(C-09): 공개된 복사본 그대로(당사자 id 없음). */
+  | { kind: 'course_qa'; qa: PublicCourseQaDto; status: CourseQaStatus }
   | { kind: 'unavailable'; message: string }
 
 export interface OperatorReportDetailDto {
@@ -1968,7 +2011,19 @@ export interface RecruitmentNoticeDto {
   readAt: string | null
 }
 
-export type CommunityNoticeDto = NameModeNoticeDto | PostCommentedNoticeDto | ItemReviewNoticeDto | RecruitmentNoticeDto
+/** 아카이브로 옮기기 알림(C-09): 동의 요청·끝남·취소. 누가 요청·거절했는지, 글 제목은 없습니다. 지금 읽을 수 없는 공간이면 요청 주소 없음. */
+export interface ArchiveNoticeDto {
+  id: string
+  kind: 'archive_consent_requested' | 'archive_transfer_done' | 'archive_transfer_cancelled'
+  space: { slug: string; name: string } | null
+  transferId: string | null
+  target: ArchiveTransferTarget
+  text: string
+  createdAt: string
+  readAt: string | null
+}
+
+export type CommunityNoticeDto = NameModeNoticeDto | PostCommentedNoticeDto | ItemReviewNoticeDto | RecruitmentNoticeDto | ArchiveNoticeDto
 
 export interface CommunityNoticesDto {
   items: CommunityNoticeDto[]
@@ -2030,6 +2085,8 @@ export interface CommunityCommentDto extends CommunityTimesDto {
   canReport: boolean
   canReply: boolean
   canReact: boolean
+  /** 채택된 답변인지(C-09, 질문 게시판). 작성자 표시는 다른 댓글과 같습니다. */
+  accepted: boolean
   /** 답글(한 단계). 답글의 replies는 항상 []. */
   replies: CommunityCommentDto[]
 }
@@ -2090,7 +2147,98 @@ export interface CommunityPostDto extends CommunityPostSummaryDto {
   board: { id: string; title: string; kind: BoardKind }
   /** 댓글 쓰기 안내(이 글에 댓글을 쓸 수 있는지 포함). */
   composer: CommunityComposerDto
+  /** 채택된 답변(C-09, 게시 중일 때만). */
+  acceptedCommentId: string | null
+  /** 내가 글쓴이이고 질문 게시판의 게시 중인 글이면 true. */
+  canAccept: boolean
+  /** 아카이브로 옮기기(C-09). */
+  archive: PostArchiveDto
   comments: CommunityCommentDto[]
+}
+
+// ── 아카이브로 옮기기 (C-09, ADR 0025) ──────────────────────────────────
+
+export type ArchiveTransferTarget = 'course_qa' | 'stuck_log' | 'senior_note'
+export type ArchiveTransferStatus = 'awaiting_consent' | 'done' | 'cancelled'
+export type ArchiveCancelReason =
+  | 'cancelled_by_initiator'
+  | 'declined'
+  | 'expired'
+  | 'source_unavailable'
+  | 'answer_changed'
+  | 'account_deleted'
+  | 'target_unavailable'
+export type ArchiveConsentStatus = 'pending' | 'granted' | 'declined'
+export type ArchiveDisplayMode = 'anonymous' | 'display' | 'real'
+
+/** 원 글에 붙는 옮기기 정보. 다른 사람의 요청·동의한 사람은 없습니다. */
+export interface PostArchiveDto {
+  /** "아카이브로 옮겨짐": 지금 공개된 복사본(게시 중인 막힘 Q&A·게시된 선배 노트)이 있음. 링크 없음. */
+  archived: boolean
+  /** 내가 글쓴이이고 게시 중인 글이면 true(옮길 곳별 조건은 archive-options). */
+  canStart: boolean
+  questionBoard: boolean
+  /** 내가 요청했거나 동의를 요청받은 것만. */
+  transfers: ArchiveTransferSummaryDto[]
+}
+
+export interface ArchiveTransferSummaryDto {
+  id: string
+  target: ArchiveTransferTarget
+  status: ArchiveTransferStatus
+  cancelReason: ArchiveCancelReason | null
+  myRole: 'initiator' | 'party'
+  /** 동의를 요청받은 사람이면 내 결정. */
+  myConsent: ArchiveConsentStatus | null
+  createdAt: string
+}
+
+/** GET /community/archive-transfers/:id */
+export interface ArchiveTransferDto {
+  id: string
+  target: ArchiveTransferTarget
+  status: ArchiveTransferStatus
+  cancelReason: ArchiveCancelReason | null
+  cancelText: string | null
+  myRole: 'initiator' | 'party'
+  postId: string
+  course: { id: string; title: string; schoolName: string } | null
+  /** 요청한 사람에게만(답한 사람에게는 null). */
+  project: { id: string; title: string } | null
+  includesAnswer: boolean
+  expiresAt: string
+  createdAt: string
+  completedAt: string | null
+  /** 동의를 기다리는 동안만: 옮겨질 글 그대로(요청 때 얼린 것)와 질문한 사람이 고른 이름(막힘 Q&A). */
+  preview: { questionTitle: string; questionBody: string; answerBody: string | null; askerLabel: string | null } | null
+  /** 공개 전 점검 경고(막힘 Q&A, 가린 표본만). 두 사람 모두에게 같습니다. */
+  warnings: Array<{ rule: PublicationCheckRule; field: string; sample: string }>
+  /** 동의할 때 그대로 돌려보낼 해시(동의를 기다리는 동안만). */
+  contentHash: string | null
+  myConsent: { status: ArchiveConsentStatus; displayMode: ArchiveDisplayMode | null; displayLabel: string | null } | null
+  /** 요청한 사람에게만: 상대의 동의 상태(누구인지·고른 이름 없음). */
+  counterpart: { status: ArchiveConsentStatus; text: string } | null
+  /** 막힘 Q&A: 내가 고를 수 있는 이름(내 계정 값). */
+  displayOptions: { anonymousLabel: string; displayName: string | null; realName: string | null } | null
+  canDecide: boolean
+  canCancel: boolean
+  result: { courseQa: MyCourseQaDto | null; seniorNoteId: string | null; projectId: string | null }
+}
+
+/** GET /community/posts/:id/archive-options(글쓴이만). 옮길 곳마다 막는 이유(null이면 가능). */
+export interface ArchiveOptionsDto {
+  postId: string
+  questionBoard: boolean
+  hasAcceptedAnswer: boolean
+  answerIsMine: boolean
+  school: { id: string; name: string } | null
+  targets: Record<ArchiveTransferTarget, 'source_not_open' | 'not_author' | 'not_question_board' | 'no_accepted_answer' | null>
+  projects: Array<{ id: string; title: string }>
+  displayName: string | null
+  hasRealName: boolean
+  lengths: { title: number; body: number; answer: number }
+  limits: { stuckSymptom: number; logBody: number; solution: number; noteAnswer: number }
+  timeBuckets: string[]
 }
 
 export interface CommunityReactionDto {

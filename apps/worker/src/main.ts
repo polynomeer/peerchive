@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { PgBoss } from 'pg-boss'
 import { createDb, pingDb } from '@peerchive/db'
 import { loadWorkerConfig } from './config'
-import { registerCourseHubDerived, registerSeniorNoteQueues } from './course-hub-derived'
+import { registerCourseHubDerived, registerCourseQaQueues, registerSeniorNoteQueues } from './course-hub-derived'
 import { dispatchOutbox } from './dispatcher'
 import { registerModerationQueue } from './moderation-derived'
 import { registerPortfolioDerived } from './portfolio-derived'
@@ -44,6 +44,8 @@ registerCourseHubDerived()
 registerPortfolioDerived()
 await registerPublicationQueues(boss, db)
 await registerSeniorNoteQueues(boss, db)
+// 막힘 Q&A 검색 색인·철회 정리(C-09).
+await registerCourseQaQueues(boss, db)
 await registerModerationQueue(boss, db)
 // 운영 주기 작업(T-16): 만료 행·주인 없는 격리 파일 정리, 유예 기간이 지난 탈퇴 계정 정리.
 await registerOpsSchedules(boss, db, config.storage, opsConfig)

@@ -25,12 +25,16 @@ const KIND_TITLES: Record<CommunityNoticeDto['kind'], string> = {
   recruitment_invited: '모집에 선정됨',
   recruitment_not_selected: '모집 결과',
   recruitment_cancelled: '모집 취소',
+  archive_consent_requested: '아카이브로 옮기기 동의 요청',
+  archive_transfer_done: '아카이브로 옮기기 끝남',
+  archive_transfer_cancelled: '아카이브로 옮기기 취소',
 }
 
 function textOf(n: CommunityNoticeDto): string {
   if (n.kind === 'post_commented') return postNoticeText({ count: n.count })
   if (n.kind === 'item_auto_hidden' || n.kind === 'item_restored') return n.text
   if (n.kind === 'recruitment_invited' || n.kind === 'recruitment_not_selected' || n.kind === 'recruitment_cancelled') return n.text
+  if (n.kind === 'archive_consent_requested' || n.kind === 'archive_transfer_done' || n.kind === 'archive_transfer_cancelled') return n.text
   const m = n as NameModeNoticeDto
   return noticeText(m.kind, { fromMode: m.fromMode, toMode: m.toMode, effectiveAt: m.effectiveAt, ...(m.kind === 'name_mode_scheduled' && { joinPolicyAdjusted: m.joinPolicyAdjusted }) })
 }
@@ -54,7 +58,7 @@ async function markAll() {
   <div class="community-page">
     <h1>커뮤니티 알림</h1>
     <p class="hint">
-      내가 멤버인 방의 이름 표시 방식이 바뀌거나, 내 글에 새 댓글이 달리거나, 내 글·댓글이 신고로 운영 검토 중이 되거나, 지원한 모집의 결과가 나오면 여기에 알립니다. 운영 조치·이용 제한의
+      내가 멤버인 방의 이름 표시 방식이 바뀌거나, 내 글에 새 댓글이 달리거나, 내 글·댓글이 신고로 운영 검토 중이 되거나, 지원한 모집의 결과가 나오거나, 내 답변을 아카이브로 옮기는 데 동의를 요청받으면 여기에 알립니다. 운영 조치·이용 제한의
       사유와 이의제기는 <NuxtLink to="/me/moderation-notices">운영 조치 안내</NuxtLink>에서 봅니다. 이름 표시 방식이 바뀌어도 이미 쓴 글·댓글은 쓸 때의 방식
       그대로입니다.
     </p>
@@ -83,6 +87,12 @@ async function markAll() {
             <NuxtLink v-if="(n.kind === 'post_commented' || n.kind === 'item_auto_hidden' || n.kind === 'item_restored') && n.postId" :to="`/community/p/${n.postId}`">{{
               textOf(n)
             }}</NuxtLink>
+            <NuxtLink
+              v-else-if="(n.kind === 'archive_consent_requested' || n.kind === 'archive_transfer_done' || n.kind === 'archive_transfer_cancelled') && n.transferId"
+              :to="`/community/archive-transfers/${n.transferId}`"
+              :data-testid="`archive-notice-${n.kind}`"
+              >{{ textOf(n) }}</NuxtLink
+            >
             <template v-else>{{ textOf(n) }}</template>
           </p>
           </template>

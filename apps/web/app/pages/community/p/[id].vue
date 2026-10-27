@@ -6,6 +6,8 @@
  * - 지운 글·댓글은 "작성자가 삭제한 …", 운영 조치로 가린 것은 "운영 조치로 가려진 …", 신고 누적 임시 숨김은 "운영 검토 중"으로 보입니다(C-06).
  * - 방 운영진(방장·admin·moderator)에게는 가리기·되돌리기·제재 요청 도구가 보입니다(C-06). 글 응답(DTO)은 누구에게나 같고, 운영진 여부는
  *   공간 상세의 permissions.moderate와 별도 운영 화면(`/spaces/:slug/moderation`)으로만 압니다. 운영진도 익명 작성자를 볼 수 없습니다.
+ * - 질문 게시판(C-09, ADR 0025): 글쓴이는 답변 하나를 채택하고, 글을 "아카이브로 옮기기"(막힘 Q&A·내 과제의 막힘 로그·선배 노트 초안)할 수 있습니다.
+ *   지금 공개된 복사본이 있으면 "아카이브로 옮겨짐" 표시만 보입니다(링크·동의한 사람 없음). 내가 요청했거나 동의를 요청받은 요청만 상태와 함께 보입니다.
  */
 import type { CommunityPostDto, CommunityReactionDto, SpaceDetailDto, SpaceModerationDto } from '~~/shared/types/api'
 
@@ -97,6 +99,11 @@ async function togglePostReaction() {
   }
 }
 
+// ── 아카이브로 옮기기(C-09) ──
+const archiveOpen = ref(false)
+const transferText = (t: { target: keyof typeof ARCHIVE_TARGET_LABELS; status: keyof typeof ARCHIVE_STATUS_LABELS; cancelReason: string | null }) =>
+  `${ARCHIVE_TARGET_LABELS[t.target]} · ${ARCHIVE_STATUS_LABELS[t.status]}`
+
 // ── 댓글 ──
 const comment = reactive({ body: '', nameMode: '' as '' | 'display' })
 async function addComment() {
@@ -157,6 +164,7 @@ async function addComment() {
         </form>
         <p v-else-if="post.body" class="pre post-body">{{ post.body }}</p>
         <p v-else-if="post.title" class="muted">{{ post.placeholder }}</p>
+        <p v-if="post.archive.archived" class="small" data-testid="archived-marker"><span class="badge">{{ ARCHIVED_MARKER_TEXT }}</span></p>
         <p v-if="post.status === 'auto_hidden' && post.author.mine" class="notice" role="status" data-testid="own-review-notice">
           내 글이 여러 사람의 신고로 운영 검토 중이라 다른 사람에게는 임시로 가려져 있습니다. 검토가 끝나면
           <NuxtLink to="/community/notices">커뮤니티 알림</NuxtLink>으로 결과를 알려 드립니다.
@@ -196,6 +204,25 @@ async function addComment() {
         </p>
       </article>
 
+      <section v-if="post.archive.transfers.length || post.archive.canStart" aria-labelledby="archive-heading" class="stack">
+        <h2 id="archive-heading" class="small-heading">아카이브로 옮기기</h2>
+        <ul v-if="post.archive.transfers.length" class="plain" data-testid="archive-transfers">
+          <li v-for="t in post.archive.transfers" :key="t.id">
+            <NuxtLink :to="`/community/archive-transfers/${t.id}`">{{ transferText(t) }}</NuxtLink>
+            <span v-if="t.myRole === 'party' && t.myConsent === 'pending' && t.status === 'awaiting_consent'" class="badge">내 동의 필요</span>
+          </li>
+        </ul>
+        <template v-if="post.archive.canStart">
+          <p v-if="post.archive.questionBoard && !post.acceptedCommentId" class="hint">
+            답변을 채택하면 질문과 답변을 과목 허브의 막힘 Q&amp;A나 내 과제의 막힘 로그로 옮길 수 있습니다.
+          </p>
+          <p v-if="!archiveOpen" class="actions">
+            <button type="button" class="secondary" data-testid="archive-open" @click="archiveOpen = true">아카이브로 옮기기</button>
+          </p>
+          <ArchiveTransferForm v-else :post-id="post.id" @close="archiveOpen = false" />
+        </template>
+      </section>
+
       <section aria-labelledby="comments">
         <h2 id="comments">댓글 {{ post.commentCount }}</h2>
         <ul v-if="post.comments.length" class="plain" data-testid="comments">
@@ -206,6 +233,7 @@ async function addComment() {
             :post-id="post.id"
             :official="post.space.official"
             :space-hidden-ids="spaceHiddenIds"
+            :can-accept="post.canAccept"
             @thread="setThread"
             @mod-changed="loadModeration"
             @error="showError"

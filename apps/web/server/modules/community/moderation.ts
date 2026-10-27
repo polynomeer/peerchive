@@ -80,6 +80,7 @@ import { isUuid } from '../projects/access'
 import { hitRateLimit } from '../security/rate-limit'
 import { parseInput } from '../validation'
 import { loadReadableSpace, loadSpace, loadViewer, membershipFacts } from './access'
+import { cancelTransfersForSourceInTx } from './archive-transfers'
 import { getPost } from './posts'
 import type {
   AuthorLookupResultDto,
@@ -216,6 +217,8 @@ export async function applyReportThresholdInTx(tx: DbExecutor, ref: ItemRef, tri
   if (!shouldAutoHide({ status: loaded.item.status, qualifying, threshold: autoHideThreshold(space.row.kind, autoHideThresholds()) })) return false
   const table = tableOf(kind)
   await tx.update(table).set({ status: 'auto_hidden', updatedAt: now }).where(and(eq(table.id, loaded.item.id), eq(table.status, 'published')))
+  // 가려진 글·답변은 아카이브로 옮길 수 없습니다(C-09): 진행 중 옮기기를 취소합니다.
+  await cancelTransfersForSourceInTx(tx, kind === 'post' ? { postId: loaded.item.id } : { commentId: loaded.item.id }, 'source_unavailable', now)
   await notifyItemReview(tx, loaded, 'item_auto_hidden', now)
   await emitAnalytics(tx, { name: 'community_auto_hidden', actorId: triggeredBy, unlinked: true, props: { targetKind: kind }, now })
   return true
@@ -253,6 +256,7 @@ export async function hideCommunityItemInTx(tx: DbExecutor, target: ItemKind, id
   if (!row) throw notFound()
   if (row.status === 'deleted_by_author') throw conflict('target_not_public')
   await tx.update(table).set({ status: 'hidden', updatedAt: now }).where(eq(table.id, id))
+  await cancelTransfersForSourceInTx(tx, target === 'post' ? { postId: id } : { commentId: id }, 'source_unavailable', now)
 }
 
 /**
@@ -326,6 +330,7 @@ export async function spaceHideItem(db: DbExecutor, actor: Actor, kind: ItemKind
       .returning({ id: moderationActions.id })
     const table = tableOf(kind)
     await tx.update(table).set({ status: 'hidden', updatedAt: now }).where(eq(table.id, loaded.item.id))
+    await cancelTransfersForSourceInTx(tx, kind === 'post' ? { postId: loaded.item.id } : { commentId: loaded.item.id }, 'source_unavailable', now)
     await recordAudit(tx, {
       actorId: actor.userId,
       action: 'community.space_hide',

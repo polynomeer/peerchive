@@ -34,6 +34,7 @@ import {
   schoolEmailDomains,
   schools,
   seniorNotes,
+  courseQaItems,
   sql,
   type DbExecutor,
 } from '@peerchive/db'
@@ -216,6 +217,12 @@ export async function mergeCourse(db: DbExecutor, actor: Actor, sourceId: unknow
       .set({ courseId: target.id })
       .where(eq(seniorNotes.courseId, source.id))
       .returning({ id: seniorNotes.id })
+    // 막힘 Q&A(C-09)도 같은 방식으로 정본에 모읍니다.
+    const qaRehomed = await tx
+      .update(courseQaItems)
+      .set({ courseId: target.id })
+      .where(eq(courseQaItems.courseId, source.id))
+      .returning({ id: courseQaItems.id })
 
     await tx.update(courses).set({ mergedInto: target.id }).where(eq(courses.mergedInto, source.id))
     await tx.update(courses).set({ mergedInto: target.id, mergedAt: now }).where(eq(courses.id, source.id))
@@ -231,6 +238,7 @@ export async function mergeCourse(db: DbExecutor, actor: Actor, sourceId: unknow
         projectsRepointed,
         releasesRehomed: releasesRehomed.length,
         seniorNotesRehomed: notesRehomed.length,
+        courseQaRehomed: qaRehomed.length,
       },
     })
     return toCourseDto(target)

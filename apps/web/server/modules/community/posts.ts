@@ -13,6 +13,8 @@
  *   보는 사람이 방장·모더레이터·운영자여도 같습니다(`mine`만 그 사람의 글에 true). 공감은 개수와 내가 눌렀는지만.
  *   소규모(active 멤버 10명 미만) 사용자 방의 익명 글·댓글은 시각을 `today`/`this_week`/`earlier`로만 보냅니다(DB에는 정확한 시각).
  * - 지운 글·댓글은 행을 남기고(번호·답글 유지) 제목·본문을 비웁니다. 가린 글(운영 조치)은 본문을 남기지만 응답에는 싣지 않습니다.
+ * - C-09(ADR 0025): 질문 게시판 글의 글쓴이는 최상위 댓글 하나를 "채택된 답변"으로 고릅니다(바꾸기·풀기). 글 응답에 채택 여부와
+ *   "아카이브로 옮겨짐" 표시, 보는 사람이 관련된 옮기기 요청 요약(archive-transfers.ts)이 붙습니다. 글·답변을 지우면 진행 중 옮기기는 취소됩니다.
  * - 감사 기록을 남기지 않습니다: 작성자 id와 글 id를 한 행에 남기면 익명 글의 작성자를 찾는 길(C-06의 사유 기록 경로 밖)이 생기기 때문입니다.
  *   분석 이벤트는 허용 목록(게시판 종류·방식·답글 여부·대상 종류)만, 익명 글·댓글은 사용자 키 없이(unlinked) 남깁니다.
  */
@@ -73,6 +75,7 @@ import { isUuid } from '../projects/access'
 import { hitRateLimit } from '../security/rate-limit'
 import { parseInput } from '../validation'
 import { type SpaceContext, loadReadableSpace, membershipFacts, writeRestricted } from './access'
+import { cancelTransfersForAnswerChangeInTx, cancelTransfersForSourceInTx, postArchiveInfo } from './archive-transfers'
 import { loadScheduledChange } from './name-modes'
 import type {
   BoardPostsDto,
@@ -310,6 +313,7 @@ function commentOf(tc: ThreadContext, post: PostRow, c: CommentRow, reactions: {
     canReport: !mine && open,
     canReply: open && canComment && c.parentCommentId === null && isOpenItem(post.status),
     canReact: open && !mine && active && canReact(tc.ctx.viewer, tc.ctx.facts, membershipFacts(tc.ctx.membership)),
+    accepted: open && post.acceptedCommentId === c.id,
     replies: [],
   }
 }
@@ -341,6 +345,7 @@ async function postDetail(db: DbExecutor, ctx: SpaceContext, post: PostRow, now:
   const mine = post.authorId === ctx.viewer.userId
   const active = ctx.space.row.status === 'active'
   const pr = postReactions.get(post.id)
+  const acceptedOpen = post.acceptedCommentId ? dtos.some((d) => d.id === post.acceptedCommentId && d.accepted) : false
   return {
     ...summaryOf(tc, post, dtos.filter((d) => d.status === 'published').length, pr?.count ?? 0),
     body: open ? post.body : null,
@@ -353,6 +358,9 @@ async function postDetail(db: DbExecutor, ctx: SpaceContext, post: PostRow, now:
     space: spaceDto(ctx),
     board: { id: board!.id, title: board!.title, kind: board!.kind },
     composer: { ...composer, canWrite: canComment },
+    acceptedCommentId: acceptedOpen ? post.acceptedCommentId : null,
+    canAccept: mine && open && active && board!.kind === 'question',
+    archive: await postArchiveInfo(db, ctx, post, board!.kind, now),
     comments: top,
   }
 }
@@ -608,6 +616,8 @@ export async function deletePost(db: DbExecutor, actor: Actor, postId: unknown, 
       .set({ status: 'deleted_by_author', title: '', body: '', deletedAt: now, updatedAt: now, version: post.version + 1 })
       .where(eq(communityPosts.id, post.id))
     await tx.delete(communityReactions).where(eq(communityReactions.postId, post.id))
+    // 지운 글은 옮길 수 없습니다(C-09): 이 글의 진행 중 옮기기를 취소합니다.
+    await cancelTransfersForSourceInTx(tx, { postId: post.id }, 'source_unavailable', now, actor.userId)
     return post.id
   })
   return getPost(db, actor, id, now)
@@ -648,6 +658,49 @@ export async function deleteComment(db: DbExecutor, actor: Actor, commentId: unk
       .set({ status: 'deleted_by_author', body: '', deletedAt: now, updatedAt: now, version: comment.version + 1 })
       .where(eq(communityComments.id, comment.id))
     await tx.delete(communityReactions).where(eq(communityReactions.commentId, comment.id))
+    // 지운 답변은 옮길 수 없습니다(C-09).
+    await cancelTransfersForSourceInTx(tx, { commentId: comment.id }, 'source_unavailable', now, actor.userId)
+    return post.id
+  })
+  return getPost(db, actor, id, now)
+}
+
+// ── 채택된 답변(C-09) ─────────────────────────────────────────────────────
+
+export const acceptAnswerSchema = z.object({ commentId: z.uuid({ error: (i) => (i.input === undefined ? 'required' : 'invalid') }) })
+
+/**
+ * PUT /community/posts/:id/accepted-answer {commentId} — 질문 게시판 글의 글쓴이만(403 `not_author`). 이 글의 게시 중인 최상위 댓글 하나를 채택합니다
+ * (바꾸면 이전 채택은 풀림). 409 `not_question_board`·`not_open`·`space_not_active`·`comment_not_open`, 422 `commentId: invalid|not_top_level`.
+ * 채택이 바뀌면 이전 답변을 옮기던 진행 중 요청은 취소됩니다. 글의 version은 올리지 않습니다(내용 변경이 아님). 200 + 스레드.
+ */
+export async function setAcceptedAnswer(db: DbExecutor, actor: Actor, postId: unknown, rawInput: unknown, now = new Date()): Promise<CommunityPostDto> {
+  const input = rawInput === null ? null : parseInput(acceptAnswerSchema, rawInput)
+  const id = await db.transaction(async (tx) => {
+    const peek = await findPost(tx, postId)
+    await shareLockSpace(tx, peek.spaceId)
+    const ctx = await loadReadableSpace(tx, actor, peek.spaceId, false, now)
+    const post = await findPost(tx, peek.id, true)
+    if (post.authorId !== actor.userId) throw forbidden('not_author')
+    const [board] = await tx.select({ kind: boards.kind }).from(boards).where(eq(boards.id, post.boardId)).limit(1)
+    if (board?.kind !== 'question') throw conflict('not_question_board')
+    if (!isOpenItem(post.status)) throw conflict('not_open')
+    if (ctx.space.row.status !== 'active') throw conflict('space_not_active', { status: ctx.space.row.status })
+    let commentId: string | null = null
+    if (input) {
+      const [comment] = await tx
+        .select()
+        .from(communityComments)
+        .where(and(eq(communityComments.id, input.commentId.toLowerCase()), eq(communityComments.postId, post.id)))
+        .limit(1)
+      if (!comment) throw invalid({ commentId: 'invalid' })
+      if (comment.parentCommentId) throw invalid({ commentId: 'not_top_level' })
+      if (!isOpenItem(comment.status)) throw conflict('comment_not_open')
+      commentId = comment.id
+    }
+    if (post.acceptedCommentId === commentId) return post.id
+    await tx.update(communityPosts).set({ acceptedCommentId: commentId, updatedAt: now }).where(eq(communityPosts.id, post.id))
+    await cancelTransfersForAnswerChangeInTx(tx, post.id, commentId, now, actor.userId)
     return post.id
   })
   return getPost(db, actor, id, now)

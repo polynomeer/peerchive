@@ -6,6 +6,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import {
   and,
   auditEvents,
+  courseQaItems,
   courses,
   createDb,
   eq,
@@ -21,6 +22,9 @@ import {
   type DbExecutor,
 } from '@peerchive/db'
 import {
+  handleCourseQaPublished,
+  handleCourseQaWithdrawn,
+  parseCourseQaPayload,
   handleSeniorNotePublished,
   handleSeniorNoteWithdrawn,
   parseSeniorNotePayload,
@@ -64,6 +68,15 @@ const snapshotWith = (title: string, logs: unknown[]) => ({
   logs,
   claims: [],
   artifacts: [],
+})
+
+describe('parseCourseQaPayload (C-09)', () => {
+  it('accepts the two ids only', () => {
+    const ok = { courseQaItemId: id(), courseId: id() }
+    expect(parseCourseQaPayload({ ...ok, extra: 'x' })).toEqual(ok)
+    expect(parseCourseQaPayload({ ...ok, courseQaItemId: 'x' })).toBeNull()
+    expect(parseCourseQaPayload(undefined)).toBeNull()
+  })
 })
 
 describe('parseSeniorNotePayload', () => {
@@ -227,6 +240,46 @@ describe.skipIf(!url)('course hub derived data (PostgreSQL)', () => {
       expect(await tx.select().from(usefulnessSignals).where(eq(usefulnessSignals.seniorNoteId, note!.id))).toEqual([])
       // 철회된 노트의 늦은 게시 이벤트는 색인하지 않습니다.
       expect(await handleSeniorNotePublished(tx, event)).toBe(0)
+    })
+  })
+
+  it('C-09: indexes a course Q&A only while published (copied text only) and removes documents and signals on withdrawal', async () => {
+    await rollback(async (tx) => {
+      const [user] = await tx.insert(users).values({ displayName: 'q', privateEmail: `q+${id()}@example.test` }).returning()
+      const [school] = await tx.insert(schools).values({ name: 's', nameKey: `s${id()}` }).returning()
+      const [course] = await tx.insert(courses).values({ schoolId: school!.id, title: 'c', titleKey: `c${id()}` }).returning()
+      const [qa] = await tx
+        .insert(courseQaItems)
+        .values({
+          courseId: course!.id,
+          questionTitle: 'Fork 질문',
+          questionBody: '좀비 프로세스',
+          answerBody: 'waitpid',
+          askerLabel: '질문한 학생',
+          askerAnonymous: true,
+          answererLabel: '코딩 곰',
+          answererAnonymous: false,
+          askerId: user!.id,
+          answererId: user!.id,
+          transferId: id(),
+          publishedAt: new Date(),
+        })
+        .returning()
+      const event = { courseQaItemId: qa!.id, courseId: course!.id }
+      const docs = () => tx.select().from(searchDocuments).where(eq(searchDocuments.courseQaItemId, qa!.id))
+      expect(await handleCourseQaPublished(tx, event)).toBe(1)
+      expect(await handleCourseQaPublished(tx, event)).toBe(1)
+      // 이름(고른 표시)은 색인하지 않습니다.
+      expect((await docs()).map((d) => [d.kind, d.searchText])).toEqual([['qa', 'fork 질문 좀비 프로세스 waitpid']])
+      await tx.insert(usefulnessSignals).values({ userId: user!.id, targetKind: 'course_qa', courseQaItemId: qa!.id, kind: 'me_too' })
+      // 지금도 published면 철회 이벤트는 아무것도 지우지 않음
+      expect(await handleCourseQaWithdrawn(tx, event)).toBe(0)
+      await tx.update(courseQaItems).set({ status: 'withdrawn', withdrawnAt: new Date(), withdrawnBy: 'asker' }).where(eq(courseQaItems.id, qa!.id))
+      expect(await handleCourseQaWithdrawn(tx, event)).toBe(2)
+      expect(await docs()).toEqual([])
+      // 철회된 뒤 늦게 온 게시 이벤트는 색인하지 않음
+      expect(await handleCourseQaPublished(tx, event)).toBe(0)
+      expect(await handleCourseQaPublished(tx, { courseQaItemId: 'x' })).toBe(0)
     })
   })
 })

@@ -7,16 +7,23 @@
  * - 게시 handler는 이벤트가 낡았으면(그 사이 철회·새 버전·노트 수정) 아무것도 만들지 않습니다: 지금 상태가 이벤트와 같을 때만 색인합니다.
  *   철회가 먼저 처리되고 게시가 나중에 처리돼도 철회된 내용을 다시 색인하지 않습니다.
  * - 모두 idempotent합니다(재시도·중복 전달).
+ * - 막힘 Q&A(C-09, ADR 0025): `course_qa.published` → 지금도 published일 때만 문서를 만들고, `course_qa.withdrawn` → 지금 published가 아니면 문서·신호를 지웁니다.
+ *   검색 읽기는 항목의 status를 같은 쿼리에서 확인하므로 정리가 늦어도 철회·숨김된 Q&A는 나오지 않습니다. 이 handler는 course_qa_items만 읽습니다(커뮤니티 테이블 없음).
  */
 import type { PgBoss } from 'pg-boss'
 import {
   type HubSnapshot,
   extractStuckItems,
+  searchDocFromCourseQa,
   searchDocFromSeniorNote,
   searchDocsFromSnapshot,
   type SeniorNoteAnswers,
 } from '@peerchive/domain'
 import {
+  COURSE_QA_PUBLISHED_TOPIC,
+  COURSE_QA_WITHDRAWN_TOPIC,
+  courseQaItems,
+  type CourseQaOutboxPayload,
   SENIOR_NOTE_PUBLISHED_TOPIC,
   isNull,
   releaseHiddenItems,
@@ -209,5 +216,60 @@ export async function registerSeniorNoteQueues(boss: PgBoss, db: DbExecutor): Pr
     if (!job) return
     const affected = await handleSeniorNoteWithdrawn(db, job.data)
     console.info(`[worker] senior_note.withdrawn ${job.id}: affected=${affected}`)
+  })
+}
+
+// ── 막힘 Q&A(C-09) ───────────────────────────────────────────────────────
+
+export function parseCourseQaPayload(data: unknown): CourseQaOutboxPayload | null {
+  if (!data || typeof data !== 'object') return null
+  const d = data as Record<string, unknown>
+  if (typeof d.courseQaItemId !== 'string' || !UUID.test(d.courseQaItemId)) return null
+  if (typeof d.courseId !== 'string' || !UUID.test(d.courseId)) return null
+  return { courseQaItemId: d.courseQaItemId, courseId: d.courseId }
+}
+
+/** 막힘 Q&A 게시: 지금 published일 때만 검색 문서를 만들거나 바꿉니다(철회·숨김 뒤 늦게 온 이벤트는 아무것도 만들지 않음). 바꾼 행 수. */
+export async function handleCourseQaPublished(db: DbExecutor, data: unknown): Promise<number> {
+  const event = parseCourseQaPayload(data)
+  if (!event) return 0
+  return db.transaction(async (tx) => {
+    const [qa] = await tx.select().from(courseQaItems).where(eq(courseQaItems.id, event.courseQaItemId)).limit(1).for('update')
+    if (!qa || qa.status !== 'published') return 0
+    const doc = searchDocFromCourseQa(qa)
+    await tx.delete(searchDocuments).where(eq(searchDocuments.courseQaItemId, qa.id))
+    await tx.insert(searchDocuments).values({ kind: 'qa', courseQaItemId: qa.id, ...doc })
+    return 1
+  })
+}
+
+/** 막힘 Q&A 철회: 지금 published가 아니면 검색 문서와 신호를 지웁니다. 지운 행 수. */
+export async function handleCourseQaWithdrawn(db: DbExecutor, data: unknown): Promise<number> {
+  const event = parseCourseQaPayload(data)
+  if (!event) return 0
+  return db.transaction(async (tx) => {
+    const [qa] = await tx.select({ status: courseQaItems.status }).from(courseQaItems).where(eq(courseQaItems.id, event.courseQaItemId)).limit(1).for('update')
+    if (qa?.status === 'published') return 0
+    const docs = await tx.delete(searchDocuments).where(eq(searchDocuments.courseQaItemId, event.courseQaItemId)).returning({ id: searchDocuments.id })
+    const signals = await tx.delete(usefulnessSignals).where(eq(usefulnessSignals.courseQaItemId, event.courseQaItemId)).returning({ id: usefulnessSignals.id })
+    return docs.length + signals.length
+  })
+}
+
+/** 막힘 Q&A 큐 등록. */
+export async function registerCourseQaQueues(boss: PgBoss, db: DbExecutor): Promise<void> {
+  for (const queue of [COURSE_QA_PUBLISHED_TOPIC, COURSE_QA_WITHDRAWN_TOPIC]) {
+    await boss.createQueue(queue, PUBLICATION_QUEUE_OPTIONS)
+    await boss.updateQueue(queue, PUBLICATION_QUEUE_OPTIONS)
+  }
+  await boss.work<Record<string, unknown>>(COURSE_QA_PUBLISHED_TOPIC, { batchSize: 1, pollingIntervalSeconds: 2 }, async ([job]) => {
+    if (!job) return
+    const affected = await handleCourseQaPublished(db, job.data)
+    console.info(`[worker] course_qa.published ${job.id}: affected=${affected}`)
+  })
+  await boss.work<Record<string, unknown>>(COURSE_QA_WITHDRAWN_TOPIC, { batchSize: 1, pollingIntervalSeconds: 2 }, async ([job]) => {
+    if (!job) return
+    const affected = await handleCourseQaWithdrawn(db, job.data)
+    console.info(`[worker] course_qa.withdrawn ${job.id}: affected=${affected}`)
   })
 }

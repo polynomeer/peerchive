@@ -4,6 +4,7 @@
  */
 import { afterAll, describe, expect, it } from 'vitest'
 import {
+  courseQaItems,
   courses,
   createDb,
   eq,
@@ -175,6 +176,41 @@ describe.skipIf(!url)('moderation derived data (PostgreSQL)', () => {
       expect(await handleModerationAction(tx, { actionId: action!.id, phase: 'reversed' })).toBe(1)
       expect(await tx.select().from(searchDocuments).where(eq(searchDocuments.seniorNoteId, note!.id))).toHaveLength(1)
       expect(await handleModerationAction(tx, { actionId: id(), phase: 'applied' })).toBe(0)
+    })
+  })
+
+  it('C-09 hide_qa removes the Q&A document; reversal reindexes the published item', async () => {
+    await rollback(async (tx) => {
+      const [user] = await tx.insert(users).values({ displayName: 'q', privateEmail: `q+${id()}@example.test` }).returning()
+      const [school] = await tx.insert(schools).values({ name: 's', nameKey: `s${id()}` }).returning()
+      const [course] = await tx.insert(courses).values({ schoolId: school!.id, title: 'c', titleKey: `c${id()}` }).returning()
+      const [qa] = await tx
+        .insert(courseQaItems)
+        .values({
+          courseId: course!.id,
+          questionTitle: '질문',
+          questionBody: '본문',
+          answerBody: '답',
+          askerLabel: '질문한 학생',
+          askerAnonymous: true,
+          answererLabel: '답한 학생',
+          answererAnonymous: true,
+          transferId: id(),
+          status: 'hidden',
+          publishedAt: new Date(),
+        })
+        .returning()
+      await tx.insert(searchDocuments).values({ kind: 'qa', courseQaItemId: qa!.id, title: 't', snippet: 's', searchText: '질문' })
+      const [action] = await tx
+        .insert(moderationActions)
+        .values({ kind: 'hide_qa', outcome: 'resolved', targetType: 'course_qa', targetKey: `course_qa:${qa!.id}`, courseQaItemId: qa!.id, internalNote: 'n', createdBy: user!.id })
+        .returning()
+      const docs = () => tx.select().from(searchDocuments).where(eq(searchDocuments.courseQaItemId, qa!.id))
+      expect(await handleModerationAction(tx, { actionId: action!.id, phase: 'applied' })).toBe(1)
+      expect(await docs()).toEqual([])
+      await tx.update(courseQaItems).set({ status: 'published' }).where(eq(courseQaItems.id, qa!.id))
+      expect(await handleModerationAction(tx, { actionId: action!.id, phase: 'reversed' })).toBe(1)
+      expect(await docs()).toHaveLength(1)
     })
   })
 })
