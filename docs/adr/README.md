@@ -24,3 +24,4 @@ Peerchive 신규 앱(`apps/`, `packages/`)의 기술 결정을 짧게 남깁니�
 | [0016](0016-deletion-ledger-maintenance-analytics.md) | 탈퇴 정리·삭제 장부·점검 모드·pilot 분석: 유예 뒤 한 트랜잭션 정리(팀 기록은 가명 처리) + HMAC 장부 재적용 + 헬스 체크만 여는 점검 모드 + 허용 목록 이벤트 | 채택 |
 | [0017](0017-smtp-mail-and-s3-storage.md) | 배포 준비: 공급자 무관 SMTP 메일 transport(TLS 필수·실패해도 같은 202) + S3 호환 저장소 driver(비공개 버킷·서버 경유 스트림·공급자 쪽 파일 백업) | 채택 |
 | [0018](0018-school-affiliation.md) | 학교 메일 인증·학과 자기 신고: institution_affiliations(HMAC만, 주소 미저장) + 운영자 등록 도메인 + 열거 안전 코드 흐름 + 과목 허브 작성 자격 | 채택 |
+| [0019](0019-community-spaces.md) | 커뮤니티 공간·게시판·멤버십·가입 방식: 별도 community 모듈 + 학교 인증에서 파생하는 공식 페이지 자격 + 정책 함수 한 곳 + 운영자만 여는 공식 페이지 | 채택 |

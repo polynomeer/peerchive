@@ -36,6 +36,9 @@
  * C-01(0016 migration): 학교 메일 도메인(school_email_domains, 운영자 등록), 기관 소속 인증(institution_affiliations: 메일 주소 대신
  * HMAC·도메인만, 자기 신고 학과·재학/졸업생, 상태 이력)과 인증 코드(affiliation_codes, HMAC·10분·5회), 공개 프로필 배지 선택
  * (profiles.show_affiliation_badge), 분석 이벤트 affiliation_verified. 결정은 ADR 0018.
+ * C-02(0017 migration): 커뮤니티 공간(community_spaces: 공식 학교·학과 페이지·사용자 방·스터디 방)·멤버십(space_memberships)·게시판(boards)·
+ * 초대(space_invitations, 해시·7일·일회성)·공식 페이지 개설 요청(official_page_requests), 신고 대상 community_space·조치 restrict_space,
+ * 분석 이벤트 space_created·space_joined. 결정은 ADR 0019.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -153,14 +156,14 @@ export const searchDocKind = pgEnum('search_doc_kind', ['case', 'stuck', 'note']
 export const caseJobTarget = pgEnum('case_job_target', ['backend', 'frontend', 'data', 'pm', 'design', 'general'])
 /** 케이스 스터디 상태(T-14): 초안 → 게시 → (원본 release 철회·대체 시) 이용 불가. 이용 불가는 되돌리지 않습니다. */
 export const caseStudyStatus = pgEnum('case_study_status', ['draft', 'published', 'unavailable'])
-/** 신고 대상(T-15, @peerchive/domain REPORT_TARGET_TYPES). 모두 지금 공개인 것만 신고할 수 있습니다. */
-export const reportTargetType = pgEnum('report_target_type', ['publication', 'publication_item', 'senior_note', 'case_study', 'profile'])
+/** 신고 대상(T-15, @peerchive/domain REPORT_TARGET_TYPES). 지금 공개인 것만 신고할 수 있습니다(community_space는 신고자가 읽을 수 있는 공간, C-02). */
+export const reportTargetType = pgEnum('report_target_type', ['publication', 'publication_item', 'senior_note', 'case_study', 'profile', 'community_space'])
 /** 신고 사유(T-15, REPORT_REASONS). 개인정보·저작권은 공개 사례에 보류를 겁니다. */
 export const reportReason = pgEnum('report_reason', ['personal_info', 'answer_sharing', 'copyright', 'harassment', 'false_claim', 'spam', 'other'])
 /** 신고 상태(T-15): 접수 → 검토 중 → 처리됨/기각. 닫힌 신고는 다시 열지 않습니다. */
 export const reportStatus = pgEnum('report_status', ['open', 'in_review', 'resolved', 'dismissed'])
 /** 운영 조치 종류(T-15, MODERATION_ACTION_KINDS). 모두 공개 차단이며 삭제는 없습니다. */
-export const moderationActionKind = pgEnum('moderation_action_kind', ['none', 'restrict', 'hide_item', 'hide_note', 'hide_case_study', 'hide_profile'])
+export const moderationActionKind = pgEnum('moderation_action_kind', ['none', 'restrict', 'hide_item', 'hide_note', 'hide_case_study', 'hide_profile', 'restrict_space'])
 /** 공개 사례 안에서 가릴 수 있는 항목(T-15, HIDDEN_ITEM_KINDS). */
 export const hiddenItemKind = pgEnum('hidden_item_kind', ['log', 'claim', 'artifact'])
 /** 이의제기 상태(T-15): 열림 → 유지/되돌림. */
@@ -184,6 +187,8 @@ export const analyticsEventName = pgEnum('analytics_event_name', [
   'portfolio_shared',
   'login_succeeded',
   'affiliation_verified',
+  'space_created',
+  'space_joined',
 ])
 /** 기관 종류(C-01). 지금은 대학만. P2에서 bootcamp 등을 더합니다(SYSTEM_DESIGN §6.7.2 이관 원칙, ADR 0018). */
 export const institutionKind = pgEnum('institution_kind', ['university'])
@@ -193,6 +198,26 @@ export const affiliationMethod = pgEnum('affiliation_method', ['email'])
 export const affiliationStanding = pgEnum('affiliation_standing', ['student', 'alumni'])
 /** pending(코드 대기) → active(인증) / expired(만료·시도 초과·새 요청으로 대체) / revoked(본인 해제·운영자 취소). */
 export const affiliationStatus = pgEnum('affiliation_status', ['pending', 'active', 'revoked', 'expired'])
+/** 커뮤니티 공간 종류(C-02, @peerchive/domain SPACE_KINDS). official_*는 운영자만 만듭니다. */
+export const communitySpaceKind = pgEnum('community_space_kind', ['official_school', 'official_department', 'user_room', 'study_room'])
+/** 공간의 이름 표시 방식(실명·표시명·익명). 공식 페이지는 anonymous 고정. 바꾸기는 C-03(7일 예약). */
+export const communityNameMode = pgEnum('community_name_mode', ['real', 'display', 'anonymous'])
+/** 찾기: 목록에 노출 / 링크·초대로만. */
+export const spaceDiscovery = pgEnum('space_discovery', ['listed', 'unlisted'])
+/** 가입 방식: 자유 / 방장 승인 / 초대 전용. */
+export const spaceJoinPolicy = pgEnum('space_join_policy', ['open', 'approval', 'invite'])
+/** 공간 상태: active / archived(보관, 읽기만) / restricted(운영 조치, 읽기만·운영자만 해제). */
+export const spaceStatus = pgEnum('space_status', ['active', 'archived', 'restricted'])
+/** 공간 역할(과제 역할과 별개). */
+export const spaceRole = pgEnum('space_role', ['owner', 'admin', 'moderator', 'member'])
+/** 멤버십 상태: pending(승인 대기) / active / left(나감) / removed(내보냄·승인 거절·학과 쓰기 제한). */
+export const spaceMembershipStatus = pgEnum('space_membership_status', ['pending', 'active', 'left', 'removed'])
+/** 게시판 종류(§6.7 Board). */
+export const boardKind = pgEnum('board_kind', ['free', 'freshmen', 'alumni', 'question', 'info', 'recruiting', 'notice', 'general'])
+/** 게시판 쓰기 역할: member / moderator(공지 등). */
+export const boardWriteRole = pgEnum('board_write_role', ['member', 'moderator'])
+/** 공식 페이지 개설 요청 출처: 학생 / 학생회(운영자가 확인해 표시). */
+export const officialRequestSource = pgEnum('official_request_source', ['student', 'student_council'])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -1799,6 +1824,8 @@ export const moderationActions = pgTable(
     seniorNoteId: uuid('senior_note_id').references(() => seniorNotes.id),
     caseStudyId: uuid('case_study_id').references(() => caseStudies.id),
     profileUserId: uuid('profile_user_id').references(() => users.id),
+    /** 커뮤니티 공간 조치(restrict_space, C-02). */
+    communitySpaceId: uuid('community_space_id').references((): AnyPgColumn => communitySpaces.id),
     internalNote: text('internal_note').notNull(),
     publicReason: text('public_reason'),
     notifyOwner: boolean('notify_owner').notNull().default(false),
@@ -1818,6 +1845,7 @@ export const moderationActions = pgTable(
     index('moderation_actions_senior_note_idx').on(t.seniorNoteId),
     index('moderation_actions_case_study_idx').on(t.caseStudyId),
     index('moderation_actions_profile_user_idx').on(t.profileUserId),
+    index('moderation_actions_community_space_idx').on(t.communitySpaceId),
     check('moderation_actions_outcome_check', sql`${t.outcome} in ('resolved', 'dismissed') and (${t.outcome} = 'resolved' or ${t.kind} = 'none')`),
     check('moderation_actions_internal_note_check', sql`char_length(${t.internalNote}) between 1 and 1000`),
     check('moderation_actions_public_reason_check', sql`${t.publicReason} is null or char_length(${t.publicReason}) between 1 and 300`),
@@ -1826,6 +1854,8 @@ export const moderationActions = pgTable(
       'moderation_actions_reversed_check',
       sql`(${t.reversedAt} is null) = (${t.reverseCause} is null) and (${t.reverseCause} is null or ${t.reverseCause} in ('lift', 'appeal')) and (${t.reversedAt} is null or ${t.kind} <> 'none')`,
     ),
+    // ::text 비교: 같은 migration에서 더한 enum 값을 리터럴로 쓰면 PostgreSQL이 "unsafe use of new value"로 거부합니다.
+    check('moderation_actions_space_check', sql`${t.kind}::text <> 'restrict_space' or ${t.communitySpaceId} is not null`),
     check('moderation_actions_item_check', sql`(${t.kind} <> 'hide_item') or (${t.itemKind} is not null and ${t.itemKey} is not null and ${t.publicationId} is not null)`),
   ],
 )
@@ -1856,6 +1886,8 @@ export const reports = pgTable(
     caseStudyId: uuid('case_study_id').references(() => caseStudies.id),
     caseStudyVersion: integer('case_study_version'),
     profileUserId: uuid('profile_user_id').references(() => users.id),
+    /** 신고한 커뮤니티 공간(C-02). 내용은 복사하지 않습니다. */
+    communitySpaceId: uuid('community_space_id').references((): AnyPgColumn => communitySpaces.id),
     reason: reportReason('reason').notNull(),
     details: text('details'),
     status: reportStatus('status').notNull().default('open'),
@@ -1881,7 +1913,8 @@ export const reports = pgTable(
         or (${t.targetType} = 'publication_item' and ${t.publicationId} is not null and ${t.releaseId} is not null and ${t.itemKind} is not null and ${t.itemKey} is not null)
         or (${t.targetType} = 'senior_note' and ${t.seniorNoteId} is not null and ${t.noteVersion} is not null)
         or (${t.targetType} = 'case_study' and ${t.caseStudyId} is not null and ${t.caseStudyVersion} is not null)
-        or (${t.targetType} = 'profile' and ${t.profileUserId} is not null)`,
+        or (${t.targetType} = 'profile' and ${t.profileUserId} is not null)
+        or (${t.targetType}::text = 'community_space' and ${t.communitySpaceId} is not null)`,
     ),
   ],
 )
@@ -2152,5 +2185,190 @@ export const affiliationCodes = pgTable(
     index('affiliation_codes_affiliation_id_idx').on(t.affiliationId),
     check('affiliation_codes_code_hash_check', sql`${t.codeHash} ~ '^[0-9a-f]{64}$'`),
     check('affiliation_codes_attempts_check', sql`${t.attempts} between 0 and 5`),
+  ],
+)
+
+// ── 캠퍼스 커뮤니티: 공간·멤버십·게시판 (C-02, PROOFU_EVOLUTION_PLAN §8.9.2–§8.9.4, SYSTEM_DESIGN §6.7, ADR 0019) ─────────────
+//
+// 이 테이블들은 web `server/modules/community`만 읽고 씁니다. 공개 조회 경로(`/api/v1/public/**`, 검색 색인 search_documents, 과목 집계,
+// 공개 release)는 이 테이블을 읽지 않습니다(SYSTEM_DESIGN §8.2·§11). 예외는 운영(신고 처리·탈퇴 정리)뿐입니다.
+
+/**
+ * 커뮤니티 공간(공식 학교·학과 페이지, 사용자 방, 스터디 방).
+ * - official_*: 운영자만 만듭니다. school_id 필수, 이름 표시는 anonymous 고정, 가입 방식·정원은 쓰지 않습니다(자격은 학교 인증에서 나옴).
+ *   학교마다 공식 학교 페이지 하나, (학교, 학과 키)마다 공식 학과 페이지 하나(부분 unique). 학과는 C-01의 자기 신고 학과와 같은
+ *   labelKey(department_key)로 맞춥니다(학과 테이블 없음, ADR 0019).
+ * - user_room: active 학교 인증이 있는 사용자가 만듭니다. school_id는 학교를 연결했을 때만(그 학교 인증 계정만 들어옴).
+ *   정원 기본·최대 300, 더 큰 요청은 capacity_requested로 남겨 운영자가 검토합니다.
+ * - study_room: 모집 마감(C-07)이 만듭니다. 지금은 내부 서비스만 있습니다.
+ * - school_id는 만들 때의 정본 학교이며, 학교 병합 뒤에도 읽기는 coalesce(merged_into, id)로 정본을 따라갑니다.
+ * - slug: 무작위 소문자·숫자 10자(unlisted 방의 링크 역할). 이름은 주소에 넣지 않습니다.
+ */
+export const communitySpaces = pgTable(
+  'community_spaces',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    kind: communitySpaceKind('kind').notNull(),
+    schoolId: uuid('school_id').references(() => schools.id),
+    /** 공식 학과 페이지의 학과 이름(운영자가 정한 표시용). */
+    departmentLabel: text('department_label'),
+    /** 학과 키(@peerchive/domain departmentKey = labelKey). 자기 신고 학과와 이 키가 같으면 그 학과로 봅니다. */
+    departmentKey: text('department_key'),
+    /** 과목과 연결한 방(§8.9.2 "이 과목 이야기하기", 엠바고 적용). 연결 화면은 아직 없음. */
+    linkedCourseId: uuid('linked_course_id').references(() => courses.id),
+    name: text('name').notNull(),
+    description: text('description'),
+    slug: text('slug').notNull(),
+    currentNameMode: communityNameMode('current_name_mode').notNull(),
+    discovery: spaceDiscovery('discovery').notNull().default('listed'),
+    joinPolicy: spaceJoinPolicy('join_policy').notNull().default('open'),
+    capacity: integer('capacity').notNull().default(300),
+    /** 300을 넘는 정원 요청(운영자 검토 대기). 운영자가 정하면 null. */
+    capacityRequested: integer('capacity_requested'),
+    status: spaceStatus('status').notNull().default('active'),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id),
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
+    restrictedAt: timestamp('restricted_at', { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('community_spaces_slug_key').on(t.slug),
+    uniqueIndex('community_spaces_official_school_key').on(t.schoolId).where(sql`${t.kind} = 'official_school'`),
+    uniqueIndex('community_spaces_official_department_key').on(t.schoolId, t.departmentKey).where(sql`${t.kind} = 'official_department'`),
+    index('community_spaces_school_id_idx').on(t.schoolId),
+    index('community_spaces_status_discovery_idx').on(t.status, t.discovery),
+    check('community_spaces_slug_check', sql`${t.slug} ~ '^[a-z0-9]{10}$'`),
+    check('community_spaces_name_check', sql`char_length(${t.name}) between 1 and 60`),
+    check('community_spaces_description_check', sql`${t.description} is null or char_length(${t.description}) between 1 and 300`),
+    check('community_spaces_capacity_check', sql`${t.capacity} between 2 and 100000`),
+    check('community_spaces_capacity_requested_check', sql`${t.capacityRequested} is null or ${t.capacityRequested} between 2 and 100000`),
+    check(
+      'community_spaces_official_check',
+      sql`${t.kind} not in ('official_school', 'official_department') or (${t.schoolId} is not null and ${t.currentNameMode} = 'anonymous')`,
+    ),
+    check(
+      'community_spaces_department_check',
+      sql`(${t.kind} = 'official_department') = (${t.departmentKey} is not null) and (${t.departmentKey} is null) = (${t.departmentLabel} is null)`,
+    ),
+    check('community_spaces_department_label_check', sql`${t.departmentLabel} is null or char_length(${t.departmentLabel}) between 1 and 40`),
+    check('community_spaces_archived_check', sql`${t.status} <> 'archived' or ${t.archivedAt} is not null`),
+    check('community_spaces_restricted_check', sql`${t.status} <> 'restricted' or ${t.restrictedAt} is not null`),
+  ],
+)
+
+/**
+ * 공간 멤버십. (space, user) 하나. 공간마다 active owner는 하나(부분 unique, 사용자 방·스터디 방만).
+ * 공식 페이지에서는 모더레이터 지정(role moderator)과 학과 쓰기 제한(status removed)에만 씁니다(읽기·쓰기 자격은 학교 인증).
+ * joined_at: active가 된 시각(승계 순서). requested_at: 승인 요청 시각.
+ */
+export const spaceMemberships = pgTable(
+  'space_memberships',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    spaceId: uuid('space_id')
+      .notNull()
+      .references(() => communitySpaces.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    role: spaceRole('role').notNull().default('member'),
+    status: spaceMembershipStatus('status').notNull(),
+    joinedAt: timestamp('joined_at', { withTimezone: true }),
+    requestedAt: timestamp('requested_at', { withTimezone: true }),
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('space_memberships_space_user_key').on(t.spaceId, t.userId),
+    uniqueIndex('space_memberships_active_owner_key').on(t.spaceId).where(sql`${t.role} = 'owner' and ${t.status} = 'active'`),
+    index('space_memberships_user_id_idx').on(t.userId, t.status),
+    index('space_memberships_space_status_idx').on(t.spaceId, t.status),
+    check('space_memberships_active_joined_check', sql`${t.status} <> 'active' or ${t.joinedAt} is not null`),
+  ],
+)
+
+/** 게시판. 공식 페이지는 기본 세트, 사용자 방은 general 하나에서 시작(최대 10개). notice는 항상 write_role moderator. */
+export const boards = pgTable(
+  'boards',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    spaceId: uuid('space_id')
+      .notNull()
+      .references(() => communitySpaces.id),
+    kind: boardKind('kind').notNull(),
+    title: text('title').notNull(),
+    writeRole: boardWriteRole('write_role').notNull().default('member'),
+    position: integer('position').notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('boards_space_title_key').on(t.spaceId, t.title),
+    index('boards_space_position_idx').on(t.spaceId, t.position),
+    check('boards_title_check', sql`char_length(${t.title}) between 1 and 30`),
+    check('boards_notice_write_role_check', sql`${t.kind} <> 'notice' or ${t.writeRole} = 'moderator'`),
+  ],
+)
+
+/**
+ * 공간 초대 링크. 원문 토큰은 만든 응답에서 한 번만 돌려주고 SHA-256 해시만 저장합니다. 7일, 한 번만, 취소 가능(과제 초대와 같은 규칙).
+ */
+export const spaceInvitations = pgTable(
+  'space_invitations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    spaceId: uuid('space_id')
+      .notNull()
+      .references(() => communitySpaces.id),
+    tokenHash: text('token_hash').notNull(),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    usedBy: uuid('used_by').references(() => users.id),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('space_invitations_token_hash_key').on(t.tokenHash),
+    index('space_invitations_space_id_idx').on(t.spaceId),
+    check('space_invitations_token_hash_check', sql`${t.tokenHash} ~ '^[0-9a-f]{64}$'`),
+    check('space_invitations_used_check', sql`(${t.usedAt} is null) = (${t.usedBy} is null)`),
+  ],
+)
+
+/**
+ * 공식 페이지 개설 요청(§6.7 SpaceOpeningRequest). 학교 인증 계정이 (학교, 학과 키)마다 한 번(department_key ''는 학교 페이지).
+ * 서로 다른 요청자 수가 기준(10)에 이르거나 운영자가 학생회 요청으로 표시하면 운영자에게 알립니다(감사 기록 + 운영자 목록). 자동 개설하지 않습니다.
+ * 요청 수는 운영자에게만 보입니다.
+ */
+export const officialPageRequests = pgTable(
+  'official_page_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    schoolId: uuid('school_id')
+      .notNull()
+      .references(() => schools.id),
+    departmentLabel: text('department_label'),
+    departmentKey: text('department_key').notNull().default(''),
+    requesterId: uuid('requester_id')
+      .notNull()
+      .references(() => users.id),
+    source: officialRequestSource('source').notNull().default('student'),
+    /** 학생회 요청으로 표시한 운영자. */
+    sourceMarkedBy: uuid('source_marked_by').references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('official_page_requests_target_requester_key').on(t.schoolId, t.departmentKey, t.requesterId),
+    index('official_page_requests_target_idx').on(t.schoolId, t.departmentKey),
+    index('official_page_requests_requester_idx').on(t.requesterId),
+    check('official_page_requests_department_check', sql`(${t.departmentKey} = '') = (${t.departmentLabel} is null)`),
+    check('official_page_requests_department_label_check', sql`${t.departmentLabel} is null or char_length(${t.departmentLabel}) between 1 and 40`),
   ],
 )

@@ -8,6 +8,7 @@
  * | hide_note | 선배 노트 published → hidden | hidden → published(내용은 숨긴 동안 고칠 수 없으므로 그대로) |
  * | hide_case_study | case_studies.hidden_at | hidden_at = null(게시 상태는 그대로) |
  * | hide_profile | profiles.hidden_at | hidden_at = null |
+ * | restrict_space | 커뮤니티 공간 active → restricted(C-02, 읽기만·목록·가입·쓰기 중지) | restricted → active |
  *
  * 공개 읽기는 이 상태를 요청마다 읽으므로 커밋 즉시 효력이 있습니다(worker 무관). outbox `moderation.action`은 worker가 검색 문서 같은 남은 사본을
  * 맞추는 데만 씁니다. 삭제 조치는 없습니다(차단 ≠ 삭제).
@@ -30,6 +31,7 @@ import {
   type ModerationActionOutboxPayload,
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
+import { liftSpaceRestrictionInTx, restrictSpaceInTx } from '../community/official'
 import { conflict, notFound } from '../errors'
 import { lockPublication } from '../publication/candidates'
 import { liftRestrictionInTx, restrictInTx } from '../publication/releases'
@@ -46,8 +48,10 @@ export interface ApplyInput {
   notifyOwner: boolean
 }
 
-function auditTarget(action: Pick<ActionRow, 'targetType' | 'publicationId' | 'seniorNoteId' | 'caseStudyId' | 'profileUserId'>) {
+function auditTarget(action: Pick<ActionRow, 'targetType' | 'publicationId' | 'seniorNoteId' | 'caseStudyId' | 'profileUserId' | 'communitySpaceId'>) {
   switch (action.targetType) {
+    case 'community_space':
+      return { targetType: 'community_space' as const, targetId: action.communitySpaceId }
     case 'publication':
     case 'publication_item':
       return { targetType: 'publication' as const, targetId: action.publicationId }
@@ -114,6 +118,10 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
     if (!cs) throw notFound()
     if (cs.hiddenAt) throw conflict('target_not_public')
   }
+  if (input.kind === 'restrict_space') {
+    // 효과(공간 제한)는 조치 행을 만든 뒤 restrictSpaceInTx가 적용합니다(active가 아니면 409 target_not_public, 같은 트랜잭션이라 함께 되돌아감).
+    if (!target.communitySpaceId) throw notFound()
+  }
   if (input.kind === 'hide_profile') {
     const [profile] = await tx.select().from(profiles).where(eq(profiles.userId, target.profileUserId!)).limit(1).for('update')
     if (!profile) throw notFound()
@@ -134,6 +142,7 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
       seniorNoteId: target.seniorNoteId,
       caseStudyId: target.caseStudyId,
       profileUserId: target.profileUserId,
+      communitySpaceId: target.communitySpaceId,
       internalNote: input.internalNote,
       publicReason: input.publicReason,
       notifyOwner: input.notifyOwner,
@@ -168,6 +177,9 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
       break
     case 'hide_profile':
       await tx.update(profiles).set({ hiddenAt: now, updatedAt: now }).where(eq(profiles.userId, target.profileUserId!))
+      break
+    case 'restrict_space':
+      await restrictSpaceInTx(tx, target.communitySpaceId!, now)
       break
   }
   await emit(tx, action!.id, 'applied', now)
@@ -223,6 +235,9 @@ export async function undoModeration(
       break
     case 'hide_profile':
       await tx.update(profiles).set({ hiddenAt: null, updatedAt: now }).where(eq(profiles.userId, action.profileUserId!))
+      break
+    case 'restrict_space':
+      await liftSpaceRestrictionInTx(tx, action.communitySpaceId!, now)
       break
   }
   await tx

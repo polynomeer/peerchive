@@ -32,6 +32,7 @@ export const REPORT_TARGET_LABELS: Record<ReportTargetType, string> = {
   senior_note: '선배 노트',
   case_study: '케이스 스터디',
   profile: '공개 프로필',
+  community_space: '커뮤니티 공간',
 }
 
 export const REPORTER_STATUS_LABELS: Record<MyReportDto['status'], string> = {
@@ -48,6 +49,7 @@ export const ACTION_LABELS: Record<ModerationActionKind, string> = {
   hide_note: '선배 노트 숨기기',
   hide_case_study: '케이스 스터디 숨기기',
   hide_profile: '공개 프로필 숨기기',
+  restrict_space: '커뮤니티 공간 제한(읽기만, 가입·쓰기 중지)',
 }
 
 /** 당사자에게 보이는 조치 설명. */
@@ -57,6 +59,7 @@ export const NOTICE_TITLES: Record<Exclude<ModerationActionKind, 'none'>, string
   hide_note: '운영 조치로 숨겨진 선배 노트',
   hide_case_study: '운영 조치로 숨겨진 케이스 스터디',
   hide_profile: '운영 조치로 숨겨진 공개 프로필',
+  restrict_space: '운영 조치로 제한된 커뮤니티 공간',
 }
 
 export const APPEAL_STATUS_LABELS: Record<AppealStatus, string> = {

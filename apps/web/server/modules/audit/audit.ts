@@ -90,6 +90,33 @@ export type AuditAction =
   | 'affiliation.revoke'
   | 'school_email_domain.add'
   | 'school_email_domain.remove'
+  | 'community.board_create'
+  | 'community.board_update'
+  | 'community.capacity_decide'
+  | 'community.invitation_accept'
+  | 'community.invitation_create'
+  | 'community.invitation_revoke'
+  | 'community.member_approve'
+  | 'community.member_join'
+  | 'community.member_leave'
+  | 'community.member_reject'
+  | 'community.member_remove'
+  | 'community.member_request'
+  | 'community.member_request_cancel'
+  | 'community.member_role_change'
+  | 'community.moderator_assign'
+  | 'community.moderator_unassign'
+  | 'community.official_create'
+  | 'community.official_request'
+  | 'community.official_request.student_council'
+  | 'community.official_request.threshold'
+  | 'community.owner_succession'
+  | 'community.owner_transfer'
+  | 'community.space_archive'
+  | 'community.space_create'
+  | 'community.space_lift'
+  | 'community.space_restrict'
+  | 'community.space_update'
 
 export async function recordAudit(
   db: DbExecutor,
@@ -127,6 +154,7 @@ export async function recordAudit(
       | 'appeal'
       | 'mail'
       | 'affiliation'
+      | 'community_space'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

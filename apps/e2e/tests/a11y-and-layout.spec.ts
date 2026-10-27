@@ -80,7 +80,7 @@ test('접근성·레이아웃 smoke: 주요 화면', async ({ newUser, anon }) =
   for (const path of ['/', '/login', `/p/${pub.slug}`, `/c/${pub.courseId}`, `/u/${owner.handle}`, `/search?q=${encodeURIComponent('CORS')}`]) {
     await checkPage(visitor.page, path)
   }
-  for (const path of ['/projects', `/projects/${project.id}`, `/projects/${pub.projectId}/publish`, '/consents', '/portfolio', '/onboarding', '/settings/affiliations']) {
+  for (const path of ['/projects', `/projects/${project.id}`, `/projects/${pub.projectId}/publish`, '/consents', '/portfolio', '/onboarding', '/settings/affiliations', '/community']) {
     await checkPage(owner.page, path)
   }
   await expectNoHorizontalScroll(owner.page)

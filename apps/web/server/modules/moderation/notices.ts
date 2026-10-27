@@ -96,6 +96,7 @@ async function toNotices(db: DbExecutor, actions: readonly ActionRow[], viewerId
     else if (a.seniorNoteId) ownerPath = `/senior-notes?course=${courseBy.get(a.seniorNoteId) ?? ''}`
     else if (a.caseStudyId) ownerPath = `/portfolio/case-studies/${a.caseStudyId}`
     else if (a.profileUserId) ownerPath = '/onboarding'
+    else if (a.communitySpaceId) ownerPath = '/community'
     const snapshot = a.releaseId ? snapshotBy.get(a.releaseId) : undefined
     out.push({
       actionId: a.id,
@@ -121,7 +122,9 @@ function affectedSql(userId: string): SQL {
       where p.id = ${moderationActions.publicationId} and pm.user_id = ${userId} and pm.role = 'owner' and pm.status = 'active'))
     or (${moderationActions.seniorNoteId} is not null and exists (select 1 from ${seniorNotes} n where n.id = ${moderationActions.seniorNoteId} and n.author_id = ${userId}))
     or (${moderationActions.caseStudyId} is not null and exists (select 1 from ${caseStudies} c where c.id = ${moderationActions.caseStudyId} and c.user_id = ${userId}))
-    or ${moderationActions.profileUserId} = ${userId})`
+    or ${moderationActions.profileUserId} = ${userId}
+    or (${moderationActions.communitySpaceId} is not null and exists (select 1 from space_memberships sm
+      where sm.space_id = ${moderationActions.communitySpaceId} and sm.user_id = ${userId} and sm.role = 'owner' and sm.status = 'active')))`
 }
 
 /** GET /me/moderation-notices — 내가 당사자인 조치 중 운영자가 알림을 켠 것(되돌린 것 포함, 최근 50). */

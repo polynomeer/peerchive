@@ -29,7 +29,8 @@ import {
   users,
   type DbExecutor,
 } from '@peerchive/db'
-import { invalid, notFound } from '../errors'
+import { communitySpaceLabels, communitySpaceOwnerIds, resolveReportableSpace } from '../community/reporting'
+import { type Actor, invalid, notFound } from '../errors'
 import { HANDLE_PATTERN } from '../identity/profiles'
 import { loadCurrentEditionModel } from '../portfolio/editions'
 import { loadCaseStudiesWithRelease } from '../portfolio/release-scope'
@@ -51,6 +52,7 @@ export interface TargetPointer {
   caseStudyId: string | null
   caseStudyVersion: number | null
   profileUserId: string | null
+  communitySpaceId: string | null
 }
 
 const empty = (targetType: ReportTargetType, identity: ReportTargetIdentity): TargetPointer => ({
@@ -65,6 +67,7 @@ const empty = (targetType: ReportTargetType, identity: ReportTargetIdentity): Ta
   caseStudyId: null,
   caseStudyVersion: null,
   profileUserId: null,
+  communitySpaceId: null,
 })
 
 const slug = z.string({ error: 'invalid' }).trim().toLowerCase().min(3, { error: 'invalid' }).max(60, { error: 'invalid' })
@@ -82,7 +85,7 @@ const refSchemas = {
   profile: z.object({ handle }),
 } as const
 
-function parseRef<T extends ReportTargetType>(type: T, raw: unknown): z.output<(typeof refSchemas)[T]> {
+function parseRef<T extends keyof typeof refSchemas>(type: T, raw: unknown): z.output<(typeof refSchemas)[T]> {
   const result = refSchemas[type].safeParse(raw ?? {})
   if (!result.success) throw invalid(issuesToFields(result.error.issues, 'targetRef'))
   return result.data as z.output<(typeof refSchemas)[T]>
@@ -99,9 +102,17 @@ async function publicProfileUser(db: DbExecutor, rawHandle: string): Promise<{ u
   return row ?? null
 }
 
-/** 신고 대상이 지금 공개인지 확인하고 포인터를 돌려줍니다. 아니면 404(대상 종류·형식 오류는 422). */
-export async function resolvePublicTarget(db: DbExecutor, type: ReportTargetType, rawRef: unknown, now: Date): Promise<TargetPointer> {
+/**
+ * 신고 대상이 지금 공개인지 확인하고 포인터를 돌려줍니다. 아니면 404(대상 종류·형식 오류는 422).
+ * 커뮤니티 공간(C-02)은 공개가 아니므로 신고자(actor)가 그 공간을 읽거나 소개를 볼 수 있는지로 판정합니다(community/reporting.ts).
+ */
+export async function resolvePublicTarget(db: DbExecutor, type: ReportTargetType, rawRef: unknown, now: Date, actor?: Actor): Promise<TargetPointer> {
   switch (type) {
+    case 'community_space': {
+      if (!actor) throw notFound()
+      const spaceId = await resolveReportableSpace(db, actor, rawRef)
+      return { ...empty(type, { type, spaceId }), communitySpaceId: spaceId }
+    }
     case 'publication': {
       const ref = parseRef('publication', rawRef)
       const served = await loadServedRelease(db, ref.slug, now)
@@ -166,8 +177,13 @@ export async function resolvePublicTarget(db: DbExecutor, type: ReportTargetType
 }
 
 /** 대상의 당사자(이의제기·조치 안내를 받는 사람). 공개 사례는 지금 active owner들. */
-export async function affectedUserIds(db: DbExecutor, target: Pick<TargetPointer, 'targetType' | 'publicationId' | 'seniorNoteId' | 'caseStudyId' | 'profileUserId'>): Promise<string[]> {
+export async function affectedUserIds(
+  db: DbExecutor,
+  target: Pick<TargetPointer, 'targetType' | 'publicationId' | 'seniorNoteId' | 'caseStudyId' | 'profileUserId' | 'communitySpaceId'>,
+): Promise<string[]> {
   switch (target.targetType) {
+    case 'community_space':
+      return target.communitySpaceId ? communitySpaceOwnerIds(db, target.communitySpaceId) : []
     case 'publication':
     case 'publication_item': {
       if (!target.publicationId) return []
@@ -200,6 +216,8 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
   const pubIds = [...new Set(targets.map((t) => t.publicationId).filter((id): id is string => !!id))]
   const noteIds = [...new Set(targets.map((t) => t.seniorNoteId).filter((id): id is string => !!id))]
   const caseIds = [...new Set(targets.map((t) => t.caseStudyId).filter((id): id is string => !!id))]
+  const spaceIds = [...new Set(targets.map((t) => t.communitySpaceId).filter((id): id is string => !!id))]
+  const spaceBy = await communitySpaceLabels(db, spaceIds)
   const [pubRows, noteRows, caseRows] = await Promise.all([
     pubIds.length ? db.select({ id: publications.id, slug: publications.slug }).from(publications).where(inArray(publications.id, pubIds)) : [],
     noteIds.length
@@ -240,6 +258,9 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
         label = `공개 프로필 ${h ? `@${h}` : ''}`.trim()
         break
       }
+      case 'community_space':
+        label = `커뮤니티 공간 · ${spaceBy.get(t.communitySpaceId ?? '')?.name ?? '공간'}`
+        break
     }
     out.set(t.targetKey, label)
   }
@@ -248,7 +269,11 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
 
 /** 행(신고·조치)에서 포인터 열만. 조치 행에는 version 열이 없습니다. */
 export function pointerOf(
-  row: Omit<TargetPointer, 'noteVersion' | 'caseStudyVersion'> & { noteVersion?: number | null; caseStudyVersion?: number | null },
+  row: Omit<TargetPointer, 'noteVersion' | 'caseStudyVersion' | 'communitySpaceId'> & {
+    noteVersion?: number | null
+    caseStudyVersion?: number | null
+    communitySpaceId?: string | null
+  },
 ): TargetPointer {
   return {
     targetType: row.targetType,
@@ -262,6 +287,7 @@ export function pointerOf(
     caseStudyId: row.caseStudyId,
     caseStudyVersion: row.caseStudyVersion ?? null,
     profileUserId: row.profileUserId,
+    communitySpaceId: row.communitySpaceId ?? null,
   }
 }
 

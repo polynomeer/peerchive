@@ -45,7 +45,7 @@ export interface ReportResult extends ReportReceiptDto {}
 export async function createReport(db: DbExecutor, actor: Actor, rawInput: unknown, now = new Date()): Promise<ReportResult> {
   const input = parseInput(createReportSchema, rawInput)
   return db.transaction(async (tx) => {
-    const target = await resolvePublicTarget(tx, input.targetType, input.targetRef, now)
+    const target = await resolvePublicTarget(tx, input.targetType, input.targetRef, now, actor)
     const existing = async () => {
       const [row] = await tx
         .select()
@@ -83,7 +83,7 @@ export async function createReport(db: DbExecutor, actor: Actor, rawInput: unkno
       action: 'report.create',
       targetType: 'report',
       targetId: row.id,
-      metadata: { targetType: input.targetType, reason: input.reason, hold, publicationId: target.publicationId },
+      metadata: { targetType: input.targetType, reason: input.reason, hold, publicationId: target.publicationId, communitySpaceId: target.communitySpaceId },
     })
     return receipt(row, true)
   })

@@ -4,7 +4,7 @@
  * 학교마다 무작위 도메인을 씁니다.
  */
 import { expect, type Page } from '@playwright/test'
-import { rand } from './api'
+import { type Api, rand } from './api'
 import { registerSchoolDomain } from './db'
 import { mailCount, waitForAffiliationCode } from './mail'
 
@@ -32,4 +32,20 @@ export async function requestAndVerify(page: Page, email: string, options: { wro
   await input.fill(code)
   await page.getByRole('button', { name: '확인', exact: true }).click()
   await expect(page.getByRole('status').filter({ hasText: '인증을 마쳤습니다' })).toBeVisible()
+}
+
+/**
+ * 준비 단계(C-02 커뮤니티 시나리오용): API로 학교 메일 인증을 마칩니다. 인증 화면 자체는 affiliation.spec.ts가 확인합니다.
+ * 메일 로그에서 주소가 첫 글자 + 도메인으로 가려지므로 `prefix`의 첫 글자는 같은 도메인 안에서 사람마다 달라야 합니다.
+ */
+export async function verifyByApi(api: Api, schoolId: string, domain: string, prefix: string): Promise<string> {
+  const email = `${prefix}${rand(3)}@stu.${domain}`
+  const before = mailCount(email)
+  const res = await api.raw('POST', '/api/v1/me/affiliations', { schoolId, email, standing: 'student' })
+  expect(res.status(), await res.text()).toBe(202)
+  const { id } = (await res.json()) as { id: string }
+  const code = await waitForAffiliationCode(email, before)
+  const verified = await api.raw('POST', `/api/v1/me/affiliations/${id}/verify`, { code })
+  expect(verified.status(), await verified.text()).toBe(200)
+  return email
 }

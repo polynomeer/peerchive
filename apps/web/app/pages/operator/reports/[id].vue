@@ -165,6 +165,19 @@ async function loadAudit() {
           <p v-if="data.content.profile.headline" class="pre">{{ data.content.profile.headline }}</p>
           <p class="small muted">{{ data.content.profile.schoolLabel }} {{ data.content.profile.gradTerm }}</p>
         </template>
+        <template v-else-if="data.content.kind === 'community_space'">
+          <p>
+            <strong>{{ data.content.space.name }}</strong>
+            <span class="badge">{{ SPACE_KIND_LABELS[data.content.space.kind] }}</span>
+            <span class="badge">{{ SPACE_STATUS_LABELS[data.content.space.status] }}</span>
+          </p>
+          <p v-if="data.content.space.description" class="pre">{{ data.content.space.description }}</p>
+          <p class="small muted">
+            {{ data.content.space.school?.name ?? '학교 무관' }} · 멤버 {{ data.content.space.memberCount }}명 ·
+            {{ NAME_MODE_LABELS[data.content.space.nameMode] }} · {{ JOIN_POLICY_LABELS[data.content.space.joinPolicy] }}
+          </p>
+          <p class="hint">운영자에게도 게시판 글·멤버 목록은 보이지 않습니다. 제한하면 멤버는 읽기만 하고 목록·가입·쓰기가 멈춥니다.</p>
+        </template>
         <p v-else class="muted">{{ data.content.message }}</p>
       </section>
 

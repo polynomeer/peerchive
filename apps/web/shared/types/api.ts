@@ -1465,10 +1465,10 @@ export interface PublicAffiliationBadgeDto {
 
 // ── 신고·운영 조치·이의제기 (T-15, ADR 0015) ─────────────────────────────
 
-export type ReportTargetType = 'publication' | 'publication_item' | 'senior_note' | 'case_study' | 'profile'
+export type ReportTargetType = 'publication' | 'publication_item' | 'senior_note' | 'case_study' | 'profile' | 'community_space'
 export type ReportReason = 'personal_info' | 'answer_sharing' | 'copyright' | 'harassment' | 'false_claim' | 'spam' | 'other'
 export type ReportStatus = 'open' | 'in_review' | 'resolved' | 'dismissed'
-export type ModerationActionKind = 'none' | 'restrict' | 'hide_item' | 'hide_note' | 'hide_case_study' | 'hide_profile'
+export type ModerationActionKind = 'none' | 'restrict' | 'hide_item' | 'hide_note' | 'hide_case_study' | 'hide_profile' | 'restrict_space'
 export type HiddenItemKind = 'log' | 'claim' | 'artifact'
 export type AppealStatus = 'open' | 'upheld' | 'reversed'
 
@@ -1479,6 +1479,8 @@ export type ReportTargetRef =
   | { noteId: string }
   | { handle: string; anchor: string }
   | { handle: string }
+  /** 커뮤니티 공간(C-02): 공간 주소. 신고자가 읽을 수 있거나 소개를 볼 수 있는 공간만. */
+  | { spaceSlug: string }
 
 export interface HiddenItemPlaceholderDto {
   kind: HiddenItemKind
@@ -1579,6 +1581,8 @@ export type OperatorTargetContentDto =
   | { kind: 'senior_note'; note: PublicSeniorNoteDto }
   | { kind: 'case_study'; title: string; sections: Array<{ key: string; label: string; sentences: Array<{ text: string; citations: string[] }> }> }
   | { kind: 'profile'; profile: PublicProfileDto }
+  /** 커뮤니티 공간(C-02): 이름·소개·종류·상태·멤버 수만. 게시판 글·멤버 목록은 운영자에게도 싣지 않습니다. */
+  | { kind: 'community_space'; space: OperatorSpaceDto }
   | { kind: 'unavailable'; message: string }
 
 export interface OperatorReportDetailDto {
@@ -1662,4 +1666,164 @@ export interface DeepHealthDto {
   outbox: { backlog: number; oldestAgeSeconds: number | null }
   jobs: { failed: Record<string, number>; deadLetter: Record<string, number>; available: boolean }
   deletion: { overdue: number; graceDays: number }
+}
+
+// ── 캠퍼스 커뮤니티: 공간·게시판·멤버십 (C-02, ADR 0019) ──────────────────
+
+export type SpaceKind = 'official_school' | 'official_department' | 'user_room' | 'study_room'
+export type NameMode = 'real' | 'display' | 'anonymous'
+export type SpaceDiscovery = 'listed' | 'unlisted'
+export type JoinPolicy = 'open' | 'approval' | 'invite'
+export type SpaceStatus = 'active' | 'archived' | 'restricted'
+export type SpaceRole = 'owner' | 'admin' | 'moderator' | 'member'
+export type SpaceMembershipStatus = 'pending' | 'active' | 'left' | 'removed'
+export type BoardKind = 'free' | 'freshmen' | 'alumni' | 'question' | 'info' | 'recruiting' | 'notice' | 'general'
+export type BoardWriteRole = 'member' | 'moderator'
+
+/** 공간 목록 한 줄(내 공간·찾기). 멤버 수는 사용자 방만(공식 페이지는 학교 인증 구성원 전체라 세지 않음). */
+export interface SpaceSummaryDto {
+  slug: string
+  kind: SpaceKind
+  /** `공식` 배지: official_* 종류에만 true. */
+  official: boolean
+  name: string
+  description: string | null
+  school: { id: string; name: string } | null
+  departmentLabel: string | null
+  nameMode: NameMode
+  discovery: SpaceDiscovery
+  joinPolicy: JoinPolicy
+  status: SpaceStatus
+  memberCount: number | null
+  /** 내 멤버십(없으면 null). 공식 페이지는 모더레이터일 때만. */
+  myMembership: { role: SpaceRole; status: SpaceMembershipStatus } | null
+}
+
+export interface MySpacesDto {
+  /** 내가 active 멤버인 방 + 내 학교의 공식 페이지. */
+  items: SpaceSummaryDto[]
+  /** 승인 대기 중인 방. */
+  pending: SpaceSummaryDto[]
+  /** 방을 만들 수 있는지(active 학교 인증 하나 이상). */
+  canCreateRoom: boolean
+  /** 내 active 학교 인증(방 학교 연결·개설 요청 선택지). 학과는 본인 것이라 함께 보냄. */
+  schools: Array<{ id: string; name: string; departmentLabel: string | null }>
+}
+
+export interface BoardDto {
+  id: string
+  kind: BoardKind
+  title: string
+  writeRole: BoardWriteRole
+  position: number
+  /** 지금 이 사람이 이 게시판에 쓸 자격이 있는지(canWriteBoard). 글쓰기 자체는 C-04. */
+  canWrite: boolean
+}
+
+export interface SpacePermissionsDto {
+  manage: boolean
+  manageBoards: boolean
+  reviewRequests: boolean
+  removeMembers: boolean
+  invite: boolean
+  changeRoles: boolean
+  archive: boolean
+  moderate: boolean
+}
+
+/**
+ * GET /community/spaces/:slug. access 'member'이면 게시판·권한까지, 'preview'이면 소개만(멤버가 아닌 사람에게 가입 버튼용).
+ * 이름 표시 방식(nameMode)은 글쓰기 화면이 항상 보여 줄 값입니다(변경 예약은 C-03).
+ */
+export interface SpaceDetailDto extends SpaceSummaryDto {
+  access: 'member' | 'preview'
+  boards: BoardDto[]
+  permissions: SpacePermissionsDto
+  /** 가입 버튼: join(바로 가입) / request(승인 요청) / pending(대기 중) / none. */
+  joinAction: 'join' | 'request' | 'pending' | 'none'
+  capacity: number | null
+  capacityRequested: number | null
+  createdAt: string
+}
+
+export interface SpaceMemberDto {
+  userId: string
+  displayName: string
+  handle: string | null
+  role: SpaceRole
+  status: SpaceMembershipStatus
+  joinedAt: string | null
+  requestedAt: string | null
+}
+
+export interface SpaceMembersDto {
+  members: SpaceMemberDto[]
+  pending: SpaceMemberDto[]
+}
+
+export interface SpaceInvitationDto {
+  id: string
+  status: 'pending' | 'used' | 'expired' | 'revoked'
+  expiresAt: string
+  createdAt: string
+  usedAt: string | null
+  revokedAt: string | null
+}
+
+/** POST /community/invitations/preview: 초대받은 사람이 보는 방 소개. 유효하지 않으면 410. */
+export interface SpaceInvitationPreviewDto {
+  space: Pick<SpaceSummaryDto, 'slug' | 'kind' | 'name' | 'description' | 'nameMode' | 'school'>
+  expiresAt: string
+  /** 이 사람이 수락할 수 있는지(학교 자격·정원). */
+  acceptable: boolean
+  reason: 'ok' | 'already_member' | 'not_eligible' | 'full'
+}
+
+export interface JoinResultDto {
+  status: 'active' | 'pending'
+  space: SpaceSummaryDto
+}
+
+/** 내 공식 페이지 개설 요청. 요청 수는 운영자에게만 보입니다. */
+export interface OfficialPageRequestDto {
+  id: string
+  school: { id: string; name: string }
+  departmentLabel: string | null
+  createdAt: string
+}
+
+/** 운영자: 개설 요청 묶음(학교·학과별). */
+export interface OperatorOfficialRequestGroupDto {
+  school: { id: string; name: string }
+  departmentLabel: string | null
+  departmentKey: string
+  /** 서로 다른 요청자 중 지금 그 학교 인증이 active인 수. */
+  requesters: number
+  studentCouncil: boolean
+  thresholdReached: boolean
+  /** 이미 열린 공식 페이지(있으면). */
+  existingSpaceSlug: string | null
+  firstRequestedAt: string
+  lastRequestedAt: string
+  /** 학생회 표시용 요청 id(가장 최근 것). */
+  latestRequestId: string
+}
+
+/** 운영자가 보는 공간 정보(내용 없음). */
+export interface OperatorSpaceDto {
+  id: string
+  slug: string
+  kind: SpaceKind
+  name: string
+  description: string | null
+  school: { id: string; name: string } | null
+  departmentLabel: string | null
+  status: SpaceStatus
+  nameMode: NameMode
+  joinPolicy: JoinPolicy
+  discovery: SpaceDiscovery
+  memberCount: number
+  capacity: number
+  capacityRequested: number | null
+  createdAt: string
 }

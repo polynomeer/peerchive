@@ -53,6 +53,11 @@ describe('moderation: report state', () => {
     expect(isActionApplicable('senior_note', 'restrict')).toBe(false)
     expect(isActionApplicable('case_study', 'hide_case_study')).toBe(true)
     expect(isActionApplicable('profile', 'hide_note')).toBe(false)
+    expect(isActionApplicable('community_space', 'restrict_space')).toBe(true)
+    expect(isActionApplicable('community_space', 'restrict')).toBe(false)
+    expect(isActionApplicable('publication', 'restrict_space')).toBe(false)
+    expect(reportCreatesHold('community_space', 'personal_info')).toBe(false)
+    expect(reportTargetKey({ type: 'community_space', spaceId: 's1' })).toBe('community_space:s1')
     expect(Object.values(ACTIONS_BY_TARGET).flat().some((a) => a.includes('delete'))).toBe(false)
   })
 

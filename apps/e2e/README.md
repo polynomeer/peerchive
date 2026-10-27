@@ -45,7 +45,7 @@ docker compose -f ops/docker-compose.yml down
 | `support/api.ts` | 준비 단계용 API 도우미(같은 context의 쿠키와 사이트 `Origin` 헤더 사용). 시험 대상 동작은 화면으로 조작합니다 |
 | `support/scenarios.ts` | 여러 시나리오가 함께 쓰는 "지난 학기 과목에 게시된 사례" 만들기 |
 | `support/db.ts` | E2E DB 직접 작업: 로그인 IP rate limit 카운터 비우기, 운영자 부여 CLI·학교 메일 도메인 등록 CLI 실행 |
-| `support/affiliation.ts` | 학교 메일 인증(C-01): CLI로 학교마다 무작위 도메인 등록, 화면에서 코드 요청 → dev-console 메일에서 6자리 코드 읽기 → 입력 |
+| `support/affiliation.ts` | 학교 메일 인증(C-01): CLI로 학교마다 무작위 도메인 등록, 화면에서 코드 요청 → dev-console 메일에서 6자리 코드 읽기 → 입력. 다른 시나리오의 준비용 `verifyByApi`(API로 인증, C-02) |
 
 ## 설계 결정
 
@@ -70,8 +70,9 @@ docker compose -f ops/docker-compose.yml down
 | `g-retrospective.spec.ts` | G | 사후 작성 과제·마일스톤·로그 배지, 기억·파일 기준 날짜, 공개 화면·JSON까지 `사후 작성` |
 | `h-mobile-keyboard.spec.ts` | H | 파일 먼저 → 나중에 설명, 오프라인 저장 실패에도 입력 보존·"오류 — 재시도"·재시도 성공, 새로고침 뒤 입력 복원, 할 일·마일스톤 키보드 순서 변경(포커스 유지) |
 | `i-public-profile.spec.ts` | I | 익명 검토자가 `/u/<handle>`에서 문제·내 역할·근거 칩 → 공개 기록, HTML·JSON·OG·인쇄·README 카드에 이메일·체크인 메모·비공개 로그·내부 id 없음 |
+| `community.spec.ts` | C-02 | 학교 인증(준비는 API) → 방 만들기 화면(예약어 이름 거부·학교 연결·표시명·초대 전용·링크로만) → 비멤버는 "찾을 수 없습니다"(API 404) → 초대 링크(화면) → 다른 인증 사용자가 수락 → 같은 링크 재사용 410 → 방장 나가기 → 남은 멤버가 방장(승계). API·페이지 `X-Robots-Tag: noindex, nofollow`, 비로그인 401, 공개 검색에 방 이름 없음 |
 | `moderation.spec.ts` | T-15 | 신고(화면) → 운영자 "항목 하나 가리기" → 공개 페이지에 "운영 조치로 가려진 항목" |
-| `a11y-and-layout.spec.ts` | 접근성 | 주요 화면 13곳(학교 인증 화면 포함): 보이는 h1 하나, 이름 있는 입력 칸, Tab 포커스 표시(첫 Tab은 건너뛰기 링크), 가로 스크롤 없음 |
+| `a11y-and-layout.spec.ts` | 접근성 | 주요 화면 14곳(학교 인증·커뮤니티 화면 포함): 보이는 h1 하나, 이름 있는 입력 칸, Tab 포커스 표시(첫 Tab은 건너뛰기 링크), 가로 스크롤 없음 |
 
 ## 한계
 

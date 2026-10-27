@@ -3,7 +3,8 @@
  *
  * 탈퇴 요청(T-02)은 계정을 deleted로 바꾸고 세션을 끊기만 합니다. 유예 기간(기본 7일)이 지나면 이 작업이 한 트랜잭션에서 정리합니다.
  *
- * 지우는 것(그 사람만의 자료): 프로필, 세션, 로그인 수단, 그 주소의 매직링크 토큰, 외부 연동(디스코드 id), 학교 메일 인증·인증 코드(C-01), 디스코드 코드·📌 요청,
+ * 지우는 것(그 사람만의 자료): 프로필, 세션, 로그인 수단, 그 주소의 매직링크 토큰, 외부 연동(디스코드 id), 학교 메일 인증·인증 코드(C-01),
+ * 커뮤니티 멤버십·그 사람이 만들거나 쓴 공간 초대·공식 페이지 개설 요청(C-02, 방장이었으면 먼저 승계: 가장 오래된 admin → 멤버, 없으면 방 보관), 디스코드 코드·📌 요청,
  * 주간 체크인(모든 과제), 유용성 신호, 선배 노트(철회 + 삭제), 케이스 스터디·포트폴리오 판, 분석 이벤트, 업로드 의도,
  * **혼자만 쓴 과제 전체**(다른 사람이 멤버였던 적 없는 과제: 로그·할 일·마일스톤·선언·체크인·디스코드 연결·파일과 저장소 파일·공개·후보).
  *
@@ -31,6 +32,7 @@ import {
   caseSentences,
   caseStudies,
   claimEvidence,
+  communitySpaces,
   claimRevisions,
   competencyEvidence,
   consents,
@@ -58,6 +60,7 @@ import {
   milestones,
   moderationActions,
   ne,
+  officialPageRequests,
   operators,
   or,
   outboxEvents,
@@ -74,6 +77,8 @@ import {
   searchDocuments,
   seniorNotes,
   sessions,
+  spaceInvitations,
+  spaceMemberships,
   sql,
   tasks,
   uploadIntents,
@@ -83,6 +88,7 @@ import {
   type DbExecutor,
   type PublicationOutboxPayload,
 } from '@peerchive/db'
+import { chooseOwnerSuccessor } from '@peerchive/domain'
 import { cleanKeyFor, isObjectKey, type ObjectKey, type ObjectStorage } from '@peerchive/files'
 import type { TaskOutcome } from './cleanup'
 
@@ -178,6 +184,8 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
         (await tx.delete(institutionAffiliations).where(inArray(institutionAffiliations.id, affiliationIds)).returning({ id: institutionAffiliations.id })).length,
       )
     }
+    // 커뮤니티(C-02): 방장 자리를 넘긴 뒤(웹 succeedOwner와 같은 규칙) 멤버십·초대·개설 요청을 지웁니다. 공간 행(created_by)은 가명 처리된 users를 가리킨 채 남습니다.
+    await purgeCommunity(tx, userId, c, now)
     c.add('discord_codes', (await tx.delete(discordCodes).where(eq(discordCodes.userId, userId)).returning({ id: discordCodes.id })).length)
     c.add(
       'discord_pin_requests',
@@ -301,6 +309,55 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
     for (const key of objectKeys) await deps.storage.delete(key)
     return c.counts
   })
+}
+
+/** 커뮤니티 멤버십·초대·개설 요청 정리. 그 사람이 active owner인 방은 승계(없으면 보관)합니다. */
+async function purgeCommunity(tx: DbExecutor, userId: string, c: Counter, now: Date): Promise<void> {
+  const owned = await tx
+    .select({ spaceId: spaceMemberships.spaceId })
+    .from(spaceMemberships)
+    .where(and(eq(spaceMemberships.userId, userId), eq(spaceMemberships.role, 'owner'), eq(spaceMemberships.status, 'active')))
+  for (const { spaceId } of owned.sort((a, b) => (a.spaceId < b.spaceId ? -1 : 1))) {
+    await tx.select({ id: communitySpaces.id }).from(communitySpaces).where(eq(communitySpaces.id, spaceId)).limit(1).for('update')
+    // 떠나는 owner를 먼저 내립니다(active owner unique).
+    await tx
+      .update(spaceMemberships)
+      .set({ status: 'left', role: 'member', endedAt: now, updatedAt: now })
+      .where(and(eq(spaceMemberships.spaceId, spaceId), eq(spaceMemberships.userId, userId)))
+    const members = await tx
+      .select({ userId: spaceMemberships.userId, role: spaceMemberships.role, status: spaceMemberships.status, joinedAt: spaceMemberships.joinedAt })
+      .from(spaceMemberships)
+      .where(and(eq(spaceMemberships.spaceId, spaceId), eq(spaceMemberships.status, 'active')))
+    const successorId = chooseOwnerSuccessor(members, userId)
+    if (successorId) {
+      await tx
+        .update(spaceMemberships)
+        .set({ role: 'owner', updatedAt: now })
+        .where(and(eq(spaceMemberships.spaceId, spaceId), eq(spaceMemberships.userId, successorId)))
+      await tx.insert(auditEvents).values({ actorId: null, action: 'community.owner_succession', targetType: 'community_space', targetId: spaceId, metadata: { reason: 'account_deleted' } })
+      c.add('space_owner_transfers', 1)
+    } else {
+      await tx.update(communitySpaces).set({ status: 'archived', archivedAt: now, updatedAt: now }).where(and(eq(communitySpaces.id, spaceId), eq(communitySpaces.status, 'active')))
+      await tx
+        .update(spaceMemberships)
+        .set({ status: 'left', endedAt: now, updatedAt: now })
+        .where(and(eq(spaceMemberships.spaceId, spaceId), eq(spaceMemberships.status, 'pending')))
+      await tx
+        .update(spaceInvitations)
+        .set({ revokedAt: now })
+        .where(and(eq(spaceInvitations.spaceId, spaceId), isNull(spaceInvitations.revokedAt), isNull(spaceInvitations.usedAt)))
+      await tx.insert(auditEvents).values({ actorId: null, action: 'community.space_archive', targetType: 'community_space', targetId: spaceId, metadata: { cause: 'no_successor', reason: 'account_deleted' } })
+      c.add('spaces_archived', 1)
+    }
+  }
+  c.add('space_memberships', (await tx.delete(spaceMemberships).where(eq(spaceMemberships.userId, userId)).returning({ id: spaceMemberships.id })).length)
+  c.add(
+    'space_invitations',
+    (await tx.delete(spaceInvitations).where(or(eq(spaceInvitations.createdBy, userId), eq(spaceInvitations.usedBy, userId))).returning({ id: spaceInvitations.id })).length,
+  )
+  c.add('official_page_requests', (await tx.delete(officialPageRequests).where(eq(officialPageRequests.requesterId, userId)).returning({ id: officialPageRequests.id })).length)
+  // 운영자가 학생회 요청으로 표시한 기록의 표시자만 지웁니다(요청은 남의 것).
+  await tx.update(officialPageRequests).set({ sourceMarkedBy: null }).where(eq(officialPageRequests.sourceMarkedBy, userId))
 }
 
 const truncateToMinute = (date: Date) => new Date(Math.floor(date.getTime() / 60_000) * 60_000)

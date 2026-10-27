@@ -16,6 +16,7 @@ import {
   authAccounts,
   caseStudies,
   claimRevisions,
+  communitySpaces,
   consents,
   createDb,
   deletionLedger,
@@ -27,6 +28,7 @@ import {
   logEntries,
   logRevisions,
   magicLinkTokens,
+  officialPageRequests,
   outboxEvents,
   planForks,
   portfolioEditions,
@@ -38,6 +40,8 @@ import {
   roleClaims,
   seniorNotes,
   sessions,
+  spaceInvitations,
+  spaceMemberships,
   sql,
   usefulnessSignals,
   users,
@@ -344,6 +348,51 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       // 다시 정리해도 지울 것이 없고 장부도 그대로(idempotent).
       expect(await purgeAccount(tx, deps(), w.U.id, { now: NOW, source: 'reapply' })).toEqual({})
       expect(await count(tx, deletionLedger, eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, w.U.id)))).toBe(ledger.length)
+    })
+  })
+
+  it('purges community memberships, invitations and official-page requests, passing room ownership on (C-02)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴방장', 'deleted')
+      const A = await user(tx, '오래된운영진')
+      const M = await user(tx, '멤버')
+      const [school] = await tx.insert(schools).values({ name: `정리대${id().slice(0, 8)}`, nameKey: `정리대${id().slice(0, 8)}` }).returning()
+      const slug = () => id().replace(/-/g, '').slice(0, 10)
+      const [withHeirs] = await tx.insert(communitySpaces).values({ kind: 'user_room', name: '승계 방', slug: slug(), currentNameMode: 'display', createdBy: U.id }).returning()
+      const [alone] = await tx.insert(communitySpaces).values({ kind: 'user_room', name: '혼자 방', slug: slug(), currentNameMode: 'display', createdBy: U.id }).returning()
+      const t = (d: number) => new Date(NOW.getTime() - d * DAY)
+      await tx.insert(spaceMemberships).values([
+        { spaceId: withHeirs!.id, userId: U.id, role: 'owner', status: 'active', joinedAt: t(30) },
+        { spaceId: withHeirs!.id, userId: M.id, role: 'member', status: 'active', joinedAt: t(20) },
+        { spaceId: withHeirs!.id, userId: A.id, role: 'admin', status: 'active', joinedAt: t(10) },
+        { spaceId: alone!.id, userId: U.id, role: 'owner', status: 'active', joinedAt: t(5) },
+        { spaceId: alone!.id, userId: M.id, role: 'member', status: 'pending', requestedAt: t(1) },
+      ])
+      await tx.insert(spaceInvitations).values([
+        { spaceId: withHeirs!.id, tokenHash: 'a'.repeat(64), createdBy: U.id, expiresAt: NOW },
+        { spaceId: withHeirs!.id, tokenHash: 'b'.repeat(64), createdBy: A.id, expiresAt: NOW },
+      ])
+      await tx.insert(officialPageRequests).values({ schoolId: school!.id, requesterId: U.id })
+      await tx.insert(officialPageRequests).values({ schoolId: school!.id, requesterId: A.id, source: 'student_council', sourceMarkedBy: U.id })
+
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ space_owner_transfers: 1, spaces_archived: 1, space_memberships: 2, space_invitations: 1, official_page_requests: 1 })
+      // 가장 오래된 admin이 방장(멤버가 더 먼저 들어왔어도 admin 우선)
+      const heirs = await tx.select().from(spaceMemberships).where(eq(spaceMemberships.spaceId, withHeirs!.id))
+      expect(heirs.map((m) => [m.userId, m.role, m.status]).sort()).toEqual([[A.id, 'owner', 'active'], [M.id, 'member', 'active']].sort())
+      const [archived] = await tx.select().from(communitySpaces).where(eq(communitySpaces.id, alone!.id))
+      expect(archived).toMatchObject({ status: 'archived' })
+      expect((await tx.select().from(spaceMemberships).where(eq(spaceMemberships.spaceId, alone!.id))).map((m) => m.status)).toEqual(['left'])
+      expect(await count(tx, spaceMemberships, eq(spaceMemberships.userId, U.id))).toBe(0)
+      expect(await count(tx, spaceInvitations, eq(spaceInvitations.createdBy, U.id))).toBe(0)
+      expect(await count(tx, officialPageRequests, eq(officialPageRequests.requesterId, U.id))).toBe(0)
+      const [kept] = await tx.select().from(officialPageRequests).where(eq(officialPageRequests.requesterId, A.id))
+      expect(kept).toMatchObject({ source: 'student_council', sourceMarkedBy: null })
+      const ledger = await tx.select().from(deletionLedger).where(eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, U.id)))
+      expect(ledger.map((l) => l.entityKind)).toEqual(expect.arrayContaining(['space_memberships', 'space_invitations', 'official_page_requests', 'spaces_archived']))
+      // 공간 행은 가명 처리된 사용자를 가리킨 채 남음
+      expect(await count(tx, communitySpaces, eq(communitySpaces.createdBy, U.id))).toBe(2)
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })
 

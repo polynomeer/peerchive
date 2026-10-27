@@ -1,6 +1,6 @@
 # Peerchive 운영 runbook (파일럿)
 
-제한된 파일럿(학생 50명·과제 20개 수준, SYSTEM_DESIGN §14)을 한 사람이 운영한다는 전제의 절차서입니다. 결정 배경은 [ADR 0016](../adr/0016-deletion-ledger-maintenance-analytics.md)(탈퇴 정리·삭제 장부·점검 모드·분석), [ADR 0018](../adr/0018-school-affiliation.md)(학교 메일 인증), [ADR 0017](../adr/0017-smtp-mail-and-s3-storage.md)(SMTP 메일·S3 호환 저장소), [ADR 0012](../adr/0012-publish-withdraw-public-read.md)(공개 읽기 운영 스위치), [ADR 0015](../adr/0015-reports-moderation-appeals.md)(신고·조치)를 보세요. 값·명령은 [apps/README.md](../../apps/README.md)의 환경 변수 표와 같습니다.
+제한된 파일럿(학생 50명·과제 20개 수준, SYSTEM_DESIGN §14)을 한 사람이 운영한다는 전제의 절차서입니다. 결정 배경은 [ADR 0016](../adr/0016-deletion-ledger-maintenance-analytics.md)(탈퇴 정리·삭제 장부·점검 모드·분석), [ADR 0018](../adr/0018-school-affiliation.md)(학교 메일 인증), [ADR 0019](../adr/0019-community-spaces.md)(커뮤니티 공간·공식 페이지), [ADR 0017](../adr/0017-smtp-mail-and-s3-storage.md)(SMTP 메일·S3 호환 저장소), [ADR 0012](../adr/0012-publish-withdraw-public-read.md)(공개 읽기 운영 스위치), [ADR 0015](../adr/0015-reports-moderation-appeals.md)(신고·조치)를 보세요. 값·명령은 [apps/README.md](../../apps/README.md)의 환경 변수 표와 같습니다.
 
 목표 값은 SLA가 아니라 검증할 설계 목표입니다. 호스팅 공급자·가격은 정하지 않았습니다(DELIVERY_PLAN §10). `<…>` 자리는 파일럿 전에 채웁니다.
 
@@ -156,6 +156,25 @@
 3. 같은 주소로 다시 인증하는 것은 막지 않습니다(ADR 0018 한계). 반복되면 계정 조치를 검토합니다.
 
 **학생 문의.** "코드가 안 와요" → §3.8과 같은 메일 점검 + 주소별 한도(시간당 3회, 넘으면 응답은 같고 발송만 안 함). "다른 계정에서 인증됐다고 나와요(`email_in_use`)" → 그 주소의 다른 계정에서 해제(`/settings/affiliations`)하거나, 본인 확인 뒤 운영자가 그 소속을 취소합니다. "졸업해서 메일이 없어졌어요" → 인증은 그대로 유지되고 졸업생으로 바꿀 수 있습니다(재인증 없음).
+
+### 4.2 커뮤니티 공식 페이지·공간 운영(C-02, ADR 0019)
+
+커뮤니티는 GC 게이트(DELIVERY_PLAN §7) 전에는 실제 사용자에게 열지 않습니다(2026-10-27 소유자 결정: 구현만 G3 전에 시작). 아래 절차는 시험 환경과 개방 이후에 씁니다.
+
+**공식 학교·학과 페이지 열기.** 운영자만 엽니다. 빈 페이지를 미리 만들지 않고, 요청이 기준(같은 학교 인증 요청자 10명 또는 학생회 요청)에 이르렀거나 pilot 학교 한 곳을 운영자가 먼저 여는 경우(§19)에만 엽니다.
+
+1. 요청 확인: `/operator/community`의 "공식 페이지 개설 요청"(또는 `GET /api/v1/operator/community/official-requests`). 학교·학과별 인증 요청자 수(지금 active 인증인 사람만)·학생회 여부·기준 도달이 보입니다. 기준에 처음 이르면 감사 `community.official_request.threshold`가 남습니다(`GET /api/v1/operator/audit?target=<schoolId>`). 자동으로 열리지 않습니다.
+2. 학생회 요청: 학생회(학과 학생회)임을 학교 공지·공식 채널로 확인한 뒤 "학생회 요청으로 표시"(`POST /api/v1/operator/community/official-requests/:id/student-council`). 학번·신분증은 받지 않습니다.
+3. 열기: 같은 화면 "공식 페이지 열기" 또는 `POST /api/v1/operator/community/official-pages {"schoolId": "…", "departmentLabel": null|"컴퓨터공학과", "name"?: "…", "description"?: "…"}`. 학교 id는 정본(병합 뒤)이어야 하고, 학교 메일 도메인이 먼저 등록돼 있어야(§4.1) 학생이 들어올 수 있습니다. 학과 페이지는 학생이 학교 인증에 적은 학과와 띄어쓰기·대소문자를 무시하고 같아야 그 학과로 쓰므로, 가장 흔한 표기(요청 목록의 학과 이름)를 씁니다. 기본 게시판 7개(공지는 모더레이터 전용)와 익명 고정으로 열립니다.
+4. 모더레이터 지정(학교·학과마다 2~3명, GC 조건은 pilot 학교 2명 이상): `POST /api/v1/operator/community/spaces/:id/moderators {"userId": "…"}`(그 학교 active 인증 필요). 해제는 `DELETE …/moderators/:userId`. 모더레이터도 익명 글의 작성자를 볼 수 없다는 점을 안내합니다.
+5. 확인: 그 학교 인증 계정으로 `/community`에 페이지가 보이는지, 다른 학교 인증 계정·미인증 계정은 같은 주소에서 "찾을 수 없습니다"인지 봅니다.
+
+**사용자 방 조치.** 운영자도 사용자 방의 게시판·멤버 목록은 볼 수 없습니다(공간 정보만).
+
+- 사칭(`공식`·학생회 흉내)·괴롭힘 방 신고는 신고 대기열(`/operator`)에 "커뮤니티 공간 · <이름>"으로 들어옵니다. 처리에서 "커뮤니티 공간 제한"을 고르면 멤버는 읽기만 하고 목록·가입·쓰기가 멈춥니다. 이의제기가 받아들여지면 풀립니다.
+- 신고 없이 직접: `/operator/community` 공간 목록에서 제한·제한 해제·보관(사유는 감사 `community.space_restrict`·`.space_lift`·`.space_archive`에 남음). 보관은 되돌리지 않습니다.
+- 정원 검토: 300명을 넘게 요청한 방은 "정원 검토 요청"으로 보입니다. 운영 여력을 보고 `POST /api/v1/operator/community/spaces/:id/capacity {"capacity": n}`(최대 2000)으로 정합니다. 큰 모임은 공식 페이지로 안내합니다.
+- 방장이 탈퇴하면 탈퇴 정리(§4)가 가장 오래된 운영진 → 멤버에게 방장을 넘기고, 남은 사람이 없으면 방을 보관합니다.
 
 ## 5. 백업 일정과 보존
 

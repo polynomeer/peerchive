@@ -52,6 +52,7 @@ import {
   type DbExecutor,
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
+import { operatorSpaceContent } from '../community/reporting'
 import { requireOperator } from '../catalog/operators'
 import { publicNotePath } from '../course-hub/search'
 import { toPublicSeniorNote } from '../course-hub/hub'
@@ -244,6 +245,12 @@ async function contentFor(db: DbExecutor, report: ReportRow, now: Date): Promise
         publicPath: owner && isPubliclyVisible(row!) ? `/u/${owner.handle}` : null,
         servedNow: isPubliclyVisible(row!),
       }
+    }
+    case 'community_space': {
+      // 공간 정보만(이름·소개·종류·상태·멤버 수). 게시판·멤버 목록·글은 운영자에게도 싣지 않습니다(C-02, ADR 0019).
+      const space = report.communitySpaceId ? await operatorSpaceContent(db, report.communitySpaceId) : null
+      if (!space) return { content: unavailable('공간을 찾을 수 없습니다.'), publicPath: null, servedNow: false }
+      return { content: { kind: 'community_space', space }, publicPath: null, servedNow: space.status === 'active' }
     }
     case 'profile': {
       const [row] = await db

@@ -120,6 +120,13 @@
       "when": 1793006680722,
       "tag": "0016_school_affiliation",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793068546861,
+      "tag": "0017_community_spaces",
+      "breakpoints": true
     }
   ]
 }
