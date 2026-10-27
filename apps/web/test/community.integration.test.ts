@@ -18,6 +18,7 @@ import {
   hashSubject,
   inArray,
   institutionAffiliations,
+  moderationActions,
   operators,
   searchDocuments,
   spaceMemberships,
@@ -519,6 +520,20 @@ describe.skipIf(!databaseUrl)('community spaces (PostgreSQL)', () => {
       expect(await archiveSpaceByOperator(tx, f.op, spaceId, { note: '정리' }, at(7))).toMatchObject({ status: 'archived' })
       await expectServiceError(archiveSpaceByOperator(tx, f.op, spaceId, { note: '정리' }), 'CONFLICT', 'already_archived')
 
+      // 운영자 메모는 운영 조치 행에만 남고, 감사 기록에는 id·종류만 남습니다(ADR 0015).
+      const actions = await tx.select().from(moderationActions).where(eq(moderationActions.communitySpaceId, spaceId))
+      expect(actions.map((a) => [a.kind, a.internalNote]).sort()).toEqual(
+        expect.arrayContaining([
+          ['archive_space', '정리'],
+          ['restrict_space', '직접 제한'],
+        ]),
+      )
+      const audits = await tx
+        .select({ action: auditEvents.action, metadata: auditEvents.metadata })
+        .from(auditEvents)
+        .where(and(eq(auditEvents.targetId, spaceId), inArray(auditEvents.action, ['community.space_restrict', 'community.space_lift', 'community.space_archive'])))
+      expect(audits.length).toBeGreaterThanOrEqual(3)
+      for (const note of ['소명 확인', '직접 제한', '정리']) expect(JSON.stringify(audits)).not.toContain(note)
     })
   })
 

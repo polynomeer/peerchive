@@ -1470,7 +1470,7 @@ export interface PublicAffiliationBadgeDto {
 export type ReportTargetType = 'publication' | 'publication_item' | 'senior_note' | 'case_study' | 'profile' | 'community_space'
 export type ReportReason = 'personal_info' | 'answer_sharing' | 'copyright' | 'harassment' | 'false_claim' | 'spam' | 'other'
 export type ReportStatus = 'open' | 'in_review' | 'resolved' | 'dismissed'
-export type ModerationActionKind = 'none' | 'restrict' | 'hide_item' | 'hide_note' | 'hide_case_study' | 'hide_profile' | 'restrict_space'
+export type ModerationActionKind = 'none' | 'restrict' | 'hide_item' | 'hide_note' | 'hide_case_study' | 'hide_profile' | 'restrict_space' | 'archive_space'
 export type HiddenItemKind = 'log' | 'claim' | 'artifact'
 export type AppealStatus = 'open' | 'upheld' | 'reversed'
 

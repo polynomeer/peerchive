@@ -166,7 +166,7 @@ export const reportReason = pgEnum('report_reason', ['personal_info', 'answer_sh
 /** 신고 상태(T-15): 접수 → 검토 중 → 처리됨/기각. 닫힌 신고는 다시 열지 않습니다. */
 export const reportStatus = pgEnum('report_status', ['open', 'in_review', 'resolved', 'dismissed'])
 /** 운영 조치 종류(T-15, MODERATION_ACTION_KINDS). 모두 공개 차단이며 삭제는 없습니다. */
-export const moderationActionKind = pgEnum('moderation_action_kind', ['none', 'restrict', 'hide_item', 'hide_note', 'hide_case_study', 'hide_profile', 'restrict_space'])
+export const moderationActionKind = pgEnum('moderation_action_kind', ['none', 'restrict', 'hide_item', 'hide_note', 'hide_case_study', 'hide_profile', 'restrict_space', 'archive_space'])
 /** 공개 사례 안에서 가릴 수 있는 항목(T-15, HIDDEN_ITEM_KINDS). */
 export const hiddenItemKind = pgEnum('hidden_item_kind', ['log', 'claim', 'artifact'])
 /** 이의제기 상태(T-15): 열림 → 유지/되돌림. */
@@ -1841,7 +1841,7 @@ export const moderationActions = pgTable(
     seniorNoteId: uuid('senior_note_id').references(() => seniorNotes.id),
     caseStudyId: uuid('case_study_id').references(() => caseStudies.id),
     profileUserId: uuid('profile_user_id').references(() => users.id),
-    /** 커뮤니티 공간 조치(restrict_space, C-02). */
+    /** 커뮤니티 공간 조치(restrict_space, C-02 / 운영자 직접 보관 archive_space). */
     communitySpaceId: uuid('community_space_id').references((): AnyPgColumn => communitySpaces.id),
     internalNote: text('internal_note').notNull(),
     publicReason: text('public_reason'),
@@ -1872,7 +1872,7 @@ export const moderationActions = pgTable(
       sql`(${t.reversedAt} is null) = (${t.reverseCause} is null) and (${t.reverseCause} is null or ${t.reverseCause} in ('lift', 'appeal')) and (${t.reversedAt} is null or ${t.kind} <> 'none')`,
     ),
     // ::text 비교: 같은 migration에서 더한 enum 값을 리터럴로 쓰면 PostgreSQL이 "unsafe use of new value"로 거부합니다.
-    check('moderation_actions_space_check', sql`${t.kind}::text <> 'restrict_space' or ${t.communitySpaceId} is not null`),
+    check('moderation_actions_space_check', sql`${t.kind}::text not in ('restrict_space', 'archive_space') or ${t.communitySpaceId} is not null`),
     check('moderation_actions_item_check', sql`(${t.kind} <> 'hide_item') or (${t.itemKind} is not null and ${t.itemKey} is not null and ${t.publicationId} is not null)`),
   ],
 )

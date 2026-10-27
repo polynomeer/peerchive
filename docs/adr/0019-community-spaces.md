@@ -81,7 +81,7 @@ C-02는 캠퍼스 커뮤니티의 뼈대입니다(DELIVERY_PLAN §4.1 "공식 �
 ### 신고·운영 조치
 
 - T-15 대기열을 그대로 씁니다. 신고 대상 `community_space`는 `{spaceSlug}`로 가리키고, **신고자가 그 공간을 읽거나 소개를 볼 수 있을 때만** 받습니다(아니면 404). 운영자 상세에는 공간 정보만 싣습니다(`OperatorTargetContentDto.kind = 'community_space'`).
-- 조치 `restrict_space`: active → restricted(같은 트랜잭션, 이미 아니면 409 `target_not_public`), 되돌림(이의제기 reverse)은 restricted → active. 당사자(이의제기·안내)는 그 방의 active owner입니다. 신고 없이도 운영자가 `POST /operator/community/spaces/:id/restrict|lift-restriction|archive {note}`로 직접 조치하고 사유는 감사에 남습니다. 해제는 그 공간의 되돌리지 않은 restrict_space 조치를 `lift`로 표시합니다.
+- 조치 `restrict_space`: active → restricted(같은 트랜잭션, 이미 아니면 409 `target_not_public`), 되돌림(이의제기 reverse)은 restricted → active. 당사자(이의제기·안내)는 그 방의 active owner입니다. 신고 없이도 운영자가 `POST /operator/community/spaces/:id/restrict|lift-restriction|archive {note}`로 직접 조치합니다. 사유는 운영 조치 행(`restrict_space`·`archive_space`의 `internal_note`, 해제는 `reverse_note`)에 남고 감사에는 id만 남습니다(ADR 0015·0021, migration 0019). 해제는 그 공간의 되돌리지 않은 restrict_space 조치를 `lift`로 표시합니다.
 - 글·댓글 신고(`community_post`·`community_comment`)·자동 임시 숨김·제재는 C-06입니다.
 
 ### 탈퇴 정리·분석·검색엔진

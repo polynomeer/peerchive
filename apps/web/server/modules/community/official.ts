@@ -413,13 +413,38 @@ export async function liftSpaceRestrictionInTx(tx: DbExecutor, spaceId: string, 
   return true
 }
 
+/** 신고 없이 하는 운영자 직접 조치를 운영 조치 행으로 남깁니다(메모는 internal_note, 당사자 공개 사유 없음). */
+async function recordDirectSpaceAction(
+  tx: DbExecutor,
+  actor: Actor,
+  spaceId: string,
+  kind: 'restrict_space' | 'archive_space',
+  note: string,
+): Promise<string> {
+  const [action] = await tx
+    .insert(moderationActions)
+    .values({
+      kind,
+      outcome: 'resolved',
+      targetType: 'community_space',
+      targetKey: `community_space:${spaceId}`,
+      communitySpaceId: spaceId,
+      internalNote: note,
+      createdBy: actor.userId,
+    })
+    .returning({ id: moderationActions.id })
+  return action!.id
+}
+
 /** POST /operator/community/spaces/:id/restrict {note} — 운영자만. 200. 이미 active가 아니면 409. 신고 없이 하는 직접 조치(사유는 감사). */
 export async function restrictSpace(db: DbExecutor, actor: Actor, spaceId: unknown, rawInput: unknown, now = new Date()): Promise<OperatorSpaceDto> {
   const { note } = parseInput(noteSchema, rawInput)
   const space = await operatorSpace(db, actor, spaceId)
   await db.transaction(async (tx) => {
     await restrictSpaceInTx(tx, space.row.id, now)
-    await recordAudit(tx, { actorId: actor.userId, action: 'community.space_restrict', targetType: 'community_space', targetId: space.row.id, metadata: { note } })
+    // 운영자 메모는 감사 기록이 아니라 운영 조치 행(internal_note)에 둡니다(감사에는 id만, ADR 0015).
+    const actionId = await recordDirectSpaceAction(tx, actor, space.row.id, 'restrict_space', note)
+    await recordAudit(tx, { actorId: actor.userId, action: 'community.space_restrict', targetType: 'community_space', targetId: space.row.id, metadata: { moderationActionId: actionId } })
   })
   return operatorDto(db, space.row.id)
 }
@@ -437,7 +462,8 @@ export async function liftSpaceRestriction(db: DbExecutor, actor: Actor, spaceId
       .update(moderationActions)
       .set({ reversedAt: now, reversedBy: actor.userId, reverseNote: note, reverseCause: 'lift' })
       .where(and(eq(moderationActions.communitySpaceId, space.row.id), eq(moderationActions.kind, 'restrict_space'), isNull(moderationActions.reversedAt)))
-    await recordAudit(tx, { actorId: actor.userId, action: 'community.space_lift', targetType: 'community_space', targetId: space.row.id, metadata: { note } })
+    // 해제 메모는 위 restrict_space 조치 행의 reverse_note에 남았습니다.
+    await recordAudit(tx, { actorId: actor.userId, action: 'community.space_lift', targetType: 'community_space', targetId: space.row.id, metadata: {} })
   })
   return operatorDto(db, space.row.id)
 }
@@ -450,7 +476,8 @@ export async function archiveSpaceByOperator(db: DbExecutor, actor: Actor, space
     const [row] = await tx.select().from(communitySpaces).where(eq(communitySpaces.id, space.row.id)).limit(1).for('update')
     if (row!.status === 'archived') throw conflict('already_archived')
     await archiveSpaceInTx(tx, space.row.id, now)
-    await recordAudit(tx, { actorId: actor.userId, action: 'community.space_archive', targetType: 'community_space', targetId: space.row.id, metadata: { cause: 'operator', note } })
+    const actionId = await recordDirectSpaceAction(tx, actor, space.row.id, 'archive_space', note)
+    await recordAudit(tx, { actorId: actor.userId, action: 'community.space_archive', targetType: 'community_space', targetId: space.row.id, metadata: { cause: 'operator', moderationActionId: actionId } })
   })
   return operatorDto(db, space.row.id)
 }

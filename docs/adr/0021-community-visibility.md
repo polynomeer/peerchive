@@ -70,7 +70,7 @@ C-05는 DELIVERY_PLAN §4.1 "비로그인·다른 학교·비멤버 404, `noinde
 - **모듈 import**: 커뮤니티 모듈을 import하는 파일은 커뮤니티 API 경로, 신고·조치 어댑터(`moderation/operator|targets|actions.ts` → `community/reporting|official`만), 서버 미들웨어(→ `community/http`만)뿐입니다.
 - **공개 읽기·파생 경로**: 공개 조회 API, publication(공개 스냅샷 포함)·course-hub(검색·허브)·portfolio(공개 프로필)·analytics·catalog·identity·ops 모듈과 worker 파생 handler는 커뮤니티 모듈·테이블을 어떤 형태로도 참조하지 않습니다.
 - **런타임 센티넬**: 센티넬 이름·소개의 방 셋·공식 페이지·게시판·초대·가입·나가기·내보내기·이름 표시 방식 예약·알림·인증 해제를 만든 뒤, **커뮤니티 테이블 밖의 모든 테이블**(information_schema로 나열: 감사·outbox·분석·검색 문서·공개 스냅샷·포트폴리오 등)에 센티넬이 0건이고, 공개 검색(모든 종류)·과목 허브·공개 사례·공개 프로필 응답에 센티넬·slug가 없음을 확인합니다. C-04 글 본문이 어디로든 복사되면 이 검사가 실패합니다.
-- **감사·분석**: 커뮤니티 감사 기록의 metadata 값은 uuid·코드(`[a-z_]+`)·숫자·참거짓·null뿐이고 센티넬이 없습니다(운영자가 직접 쓰는 조치 사유 `note`만 예외 — 공간 내용이 아니라 운영 기록, ADR 0019). 커뮤니티 분석 이벤트(`space_*`·`name_mode_*`, 앞으로의 `post_*`·`comment_*`·`community_*`·`board_*`·`reaction_*`·`thread_*`·`recruitment_*`)는 enum·bool props만, 키에 id·name·slug·title·body·text 같은 말이 없고, 그런 키를 넣으면 허용 목록이 거부합니다. `projectHash`는 null.
+- **감사·분석**: 커뮤니티 감사 기록의 metadata 값은 uuid·코드(`[a-z_]+`)·숫자·참거짓·null뿐이고 센티넬이 없습니다. 운영자가 직접 조치할 때 쓰는 사유 `note`도 감사가 아니라 `moderation_actions.internal_note`(제한·보관)와 `reverse_note`(해제)에 남고, 감사에는 `moderationActionId`만 남습니다(ADR 0015와 같은 원칙, migration 0019). 커뮤니티 분석 이벤트(`space_*`·`name_mode_*`, 앞으로의 `post_*`·`comment_*`·`community_*`·`board_*`·`reaction_*`·`thread_*`·`recruitment_*`)는 enum·bool props만, 키에 id·name·slug·title·body·text 같은 말이 없고, 그런 키를 넣으면 허용 목록이 거부합니다. `projectHash`는 null.
 - 서버 로그: 커뮤니티 모듈은 console·logger를 쓰지 않습니다(요청 로그는 경로만, 방 이름은 경로에 없음 — 무작위 slug).
 
 ### 7. 화면 상태와 로그아웃

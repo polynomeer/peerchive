@@ -1,0 +1,3 @@
+ALTER TYPE "public"."moderation_action_kind" ADD VALUE 'archive_space';--> statement-breakpoint
+ALTER TABLE "moderation_actions" DROP CONSTRAINT "moderation_actions_space_check";--> statement-breakpoint
+ALTER TABLE "moderation_actions" ADD CONSTRAINT "moderation_actions_space_check" CHECK ("moderation_actions"."kind"::text not in ('restrict_space', 'archive_space') or "moderation_actions"."community_space_id" is not null);

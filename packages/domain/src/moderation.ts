@@ -20,7 +20,7 @@ export type ReportReason = (typeof REPORT_REASONS)[number]
 export const REPORT_STATUSES = ['open', 'in_review', 'resolved', 'dismissed'] as const
 export type ReportStatus = (typeof REPORT_STATUSES)[number]
 
-export const MODERATION_ACTION_KINDS = ['none', 'restrict', 'hide_item', 'hide_note', 'hide_case_study', 'hide_profile', 'restrict_space'] as const
+export const MODERATION_ACTION_KINDS = ['none', 'restrict', 'hide_item', 'hide_note', 'hide_case_study', 'hide_profile', 'restrict_space', 'archive_space'] as const
 export type ModerationActionKind = (typeof MODERATION_ACTION_KINDS)[number]
 
 /** 공개 사례 안에서 가릴 수 있는 항목 종류(스냅샷 키: 로그·선언은 가명 키, 파일은 버전 id). */

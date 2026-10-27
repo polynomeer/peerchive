@@ -50,6 +50,7 @@ export const ACTION_LABELS: Record<ModerationActionKind, string> = {
   hide_case_study: '케이스 스터디 숨기기',
   hide_profile: '공개 프로필 숨기기',
   restrict_space: '커뮤니티 공간 제한(읽기만, 가입·쓰기 중지)',
+  archive_space: '커뮤니티 공간 보관(운영자 직접 조치)',
 }
 
 /** 당사자에게 보이는 조치 설명. */
@@ -60,6 +61,7 @@ export const NOTICE_TITLES: Record<Exclude<ModerationActionKind, 'none'>, string
   hide_case_study: '운영 조치로 숨겨진 케이스 스터디',
   hide_profile: '운영 조치로 숨겨진 공개 프로필',
   restrict_space: '운영 조치로 제한된 커뮤니티 공간',
+  archive_space: '운영 조치로 보관된 커뮤니티 공간',
 }
 
 export const APPEAL_STATUS_LABELS: Record<AppealStatus, string> = {
