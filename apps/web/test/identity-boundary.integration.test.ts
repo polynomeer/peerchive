@@ -26,6 +26,8 @@ import { createRoom } from '../server/modules/community/spaces'
 import { getPublicProfile, updateRealName, upsertProfile } from '../server/modules/identity/profiles'
 import { createPublicProfileHandler, createReadmeCardHandler } from '../server/modules/portfolio/public-http'
 import { listPersonaActivities, projectPersonaActivity } from '../server/modules/social/activities'
+import { followProfile, getFollowList, getProfileSocial } from '../server/modules/social/follows'
+import { setVisibility } from '../server/modules/social/visibility'
 import { createDisplayPersona, listMyPersonas, resolvePublicPersona, setIdentityLink } from '../server/modules/social/personas'
 import { COMMUNITY_TABLES } from './community-tables'
 import { closeTestDb, createUser, databaseUrl, expectServiceError, verifiedAffiliation, withRollback } from './helpers'
@@ -104,7 +106,7 @@ export function boundaryViolations(file: string, text: string, strict: boolean):
 }
 
 /** 프로필·페르소나(·이후 팔로우·피드·활동)를 내보내는 라우트. 새 라우트도 이름으로 자동 포함됩니다. */
-const SOCIAL_ROUTE = /(^|\/)(personas?|profiles?|profile\.[a-z]+\.ts|identity-link[^/]*|follows?|followers|following|feeds?|activit(y|ies))(\/|\.|$)/
+const SOCIAL_ROUTE = /(^|\/)(personas?|profiles?|profile\.[a-z]+\.ts|identity-link[^/]*|follows?|followers|following|follow-requests|blocks?|mutes?|feeds?|activit(y|ies))(\/|\.|$)/
 const SOCIAL_ROUTES = listTs(join(SERVER, 'api')).filter((f) => SOCIAL_ROUTE.test(relative(join(SERVER, 'api'), f)))
 const SOCIAL_MODULE = listTs(join(SERVER, 'modules/social'))
 /** 공개 프로필·포트폴리오 경로가 페르소나를 푸는 곳(S-01). */
@@ -257,8 +259,8 @@ const sha256 = (s: string) => createHash('sha256').update(s).digest('hex')
 // ── DB: social 역할 ───────────────────────────────────────────────────────
 
 const SOCIAL_ROLE = 'peerchive_social'
-/** social 읽기 경로가 쓰는 테이블(migration 0027·0028 peerchive_apply_social_grants). 과제·학기·과목·엠바고·학교 인증은 열 단위 SELECT(S-03 테스트). */
-const SOCIAL_READ_TABLES = ['personas', 'profiles', 'identity_links', 'persona_activities', 'visibility_settings', 'project_listings']
+/** social 읽기 경로가 쓰는 테이블(migration 0027·0028·0029 peerchive_apply_social_grants). 과제·학기·과목·엠바고·학교 인증은 열 단위 SELECT(S-03 테스트). */
+const SOCIAL_READ_TABLES = ['personas', 'profiles', 'identity_links', 'persona_activities', 'visibility_settings', 'project_listings', 'follows', 'blocks', 'mutes']
 
 describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
   afterAll(closeTestDb)
@@ -323,6 +325,9 @@ describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
         expect((await resolvePublicPersona(inner, persona!.handle)).persona.id).toBe(persona!.id)
         expect(await getPublicProfile(inner, persona!.handle)).toEqual(expected)
         expect(await listPersonaActivities(inner, persona!.id)).toEqual([])
+        // 팔로우 목록·관계 정보(S-04)도 같은 역할로: follows·blocks·mutes 읽기.
+        expect(await getFollowList(inner, null, persona!.handle, 'followers')).toEqual({ entries: null })
+        expect((await getProfileSocial(inner, { userId: user.id }, persona!.handle)).isOwner).toBe(true)
         await inner.execute(sql.raw('reset role'))
       })
     })
@@ -608,12 +613,24 @@ async function buildWorld(tx: DbExecutor, seed: number) {
 describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a persona (PostgreSQL)', () => {
   afterAll(closeTestDb)
 
-  it(`for ${WORLDS} seeded random worlds, every persona's public JSON, README card, old profile DTO and activity list carry 0 anonymous post ids, bodies, body hashes or timestamps`, async () => {
-    const totals = { worlds: 0, personas: 0, anonymous: 0, projected: 0 }
+  it(`for ${WORLDS} seeded random worlds, every persona's public JSON, README card, old profile DTO, activity list and follow lists carry 0 anonymous post ids, bodies, body hashes or timestamps`, async () => {
+    const totals = { worlds: 0, personas: 0, anonymous: 0, projected: 0, follows: 0 }
     for (let w = 0; w < WORLDS; w++) {
       const seed = BASE_SEED + w
       await withRollback(async (tx) => {
         const { people, items, now } = await buildWorld(tx, seed)
+        // S-04: 무작위 팔로우(실명·표시명 주체 모두)와 전체 공개 팔로우 목록. 목록은 새 공개 출력이라 같은 검사에 넣습니다.
+        const r = rng(seed ^ 0x5f04)
+        const all = people.flatMap((p) => [p.real, p.display].filter((x): x is NonNullable<typeof x> => !!x).map((persona) => ({ owner: p, persona })))
+        for (const { owner, persona } of all) await setVisibility(tx, { userId: owner.userId }, persona.id, { items: { follow_lists: 'public' } }, now)
+        const edges: Array<{ from: string; to: string }> = []
+        for (const a of all)
+          for (const b of all)
+            if (a.owner !== b.owner && r.chance(0.4)) {
+              await followProfile(tx, { userId: a.owner.userId }, b.persona.handle, { as: a.persona.id }, now)
+              edges.push({ from: a.persona.handle, to: b.persona.handle })
+            }
+        totals.follows += edges.length
         const anonymous = items.filter((i) => i.mode === 'anonymous')
         const forbidden = anonymous.flatMap((i) => [
           i.id,
@@ -632,7 +649,21 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
           for (const [kind, persona] of [['real', p.real], ['display', p.display]] as const) {
             if (!persona) continue
             const activities = await listPersonaActivities(tx, persona.id)
-            const body = [await publicBodies(tx, persona.handle, now), JSON.stringify(activities)].join('\n')
+            const followers = await getFollowList(tx, null, persona.handle, 'followers')
+            const following = await getFollowList(tx, null, persona.handle, 'following')
+            const body = [await publicBodies(tx, persona.handle, now), JSON.stringify(activities), JSON.stringify(followers), JSON.stringify(following)].join('\n')
+            // 팔로우 목록은 정확히 실제 팔로우한(받은) 페르소나의 handle·이름·종류뿐: 같은 사람의 다른 페르소나·실명·id는 들어올 자리가 없음.
+            expect(followers.entries!.map((e) => e.handle).sort(), `seed ${seed} @${persona.handle} followers`).toEqual(edges.filter((e) => e.to === persona.handle).map((e) => e.from).sort())
+            expect(following.entries!.map((e) => e.handle).sort(), `seed ${seed} @${persona.handle} following`).toEqual(edges.filter((e) => e.from === persona.handle).map((e) => e.to).sort())
+            for (const e of [...followers.entries!, ...following.entries!]) expect(Object.keys(e).sort()).toEqual(['displayName', 'handle', 'kind'])
+            const other = kind === 'real' ? p.display : p.real
+            const linked = other && (await listMyPersonas(tx, { userId: p.userId })).identityLink?.visible
+            if (other && !linked) {
+              // 연결이 비공개면 이 페르소나의 공개 출력(목록 포함)에 상대 페르소나의 handle·id가 없음.
+              expect(body.includes(other.handle), `seed ${seed} @${persona.handle} leaks other persona`).toBe(false)
+              expect(body.includes(other.id), `seed ${seed} @${persona.handle} leaks other persona id`).toBe(false)
+            }
+            expect(body.includes(p.userId), `seed ${seed} @${persona.handle} leaks user id`).toBe(false)
             for (const value of forbidden) expect(body.includes(value), `seed ${seed} ${kind} @${persona.handle} leaks ${value.slice(0, 24)}`).toBe(false)
             // 활동 목록은 정확히 "이 페르소나로 작성 시점에 고정된, listed 공간의 같은 종류 방식 글"뿐(다른 종류·익명·unlisted 없음).
             const expected = postRows.filter((r) => r.personaId === persona.id && r.nameMode === kind && r.discovery === 'listed').map((r) => r.id)
@@ -659,6 +690,7 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
     expect(totals.worlds).toBe(WORLDS)
     expect(totals.anonymous).toBeGreaterThan(WORLDS)
     expect(totals.projected).toBeGreaterThan(0)
+    expect(totals.follows).toBeGreaterThan(WORLDS)
     expect(totals.personas).toBeGreaterThan(WORLDS)
   })
 })

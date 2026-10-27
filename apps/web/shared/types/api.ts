@@ -72,6 +72,8 @@ export interface MyPersonaDto {
   displayName: string
   accountPrivacy: PersonaAccountPrivacy
   showFollowerCount: boolean
+  /** 받은 대기 팔로우 요청 수(S-04). 비공개 → 공개로 바꿀 때 화면이 이 수로 확인을 묻습니다(자동 승인 없음). */
+  pendingFollowRequests: number
   /** 운영 조치로 이 페르소나의 공개 프로필이 숨겨졌는지. */
   profileHidden: boolean
   profile: ProfileFields | null
@@ -147,6 +149,111 @@ export interface ProfileProjectsDto {
 
 /** GET /profiles/:handle — 공개 DTO + 보는 사람 기준 과제 수행 목록(S-03). */
 export type PublicProfileWithProjectsDto = PublicProfileDto & ProfileProjectsDto
+
+// ── 팔로우·비공개 계정·차단·뮤트 (S-04, ADR 0033) ─────────────────────────
+
+export type FollowStatus = 'pending' | 'active'
+export type BlockScope = 'origin_persona' | 'all_personas'
+
+/**
+ * 팔로워·팔로잉 수. 공개 응답에는 주인이 `show_follower_count`를 켰을 때만 이 키가 있고, 끄면 키 자체가 없습니다(null도 0도 아님).
+ * 본인에게는 늘 있습니다.
+ */
+export interface FollowCountsDto {
+  followers: number
+  following: number
+}
+
+/**
+ * 팔로우 목록 한 줄: 그 페르소나의 handle·이름·종류만. 같은 사용자의 다른 페르소나·연결·id는 싣지 않습니다(표시명으로 팔로우하면 표시명만 보임).
+ */
+export interface FollowPersonaDto {
+  kind: PersonaKind
+  handle: string
+  displayName: string
+}
+
+/** GET /profiles/:handle/followers·following — 볼 수 없으면(`follow_lists` 공개 범위) `entries: null`. 차단당했으면 404. */
+export interface FollowListDto {
+  entries: FollowPersonaDto[] | null
+}
+
+/** 보는 사람의 내 페르소나 하나와 이 프로필의 관계(팔로우 주체 고르기용, 본인에게만). */
+export interface ViewerPersonaRelationDto {
+  personaId: string
+  kind: PersonaKind
+  handle: string
+  displayName: string
+  /** 이 페르소나로 대상을 팔로우한 상태(none = 팔로우 안 함). */
+  follow: FollowStatus | 'none'
+  /** 이 페르소나에서 대상 페르소나를 차단한 행(없으면 null). */
+  block: { id: string; scope: BlockScope } | null
+}
+
+/**
+ * GET /profiles/:handle/social — 세션을 읽는 프로필 관계 정보(no-store). 화면이 SSR 뒤 브라우저에서만 부릅니다.
+ * 차단당한 사용자에게는 404입니다(화면은 프로필을 "찾을 수 없음"으로 바꿈). `followCounts`는 공개 DTO와 같은 규칙(끄면 키 없음, 본인은 늘).
+ */
+export interface ProfileSocialDto {
+  accountPrivacy: PersonaAccountPrivacy
+  followCounts?: FollowCountsDto
+  /** 팔로워·팔로잉 목록을 이 사람이 볼 수 있는지(`follow_lists` 공개 범위). */
+  followListsVisible: boolean
+  isOwner: boolean
+  /** 로그인한 다른 사람에게만. 내 페르소나별 팔로우·차단 상태와 뮤트. */
+  viewer: { personas: ViewerPersonaRelationDto[]; muteId: string | null } | null
+}
+
+/** POST /profiles/:handle/follow — 팔로우 결과(공개 계정 active, 비공개 계정 pending). */
+export interface FollowResultDto {
+  status: FollowStatus | 'none'
+}
+
+/** 내 페르소나의 팔로워·팔로잉·요청 한 줄(본인에게만). id는 팔로우 행 id(승인·거절·팔로워 삭제에 씀). */
+export interface MyFollowEntryDto extends FollowPersonaDto {
+  id: string
+  /** 요청 시각(pending) 또는 승인 시각(active). */
+  at: string
+}
+
+/** GET /personas/:id/follows — 내 페르소나의 팔로우 관리(본인에게만, 남의 것 404). */
+export interface MyFollowsDto {
+  personaId: string
+  kind: PersonaKind
+  handle: string
+  accountPrivacy: PersonaAccountPrivacy
+  showFollowerCount: boolean
+  followers: MyFollowEntryDto[]
+  following: MyFollowEntryDto[]
+  /** 받은 대기 요청. 공개 계정이 된 뒤에도 자동 승인하지 않고 남습니다(모두 승인·모두 거절·그대로 두기). */
+  incoming: MyFollowEntryDto[]
+  /** 보낸 대기 요청. */
+  outgoing: MyFollowEntryDto[]
+}
+
+/** 내 차단 한 줄(본인에게만). 차단을 건 상대의 그 페르소나만 보이고, 상대의 다른 페르소나는 드러내지 않습니다. */
+export interface MyBlockDto {
+  id: string
+  target: FollowPersonaDto
+  /** 차단을 건 내 페르소나. */
+  origin: { kind: PersonaKind; handle: string }
+  scope: BlockScope
+  createdAt: string
+}
+
+export interface MyBlocksDto {
+  blocks: MyBlockDto[]
+}
+
+export interface MyMuteDto {
+  id: string
+  target: FollowPersonaDto
+  createdAt: string
+}
+
+export interface MyMutesDto {
+  mutes: MyMuteDto[]
+}
 
 /**
  * 사후 작성 표시(PROOFU_EVOLUTION_PLAN §6.7, DELIVERY_PLAN 시나리오 G). 프로젝트·로그·마일스톤·스냅샷 DTO는 모두 이 필드를 가집니다.
@@ -1557,6 +1664,10 @@ export interface PublicPortfolioProfileDto extends PortfolioViewDto {
    * 표시명 프로필은 늘 null(과제 수행 목록은 실명 페르소나만, ADR 0031).
    */
   projects: PublicProjectListingDto[] | null
+  /**
+   * 팔로워·팔로잉 수(S-04). 공개 경로는 비로그인 판정이라 주인이 `show_follower_count`를 켰을 때만 이 키가 있고, 끄면 키 자체가 없습니다.
+   */
+  followCounts?: FollowCountsDto
 }
 
 // ── 학교 메일 인증 (C-01, ADR 0018) ──────────────────────────────────────

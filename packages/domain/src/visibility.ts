@@ -10,9 +10,9 @@
  * - 기본값(행이 없을 때, 저장하지 않고 계산): `project_list`는 private, `posts`·`notes_and_studies`는 공개 계정이면 signed_in, 비공개 계정이면
  *   approved_followers. `follow_lists`는 signed_in을 받을 수 없어 private입니다. 계정 공개 설정을 바꾸면 기본값도 따라 바뀝니다.
  * - **비공개 계정**(`account_privacy = private`)은 저장한 값이 더 넓어도 모든 항목을 approved_followers 이하로 좁혀 적용합니다(§8.3 "Instagram식").
- * - `approved_followers`: 팔로우는 S-04에서 생깁니다. 그때까지 `approvedFollower`는 늘 false라 이 단계는 사실상 본인만입니다. S-04는 social 모듈의
- *   보는 사람 계산에 팔로우 승인 여부만 채우면 되고, 이 함수는 바뀌지 않습니다.
- * - 차단(S-04)은 `canViewPersona`가 먼저 404로 끊습니다(`blocked`).
+ * - `approved_followers`: 승인된(active) 팔로우가 있는 사용자입니다. social 모듈의 `personaViewerFor`가 팔로우 행으로 `approvedFollower`를
+ *   채웁니다(S-04, ADR 0033). 대기 중(pending) 요청은 아무것도 넓히지 않습니다.
+ * - 차단(S-04)은 `canViewPersona`가 먼저 404로 끊습니다(`blocked`: 페르소나 주인이 보는 사람을 차단했고 그 차단이 이 페르소나를 숨김).
  *
  * 런타임 의존성 없음.
  */
@@ -67,7 +67,7 @@ export type AccountPrivacy = 'public' | 'private'
 /** 행이 없을 때의 기본값(§6.7.1 초기안). */
 export function defaultAudience(itemKind: VisibilityItemKind, accountPrivacy: AccountPrivacy): VisibilityAudience {
   if (itemKind === 'project_list') return 'private'
-  // follow_lists는 signed_in을 받지 않으므로 두 단계 중 좁은 쪽(팔로우 목록은 S-04에서 생김, ADR 0031 열린 질문).
+  // follow_lists는 signed_in을 받지 않으므로 두 단계 중 좁은 쪽(ADR 0031, S-04에서도 그대로 private: ADR 0033).
   if (itemKind === 'follow_lists') return 'private'
   return accountPrivacy === 'private' ? 'approved_followers' : 'signed_in'
 }
@@ -90,9 +90,9 @@ export interface PersonaViewer {
   signedIn: boolean
   /** 열람자와 주인이 같은 정본 학교의 active 학교 인증(InstitutionAffiliation)을 가졌는지. */
   sameInstitution: boolean
-  /** 승인된 팔로워(S-04 전까지 늘 false). */
+  /** 이 페르소나의 승인된(active) 팔로워(보는 사람의 어느 페르소나로든, S-04). */
   approvedFollower: boolean
-  /** 주인이 열람자를 차단했는지(S-04 전까지 늘 false). */
+  /** 주인이 열람자를 차단했고 그 차단이 이 페르소나를 숨기는지(S-04, `blockHides`). */
   blocked: boolean
 }
 

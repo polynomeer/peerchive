@@ -3,12 +3,13 @@
  * DELIVERY_PLAN §4.2 S-03·§5.2 S, ADR 0031).
  *
  * social 모듈입니다: 커뮤니티 글 테이블·커뮤니티 모듈을 import하지 않습니다(S-02 경계 테스트). 과제·학기·과목·엠바고·학교 인증은 커뮤니티
- * 테이블이 아니며, social DB 역할에는 여기서 읽는 열만 SELECT로 줍니다(migration 0028 `peerchive_apply_social_grants`).
+ * 테이블이 아니며, social DB 역할에는 여기서 읽는 열만 SELECT로 줍니다(migration 0028·0029 `peerchive_apply_social_grants`).
  *
  * - **정책**: 판정은 모두 @peerchive/domain `canViewPersona`·`canViewPersonaItem`이 합니다. 이 파일은 보는 사람(`personaViewerFor`)과
  *   저장 값(`loadVisibility`)만 모읍니다. 공개 경로(공개 프로필 JSON·HTML·OG·인쇄 보기·README 카드)는 쿠키를 읽지 않으므로 늘 비로그인
  *   (`ANONYMOUS_VIEWER`)으로 판정하고, 로그인 상태를 반영한 목록은 `GET /profiles/:handle/projects`(세션을 읽음)만 줍니다.
- * - **승인된 팔로워**: 팔로우는 S-04입니다. `personaViewerFor`의 `approvedFollower`·`blocked`는 지금 늘 false이고, S-04는 그 두 값만 채우면 됩니다.
+ * - **승인된 팔로워·차단**(S-04, ADR 0033): `personaViewerFor`가 팔로우 행(active)으로 `approvedFollower`를, 차단 행(범위가 이 페르소나를 덮는 것)으로
+ *   `blocked`를 채웁니다. 차단당한 사용자는 `canViewPersona`에서 404입니다.
  * - **공개 사례·케이스 스터디는 이 설정의 대상이 아닙니다**(§8.3 불변조건 2). PUT은 그런 항목 이름을 422로 거부하고, 공개 사례 목록은 계속
  *   공개 절차(동의·게시)를 거친 것만 나옵니다.
  * - **과제 수행 목록**은 실명 페르소나만, active 멤버가 직접 고른 과제만, 과목·학기·제목만(엠바고 중이면 제목 없이) 싣습니다. 익명·표시명
@@ -54,6 +55,7 @@ import { activeAffiliationSchoolIds } from '../affiliation/affiliations'
 import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, invalid, notFound } from '../errors'
 import { resolvePublicPersona } from './personas'
+import { isApprovedFollower, isHiddenFrom } from './relations'
 import type {
   MyProjectListingDto,
   MyProjectListingsDto,
@@ -70,14 +72,21 @@ type PersonaRow = typeof personas.$inferSelect
 /**
  * 보는 사람과 페르소나 주인의 관계. 로그인하지 않았으면 `ANONYMOUS_VIEWER`.
  * same_institution은 두 사람의 active 학교 인증이 같은 정본 학교를 가리키는지로 봅니다(§8.3).
- * S-04: `approvedFollower`(승인된 팔로우)·`blocked`(차단)를 여기서 채웁니다. 지금은 팔로우·차단이 없어 늘 false입니다.
+ * S-04(ADR 0033): `approvedFollower` = 보는 사람이 어느 페르소나로든 이 페르소나를 active로 팔로우함, `blocked` = 주인이 보는 사람을 차단했고 그 범위가
+ * 이 페르소나를 덮음(`isHiddenFrom`). 차단당했으면 나머지는 읽지 않습니다.
  */
-export async function personaViewerFor(db: DbExecutor, persona: Pick<PersonaRow, 'userId'>, actor: Actor | null): Promise<PersonaViewer> {
+export async function personaViewerFor(db: DbExecutor, persona: Pick<PersonaRow, 'id' | 'userId'>, actor: Actor | null): Promise<PersonaViewer> {
   if (!actor) return ANONYMOUS_VIEWER
   if (actor.userId === persona.userId) return { ...ANONYMOUS_VIEWER, isOwner: true, signedIn: true }
+  if (await isHiddenFrom(db, persona, actor.userId)) return { ...ANONYMOUS_VIEWER, signedIn: true, blocked: true }
   const [mine, theirs] = await Promise.all([activeAffiliationSchoolIds(db, actor.userId), activeAffiliationSchoolIds(db, persona.userId)])
   const theirSet = new Set(theirs)
-  return { ...ANONYMOUS_VIEWER, signedIn: true, sameInstitution: mine.some((id) => theirSet.has(id)) }
+  return {
+    ...ANONYMOUS_VIEWER,
+    signedIn: true,
+    sameInstitution: mine.some((id) => theirSet.has(id)),
+    approvedFollower: await isApprovedFollower(db, persona.id, actor.userId),
+  }
 }
 
 /** 페르소나의 저장된 공개 범위(행이 없는 항목은 빠짐 → 기본값). */

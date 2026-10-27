@@ -13,6 +13,8 @@
  * - 과제 수행 목록(S-03, ADR 0031): 공개 API는 늘 비로그인으로 판정하므로 SSR에는 전체 공개일 때만 들어갑니다. 그렇지 않으면 화면이 뜬 뒤
  *   브라우저에서만 `/api/v1/profiles/:handle`(세션을 읽음)을 불러 로그인·같은 기관·본인 범위의 목록을 붙입니다 — 보는 사람에 따라 달라지는
  *   내용이 SSR HTML·payload에 들어가지 않습니다. 과목·학기·제목만, 엠바고 중이면 제목 없이.
+ * - 팔로우·차단·뮤트(S-04, ADR 0033): `ProfileSocial`이 화면이 뜬 뒤 브라우저에서만 세션을 읽는 관계 API를 부릅니다. 차단당한 사용자에게는 그 API가
+ *   404이고, 이 화면은 "프로필을 찾을 수 없습니다"로 바뀝니다(공개 경로 자체는 쿠키를 읽지 않으므로 로그아웃한 방문자와 같은 SSR 응답).
  */
 import type { PublicPortfolioProfileDto, PublicProfileWithProjectsDto, PublicProjectListingDto } from '~~/shared/types/api'
 import type { ReportChoice } from '~/utils/moderation'
@@ -27,6 +29,8 @@ const { data: profile, error } = await useAsyncData(
 )
 
 const status = computed(() => ((error.value as { statusCode?: number } | null)?.statusCode === 503 ? 503 : 404))
+// 차단당한 로그인 사용자(브라우저에서 관계 API가 404): 화면을 "찾을 수 없음"으로 바꿉니다.
+const hiddenForViewer = ref(false)
 const indexing = usePublicIndexing()
 const indexable = computed(() => indexing.value && !!profile.value)
 if (import.meta.server) {
@@ -74,8 +78,9 @@ onMounted(async () => {
   try {
     const res = await $fetch<PublicProfileWithProjectsDto>(`/api/v1/profiles/${encodeURIComponent(profile.value.handle)}`)
     viewerProjects.value = res.projects
-  } catch {
+  } catch (e) {
     viewerProjects.value = null
+    if (apiError(e).status === 404) hiddenForViewer.value = true
   }
 })
 const projects = computed(() => profile.value?.projects ?? viewerProjects.value)
@@ -89,7 +94,7 @@ const years = computed(() => {
 
 <template>
   <div>
-    <template v-if="error || !profile">
+    <template v-if="error || !profile || hiddenForViewer">
       <template v-if="status === 503">
         <h1>잠시 공개 페이지를 볼 수 없습니다</h1>
         <p>점검 중입니다. 잠시 뒤 다시 열어 주세요.</p>
@@ -126,6 +131,8 @@ const years = computed(() => {
           <li v-for="badge in profile.affiliationBadges" :key="badge.label"><span class="badge">✓ {{ badge.label }}</span></li>
         </ul>
       </header>
+
+      <ClientOnly><ProfileSocial :handle="profile.handle" @hidden="hiddenForViewer = true" /></ClientOnly>
 
       <PortfolioView :view="profile" id-prefix="pf" />
 

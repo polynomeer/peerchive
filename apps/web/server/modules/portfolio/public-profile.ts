@@ -18,6 +18,7 @@
  *   꺼져 있으면 상대 페르소나의 handle·이름·id·소개가 이 DTO(그리고 이것만 그리는 HTML·OG·인쇄 보기·README 카드)에 없습니다.
  *
  * 과제 수행 목록(S-03, ADR 0031): `projects`는 `canViewPersonaItem('project_list')`를 비로그인으로 판정해 통과할 때만(전체 공개) 싣습니다.
+ * 팔로워 수(S-04, ADR 0033): `followCounts`는 주인이 `show_follower_count`를 켰을 때만 있습니다. 팔로우 목록 자체는 세션을 읽는 경로에서만 줍니다.
  * 공개 사례·타임라인은 공개 범위 설정과 무관하게 공개 절차를 거친 것만입니다(설정으로 넓힐 수 없음, §8.3 불변조건 2).
  */
 import { ANONYMOUS_VIEWER, CASE_SECTIONS, clipText } from '@peerchive/domain'
@@ -35,6 +36,7 @@ import {
 import { toPublicProfileDto } from '../identity/profile-input'
 import { publicAffiliationBadges } from '../affiliation/affiliations'
 import { linkedPersonaFor, resolvePublicPersona } from '../social/personas'
+import { publicFollowCounts } from '../social/follows'
 import { visiblePersonaProjects } from '../social/visibility'
 import { loadCurrentEditionModel } from './editions'
 import { loadCaseStudiesWithRelease } from './release-scope'
@@ -113,6 +115,8 @@ export async function getPublicPortfolioProfile(db: DbExecutor, rawHandle: unkno
     linkedPersona: await linkedPersonaFor(db, persona, { isOwner: false }),
     // 과제 수행 목록(S-03): 공개 경로는 늘 비로그인으로 판정 — `project_list`가 전체 공개일 때만. 과목·학기·제목뿐, 엠바고 중이면 제목 없음.
     projects: await visiblePersonaProjects(db, persona, ANONYMOUS_VIEWER, now),
+    // 팔로워·팔로잉 수(S-04): `show_follower_count`를 끄면 키 자체를 싣지 않습니다(null·0도 아님).
+    ...(await publicFollowCounts(db, persona)),
   }
 }
 

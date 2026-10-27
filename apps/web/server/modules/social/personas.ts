@@ -19,6 +19,7 @@ import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, invalid, notFound, sqlState } from '../errors'
 import { parseInput } from '../validation'
 import { displayNameSchema, handleSchema, profileFields, profileFieldsSchema } from '../identity/profile-input'
+import { pendingRequestCounts } from './relations'
 import type { MyPersonaDto, MyPersonasDto, PublicLinkedPersonaDto } from '../../../shared/types/api'
 
 type PersonaRow = typeof personas.$inferSelect
@@ -129,6 +130,7 @@ export async function listMyPersonas(db: DbExecutor, actor: Actor): Promise<MyPe
     .where(eq(personas.userId, actor.userId))
     .orderBy(asc(personas.kind))
   const [link] = await db.select().from(identityLinks).where(eq(identityLinks.userId, actor.userId)).limit(1)
+  const pending = await pendingRequestCounts(db, actor.userId, rows.map((r) => r.persona.id))
   return {
     personas: rows.map((r): MyPersonaDto => ({
       id: r.persona.id,
@@ -137,6 +139,7 @@ export async function listMyPersonas(db: DbExecutor, actor: Actor): Promise<MyPe
       displayName: personaDisplayName(r.persona, account.displayName),
       accountPrivacy: r.persona.accountPrivacy,
       showFollowerCount: r.persona.showFollowerCount,
+      pendingFollowRequests: pending.get(r.persona.id) ?? 0,
       profileHidden: r.profile?.hiddenAt != null,
       profile: r.profile ? profileFields(r.profile) : null,
     })),
@@ -194,6 +197,8 @@ export async function createDisplayPersona(db: DbExecutor, actor: Actor, rawInpu
 
 /**
  * PATCH /personas/:id — 내 페르소나 수정(handle·표시명·프로필 필드·공개 설정). 남의 페르소나·없는 id는 404.
+ * 공개 설정(S-04, ADR 0033): 공개 → 비공개는 즉시(이미 승인된 팔로워는 그대로), 비공개 → 공개는 대기 중인 팔로우 요청을 **자동 승인하지 않습니다**
+ * (응답의 `pendingFollowRequests`로 화면이 묻고, `POST /personas/:id/follow-requests`로 모두 승인·모두 거절, 아니면 그대로).
  * 실명 페르소나의 이름은 계정 표시 이름이라 여기서 바꾸지 않습니다(422 `displayName: not_editable`, `PATCH /me/profile`을 씀).
  * 감사에는 바뀐 필드 이름만 남깁니다(값 없음).
  */

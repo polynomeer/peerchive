@@ -62,7 +62,7 @@ const ITEM_HINTS: Record<VisibilityItemKind, string> = {
   project_list: '과목·학기·과제 제목만 보입니다. 팀원 이름·로그·파일은 보이지 않고, 엠바고 중인 과제는 제목 없이 과목·학기만 보입니다.',
   posts: '실명·표시명으로 쓴 글만 해당합니다. 익명으로 쓴 글은 어떤 설정에서도 프로필에 나오지 않습니다.',
   notes_and_studies: '익명으로 쓴 선배 노트와 익명 스터디 기록은 어떤 설정에서도 나오지 않습니다.',
-  follow_lists: '팔로우 기능은 준비 중입니다. 전체 공개 또는 비공개만 고를 수 있습니다.',
+  follow_lists: '팔로워·팔로잉 목록에는 프로필 이름과 handle만 보입니다. 전체 공개 또는 비공개만 고를 수 있습니다.',
 }
 
 const sameInstitutionOnDisplay = computed(
@@ -149,7 +149,7 @@ const audienceLabel = (a: VisibilityAudience | undefined) => (a ? VISIBILITY_AUD
       <section v-if="visibility && selected" aria-labelledby="items-heading">
         <h2 id="items-heading">{{ selected.kind === 'real' ? '실명 프로필' : '표시명 프로필' }}의 항목별 공개 범위</h2>
         <p v-if="visibility.accountPrivacy === 'private'" class="hint">
-          비공개 계정입니다. 더 넓게 골라도 <strong>승인한 팔로워</strong>까지만 보입니다(팔로우 기능은 준비 중이라 지금은 나만 봅니다).
+          비공개 계정입니다. 더 넓게 골라도 <strong>승인한 팔로워</strong>까지만 보입니다(<NuxtLink to="/settings/follows">팔로우·차단</NuxtLink>에서 요청을 승인).
         </p>
         <form class="stack" novalidate @submit.prevent="save">
           <div v-for="item in visibility.items" :key="item.itemKind" class="field">
@@ -178,7 +178,7 @@ const audienceLabel = (a: VisibilityAudience | undefined) => (a ? VISIBILITY_AUD
             소속을 드러내고 싶지 않다면 다른 범위를 고르세요.
           </p>
           <p class="hint">
-            "같은 기관"은 학교 메일 인증을 한 사람 중 나와 같은 학교 인증이 있는 사람입니다. "승인한 팔로워"는 팔로우 기능이 열리기 전까지 나만 봅니다.
+            "같은 기관"은 학교 메일 인증을 한 사람 중 나와 같은 학교 인증이 있는 사람입니다. "승인한 팔로워"는 이 프로필을 팔로우하고(비공개 계정이면 내가 승인한) 사람입니다.
           </p>
           <p class="actions">
             <button type="submit" :disabled="busy === 'save' || changed.length === 0">저장</button>

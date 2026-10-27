@@ -34,6 +34,7 @@ import {
   artifactVersions,
   artifacts,
   auditEvents,
+  blocks,
   authAccounts,
   caseSentences,
   caseStudies,
@@ -88,6 +89,8 @@ import {
   portfolioEditions,
   portfolioItems,
   profiles,
+  follows,
+  mutes,
   projectListings,
   projectMembers,
   projects,
@@ -242,6 +245,11 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
         .where(or(editionIds.length ? inArray(portfolioItems.editionId, editionIds) : sql`false`, caseIds.length ? inArray(portfolioItems.caseStudyId, caseIds) : sql`false`))
     }
     if (editionIds.length) c.add('portfolio_editions', (await tx.delete(portfolioEditions).where(inArray(portfolioEditions.id, editionIds)).returning({ id: portfolioEditions.id })).length)
+    // S-04(ADR 0033): 뮤트는 페르소나 없이도 걸 수 있어(건 사람은 사용자 단위) 페르소나 유무와 관계없이 지웁니다.
+    c.add(
+      'mutes',
+      (await tx.delete(mutes).where(or(eq(mutes.muterUserId, userId), eq(mutes.mutedUserId, userId))).returning({ id: mutes.id })).length,
+    )
     if (personaIds.length) {
       // S-02(ADR 0029): 페르소나 활동은 지우고, 글·댓글에 고정한 작성 시점 페르소나는 비웁니다(고정 열 트리거가 null로 비우는 것만 허용).
       // 글·댓글 행 자체는 위 커뮤니티 정리 규칙대로 남습니다(표시명·실명 글은 읽을 때 "탈퇴한 사용자").
@@ -249,6 +257,10 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
       // S-03(ADR 0031): 항목별 공개 범위와 과제 수행 목록 행(그 사람의 선택일 뿐이라 남기지 않음). 과제·멤버십은 아래 규칙대로.
       c.add('visibility_settings', (await tx.delete(visibilitySettings).where(inArray(visibilitySettings.personaId, personaIds)).returning({ id: visibilitySettings.personaId })).length)
       c.add('project_listings', (await tx.delete(projectListings).where(inArray(projectListings.personaId, personaIds)).returning({ id: projectListings.personaId })).length)
+      // S-04(ADR 0033): 이 사람의 페르소나가 들어간 팔로우(양쪽)·차단(건 것·당한 것). 관계 행이라 남기지 않고, 상대에게 알리지 않습니다.
+      // 사용자 사본 열은 복합 외래 키로 페르소나의 주인과 같음이 보장됩니다.
+      c.add('follows', (await tx.delete(follows).where(or(eq(follows.followerUserId, userId), eq(follows.followeeUserId, userId))).returning({ id: follows.id })).length)
+      c.add('blocks', (await tx.delete(blocks).where(or(eq(blocks.blockerUserId, userId), eq(blocks.blockedUserId, userId))).returning({ id: blocks.id })).length)
       const postRefs = await tx.update(communityPosts).set({ personaId: null }).where(inArray(communityPosts.personaId, personaIds)).returning({ id: communityPosts.id })
       const commentRefs = await tx
         .update(communityComments)

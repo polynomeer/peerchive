@@ -38,6 +38,7 @@ import {
   deletionLedger,
   endorsements,
   eq,
+  or,
   hashSubject,
   institutionAffiliations,
   integrations,
@@ -50,6 +51,9 @@ import {
   planForks,
   personaActivities,
   personas,
+  follows,
+  blocks,
+  mutes,
   visibilitySettings,
   portfolioEditions,
   profiles,
@@ -235,6 +239,23 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       const [m] = await tx.select({ id: projectMembers.id }).from(projectMembers).where(and(eq(projectMembers.projectId, p.id), eq(projectMembers.userId, U.id)))
       await tx.insert(projectListings).values({ projectMemberId: m!.id, personaId: realPersona!.id, userId: U.id })
     }
+    // 팔로우·차단·뮤트(S-04): T·X의 실명 페르소나와 U의 두 페르소나 사이. X ↔ T 사이 행은 U와 무관해 남아야 합니다.
+    const [tPersona] = await tx.insert(personas).values({ userId: T.id, kind: 'real', handle: `t-${id().slice(0, 8)}` }).returning()
+    const [xPersona] = await tx.insert(personas).values({ userId: X.id, kind: 'real', handle: `x-${id().slice(0, 8)}` }).returning()
+    await tx.insert(follows).values([
+      { followerPersonaId: displayPersona!.id, followerUserId: U.id, followeePersonaId: tPersona!.id, followeeUserId: T.id, status: 'active', approvedAt: NOW },
+      { followerPersonaId: xPersona!.id, followerUserId: X.id, followeePersonaId: realPersona!.id, followeeUserId: U.id, status: 'pending' },
+      { followerPersonaId: xPersona!.id, followerUserId: X.id, followeePersonaId: tPersona!.id, followeeUserId: T.id, status: 'active', approvedAt: NOW },
+    ])
+    await tx.insert(blocks).values([
+      { blockerUserId: U.id, blockedUserId: X.id, originPersonaId: displayPersona!.id, blockedPersonaId: xPersona!.id },
+      { blockerUserId: T.id, blockedUserId: U.id, originPersonaId: tPersona!.id, blockedPersonaId: realPersona!.id, scope: 'all_personas' },
+    ])
+    await tx.insert(mutes).values([
+      { muterUserId: U.id, mutedPersonaId: tPersona!.id, mutedUserId: T.id },
+      { muterUserId: X.id, mutedPersonaId: displayPersona!.id, mutedUserId: U.id },
+      { muterUserId: X.id, mutedPersonaId: tPersona!.id, mutedUserId: T.id },
+    ])
     const uTeamLog = await log(tx, team.id, U.id, 'U가 쓴 팀 로그')
     const tTeamLog = await log(tx, team.id, T.id, 'T가 쓴 팀 로그')
     const teamFile = await file(tx, team.id, U.id)
@@ -280,7 +301,7 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       { affiliationId: pendingAff!.id, codeHash: hex(), expiresAt: NOW },
     ])
     return {
-      tAffiliationId: tAff!.id, displayPersonaId: displayPersona!.id, U, T, X, solo, soloLog, soloFile, soloPub, forkedSolo, forkedPub, xProject, team, uTeamLog, tTeamLog, teamFile, teamPub, note: note!, caseStudy: caseStudy! }
+      tAffiliationId: tAff!.id, displayPersonaId: displayPersona!.id, tPersonaId: tPersona!.id, U, T, X, solo, soloLog, soloFile, soloPub, forkedSolo, forkedPub, xProject, team, uTeamLog, tTeamLog, teamFile, teamPub, note: note!, caseStudy: caseStudy! }
   }
 
   const count = async (tx: DbExecutor, table: Parameters<DbExecutor['select']>[0] extends never ? never : any, where: any) =>
@@ -297,6 +318,9 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         identity_links: 1,
         visibility_settings: 1,
         project_listings: 2,
+        follows: 2,
+        blocks: 2,
+        mutes: 2,
         sessions: 1,
         auth_accounts: 1,
         magic_link_tokens: 1,
@@ -327,6 +351,9 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         [personas, eq(personas.userId, w.U.id)],
         [identityLinks, eq(identityLinks.userId, w.U.id)],
         [projectListings, eq(projectListings.userId, w.U.id)],
+        [follows, or(eq(follows.followerUserId, w.U.id), eq(follows.followeeUserId, w.U.id))],
+        [blocks, or(eq(blocks.blockerUserId, w.U.id), eq(blocks.blockedUserId, w.U.id))],
+        [mutes, or(eq(mutes.muterUserId, w.U.id), eq(mutes.mutedUserId, w.U.id))],
         [sessions, eq(sessions.userId, w.U.id)],
         [authAccounts, eq(authAccounts.userId, w.U.id)],
         [magicLinkTokens, eq(magicLinkTokens.email, w.U.email)],
@@ -342,6 +369,9 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         expect(await count(tx, table, where)).toBe(0)
       }
       expect(await count(tx, institutionAffiliations, eq(institutionAffiliations.id, w.tAffiliationId))).toBe(1)
+      // U와 무관한 X → T 팔로우·X의 T 뮤트는 그대로.
+      expect(await count(tx, follows, eq(follows.followeePersonaId, w.tPersonaId))).toBe(1)
+      expect(await count(tx, mutes, eq(mutes.mutedPersonaId, w.tPersonaId))).toBe(1)
 
       // 혼자 과제 1: 행·파일 모두 없음.
       expect(await count(tx, projects, eq(projects.id, w.solo.id))).toBe(0)

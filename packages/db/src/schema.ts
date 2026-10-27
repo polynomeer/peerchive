@@ -100,6 +100,10 @@ export const personaActivitySource = pgEnum('persona_activity_source', ['publica
 export const visibilityItemKind = pgEnum('visibility_item_kind', ['project_list', 'posts', 'notes_and_studies', 'follow_lists'])
 /** 공개 범위 단계(S-03, @peerchive/domain VISIBILITY_AUDIENCES). public ⊃ signed_in ⊃ same_institution ⊃ approved_followers ⊃ private. */
 export const visibilityAudience = pgEnum('visibility_audience', ['public', 'signed_in', 'same_institution', 'approved_followers', 'private'])
+/** 팔로우 상태(S-04, @peerchive/domain FOLLOW_STATUSES): 비공개 계정은 pending → active(승인), 공개 계정은 바로 active. */
+export const followStatus = pgEnum('follow_status', ['pending', 'active'])
+/** 차단의 숨김 범위(S-04, SYSTEM_DESIGN §6.7.1 Block): 차단을 건 페르소나만(기본) / 내 모든 페르소나(사용자가 고를 때만). */
+export const blockScope = pgEnum('block_scope', ['origin_persona', 'all_personas'])
 export const contactPolicy = pgEnum('contact_policy', ['closed', 'on_request', 'open'])
 export const semester = pgEnum('semester', ['spring', 'summer', 'fall', 'winter'])
 /** 과제 종류. study는 스터디 방의 기록(C-08, ADR 0026): 스터디 방이 기록을 켜면 만들어지는 내부 과제 공간이고 멤버십은 방에서 파생됩니다. */
@@ -864,6 +868,91 @@ export const projectListings = pgTable(
     foreignKey({ name: 'project_listings_member_fk', columns: [t.projectMemberId, t.userId], foreignColumns: [projectMembers.id, projectMembers.userId] }),
     foreignKey({ name: 'project_listings_persona_fk', columns: [t.personaId, t.userId], foreignColumns: [personas.id, personas.userId] }),
     foreignKey({ name: 'project_listings_persona_kind_fk', columns: [t.personaId, t.personaKind], foreignColumns: [personas.id, personas.kind] }),
+  ],
+)
+
+// ── 팔로우·차단·뮤트 (S-04, SYSTEM_DESIGN §6.7.1 Follow·Block·Mute·§8.3, ADR 0033) ──
+
+/**
+ * 팔로우(S-04, SYSTEM_DESIGN §6.7.1 Follow, ADR 0033). 팔로우하는 쪽과 받는 쪽 모두 **페르소나**입니다: 표시명으로 팔로우하면 상대의 팔로워 목록에는
+ * 표시명만 보입니다. `(follower_persona_id, followee_persona_id)` 유일.
+ * - follower_user_id·followee_user_id는 두 복합 외래 키 `(persona_id, user_id) → personas(id, user_id)`로 페르소나의 주인과 같음이 보장되는
+ *   사본이고, **check `follower_user_id <> followee_user_id`로 자기 페르소나(같은 사용자의 다른 페르소나 포함) 팔로우를 DB가 막습니다.**
+ *   공개 DTO에는 싣지 않습니다.
+ * - 비공개 계정은 pending으로 생겨 주인이 승인하면 active(approved_at)가 됩니다. 거절·팔로워 삭제·언팔로우는 행 삭제이고 상대에게 알리지 않습니다.
+ */
+export const follows = pgTable(
+  'follows',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    followerPersonaId: uuid('follower_persona_id').notNull(),
+    followerUserId: uuid('follower_user_id').notNull(),
+    followeePersonaId: uuid('followee_persona_id').notNull(),
+    followeeUserId: uuid('followee_user_id').notNull(),
+    status: followStatus('status').notNull().default('pending'),
+    createdAt: createdAt(),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+  },
+  (t) => [
+    unique('follows_pair_key').on(t.followerPersonaId, t.followeePersonaId),
+    check('follows_not_self_check', sql`${t.followerUserId} <> ${t.followeeUserId}`),
+    check('follows_approved_check', sql`(${t.status} = 'active') = (${t.approvedAt} is not null)`),
+    foreignKey({ name: 'follows_follower_persona_fk', columns: [t.followerPersonaId, t.followerUserId], foreignColumns: [personas.id, personas.userId] }),
+    foreignKey({ name: 'follows_followee_persona_fk', columns: [t.followeePersonaId, t.followeeUserId], foreignColumns: [personas.id, personas.userId] }),
+    index('follows_followee_idx').on(t.followeePersonaId, t.status),
+    index('follows_follower_user_idx').on(t.followerUserId),
+    index('follows_followee_user_idx').on(t.followeeUserId),
+  ],
+)
+
+/**
+ * 차단(S-04, SYSTEM_DESIGN §6.7.1 Block, ADR 0033). **저장은 사용자 단위**(blocker_user_id → blocked_user_id)이고, 숨김 범위는 기본으로 차단을 건
+ * 내 페르소나(origin_persona_id)이며 `all_personas`는 사용자가 고를 때만입니다. 숨겨진 페르소나는 차단당한 사용자에게 404입니다.
+ * - blocked_persona_id는 차단한 사람이 차단을 건 **상대의 페르소나 페이지**입니다. 내 차단 목록에 그 handle만 보여 주고(상대의 다른 페르소나를
+ *   드러내지 않음), 같은 상대의 다른 페르소나를 다시 차단해도 "이미 차단함"으로 연결을 알려 주지 않도록 유일 키에 넣습니다.
+ *   blocked_user_id는 서버만 쓰며 어떤 응답에도 싣지 않습니다.
+ * - 두 복합 외래 키가 origin 페르소나의 주인 = blocker, 대상 페르소나의 주인 = blocked임을 보장하고, check가 자기 차단을 막습니다.
+ * - 0~1단계(익명) 커뮤니티 글에는 적용하지 않습니다(커뮤니티 모듈은 이 표를 읽지 않음).
+ */
+export const blocks = pgTable(
+  'blocks',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    blockerUserId: uuid('blocker_user_id').notNull(),
+    blockedUserId: uuid('blocked_user_id').notNull(),
+    originPersonaId: uuid('origin_persona_id').notNull(),
+    blockedPersonaId: uuid('blocked_persona_id').notNull(),
+    scope: blockScope('scope').notNull().default('origin_persona'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('blocks_origin_target_key').on(t.blockerUserId, t.originPersonaId, t.blockedPersonaId),
+    check('blocks_not_self_check', sql`${t.blockerUserId} <> ${t.blockedUserId}`),
+    foreignKey({ name: 'blocks_origin_persona_fk', columns: [t.originPersonaId, t.blockerUserId], foreignColumns: [personas.id, personas.userId] }),
+    foreignKey({ name: 'blocks_blocked_persona_fk', columns: [t.blockedPersonaId, t.blockedUserId], foreignColumns: [personas.id, personas.userId] }),
+    index('blocks_blocked_user_idx').on(t.blockedUserId, t.blockerUserId),
+  ],
+)
+
+/**
+ * 뮤트(S-04, SYSTEM_DESIGN §6.7.1 Mute, ADR 0033). 팔로우 피드·알림(S-05)에서만 제외하며 지금은 저장과 "내 뮤트 목록"만 있습니다. 상대에게 알리지 않습니다.
+ * muted_user_id는 복합 외래 키로 대상 페르소나의 주인임이 보장되는 사본이고, check가 자기 페르소나 뮤트를 막습니다(응답에 싣지 않음).
+ */
+export const mutes = pgTable(
+  'mutes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    muterUserId: uuid('muter_user_id')
+      .notNull()
+      .references(() => users.id),
+    mutedPersonaId: uuid('muted_persona_id').notNull(),
+    mutedUserId: uuid('muted_user_id').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('mutes_pair_key').on(t.muterUserId, t.mutedPersonaId),
+    check('mutes_not_self_check', sql`${t.muterUserId} <> ${t.mutedUserId}`),
+    foreignKey({ name: 'mutes_muted_persona_fk', columns: [t.mutedPersonaId, t.mutedUserId], foreignColumns: [personas.id, personas.userId] }),
   ],
 )
 

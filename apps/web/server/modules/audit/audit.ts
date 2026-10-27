@@ -143,6 +143,8 @@ export type AuditAction =
   | 'persona.identity_link_update'
   | 'persona.visibility_update'
   | 'persona.project_listing_update'
+  | 'social.block'
+  | 'social.unblock'
 
 export async function recordAudit(
   db: DbExecutor,
