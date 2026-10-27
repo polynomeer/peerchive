@@ -8,7 +8,7 @@
  * 준비(학교 인증·방·가입·글·신고)는 API로 합니다.
  */
 import type { CommunityPostDto, SpaceDetailDto } from '../../web/shared/types/api'
-import { pastTerm, rand } from '../support/api'
+import { createDisplayPersona, pastTerm, rand } from '../support/api'
 import { schoolMailbox, verifyByApi } from '../support/affiliation'
 import { grantOperator } from '../support/db'
 import { expect, expectNoHorizontalScroll, test } from '../support/fixtures'
@@ -24,6 +24,8 @@ test('C-10: 신고 대기열 처리 기한 배지 → 주간 운영 시간 기�
   for (const [u, prefix] of [[author, 'a'], [reporter, 'r']] as const) await verifyByApi(u.api, school.schoolId, domain, prefix)
   const roomName = `E2E 운영방 ${rand(3)}`
   const room = await author.api.post<SpaceDetailDto>('/api/v1/community/spaces', { name: roomName, nameMode: 'display', joinPolicy: 'open' })
+  // 표시명 방에서 쓰려면 표시명 프로필이 있어야 합니다(ADR 0030).
+  await createDisplayPersona(author.api, 'opsauthor')
   await reporter.api.post(`/api/v1/community/spaces/${room.slug}/join`)
   const post = await author.api.post<CommunityPostDto>(`/api/v1/community/boards/${room.boards[0]!.id}/posts`, { title: `운영 글 ${rand(3)}`, body: 'E2E-SENTINEL 본문' })
   await reporter.api.post('/api/v1/reports', { targetType: 'community_post', targetRef: { postId: post.id }, reason: 'spam' })

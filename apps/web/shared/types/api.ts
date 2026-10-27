@@ -2232,6 +2232,7 @@ export type CommunityTimeBucket = 'today' | 'this_week' | 'earlier'
 /**
  * 작성자 표시. 사람 id·핸들·프로필 링크·별칭 id가 없습니다(방장·모더레이터·운영자에게도 같음).
  * anonymous: `글쓴이`(익명 글의 글쓴이)·`익명N`(그 스레드에서 처음 익명으로 쓴 순서). 번호는 그 스레드 안에서만 뜻이 있습니다.
+ * display: 글에 작성 시점에 고정한 표시명 페르소나의 지금 이름(페르소나가 없는 예전 글은 `표시명 없음`, 계정 이름 아님, ADR 0030).
  */
 export interface CommunityAuthorDto {
   kind: 'real' | 'display' | 'anonymous' | 'withdrawn'
@@ -2297,6 +2298,12 @@ export interface CommunityComposerDto {
   anonymityNote: string | null
   /** 실명 방식인데 실명을 입력하지 않음(쓰기 전에 입력, 403 real_name_required). */
   realNameRequired: boolean
+  /**
+   * 고를 수 있는 방식에 표시명이 있는데(표시명 방, 공식 페이지의 표시명 선택) active 표시명 페르소나가 없음. 표시명으로 쓰면 403
+   * display_persona_required이므로 화면이 /settings/personas에서 표시명 프로필을 만들도록 안내합니다(ADR 0030). 공식 페이지는 익명 기본이라
+   * 표시명을 골랐을 때만 막힙니다.
+   */
+  displayPersonaRequired: boolean
   /** 이 공간에서 지금 내 쓰기를 막는 이용 제한(C-06). 본인 응답에만 있고 다른 사람에게는 항상 null입니다. */
   restriction: CommunityWriteRestrictionDto | null
 }
@@ -2412,7 +2419,7 @@ export interface ArchiveTransferDto {
   myConsent: { status: ArchiveConsentStatus; displayMode: ArchiveDisplayMode | null; displayLabel: string | null } | null
   /** 요청한 사람에게만: 상대의 동의 상태(누구인지·고른 이름 없음). */
   counterpart: { status: ArchiveConsentStatus; text: string } | null
-  /** 막힘 Q&A: 내가 고를 수 있는 이름(내 계정 값). */
+  /** 막힘 Q&A: 내가 고를 수 있는 이름. displayName은 내 active 표시명 페르소나의 이름(없으면 null, 계정 이름 아님, ADR 0030). */
   displayOptions: { anonymousLabel: string; displayName: string | null; realName: string | null } | null
   canDecide: boolean
   canCancel: boolean
@@ -2428,6 +2435,7 @@ export interface ArchiveOptionsDto {
   school: { id: string; name: string } | null
   targets: Record<ArchiveTransferTarget, 'source_not_open' | 'not_author' | 'not_question_board' | 'no_accepted_answer' | null>
   projects: Array<{ id: string; title: string }>
+  /** 막힘 Q&A 복사본에 고를 수 있는 표시명: 내 active 표시명 페르소나의 이름(없으면 null, 계정 이름 아님, ADR 0030). */
   displayName: string | null
   hasRealName: boolean
   lengths: { title: number; body: number; answer: number }

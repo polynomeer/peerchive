@@ -28,7 +28,7 @@ import { createPublicProfileHandler, createReadmeCardHandler } from '../server/m
 import { listPersonaActivities, projectPersonaActivity } from '../server/modules/social/activities'
 import { createDisplayPersona, listMyPersonas, resolvePublicPersona, setIdentityLink } from '../server/modules/social/personas'
 import { COMMUNITY_TABLES } from './community-tables'
-import { closeTestDb, createUser, databaseUrl, verifiedAffiliation, withRollback } from './helpers'
+import { closeTestDb, createUser, databaseUrl, expectServiceError, verifiedAffiliation, withRollback } from './helpers'
 
 const ROOT = resolve(__dirname, '../../..')
 const WEB = resolve(__dirname, '..')
@@ -392,12 +392,17 @@ describe.skipIf(!databaseUrl)('S-02 write-time persona and projection guard (Pos
       const aReal = await write(A, 'real', 1)
       const aDisplay = await write(A, 'display', 2)
       const aAnon = await write(A, 'anonymous', 3)
-      const bDisplay = await write(B, 'display', 4)
       expect([aReal.post.personaId, aReal.comment.personaId]).toEqual([A.real!.id, A.real!.id])
       expect([aDisplay.post.personaId, aDisplay.comment.personaId]).toEqual([A.display!.id, A.display!.id])
       expect([aAnon.post.personaId, aAnon.comment.personaId]).toEqual([null, null])
-      // 표시명 페르소나가 없으면 실명 페르소나로 대신하지 않습니다(null).
-      expect([bDisplay.post.personaId, bDisplay.comment.personaId]).toEqual([null, null])
+      // 표시명 페르소나가 없으면 실명 페르소나로 대신하지 않고 쓰기 자체를 막습니다(403 display_persona_required, ADR 0030).
+      await expectServiceError(write(B, 'display', 4), 'FORBIDDEN', 'display_persona_required')
+      // ADR 0030 이전에 페르소나 없이 쓴 표시명 글(persona_id null)
+      const [bDisplayPost] = await tx
+        .insert(communityPosts)
+        .values({ boardId: rooms.display.boardId, spaceId: aDisplay.post.spaceId, authorId: B.userId, nameMode: 'display', personaId: null, title: 't', body: 'b' })
+        .returning()
+      const bDisplay = { post: bDisplayPost! }
 
       const base = { boardId: rooms.anonymous.boardId, spaceId: aAnon.post.spaceId, authorId: A.userId, title: 't', body: 'b' }
       // 익명 글에 페르소나: check 위반
@@ -526,23 +531,39 @@ async function buildWorld(tx: DbExecutor, seed: number) {
     clock += HOUR + r.int(1, 59_999)
     return new Date(clock)
   }
+  /**
+   * 표시명으로 쓰는 사람에게 표시명 페르소나가 없으면 403(ADR 0030)인지 확인하고, 있는 사람으로 바꿉니다(아무도 없으면 null → 건너뜀).
+   * 공식 페이지는 고른 방식, 사용자 방은 지금 공간 방식(바뀐 뒤면 바뀐 방식)이 쓰는 방식입니다.
+   */
+  const writerFor = async (picked: Person, mode: Mode, attempt: () => Promise<unknown>): Promise<Person | null> => {
+    if (mode !== 'display' || picked.display) return picked
+    await expectServiceError(attempt(), 'FORBIDDEN', 'display_persona_required')
+    const able = people.filter((p) => p.display)
+    return able.length ? r.pick(able) : null
+  }
   const writeRound = async (round: number) => {
     for (const space of spaces) {
       const posts = r.int(1, 3)
       for (let i = 0; i < posts; i++) {
-        const author = r.pick(people)
         const requested = space.official ? r.pick(['anonymous', 'display'] as const) : undefined
         const marker = `S02-${seed}-${round}-${items.length}-${crypto.randomUUID().slice(0, 6)}`
         const at = tick()
-        const post = await createPost(tx, { userId: author.userId }, space.boardId, { title: `제목 ${marker}`, body: `본문 ${marker}`, ...(requested && { nameMode: requested }) }, at)
+        const input = { title: `제목 ${marker}`, body: `본문 ${marker}`, ...(requested && { nameMode: requested }) }
+        const picked = r.pick(people)
+        const author = await writerFor(picked, requested ?? space.mode, () => createPost(tx, { userId: picked.userId }, space.boardId, input, at))
+        if (!author) continue
+        const post = await createPost(tx, { userId: author.userId }, space.boardId, input, at)
         items.push({ kind: 'post', id: post.id, postId: post.id, authorId: author.userId, mode: post.nameMode, title: `제목 ${marker}`, body: `본문 ${marker}`, createdAt: at })
         const comments = r.int(0, 2)
         for (let c = 0; c < comments; c++) {
-          const who = r.pick(people)
           const cMarker = `S02C-${seed}-${round}-${items.length}-${crypto.randomUUID().slice(0, 6)}`
           const cAt = tick()
           const cMode = space.official ? r.pick(['anonymous', 'display'] as const) : undefined
-          const thread = await createComment(tx, { userId: who.userId }, post.id, { body: `댓글 ${cMarker}`, ...(cMode && { nameMode: cMode }) }, cAt)
+          const cInput = { body: `댓글 ${cMarker}`, ...(cMode && { nameMode: cMode }) }
+          const pickedC = r.pick(people)
+          const who = await writerFor(pickedC, cMode ?? space.mode, () => createComment(tx, { userId: pickedC.userId }, post.id, cInput, cAt))
+          if (!who) continue
+          const thread = await createComment(tx, { userId: who.userId }, post.id, cInput, cAt)
           const mine = thread.comments.flatMap((x) => [x, ...x.replies]).find((x) => x.body === `댓글 ${cMarker}`)!
           items.push({ kind: 'comment', id: mine.id, postId: post.id, authorId: who.userId, mode: mine.nameMode, title: null, body: `댓글 ${cMarker}`, createdAt: cAt })
         }

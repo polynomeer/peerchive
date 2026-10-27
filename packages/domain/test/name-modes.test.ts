@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   NAME_MODES,
   NAME_MODE_CHANGE_DELAY_MS,
+  DISPLAY_PERSONA_MISSING_LABEL,
   REAL_NAME_MISSING_LABEL,
   WITHDRAWN_AUTHOR_LABEL,
   type AuthorProfileBits,
@@ -33,7 +34,7 @@ const author = (overrides: Partial<AuthorProfileBits> = {}): AuthorProfileBits =
   userId: 'u-author',
   status: 'active',
   purged: false,
-  displayName: '지민',
+  displayPersonaName: '지민',
   realName: '김지민',
   ...overrides,
 })
@@ -152,10 +153,18 @@ describe('resolveAuthorDisplay', () => {
     expect(resolveAuthorDisplay('real', author({ realName: '   ' }), null).label).toBe(REAL_NAME_MISSING_LABEL)
   })
 
-  it('display → the account display name, never the real name', () => {
+  it('display → the display persona frozen on the item, never the real name', () => {
     const d = resolveAuthorDisplay('display', author(), null)
-    expect(d).toEqual({ kind: 'display', label: '지민', mine: false })
+    expect(d).toEqual({ kind: 'display', label: '지민', displayPersonaMissing: false, mine: false })
     expect(JSON.stringify(d)).not.toContain('김지민')
+  })
+
+  it('display without a frozen display persona (legacy persona_id null) → neutral label, never the real name (ADR 0030)', () => {
+    for (const displayPersonaName of [null, '   ']) {
+      const d = resolveAuthorDisplay('display', author({ displayPersonaName }), { userId: 'u-author' })
+      expect(d).toEqual({ kind: 'display', label: DISPLAY_PERSONA_MISSING_LABEL, displayPersonaMissing: true, mine: true })
+      expect(JSON.stringify(d)).not.toContain('김지민')
+    }
   })
 
   it('anonymous → no name, id, handle or real name, even for the owner/moderator/operator viewer', () => {
@@ -173,7 +182,7 @@ describe('resolveAuthorDisplay', () => {
 
   it('withdrawn authors of real/display posts show a fixed label', () => {
     for (const mode of ['real', 'display'] as const) {
-      expect(resolveAuthorDisplay(mode, author({ status: 'deleted', purged: true, realName: null, displayName: '탈퇴한 사용자' }), { userId: 'u-author' })).toEqual({
+      expect(resolveAuthorDisplay(mode, author({ status: 'deleted', purged: true, realName: null, displayPersonaName: '탈퇴한 사용자' }), { userId: 'u-author' })).toEqual({
         kind: 'withdrawn',
         label: WITHDRAWN_AUTHOR_LABEL,
         mine: false,

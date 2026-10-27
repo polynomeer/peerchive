@@ -111,15 +111,16 @@ describe('hash binding', () => {
 })
 
 describe('display options', () => {
-  const names = { displayName: '  코딩하는 곰  ', realName: null }
-  it('anonymous uses the role label; display uses the account display name; real needs a real name', () => {
+  const names = { displayPersonaName: '  코딩하는 곰  ', realName: null }
+  it('anonymous uses the role label; display uses the display persona name (never the account name); real needs a real name', () => {
     expect(archiveDisplayLabel('asker', 'anonymous', names)).toEqual({ ok: true, label: COURSE_QA_ANONYMOUS_LABELS.asker, anonymous: true })
     expect(archiveDisplayLabel('answerer', 'anonymous', names)).toEqual({ ok: true, label: '답한 학생', anonymous: true })
     expect(archiveDisplayLabel('asker', 'display', names)).toEqual({ ok: true, label: '코딩하는 곰', anonymous: false })
     expect(archiveDisplayLabel('asker', 'real', names)).toEqual({ ok: false, reason: 'real_name_required' })
-    expect(archiveDisplayLabel('asker', 'real', { displayName: 'x', realName: '홍길동' })).toEqual({ ok: true, label: '홍길동', anonymous: false })
-    expect(archiveDisplayLabel('asker', 'display', { displayName: ' ', realName: null })).toEqual({ ok: false, reason: 'display_name_missing' })
-    const long = archiveDisplayLabel('asker', 'display', { displayName: '가'.repeat(60), realName: null })
+    expect(archiveDisplayLabel('asker', 'real', { displayPersonaName: 'x', realName: '홍길동' })).toEqual({ ok: true, label: '홍길동', anonymous: false })
+    expect(archiveDisplayLabel('asker', 'display', { displayPersonaName: ' ', realName: null })).toEqual({ ok: false, reason: 'display_persona_required' })
+    expect(archiveDisplayLabel('asker', 'display', { displayPersonaName: null, realName: '홍길동' })).toEqual({ ok: false, reason: 'display_persona_required' })
+    const long = archiveDisplayLabel('asker', 'display', { displayPersonaName: '가'.repeat(60), realName: null })
     expect(long.ok && [...long.label].length).toBe(40)
   })
 })

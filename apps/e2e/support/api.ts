@@ -9,6 +9,7 @@ import type {
   CaseStudyDto,
   ClaimDto,
   LogDto,
+  MyPersonaDto,
   PortfolioEditionDto,
   ProjectDetailDto,
   ProjectDto,
@@ -45,6 +46,16 @@ export class Api {
   get = <T>(path: string) => this.call<T>('GET', path)
   post = <T>(path: string, data?: unknown) => this.call<T>('POST', path, data ?? {})
   patch = <T>(path: string, data: unknown) => this.call<T>('PATCH', path, data)
+}
+
+// ── 페르소나 ───────────────────────────────────────────────────────────────
+
+/** 표시명 프로필(S-01)을 API로 만듭니다. 커뮤니티 표시명 방식으로 쓰려면 이것이 있어야 합니다(ADR 0030). */
+export async function createDisplayPersona(api: Api, label = 'disp'): Promise<{ id: string; handle: string; displayName: string }> {
+  const handle = `${label}-${rand(4)}`.slice(0, 30)
+  const displayName = `표시명${label}${rand(2)}`
+  const created = await api.post<MyPersonaDto>('/api/v1/personas', { handle, displayName })
+  return { id: created.id, handle, displayName }
 }
 
 // ── 과제·멤버 ─────────────────────────────────────────────────────────────

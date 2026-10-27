@@ -134,6 +134,7 @@ const QA_STATUS: Record<MyCourseQaDto['status'], string> = { published: '공개 
             <input id="consent-display" v-model="display" type="radio" name="consent-display" value="display" />
             <label for="consent-display">표시명({{ t.displayOptions.displayName }})</label>
           </div>
+          <p v-else class="hint">표시명으로 보이려면 먼저 <NuxtLink to="/settings/personas">표시명 프로필</NuxtLink>을 만드세요.</p>
           <div v-if="t.displayOptions.realName" class="radio-row">
             <input id="consent-real" v-model="display" type="radio" name="consent-display" value="real" />
             <label for="consent-real">실명({{ t.displayOptions.realName }})</label>

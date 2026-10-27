@@ -8,6 +8,7 @@ import { afterAll, afterEach, describe, expect, it } from 'vitest'
 import { COMMENT_RATE_LIMIT, NAME_MODE_CHANGE_DELAY_MS, POST_RATE_LIMIT } from '@peerchive/domain'
 import {
   analyticsEvents,
+  and,
   auditEvents,
   communityComments,
   communityNotices,
@@ -18,6 +19,7 @@ import {
   hashSubject,
   inArray,
   operators,
+  personas,
   profiles,
   sql,
   threadAliases,
@@ -32,6 +34,7 @@ import { readCommunityWriteBody } from '../server/modules/community/http'
 import { changeMemberRole, joinSpace, leaveSpace } from '../server/modules/community/memberships'
 import { scheduleNameModeChange } from '../server/modules/community/name-modes'
 import { listMyCommunityNotices, markCommunityNoticesRead } from '../server/modules/community/notices'
+import { operatorCommunityItem } from '../server/modules/community/moderation'
 import { assignModerator, createOfficialPage } from '../server/modules/community/official'
 import {
   createComment,
@@ -54,7 +57,7 @@ import { createReport, listMyReports } from '../server/modules/moderation/report
 import { getPublicPortfolioProfile } from '../server/modules/portfolio/public-profile'
 import { hitRateLimit } from '../server/modules/security/rate-limit'
 import type { CommunityCommentDto, CommunityPostDto } from '../shared/types/api'
-import { closeTestDb, createUser, databaseUrl, expectServiceError, minutes, verifiedAffiliation, withRollback } from './helpers'
+import { closeTestDb, createUser, databaseUrl, expectServiceError, insertDisplayPersona, minutes, verifiedAffiliation, withRollback } from './helpers'
 
 const T0 = new Date('2026-11-05T09:00:00Z')
 const at = (n: number) => new Date(T0.getTime() + minutes(n))
@@ -62,13 +65,19 @@ const rand = () => crypto.randomUUID().replace(/-/g, '').slice(0, 10)
 const DB_TIMEOUT = 60_000
 const PEPPER = { NODE_ENV: 'test', PEERCHIVE_ANALYTICS_PEPPER: 'posts-analytics-pepper-for-tests-0123456789abcdef' }
 
-type Person = { userId: string; email: string; handle: string }
+type Person = { userId: string; email: string; handle: string; accountName: string; displayHandle: string | null }
 
-async function person(tx: DbExecutor, schoolId: string | null, displayName = '학생'): Promise<Person> {
+/**
+ * 사용자(실명 프로필 + 학교 인증). 표시명 방식으로 쓰려면 표시명 페르소나가 있어야 하므로(ADR 0030) 기본으로 `displayName` 이름의
+ * 표시명 페르소나를 만들고, 계정 표시 이름은 일부러 다른 값(`계정 …`)으로 둡니다 — 표시명 글이 계정 이름으로 보이면 테스트가 깨집니다.
+ */
+async function person(tx: DbExecutor, schoolId: string | null, displayName = '학생', opts: { displayPersona?: boolean } = {}): Promise<Person> {
   const handle = `p${rand()}`
-  const u = await createUser(tx, { handle, displayName })
+  const accountName = `계정 ${displayName} ${rand()}`
+  const u = await createUser(tx, { handle, displayName: accountName })
+  const persona = opts.displayPersona === false ? null : await insertDisplayPersona(tx, u.id, displayName)
   if (schoolId) await verifiedAffiliation(tx, u.id, schoolId)
-  return { userId: u.id, email: u.email, handle }
+  return { userId: u.id, email: u.email, handle, accountName, displayHandle: persona?.handle ?? null }
 }
 
 async function school(tx: DbExecutor) {
@@ -640,6 +649,80 @@ describe.skipIf(!databaseUrl)('C-04 community posts (PostgreSQL)', () => {
       expect(JSON.stringify(await getSpaceDetail(tx, B, r.slug, at(20)))).not.toContain(sentinel)
       const [u] = await tx.select({ id: users.id }).from(users).where(eq(users.id, A.userId))
       expect(u).toBeTruthy()
+    })
+  }, DB_TIMEOUT)
+
+  it('display mode = display persona (ADR 0030): no persona → 403 display_persona; with one → its name only, never the account name or a handle; legacy null → 표시명 없음; anonymous·real unchanged', async () => {
+    await withRollback(async (tx) => {
+      const { op, schoolId } = await school(tx)
+      const r = await room(tx, schoolId, 'display', 0)
+      const N = await person(tx, schoolId, '페르소나없음', { displayPersona: false })
+      const P = await person(tx, schoolId, '밤의개발자')
+      await joinSpace(tx, N, r.slug, at(1))
+      await joinSpace(tx, P, r.slug, at(1))
+
+      // (a) 표시명 방: 표시명 페르소나가 없으면 글·댓글 모두 403 + requirement, 글쓰기 화면이 미리 알려 줌. 아무것도 쓰이지 않음.
+      expect((await listBoardPosts(tx, N, r.boardId, {}, at(2))).composer).toMatchObject({ nameMode: 'display', displayPersonaRequired: true, realNameRequired: false })
+      const blocked = await expectServiceError(createPost(tx, N, r.boardId, { title: '표시명', body: '본문' }, at(2)), 'FORBIDDEN', 'display_persona_required')
+      expect(blocked.details).toEqual({ requirement: 'display_persona' })
+      const first = await createPost(tx, P, r.boardId, { title: '표시명 글', body: '본문' }, at(3))
+      await expectServiceError(createComment(tx, N, first.id, { body: '댓글' }, at(4)), 'FORBIDDEN', 'display_persona_required')
+      const written = await tx.select({ id: communityPosts.id }).from(communityPosts).where(eq(communityPosts.authorId, N.userId))
+      expect(written).toEqual([])
+      expect(first.composer.displayPersonaRequired).toBe(false)
+
+      // (b) 페르소나가 있으면 그 이름. 응답 JSON 어디에도 계정 이름·실명 handle·표시명 handle·사람 id가 없음(보는 사람이 누구든).
+      expect(first).toMatchObject({ nameMode: 'display', author: { kind: 'display', label: '밤의개발자', mine: true } })
+      const [row] = await tx.select({ personaId: communityPosts.personaId }).from(communityPosts).where(eq(communityPosts.id, first.id))
+      const [displayPersona] = await tx.select().from(personas).where(and(eq(personas.userId, P.userId), eq(personas.kind, 'display')))
+      expect(row!.personaId).toBe(displayPersona!.id)
+      const withComment = await createComment(tx, P, first.id, { body: '내 댓글' }, at(5))
+      expect(flat(withComment)[0]!.author).toMatchObject({ kind: 'display', label: '밤의개발자' })
+      for (const viewer of [r.O, P]) {
+        const json = JSON.stringify([await getPost(tx, viewer, first.id, at(6)), await listBoardPosts(tx, viewer, r.boardId, {}, at(6))])
+        for (const secret of [P.accountName, P.handle, P.displayHandle!, P.userId, displayPersona!.id]) expect(json).not.toContain(secret)
+        expect(json).toContain('밤의개발자')
+      }
+      // 운영자 신고 화면의 작성자 표시도 같은 이름(계정 이름 아님)
+      const opItem = await operatorCommunityItem(tx, { postId: first.id })
+      expect(opItem).toMatchObject({ nameMode: 'display', authorLabel: '밤의개발자' })
+      expect(JSON.stringify(opItem)).not.toContain(P.accountName)
+
+      // 표시명을 바꾸면 지금 이름(같은 정체성), 페르소나를 비활성화해도 이름은 그대로(링크는 원래 없음). 비활성 페르소나로는 새로 쓰지 못함.
+      await tx.update(personas).set({ displayName: '새벽의개발자' }).where(eq(personas.id, displayPersona!.id))
+      expect((await getPost(tx, r.O, first.id, at(7))).author.label).toBe('새벽의개발자')
+      await tx.update(personas).set({ status: 'deactivated' }).where(eq(personas.id, displayPersona!.id))
+      expect((await getPost(tx, r.O, first.id, at(8))).author.label).toBe('새벽의개발자')
+      await expectServiceError(createPost(tx, P, r.boardId, { title: '비활성', body: '본문' }, at(8)), 'FORBIDDEN', 'display_persona_required')
+      expect((await listBoardPosts(tx, P, r.boardId, {}, at(8))).composer.displayPersonaRequired).toBe(true)
+
+      // (c) persona_id가 없는 예전 표시명 글(S-01 이전): 중립 표시 `표시명 없음` — 계정 이름으로 돌아가지 않고 실명 페르소나로 대신하지 않음.
+      const [space] = await tx.select({ id: communitySpaces.id }).from(communitySpaces).where(eq(communitySpaces.slug, r.slug))
+      const [legacy] = await tx
+        .insert(communityPosts)
+        .values({ boardId: r.boardId, spaceId: space!.id, authorId: N.userId, nameMode: 'display', personaId: null, title: '예전 글', body: '본문', createdAt: at(0), updatedAt: at(0) })
+        .returning({ id: communityPosts.id })
+      const legacyView = await getPost(tx, r.O, legacy!.id, at(9))
+      expect(legacyView.author).toEqual({ kind: 'display', label: '표시명 없음', schoolVerified: false, mine: false })
+      expect((await getPost(tx, N, legacy!.id, at(9))).author).toMatchObject({ label: '표시명 없음', mine: true })
+      expect(JSON.stringify(legacyView)).not.toContain(N.accountName)
+      expect((await operatorCommunityItem(tx, { postId: legacy!.id }))!.authorLabel).toBe('표시명 없음')
+
+      // (d) 공식 페이지: 페르소나가 없어도 익명은 그대로, 표시명을 고를 때만 403(글쓰기 화면은 익명 기본 + 안내 플래그).
+      const page = await createOfficialPage(tx, op, { schoolId }, T0)
+      const free = page.boards.find((b) => b.kind === 'free')!
+      expect((await listBoardPosts(tx, N, free.id, {}, at(10))).composer).toMatchObject({ nameMode: 'anonymous', choices: ['anonymous', 'display'], displayPersonaRequired: true })
+      const anon = await createPost(tx, N, free.id, { title: '익명', body: '본문' }, at(10))
+      expect(anon).toMatchObject({ nameMode: 'anonymous', author: { kind: 'anonymous', label: '글쓴이' } })
+      await expectServiceError(createPost(tx, N, free.id, { title: '표시명', body: '본문', nameMode: 'display' }, at(11)), 'FORBIDDEN', 'display_persona_required')
+      await expectServiceError(createComment(tx, N, anon.id, { body: '표시명 댓글', nameMode: 'display' }, at(11)), 'FORBIDDEN', 'display_persona_required')
+      expect((await createComment(tx, N, anon.id, { body: '익명 댓글' }, at(12))).comments[0]!.author).toMatchObject({ kind: 'anonymous', label: '글쓴이' })
+      // 실명 방: 표시명 페르소나와 무관(실명 요구만), 실명 페르소나·실명으로 보임
+      const realRoom = await room(tx, schoolId, 'real', 0)
+      await joinSpace(tx, N, realRoom.slug, at(13))
+      expect((await listBoardPosts(tx, N, realRoom.boardId, {}, at(13))).composer).toMatchObject({ realNameRequired: true, displayPersonaRequired: false })
+      await updateRealName(tx, N, { realName: '김없음' })
+      expect((await createPost(tx, N, realRoom.boardId, { title: '실명', body: '본문' }, at(14))).author).toEqual({ kind: 'real', label: '김없음', schoolVerified: false, mine: true })
     })
   }, DB_TIMEOUT)
 })

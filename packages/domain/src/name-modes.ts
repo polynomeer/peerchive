@@ -22,6 +22,11 @@ export type NameModeChangeStatus = (typeof NAME_MODE_CHANGE_STATUSES)[number]
 export const REAL_NAME_MAX = 30
 /** 실명을 입력하지 않은 사람이 실명 방식 글에 보이는 이름(C-04가 쓰기 전에 실명 입력을 요구하므로 드묾: 실명을 지운 경우). */
 export const REAL_NAME_MISSING_LABEL = '실명 미입력'
+/**
+ * 표시명 페르소나 없이 쓴 표시명 글(S-01 이전, 또는 S-02~ADR 0030 사이에 페르소나 없이 쓴 글: `persona_id`가 null)에 보이는 이름.
+ * 계정 표시 이름(= 실명 프로필의 공개 이름)으로 대신하지 않습니다(ADR 0030).
+ */
+export const DISPLAY_PERSONA_MISSING_LABEL = '표시명 없음'
 /** 탈퇴(정리)한 작성자. 실명·표시명 글에서 이름 대신 씁니다. */
 export const WITHDRAWN_AUTHOR_LABEL = '탈퇴한 사용자'
 
@@ -125,14 +130,20 @@ export function nameModeAtWrite(space: WriteSpaceFacts, now: Date, requested?: u
 
 // ── 작성자 표시(C-04 계약) ───────────────────────────────────────────────
 
-/** 작성자 쪽 재료. 작성 시점이 아니라 읽는 시점의 값(이름을 고치면 실명·표시명 글의 이름도 따라감, 방식은 고정). */
+/**
+ * 작성자 쪽 재료. 작성 시점이 아니라 읽는 시점의 값(이름을 고치면 실명·표시명 글의 이름도 따라감, 방식은 고정).
+ * 계정 표시 이름(users.display_name)은 실명 프로필의 공개 이름이라 이 타입에 두지 않습니다(표시명 글이 그 이름으로 돌아갈 길을 없앰, ADR 0030).
+ */
 export interface AuthorProfileBits {
   userId: string
   status: 'active' | 'suspended' | 'deleted'
   /** 탈퇴 정리를 마쳤는지(users.purged_at). */
   purged: boolean
-  /** 계정 표시 이름(users.display_name). display 방식의 이름. P2 RoomProfile·S-01 Persona가 생기면 그 값으로 바뀝니다(ADR 0020). */
-  displayName: string
+  /**
+   * display 방식 글의 이름: **그 글에 작성 시점에 고정한 표시명 페르소나**(persona_id, kind = display)의 읽는 시점 이름(personas.display_name).
+   * 글마다 정합니다. persona_id가 없으면 null → DISPLAY_PERSONA_MISSING_LABEL. 실명 페르소나·계정 이름으로 대신하지 않습니다(ADR 0030).
+   */
+  displayPersonaName: string | null
   /** 실명(users.real_name, 선택). real 방식 글에서만 씁니다. */
   realName: string | null
   /** 학교를 연결한 공간에서 그 학교 active 인증이 있는지(§6.7 "실명" — 이름 옆에 인증 여부만). 학교 무관 공간이면 false. */
@@ -146,8 +157,8 @@ export interface AuthorViewer {
 export type AuthorDisplay =
   /** 실명 방식: 계정의 실명(없으면 REAL_NAME_MISSING_LABEL). schoolVerified는 학교 연결 공간의 인증 여부만. */
   | { kind: 'real'; label: string; realNameMissing: boolean; schoolVerified: boolean; mine: boolean }
-  /** 표시명 방식: 계정 표시 이름. */
-  | { kind: 'display'; label: string; mine: boolean }
+  /** 표시명 방식: 글에 고정한 표시명 페르소나의 이름(없으면 DISPLAY_PERSONA_MISSING_LABEL). 핸들·프로필 링크는 없습니다. */
+  | { kind: 'display'; label: string; displayPersonaMissing: boolean; mine: boolean }
   /**
    * 익명: 이름·id·핸들 없음. 스레드 안 번호(`글쓴이`·`익명1`…)는 C-04가 ThreadAlias로 계산해 이 자리에 넣습니다.
    * mine은 보는 사람이 작성자 본인일 때만 true이며 그 사람의 응답에만 들어갑니다(다른 사람과 연결하는 키가 아님).
@@ -170,7 +181,8 @@ export function resolveAuthorDisplay(modeAtWrite: NameMode, author: AuthorProfil
     const name = author.realName?.trim() || null
     return { kind: 'real', label: name ?? REAL_NAME_MISSING_LABEL, realNameMissing: !name, schoolVerified: !!author.schoolVerified, mine }
   }
-  return { kind: 'display', label: author.displayName, mine }
+  const persona = author.displayPersonaName?.trim() || null
+  return { kind: 'display', label: persona ?? DISPLAY_PERSONA_MISSING_LABEL, displayPersonaMissing: !persona, mine }
 }
 
 /** 실명 입력 검사(NFC·공백 하나로·길이·제어 문자). 빈 값·null은 지우기. */

@@ -245,7 +245,7 @@ describe.skipIf(!databaseUrl)('name mode changes (PostgreSQL)', () => {
       expect(nameModeNow('real', await loadScheduledChange(tx, r.spaceId), EFFECTIVE).mode).toBe('anonymous')
       // 표시: 실명 글은 실명, 익명 글은 익명(보는 사람이 방장이어도 같음)
       const [u] = await tx.select().from(users).where(eq(users.id, r.M.userId))
-      const bits = { userId: u!.id, status: u!.status, purged: u!.purgedAt !== null, displayName: u!.displayName, realName: u!.realName }
+      const bits = { userId: u!.id, status: u!.status, purged: u!.purgedAt !== null, displayPersonaName: null, realName: u!.realName }
       expect(resolveAuthorDisplay(before[0]!, bits, r.O).label).toBe('김멤버')
       expect(resolveAuthorDisplay(afterDue, bits, r.O)).toEqual({ kind: 'anonymous', label: null, threadAlias: 'computed_by_thread', mine: false })
     })

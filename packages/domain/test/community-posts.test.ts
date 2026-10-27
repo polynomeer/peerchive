@@ -132,7 +132,7 @@ describe('thread aliases (C-04, §8.5)', () => {
 })
 
 describe('author view (resolveAuthorDisplay + thread alias)', () => {
-  const author: AuthorProfileBits = { userId: 'A', status: 'active', purged: false, displayName: '지민', realName: '김지민', schoolVerified: true }
+  const author: AuthorProfileBits = { userId: 'A', status: 'active', purged: false, displayPersonaName: '지민', realName: '김지민', schoolVerified: true }
 
   it('anonymous items carry only the thread label; moderators/owners/operators see the same; mine only for the author', () => {
     const forOwner = threadAuthorView(resolveAuthorDisplay('anonymous', author, { userId: 'owner' }), 2, true)

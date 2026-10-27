@@ -16,7 +16,11 @@
  * - C-09(ADR 0025): 질문 게시판 글의 글쓴이는 최상위 댓글 하나를 "채택된 답변"으로 고릅니다(바꾸기·풀기). 글 응답에 채택 여부와
  *   "아카이브로 옮겨짐" 표시, 보는 사람이 관련된 옮기기 요청 요약(archive-transfers.ts)이 붙습니다. 글·답변을 지우면 진행 중 옮기기는 취소됩니다.
  * - **작성 시점 페르소나(S-02, ADR 0029)**: 실명·표시명 글·댓글은 그 순간의 같은 종류 페르소나 id를 `persona_id`에 함께 고정합니다(없으면 null).
- *   익명은 항상 null(DB check). 표시명 글을 실명 페르소나에 붙이지 않습니다(DB 트리거가 종류·주인을 확인). 작성자 표시는 아직 이 열을 쓰지 않습니다.
+ *   익명은 항상 null(DB check). 표시명 글을 실명 페르소나에 붙이지 않습니다(DB 트리거가 종류·주인을 확인).
+ * - **표시명 = 표시명 페르소나(ADR 0030)**: 표시명 방식으로 쓰려면 active 표시명 페르소나가 있어야 합니다(없으면 403 `display_persona_required`
+ *   + `requirement: 'display_persona'`, 실명 방식의 `real_name_required`와 같은 모양). 표시명 글·댓글의 작성자 이름은 고정한 persona_id의
+ *   지금 표시명이고(핸들·프로필 링크 없음), persona_id가 없는 예전 표시명 글은 `표시명 없음`입니다. 계정 표시 이름(= 실명 프로필의 공개 이름)은
+ *   어디에도 쓰지 않습니다.
  * - 감사 기록을 남기지 않습니다: 작성자 id와 글 id를 한 행에 남기면 익명 글의 작성자를 찾는 길(C-06의 사유 기록 경로 밖)이 생기기 때문입니다.
  *   분석 이벤트는 허용 목록(게시판 종류·방식·답글 여부·대상 종류)만, 익명 글·댓글은 사용자 키 없이(unlinked) 남깁니다.
  */
@@ -80,7 +84,7 @@ import { hitRateLimit } from '../security/rate-limit'
 import { parseInput } from '../validation'
 import { type SpaceContext, loadReadableSpace, membershipFacts, writeRestricted } from './access'
 import { cancelTransfersForAnswerChangeInTx, cancelTransfersForSourceInTx, postArchiveInfo } from './archive-transfers'
-import { loadScheduledChange } from './name-modes'
+import { activeDisplayPersona, displayPersonaNames, displayPersonaRequiredError, loadScheduledChange } from './name-modes'
 import type {
   BoardPostsDto,
   CommunityAuthorDto,
@@ -148,7 +152,9 @@ async function composerFor(db: DbExecutor, ctx: SpaceContext, board: BoardRow, n
   const m = membershipFacts(ctx.membership)
   const allowed =
     target === 'post' ? canWriteBoard(ctx.viewer, ctx.facts, m, boardFacts(board)) : canCommentOnBoard(ctx.viewer, ctx.facts, m, boardFacts(board))
+  const choices: NameMode[] = official ? ['anonymous', 'display'] : [mode]
   const [me] = mode === 'real' ? await db.select({ realName: users.realName }).from(users).where(eq(users.id, ctx.viewer.userId)).limit(1) : []
+  const displayPersona = choices.includes('display') ? await activeDisplayPersona(db, ctx.viewer.userId) : null
   return {
     canWrite: allowed && ctx.space.row.status === 'active',
     restriction: ctx.viewer.writeRestriction
@@ -160,29 +166,37 @@ async function composerFor(db: DbExecutor, ctx: SpaceContext, board: BoardRow, n
         }
       : null,
     nameMode: mode,
-    choices: official ? ['anonymous', 'display'] : [mode],
+    choices,
     note: composerNameModeNote(ctx.space.row.kind, mode),
     anonymityNote: official || mode === 'anonymous' ? ANONYMITY_OPERATOR_NOTE : null,
     realNameRequired: mode === 'real' && !me?.realName,
+    displayPersonaRequired: choices.includes('display') && !displayPersona,
   }
 }
 
 // ── 작성자 표시 ──────────────────────────────────────────────────────────
 
+/** 사람 쪽 재료(글마다 다른 표시명 페르소나 이름은 authorOf가 붙임). */
+type AuthorBase = Omit<AuthorProfileBits, 'displayPersonaName'>
+type AuthoredItem = { authorId: string; nameMode: NameMode; personaId: string | null }
+
 interface ThreadContext {
   ctx: SpaceContext
   now: Date
-  authors: Map<string, AuthorProfileBits>
+  authors: Map<string, AuthorBase>
+  /** 표시명 글·댓글에 고정한 persona_id → 지금 표시명(kind = display 행만). */
+  displayNames: Map<string, string>
   aliases: Map<string, Map<string, number>>
   bucket: (mode: NameMode) => boolean
 }
 
 /** 작성자 재료(읽는 시점의 값). 실명 글이 있는 학교 연결 공간이면 그 학교 인증 여부도. */
-async function loadAuthors(db: DbExecutor, ctx: SpaceContext, items: ReadonlyArray<{ authorId: string; nameMode: NameMode }>): Promise<Map<string, AuthorProfileBits>> {
+async function loadAuthors(db: DbExecutor, ctx: SpaceContext, items: ReadonlyArray<AuthoredItem>): Promise<Map<string, AuthorBase>> {
   const ids = [...new Set(items.map((i) => i.authorId))]
   if (ids.length === 0) return new Map()
+  // 계정 표시 이름(users.display_name)은 읽지 않습니다: 실명 프로필의 공개 이름이라 표시명 글에 쓰면 두 정체성이 이어집니다(ADR 0030).
   const rows = await db
-    .select({ id: users.id, status: users.status, purgedAt: users.purgedAt, displayName: users.displayName, realName: users.realName })
+    .select({ id: users.id, status: users.status, purgedAt: users.purgedAt, realName: users.realName })
     .from(users)
     .where(inArray(users.id, ids))
   const realAuthors = [...new Set(items.filter((i) => i.nameMode === 'real').map((i) => i.authorId))]
@@ -204,7 +218,7 @@ async function loadAuthors(db: DbExecutor, ctx: SpaceContext, items: ReadonlyArr
   return new Map(
     rows.map((r) => [
       r.id,
-      { userId: r.id, status: r.status, purged: r.purgedAt !== null, displayName: r.displayName, realName: r.realName, schoolVerified: verified.has(r.id) },
+      { userId: r.id, status: r.status, purged: r.purgedAt !== null, realName: r.realName, schoolVerified: verified.has(r.id) },
     ]),
   )
 }
@@ -221,15 +235,21 @@ async function loadAliases(db: DbExecutor, postIds: string[]): Promise<Map<strin
   return out
 }
 
-async function threadContext(db: DbExecutor, ctx: SpaceContext, items: ReadonlyArray<{ authorId: string; nameMode: NameMode }>, postIds: string[], now: Date): Promise<ThreadContext> {
-  const [authors, aliases] = await Promise.all([loadAuthors(db, ctx, items), loadAliases(db, postIds)])
+async function threadContext(db: DbExecutor, ctx: SpaceContext, items: ReadonlyArray<AuthoredItem>, postIds: string[], now: Date): Promise<ThreadContext> {
+  const [authors, aliases, displayNames] = await Promise.all([
+    loadAuthors(db, ctx, items),
+    loadAliases(db, postIds),
+    displayPersonaNames(db, items.filter((i) => i.nameMode === 'display').map((i) => i.personaId)),
+  ])
   // 공식 페이지는 멤버 수를 세지 않습니다(학교 인증 구성원 전체). 사용자 방은 loadSpaceContext가 센 active 멤버 수.
-  return { ctx, now, authors, aliases, bucket: (mode) => shouldBucketTimes({ kind: ctx.space.row.kind, activeMembers: ctx.facts.activeMembers }, mode) }
+  return { ctx, now, authors, displayNames, aliases, bucket: (mode) => shouldBucketTimes({ kind: ctx.space.row.kind, activeMembers: ctx.facts.activeMembers }, mode) }
 }
 
-function authorOf(tc: ThreadContext, postId: string, item: { authorId: string; nameMode: NameMode; status: CommunityItemStatus }): CommunityAuthorDto {
-  const bits = tc.authors.get(item.authorId) ?? { userId: item.authorId, status: 'deleted' as const, purged: true, displayName: '', realName: null }
-  const display = resolveAuthorDisplay(item.nameMode, bits, { userId: tc.ctx.viewer.userId })
+function authorOf(tc: ThreadContext, postId: string, item: AuthoredItem & { status: CommunityItemStatus }): CommunityAuthorDto {
+  const base = tc.authors.get(item.authorId) ?? { userId: item.authorId, status: 'deleted' as const, purged: true, realName: null }
+  // 표시명 이름은 이 글에 고정한 표시명 페르소나에서만(없으면 null → `표시명 없음`).
+  const displayPersonaName = item.nameMode === 'display' && item.personaId ? (tc.displayNames.get(item.personaId) ?? null) : null
+  const display = resolveAuthorDisplay(item.nameMode, { ...base, displayPersonaName }, { userId: tc.ctx.viewer.userId })
   return threadAuthorView(display, tc.aliases.get(postId)?.get(item.authorId), isOpenItem(item.status))
 }
 
@@ -460,10 +480,16 @@ function bodyOrThrow(raw: unknown, max: number): string {
 }
 
 /**
- * 같은 트랜잭션에서(공간 행 FOR SHARE 잠금 뒤) 고정할 방식. 실명 방식인데 실명이 없으면 403 `real_name_required`(쓰기 전에 입력, ADR 0020).
+ * 같은 트랜잭션에서(공간 행 FOR SHARE 잠금 뒤) 고정할 방식과 페르소나. 실명 방식인데 실명이 없으면 403 `real_name_required`(쓰기 전에 입력, ADR 0020),
+ * 표시명 방식인데 active 표시명 페르소나가 없으면 403 `display_persona_required`(ADR 0030).
  * 공식 페이지에서 실명을 고르면 422 `nameMode: real_not_allowed`, 사용자 방에서 공간 방식과 다른 방식을 고르면 422 `nameMode: mode_fixed`.
  */
-async function decideNameMode(tx: DbExecutor, ctx: SpaceContext, now: Date, requested: NameMode | null | undefined): Promise<NameMode> {
+async function decideNameMode(
+  tx: DbExecutor,
+  ctx: SpaceContext,
+  now: Date,
+  requested: NameMode | null | undefined,
+): Promise<{ mode: NameMode; personaId: string | null }> {
   const official = isOfficialKind(ctx.space.row.kind)
   const scheduled = official ? null : await loadScheduledChange(tx, ctx.space.row.id)
   const decided = nameModeAtWrite(
@@ -480,12 +506,17 @@ async function decideNameMode(tx: DbExecutor, ctx: SpaceContext, now: Date, requ
     const [me] = await tx.select({ realName: users.realName }).from(users).where(eq(users.id, ctx.viewer.userId)).limit(1)
     if (!me?.realName) throw new ServiceError('FORBIDDEN', 'real_name_required', undefined, { requirement: 'real_name' })
   }
-  return decided.mode
+  if (decided.mode === 'display') {
+    const persona = await activeDisplayPersona(tx, ctx.viewer.userId)
+    if (!persona) throw displayPersonaRequiredError()
+    return { mode: 'display', personaId: persona.id }
+  }
+  return { mode: decided.mode, personaId: await writerPersonaId(tx, ctx.viewer.userId, decided.mode) }
 }
 
 /**
- * 작성 시점에 고정할 페르소나(S-02, SYSTEM_DESIGN §6.7.1 "글의 페르소나 귀속"): real → 실명 페르소나, display → 표시명 페르소나, 없으면 null.
- * anonymous는 조회하지 않고 null입니다(0단계 글은 페르소나와 이어지지 않음).
+ * 작성 시점에 고정할 페르소나(S-02, SYSTEM_DESIGN §6.7.1 "글의 페르소나 귀속"): real → 실명 페르소나(없으면 null).
+ * display는 decideNameMode가 active 표시명 페르소나를 요구해 그 id를 씁니다(ADR 0030). anonymous는 조회하지 않고 null입니다(0단계 글은 페르소나와 이어지지 않음).
  */
 async function writerPersonaId(tx: DbExecutor, userId: string, mode: NameMode): Promise<string | null> {
   const kind = personaKindForNameMode(mode)
@@ -508,7 +539,7 @@ async function rateLimitOrThrow(tx: DbExecutor, scope: string, userId: string, r
 
 /**
  * POST /community/boards/:id/posts {title, body, nameMode?} — 201 + 글. 401, 403 `write_not_allowed`(공지 게시판은 운영진·모더레이터,
- * 공식 학과 페이지는 같은 학과)·`real_name_required`, 404(읽을 수 없음), 409 `space_not_active`, 422 `title`·`body`·`nameMode`, 429(시간당 10개).
+ * 공식 학과 페이지는 같은 학과)·`real_name_required`·`display_persona_required`, 404(읽을 수 없음), 409 `space_not_active`, 422 `title`·`body`·`nameMode`, 429(시간당 10개).
  */
 export async function createPost(db: DbExecutor, actor: Actor, boardId: unknown, rawInput: unknown, now = new Date()): Promise<CommunityPostDto> {
   const input = parseInput(createPostSchema, rawInput)
@@ -519,7 +550,7 @@ export async function createPost(db: DbExecutor, actor: Actor, boardId: unknown,
     await shareLockSpace(tx, board.spaceId)
     const ctx = await loadReadableSpace(tx, actor, board.spaceId, false, now)
     assertWritable(ctx, canWriteBoard(ctx.viewer, ctx.facts, membershipFacts(ctx.membership), boardFacts(board)))
-    const mode = await decideNameMode(tx, ctx, now, input.nameMode)
+    const { mode, personaId } = await decideNameMode(tx, ctx, now, input.nameMode)
     await rateLimitOrThrow(tx, 'community_post_create', actor.userId, POST_RATE_LIMIT, now)
     const [post] = await tx
       .insert(communityPosts)
@@ -528,7 +559,7 @@ export async function createPost(db: DbExecutor, actor: Actor, boardId: unknown,
         spaceId: board.spaceId,
         authorId: actor.userId,
         nameMode: mode,
-        personaId: await writerPersonaId(tx, actor.userId, mode),
+        personaId,
         title,
         body,
         createdAt: now,
@@ -572,7 +603,7 @@ export async function createComment(db: DbExecutor, actor: Actor, postId: unknow
       if (!isOpenItem(parent.status)) throw conflict('parent_not_open')
       parentId = parent.id
     }
-    const mode = await decideNameMode(tx, ctx, now, input.nameMode)
+    const { mode, personaId } = await decideNameMode(tx, ctx, now, input.nameMode)
     await rateLimitOrThrow(tx, 'community_comment_create', actor.userId, COMMENT_RATE_LIMIT, now)
     await tx
       .insert(communityComments)
@@ -581,7 +612,7 @@ export async function createComment(db: DbExecutor, actor: Actor, postId: unknow
         parentCommentId: parentId,
         authorId: actor.userId,
         nameMode: mode,
-        personaId: await writerPersonaId(tx, actor.userId, mode),
+        personaId,
         body,
         createdAt: now,
         updatedAt: now,

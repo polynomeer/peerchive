@@ -30,7 +30,7 @@ import { createReport } from '../server/modules/moderation/reports'
 import { setReportSlaTargetsForTesting } from '../server/modules/moderation/sla'
 import { deepHealth } from '../server/modules/ops/health'
 import { deleteMyOpsTime, listMyOpsTime, saveMyOpsTime } from '../server/modules/ops/time-log'
-import { closeTestDb, createUser, databaseUrl, expectServiceError, verifiedAffiliation, withRollback } from './helpers'
+import { closeTestDb, createUser, databaseUrl, expectServiceError, insertDisplayPersona, verifiedAffiliation, withRollback } from './helpers'
 
 const HOUR = 60 * 60 * 1000
 const T0 = new Date('2093-03-02T01:00:00Z') // 서울 2093-03-02(월) 10:00
@@ -45,6 +45,8 @@ type Person = { userId: string; displayName: string }
 async function person(tx: DbExecutor, schoolId: string | null, label = '학생'): Promise<Person> {
   const displayName = `${label}${rand().slice(0, 5)}`
   const u = await createUser(tx, { displayName, handle: `o${rand()}` })
+  // 표시명 방에서 쓰려면 표시명 페르소나가 있어야 합니다(ADR 0030).
+  await insertDisplayPersona(tx, u.id, displayName)
   if (schoolId) await verifiedAffiliation(tx, u.id, schoolId)
   return { userId: u.id, displayName }
 }

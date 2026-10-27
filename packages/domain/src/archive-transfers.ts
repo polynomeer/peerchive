@@ -152,21 +152,22 @@ export function isTransferExpired(t: { status: ArchiveTransferStatus; expiresAt:
 
 // ── 복사본 이름 ──────────────────────────────────────────────────────────
 
-export type ArchiveLabelResult = { ok: true; label: string; anonymous: boolean } | { ok: false; reason: 'real_name_required' | 'display_name_missing' }
+export type ArchiveLabelResult = { ok: true; label: string; anonymous: boolean } | { ok: false; reason: 'real_name_required' | 'display_persona_required' }
 
 /**
- * 막힘 Q&A에 보일 이름. anonymous → "질문한 학생"/"답한 학생", display → 계정 표시명, real → 계정 실명(입력한 사람만).
+ * 막힘 Q&A에 보일 이름. anonymous → "질문한 학생"/"답한 학생", display → 표시명 페르소나의 이름(있는 사람만, 계정 표시 이름이 아님 —
+ * 계정 표시 이름은 실명 프로필의 공개 이름, ADR 0030), real → 계정 실명(입력한 사람만).
  * 원 글이 익명이었어도 고를 수 있습니다(복사본만 그 이름으로 보임, 원 글과의 연결은 공개 응답에 없음).
  */
 export function archiveDisplayLabel(
   role: 'asker' | 'answerer',
   mode: ArchiveDisplayMode,
-  names: { displayName: string | null; realName: string | null },
+  names: { displayPersonaName: string | null; realName: string | null },
 ): ArchiveLabelResult {
   if (mode === 'anonymous') return { ok: true, label: COURSE_QA_ANONYMOUS_LABELS[role], anonymous: true }
-  const raw = mode === 'real' ? names.realName : names.displayName
+  const raw = mode === 'real' ? names.realName : names.displayPersonaName
   const value = raw?.replace(/\s+/g, ' ').trim() ?? ''
-  if (!value) return { ok: false, reason: mode === 'real' ? 'real_name_required' : 'display_name_missing' }
+  if (!value) return { ok: false, reason: mode === 'real' ? 'real_name_required' : 'display_persona_required' }
   return { ok: true, label: [...value].slice(0, ARCHIVE_LABEL_MAX).join(''), anonymous: false }
 }
 

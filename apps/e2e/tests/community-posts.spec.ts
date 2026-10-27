@@ -3,12 +3,14 @@
  * - 익명 방에서 두 멤버가 한 스레드로 대화: 글쓴이는 `글쓴이`, 다른 사람은 `익명1`(같은 사람은 같은 번호), 글쓰기 화면에 "이 방은 익명으로 표시됩니다".
  * - 두 번째 스레드는 번호가 따로 매겨짐(첫 스레드의 `글쓴이`가 둘째 스레드에서는 `익명1`).
  * - 방장(운영진) 화면도 같은 표시이고, API JSON에 사람 id·이메일·핸들이 없음. 공감(비추천 없음)·신고 대화상자.
+ * - 표시명 방(ADR 0030): 표시명 프로필이 없으면 글쓰기 화면이 /settings/personas로 안내하고 API는 403 `display_persona_required`,
+ *   만든 뒤에는 글이 그 표시명으로 보이고 화면·JSON에 계정 이름·실명 핸들·표시명 핸들이 없음.
  * - 360px(mobile project)에서 가로 스크롤 없음. 문서 제목은 고정(C-05).
  * 준비(학교 인증·방 만들기·가입)는 API로 합니다(그 화면은 community.spec.ts·affiliation.spec.ts가 확인).
  */
 import type { Page } from '@playwright/test'
 import type { CommunityPostDto, SpaceDetailDto } from '../../web/shared/types/api'
-import { pastTerm, rand } from '../support/api'
+import { createDisplayPersona, pastTerm, rand } from '../support/api'
 import { schoolMailbox, verifyByApi } from '../support/affiliation'
 import { expect, expectNoHorizontalScroll, test } from '../support/fixtures'
 
@@ -123,4 +125,52 @@ test('C-04: 익명 방 스레드 대화(글쓴이·익명1), 둘째 스레드는
   await outsider.page.goto(`/community/p/${post1}`)
   await expect(outsider.page.getByRole('heading', { level: 1, name: '글을 찾을 수 없습니다' })).toBeVisible()
   expect(await outsider.page.content()).not.toContain(title1)
+})
+
+test('ADR 0030: 표시명 방은 표시명 프로필로만 쓰고, 계정 이름·핸들 없이 그 표시명으로 보인다', async ({ newUser }) => {
+  test.setTimeout(150_000)
+  const owner = await newUser('dispowner')
+  const writer = await newUser('dispwriter')
+  const school = await pastTerm(owner.api)
+  const { domain } = schoolMailbox(school.schoolId)
+  await verifyByApi(owner.api, school.schoolId, domain, 'o')
+  await verifyByApi(writer.api, school.schoolId, domain, 'w')
+  await createDisplayPersona(owner.api, 'dispowner')
+  const room = await owner.api.post<SpaceDetailDto>('/api/v1/community/spaces', { name: `E2E 표시명방 ${rand(3)}`, nameMode: 'display', joinPolicy: 'open' })
+  await writer.api.post(`/api/v1/community/spaces/${room.slug}/join`)
+  const boardId = room.boards[0]!.id
+
+  // 표시명 프로필 없음: 글쓰기 화면이 만들라고 안내(링크), API는 403 + requirement
+  const page = writer.page
+  await page.goto(`/community/b/${boardId}`)
+  await expect(page.getByTestId('name-mode-note')).toHaveText('이 방은 표시명으로 표시됩니다.')
+  const prompt = page.getByTestId('display-persona-required')
+  await expect(prompt).toBeVisible()
+  await expect(prompt.getByRole('link', { name: '표시명 프로필' })).toHaveAttribute('href', '/settings/personas')
+  const denied = await writer.api.raw('POST', `/api/v1/community/boards/${boardId}/posts`, { title: '막힘', body: '막혀야 함' })
+  expect(denied.status()).toBe(403)
+  expect(await denied.json()).toMatchObject({ data: { code: 'display_persona_required', requirement: 'display_persona' } })
+  await expectNoHorizontalScroll(page)
+
+  // 표시명 프로필을 만든 뒤: 안내가 사라지고, 글이 그 표시명으로 보임
+  const persona = await createDisplayPersona(writer.api, 'dispwriter')
+  const title = `표시명 글 ${rand(3)}`
+  await page.goto(`/community/b/${boardId}`)
+  await expect(page.getByTestId('display-persona-required')).toHaveCount(0)
+  await page.getByLabel('제목').fill(title)
+  await page.getByLabel('내용').fill('표시명으로 쓰는 글')
+  await page.getByRole('button', { name: '글 올리기' }).click()
+  await page.waitForURL(/\/community\/p\/[0-9a-f-]{36}$/)
+  await expect(page.locator('.post-author')).toHaveText(persona.displayName)
+  const postId = new URL(page.url()).pathname.split('/').pop()!
+
+  // 방장 화면·JSON: 표시명만, 계정 이름·실명 핸들·표시명 핸들·사람 id 없음
+  await owner.page.goto(`/community/p/${postId}`)
+  await expect(owner.page.locator('.post-author')).toHaveText(persona.displayName)
+  const html = await owner.page.content()
+  const json = JSON.stringify([await owner.api.get(`/api/v1/community/posts/${postId}`), await owner.api.get(`/api/v1/community/boards/${boardId}/posts`)])
+  for (const text of [html, json]) {
+    for (const secret of [writer.displayName, writer.handle, persona.handle, writer.id, writer.email]) expect(text).not.toContain(secret)
+  }
+  expect(json).toContain(persona.displayName)
 })

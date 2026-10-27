@@ -81,6 +81,7 @@ import { hitRateLimit } from '../security/rate-limit'
 import { parseInput } from '../validation'
 import { loadReadableSpace, loadSpace, loadViewer, membershipFacts } from './access'
 import { cancelTransfersForSourceInTx } from './archive-transfers'
+import { displayPersonaNames } from './name-modes'
 import { getPost } from './posts'
 import type {
   AuthorLookupResultDto,
@@ -540,13 +541,21 @@ export async function operatorCommunityItem(db: DbExecutor, target: ItemRef): Pr
   const { post, comment, item } = loaded
   const [space] = await db.select({ slug: communitySpaces.slug, name: communitySpaces.name, kind: communitySpaces.kind }).from(communitySpaces).where(eq(communitySpaces.id, post.spaceId)).limit(1)
   const [author] = await db
-    .select({ id: users.id, status: users.status, purgedAt: users.purgedAt, displayName: users.displayName, realName: users.realName })
+    .select({ id: users.id, status: users.status, purgedAt: users.purgedAt, realName: users.realName })
     .from(users)
     .where(eq(users.id, item.authorId))
     .limit(1)
+  // 표시명 글은 고정한 표시명 페르소나의 이름만(계정 이름 아님, ADR 0030). 화면과 같은 표시입니다.
+  const displayNames = item.nameMode === 'display' ? await displayPersonaNames(db, [item.personaId]) : new Map<string, string>()
   const display = resolveAuthorDisplay(
     item.nameMode,
-    { userId: item.authorId, status: author?.status ?? 'deleted', purged: !author || author.purgedAt !== null, displayName: author?.displayName ?? '', realName: author?.realName ?? null },
+    {
+      userId: item.authorId,
+      status: author?.status ?? 'deleted',
+      purged: !author || author.purgedAt !== null,
+      displayPersonaName: item.personaId ? (displayNames.get(item.personaId) ?? null) : null,
+      realName: author?.realName ?? null,
+    },
     null,
   )
   return {

@@ -172,10 +172,13 @@ async function submit() {
             <input id="qa-display-anon" v-model="form.qaDisplay" type="radio" name="qa-display" value="anonymous" />
             <label for="qa-display-anon">익명("{{ COURSE_QA_ANONYMOUS_LABELS.asker }}")</label>
           </div>
-          <div class="radio-row">
+          <div v-if="options.displayName" class="radio-row">
             <input id="qa-display-display" v-model="form.qaDisplay" type="radio" name="qa-display" value="display" />
             <label for="qa-display-display">표시명({{ options.displayName }})</label>
           </div>
+          <p v-else class="hint" data-testid="archive-display-persona-required">
+            표시명으로 옮기려면 먼저 <NuxtLink to="/settings/personas">표시명 프로필</NuxtLink>을 만드세요(계정 이름은 쓰지 않습니다).
+          </p>
           <div v-if="options.hasRealName" class="radio-row">
             <input id="qa-display-real" v-model="form.qaDisplay" type="radio" name="qa-display" value="real" />
             <label for="qa-display-real">실명</label>

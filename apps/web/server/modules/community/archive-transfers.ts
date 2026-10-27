@@ -78,6 +78,7 @@ import { canonicalHash } from '../publication/manifest'
 import { hitRateLimit } from '../security/rate-limit'
 import { parseInput } from '../validation'
 import { type SpaceContext, loadReadableSpace, writeRestricted } from './access'
+import { activeDisplayPersona } from './name-modes'
 import type {
   ArchiveOptionsDto,
   ArchiveTransferDto,
@@ -125,9 +126,16 @@ async function consentsOf(db: DbExecutor, transferId: string): Promise<ConsentRo
   return db.select().from(archiveTransferConsents).where(eq(archiveTransferConsents.transferId, transferId)).orderBy(archiveTransferConsents.createdAt)
 }
 
-async function names(db: DbExecutor, userId: string): Promise<{ displayName: string | null; realName: string | null }> {
-  const [u] = await db.select({ displayName: users.displayName, realName: users.realName }).from(users).where(eq(users.id, userId)).limit(1)
-  return { displayName: u?.displayName ?? null, realName: u?.realName ?? null }
+/**
+ * 복사본 이름 재료. display는 active 표시명 페르소나의 이름이고 계정 표시 이름(= 실명 프로필의 공개 이름)이 아닙니다(ADR 0030).
+ * 표시명 페르소나가 없으면 null → 422 `displayMode: display_persona_required`.
+ */
+async function names(db: DbExecutor, userId: string): Promise<{ displayPersonaName: string | null; realName: string | null }> {
+  const [[u], persona] = await Promise.all([
+    db.select({ realName: users.realName }).from(users).where(eq(users.id, userId)).limit(1),
+    activeDisplayPersona(db, userId),
+  ])
+  return { displayPersonaName: persona?.displayName ?? null, realName: u?.realName ?? null }
 }
 
 /** 원 글 공간 행을 FOR SHARE로 잠급니다(글 쓰기와 같은 첫 잠금, ADR 0020). */
@@ -306,7 +314,7 @@ function warningsOf(snapshot: ArchiveSnapshot): PublicationCheckDto[] {
   return runPublicationChecks(courseQaCheckItems(snapshot)).map((w) => ({ rule: w.rule, location: w.location, sample: w.sample, fixUrl: null }))
 }
 
-function labelOrThrow(role: 'asker' | 'answerer', mode: ArchiveDisplayMode, n: { displayName: string | null; realName: string | null }) {
+function labelOrThrow(role: 'asker' | 'answerer', mode: ArchiveDisplayMode, n: { displayPersonaName: string | null; realName: string | null }) {
   const r = archiveDisplayLabel(role, mode, n)
   if (!r.ok) throw invalid({ displayMode: r.reason })
   return r
@@ -694,7 +702,7 @@ async function toDto(db: DbExecutor, actor: Actor, t: TransferRow, consents: Con
     counterpart: counterpart ? { status: counterpart.status as ArchiveConsentStatus, text: COUNTERPART_STATUS_LABELS[counterpart.status as ArchiveConsentStatus] } : null,
     displayOptions:
       t.target === 'course_qa'
-        ? { anonymousLabel: COURSE_QA_ANONYMOUS_LABELS[myRole], displayName: viewerNames.displayName, realName: viewerNames.realName }
+        ? { anonymousLabel: COURSE_QA_ANONYMOUS_LABELS[myRole], displayName: viewerNames.displayPersonaName, realName: viewerNames.realName }
         : null,
     canDecide: awaiting && !!mine && mine.status === 'pending',
     canCancel: awaiting && initiator,
@@ -751,7 +759,7 @@ export async function getArchiveOptions(db: DbExecutor, actor: Actor, postId: un
       senior_note: reasonFor('senior_note', false),
     },
     projects: projectRows,
-    displayName: me.displayName,
+    displayName: me.displayPersonaName,
     hasRealName: !!me.realName,
     lengths: { title: len(post.title), body: len(post.body), answer: acceptedOpen ? len(accepted!.body) : 0 },
     limits: { stuckSymptom: STUCK_SYMPTOM_MAX, logBody: LOG_BODY_MAX, solution: SOLUTION_METHOD_MAX, noteAnswer: SENIOR_NOTE_ANSWER_MAX },

@@ -10,6 +10,9 @@
  * - 이력 `GET …/name-mode-changes`: 공간을 읽을 수 있는 사람(사용자 방은 active 멤버). 요청한 사람은 싣지 않습니다.
  * - 적용은 worker(`apps/worker/src/ops/name-modes.ts`)가 합니다. 웹은 적용하지 않지만, effective_at이 지난 예약은 worker 전이라도
  *   지금 방식으로 보여 줍니다(effectiveNameMode). 이미 쓴 글·댓글의 방식은 바꾸지 않습니다(작성 시점 고정, C-04).
+ * - 표시명 방식의 이름은 표시명 페르소나입니다(ADR 0030): 쓰려면 active 표시명 페르소나가 있어야 하고(없으면 403 `display_persona_required`),
+ *   보일 때는 글에 고정한 persona_id의 지금 이름만 씁니다. 그 도우미(activeDisplayPersona·displayPersonaNames)가 이 파일에 있습니다.
+ *   커뮤니티 → personas 읽기는 허용 방향입니다(social은 커뮤니티를 읽지 않음, ADR 0029).
  */
 import { z } from 'zod'
 import {
@@ -24,10 +27,10 @@ import {
   joinPolicyForNameModeChange,
   nameModeEffectiveAt,
 } from '@peerchive/domain'
-import { and, communitySpaces, desc, eq, nameModeChanges, type DbExecutor } from '@peerchive/db'
+import { and, communitySpaces, desc, eq, inArray, nameModeChanges, personas, type DbExecutor } from '@peerchive/db'
 import { emitAnalytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
-import { type Actor, conflict, forbidden, invalid, notFound, sqlState } from '../errors'
+import { type Actor, ServiceError, conflict, forbidden, invalid, notFound, sqlState } from '../errors'
 import { isUuid } from '../projects/access'
 import { parseInput } from '../validation'
 import { type SpaceContext, loadReadableSpace, membershipFacts } from './access'
@@ -48,6 +51,40 @@ export async function loadScheduledChange(db: DbExecutor, spaceId: string, lock 
     .limit(1)
   const [row] = lock ? await query.for('update') : await query
   return row ?? null
+}
+
+// ── 표시명 페르소나(ADR 0030) ─────────────────────────────────────────────
+
+/**
+ * 표시명 방식으로 쓸 때 고정할 표시명 페르소나: 그 사람의 kind = display, status = active 행(계정당 하나). 없으면 null.
+ * 실명 페르소나·계정 표시 이름으로 대신하지 않습니다.
+ */
+export async function activeDisplayPersona(db: DbExecutor, userId: string): Promise<{ id: string; displayName: string } | null> {
+  const [row] = await db
+    .select({ id: personas.id, displayName: personas.displayName })
+    .from(personas)
+    .where(and(eq(personas.userId, userId), eq(personas.kind, 'display'), eq(personas.status, 'active')))
+    .limit(1)
+  return row?.displayName ? { id: row.id, displayName: row.displayName } : null
+}
+
+/** 표시명 방식인데 active 표시명 페르소나가 없을 때(실명 방식의 `real_name_required`와 같은 모양, 화면이 /settings/personas로 안내). */
+export function displayPersonaRequiredError(): ServiceError {
+  return new ServiceError('FORBIDDEN', 'display_persona_required', undefined, { requirement: 'display_persona' })
+}
+
+/**
+ * 글·댓글에 고정한 persona_id → 지금 표시명(읽는 시점, 이름을 바꾸면 따라감 — 같은 정체성). kind = display 행만 읽으므로
+ * 어떤 경우에도 실명 페르소나의 이름이 나오지 않습니다. 상태(deactivated)와 프로필 숨김은 보지 않습니다(이름만, 링크 없음).
+ */
+export async function displayPersonaNames(db: DbExecutor, personaIds: ReadonlyArray<string | null>): Promise<Map<string, string>> {
+  const ids = [...new Set(personaIds.filter((id): id is string => !!id))]
+  if (ids.length === 0) return new Map()
+  const rows = await db
+    .select({ id: personas.id, displayName: personas.displayName })
+    .from(personas)
+    .where(and(inArray(personas.id, ids), eq(personas.kind, 'display')))
+  return new Map(rows.flatMap((r) => (r.displayName ? [[r.id, r.displayName] as const] : [])))
 }
 
 const facts = (row: NameModeChangeRow) => ({ status: row.status, toMode: row.toMode, effectiveAt: row.effectiveAt })

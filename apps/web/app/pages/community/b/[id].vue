@@ -108,6 +108,15 @@ async function submit() {
         <p v-if="data.composer.realNameRequired" class="notice error" role="status">
           이 방은 실명으로 표시됩니다. 먼저 <NuxtLink to="/community">커뮤니티 화면</NuxtLink>에서 실명(선택)을 입력하세요.
         </p>
+        <p
+          v-if="data.composer.displayPersonaRequired && (!data.space.official || form.nameMode === 'display')"
+          class="notice error"
+          role="status"
+          data-testid="display-persona-required"
+        >
+          {{ data.space.official ? '표시명으로 쓰려면' : '이 방은 표시명으로 표시됩니다.' }} 먼저 <NuxtLink to="/settings/personas">표시명 프로필</NuxtLink>을 만드세요.
+          계정 이름은 표시명으로 쓰지 않습니다.
+        </p>
         <form class="stack" novalidate @submit.prevent="submit">
           <fieldset v-if="data.space.official">
             <legend>이름 표시</legend>

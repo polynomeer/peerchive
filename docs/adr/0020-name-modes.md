@@ -24,6 +24,7 @@ C-03은 DELIVERY_PLAN §4.1 "글·댓글에 작성 시점 모드 고정, 변경�
 - 작성자 표시는 `resolveAuthorDisplay(modeAtWrite, author, viewer)` 하나로 정합니다. 인자로 공간의 지금 방식·예약을 받지 않으므로(타입으로) 소급할 길이 없습니다.
   - `real` → 계정의 선택 실명 `users.real_name`(없으면 "실명 미입력"), 학교를 연결한 공간이면 그 학교 인증 여부(`schoolVerified`)만 덧붙임. C-04는 실명 방식 공간에서 실명이 없으면 쓰기 전에 입력을 요구합니다(그래도 나중에 지운 경우의 표시가 "실명 미입력").
   - `display` → 계정 표시 이름(`users.display_name`). **방별 이름(RoomProfile, SYSTEM_DESIGN §6.7.2)은 P2**이고, S-01 Persona가 생기면 그 표시명 페르소나로 바뀝니다(그때 `persona_id`를 작성 시점에 함께 고정, §6.7.1).
+    - **→ [ADR 0030](0030-display-persona-names.md)에서 바뀜**: 표시명 방식은 active 표시명 페르소나가 있어야 쓸 수 있고(없으면 403 `display_persona_required`), 이름은 글에 고정한 `persona_id`의 지금 표시명입니다. `persona_id`가 없는 예전 표시명 글은 "표시명 없음"이며 계정 표시 이름은 더 이상 쓰지 않습니다.
   - `anonymous` → 이름·id·핸들 없음, `threadAlias: 'computed_by_thread'` 표시만. 스레드 번호(`글쓴이`·`익명1`…)는 C-04의 ThreadAlias가 채웁니다. 작성자가 탈퇴해도 똑같이 익명(탈퇴 여부도 드러내지 않음).
   - 탈퇴(정리)한 작성자의 실명·표시명 글은 "탈퇴한 사용자".
   - 보는 사람이 방장·모더레이터·운영자여도 결과가 같습니다. `viewer`는 본인 글 표시(`mine`)에만 씁니다. 익명 글의 작성자 확인은 C-06의 사유·감사 기록 경로뿐입니다.

@@ -56,6 +56,21 @@ export async function insertRealProfile(db: DbExecutor, userId: string, handle: 
   return { personaId: persona.id }
 }
 
+/**
+ * 표시명 페르소나 fixture(S-01 행만: 프로필·연결 플래그 없음). 표시명 방식으로 커뮤니티 글을 쓰려면 이 페르소나가 있어야 합니다(ADR 0030).
+ * 표시명 프로필까지 필요한 테스트는 서비스 `createDisplayPersona`를 씁니다.
+ */
+export async function insertDisplayPersona(
+  db: DbExecutor,
+  userId: string,
+  displayName = '표시명 사용자',
+  handle = `d-${crypto.randomUUID().slice(0, 12)}`,
+): Promise<{ personaId: string; handle: string; displayName: string }> {
+  const [persona] = await db.insert(personas).values({ userId, kind: 'display', handle, displayName }).returning({ id: personas.id })
+  if (!persona) throw new Error('persona not inserted')
+  return { personaId: persona.id, handle, displayName }
+}
+
 /** 서비스 오류 코드(와 이유)를 확인합니다. */
 export async function expectServiceError(
   promise: Promise<unknown>,

@@ -15,6 +15,7 @@ import { afterAll, afterEach, describe, expect, it } from 'vitest'
 import { createFilesystemStorage } from '@peerchive/files'
 import {
   analyticsEvents,
+  and,
   archiveTransferConsents,
   archiveTransfers,
   courseQaItems,
@@ -24,6 +25,7 @@ import {
   logRevisions,
   operators,
   outboxEvents,
+  personas,
   searchDocuments,
   sql,
   users,
@@ -56,7 +58,7 @@ import { decideAppeal, resolveReport } from '../server/modules/moderation/operat
 import { createReport } from '../server/modules/moderation/reports'
 import { createProject } from '../server/modules/projects/projects'
 import { COMMUNITY_TABLE_SQL } from './community-tables'
-import { closeTestDb, createUser, databaseUrl, days, expectServiceError, minutes, verifiedAffiliation, withRollback } from './helpers'
+import { closeTestDb, createUser, databaseUrl, days, expectServiceError, insertDisplayPersona, minutes, verifiedAffiliation, withRollback } from './helpers'
 
 const T0 = new Date('2026-11-10T09:00:00Z')
 const at = (n: number) => new Date(T0.getTime() + minutes(n))
@@ -64,14 +66,17 @@ const rand = () => crypto.randomUUID().replace(/-/g, '').slice(0, 10)
 const DB_TIMEOUT = 60_000
 const PEPPER = { NODE_ENV: 'test', PEERCHIVE_ANALYTICS_PEPPER: 'archive-analytics-pepper-for-tests-0123456789abcdef' }
 
-type Person = { userId: string; email: string; handle: string; name: string }
+type Person = { userId: string; email: string; handle: string; name: string; accountName: string }
 
+/** `name`은 표시명 페르소나의 이름(표시명 방식 글·복사본 이름, ADR 0030), 계정 표시 이름은 일부러 다른 값입니다. */
 async function person(tx: DbExecutor, schoolId: string | null, label: string): Promise<Person> {
   const handle = `a${rand()}`
   const name = `${label}${rand().slice(0, 6)}`
-  const u = await createUser(tx, { handle, displayName: name })
+  const accountName = `계정${name}`
+  const u = await createUser(tx, { handle, displayName: accountName })
+  await insertDisplayPersona(tx, u.id, name)
   if (schoolId) await verifiedAffiliation(tx, u.id, schoolId)
-  return { userId: u.id, email: u.email, handle, name }
+  return { userId: u.id, email: u.email, handle, name, accountName }
 }
 
 async function world(tx: DbExecutor) {
@@ -106,7 +111,7 @@ const qaInput = (w: World, over: Record<string, unknown> = {}) => ({ target: 'co
 /** 요청한 사람 응답에 답한 사람을 가리킬 수 있는 값이 없는지. */
 function expectNoAnswererIdentity(json: unknown, w: World) {
   const text = JSON.stringify(json)
-  for (const v of [w.answerer.userId, w.answerer.email, w.answerer.handle, w.answerer.name]) expect(text).not.toContain(v)
+  for (const v of [w.answerer.userId, w.answerer.email, w.answerer.handle, w.answerer.name, w.answerer.accountName]) expect(text).not.toContain(v)
 }
 
 describe.skipIf(!databaseUrl)('C-09 archive transfers (PostgreSQL)', () => {
@@ -182,7 +187,8 @@ describe.skipIf(!databaseUrl)('C-09 archive transfers (PostgreSQL)', () => {
 
       const view = await getArchiveTransfer(tx, w.answerer, created.id, at(6))
       expect(view).toMatchObject({ myRole: 'party', canDecide: true, preview: { askerLabel: '질문한 학생' }, project: null })
-      expect(view.displayOptions).toMatchObject({ anonymousLabel: '답한 학생', realName: '답변실명' })
+      expect(view.displayOptions).toMatchObject({ anonymousLabel: '답한 학생', displayName: w.answerer.name, realName: '답변실명' })
+      expect(JSON.stringify(view)).not.toContain(w.answerer.accountName)
       // 동의는 해시가 맞아야 함
       await expectServiceError(decideArchiveConsent(tx, w.answerer, created.id, { decision: 'grant', contentHash: 'f'.repeat(64), displayMode: 'display' }, at(6)), 'CONFLICT', 'stale_content')
       await expectServiceError(decideArchiveConsent(tx, w.answerer, created.id, { decision: 'grant', displayMode: 'display' }, at(6)), 'VALIDATION')
@@ -282,6 +288,15 @@ describe.skipIf(!databaseUrl)('C-09 archive transfers (PostgreSQL)', () => {
       expect(other.fields).toEqual({ courseId: 'other_school' })
       const real = await expectServiceError(createArchiveTransfer(tx, w.asker, q.postId, qaInput(w, { displayMode: 'real' }), at(5)), 'VALIDATION')
       expect(real.fields).toEqual({ displayMode: 'real_name_required' })
+      // 표시명 = 표시명 페르소나(ADR 0030): 페르소나가 비활성이면 표시명을 고를 수 없고(422), 선택지에도 계정 이름이 나오지 않음
+      await tx.update(personas).set({ status: 'deactivated' }).where(and(eq(personas.userId, w.asker.userId), eq(personas.kind, 'display')))
+      const noPersona = await expectServiceError(createArchiveTransfer(tx, w.asker, q.postId, qaInput(w, { displayMode: 'display' }), at(5)), 'VALIDATION')
+      expect(noPersona.fields).toEqual({ displayMode: 'display_persona_required' })
+      const options = await getArchiveOptions(tx, w.asker, q.postId, at(5))
+      expect(options.displayName).toBeNull()
+      expect(JSON.stringify(options)).not.toContain(w.asker.accountName)
+      await tx.update(personas).set({ status: 'active' }).where(and(eq(personas.userId, w.asker.userId), eq(personas.kind, 'display')))
+      expect((await getArchiveOptions(tx, w.asker, q.postId, at(5))).displayName).toBe(w.asker.name)
 
       // 학교 연결 없는 방: 과목 학교 제한은 없지만 요청한 사람은 그 과목 학교 인증이 있어야 함
       const room = await createRoom(tx, w.asker, { name: `질문방 ${rand()}`, nameMode: 'display', joinPolicy: 'open' }, T0)

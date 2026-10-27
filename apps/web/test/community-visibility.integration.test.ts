@@ -69,7 +69,7 @@ import { publishCandidate } from '../server/modules/publication/releases'
 import { enableStudyRecord, getStudyRecord } from '../server/modules/community/study-records'
 import { createRobotsHandler, robotsTxt } from '../server/modules/security/robots'
 import type { ServiceError } from '../server/modules/errors'
-import { closeTestDb, createUser, databaseUrl, expectServiceError, minutes, verifiedAffiliation, withRollback } from './helpers'
+import { closeTestDb, createUser, databaseUrl, expectServiceError, insertDisplayPersona, minutes, verifiedAffiliation, withRollback } from './helpers'
 
 const ROOT = resolve(__dirname, '../../..')
 const WEB = resolve(__dirname, '..')
@@ -507,6 +507,8 @@ interface World {
 
 async function student(tx: DbExecutor, schoolId: string): Promise<{ userId: string; affiliationId: string }> {
   const u = await createUser(tx, { handle: `v${rand()}` })
+  // 표시명 방에서 쓰려면 표시명 페르소나가 있어야 합니다(ADR 0030).
+  await insertDisplayPersona(tx, u.id)
   const a = await verifiedAffiliation(tx, u.id, schoolId)
   return { userId: u.id, affiliationId: a.id }
 }
