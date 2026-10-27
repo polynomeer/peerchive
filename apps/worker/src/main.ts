@@ -1,7 +1,8 @@
 /**
  * Peerchive worker 진입점(ADR 0004). outbox 전달, 파일 검사 작업, 공개 게시·철회 이벤트(파생 데이터 정리, ADR 0012),
  * 과목 허브 파생 데이터(검색 색인·유용성 신호·선배 노트 색인, ADR 0013), 케이스 스터디 이용 불가 표시(ADR 0014),
- * 운영 조치의 검색 문서 맞추기(ADR 0015), 운영 주기 작업(만료 행·격리 파일 정리, 탈퇴 계정 정리, ADR 0016)과 상태 기록(1분마다)을 처리합니다.
+ * 운영 조치의 검색 문서 맞추기(ADR 0015), 운영 주기 작업(만료 행·격리 파일 정리, 탈퇴 계정 정리, ADR 0016), 소셜 링크 되돌림 확인·재확인(ADR 0034)과
+ * 상태 기록(1분마다)을 처리합니다.
  *
  * 실행: `pnpm worker`(저장소 루트, 개발용) 또는 `pnpm --filter worker start`.
  * 종료 신호(SIGINT/SIGTERM)를 받으면 새 작업을 받지 않고 진행 중인 작업을 기다린 뒤(최대 30초) 연결을 닫습니다.
@@ -17,6 +18,7 @@ import { registerModerationQueue } from './moderation-derived'
 import { registerPortfolioDerived } from './portfolio-derived'
 import { registerPublicationQueues } from './publication-events'
 import { registerScanQueue } from './scan-worker'
+import { registerSocialLinkQueue } from './social-links'
 import { loadOpsConfig } from './ops/config'
 import { registerOpsSchedules, startHeartbeat } from './ops/schedules'
 
@@ -47,6 +49,9 @@ await registerSeniorNoteQueues(boss, db)
 // 막힘 Q&A 검색 색인·철회 정리(C-09).
 await registerCourseQaQueues(boss, db)
 await registerModerationQueue(boss, db)
+// 소셜 링크 되돌림 확인(S-06): 링크 수집기(net/safe-fetch.ts)만 사용자가 붙인 URL에 접속합니다.
+if (!opsConfig.siteOrigin) console.warn('[worker] NUXT_SITE_ORIGIN is not set: social link verification is skipped.')
+await registerSocialLinkQueue(boss, db, { siteOrigin: opsConfig.siteOrigin })
 // 운영 주기 작업(T-16): 만료 행·주인 없는 격리 파일 정리, 유예 기간이 지난 탈퇴 계정 정리.
 await registerOpsSchedules(boss, db, config.storage, opsConfig)
 const stopHeartbeat = startHeartbeat(db, { production: config.production, storage: config.storage.driver, scanner: config.scanner.engine })

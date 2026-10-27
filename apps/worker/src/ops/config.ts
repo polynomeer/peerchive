@@ -8,6 +8,7 @@
  * | PEERCHIVE_DELETION_GRACE_DAYS | 7 | 탈퇴 요청 뒤 정리까지 유예 일수(0–90). 0이면 다음 정리 주기에 바로 |
  * | PEERCHIVE_OPS_BATCH_SIZE | 500 | 정리 작업 한 번의 삭제 행 수(10–10000) |
  * | PEERCHIVE_CRON_<작업> | 작업별 기본값 | 5필드 cron(Asia/Seoul) 또는 `off`. 예: PEERCHIVE_CRON_ACCOUNT_PURGE='* * * * *' |
+ * | NUXT_SITE_ORIGIN | (없음) | 웹과 같은 값(쉼표 구분, 첫 항목). 소셜 링크 되돌림 확인(S-06)이 찾을 프로필 주소의 origin. 없으면 확인·재확인을 건너뜀 |
  */
 import { DELETION_PEPPER_ENV, ANALYTICS_PEPPER_ENV, isProductionMode, resolvePepper } from '@peerchive/db'
 
@@ -24,6 +25,7 @@ export const OPS_TASK_NAMES = [
   'affiliation-codes',
   'account-purge',
   'name-mode-changes',
+  'social-link-recheck',
 ] as const
 export type OpsTaskName = (typeof OPS_TASK_NAMES)[number]
 
@@ -42,6 +44,8 @@ export const DEFAULT_CRONS: Record<OpsTaskName, string> = {
   'account-purge': '*/30 * * * *',
   // 이름 표시 방식 변경 적용(C-03): effective_at이 지난 예약을 1분 안에 적용합니다(웹은 그 사이에도 새 방식으로 씀).
   'name-mode-changes': '* * * * *',
+  // 소셜 링크 재확인(S-06): 매시 verified 링크 중 24시간 지난 것 최대 100개. 링크마다 대략 하루 한 번입니다.
+  'social-link-recheck': '37 * * * *',
 }
 
 export const OPS_TIMEZONE = 'Asia/Seoul'
@@ -52,6 +56,8 @@ export interface OpsConfig {
   analyticsPepper: string | null
   graceDays: number
   batchSize: number
+  /** 사이트 첫 origin(NUXT_SITE_ORIGIN). 소셜 링크 되돌림 확인이 찾을 프로필 주소의 origin. 없으면 null. */
+  siteOrigin: string | null
   /** null이면 그 작업을 예약하지 않음(off). */
   crons: Record<OpsTaskName, string | null>
 }
@@ -76,6 +82,21 @@ function intEnv(env: Env, name: string, fallback: number, min: number, max: numb
   return value
 }
 
+/** NUXT_SITE_ORIGIN(쉼표 구분)의 첫 http(s) origin. 웹의 primarySiteOrigin과 같은 규칙입니다. */
+export function siteOriginFrom(env: Env): string | null {
+  for (const item of (env.NUXT_SITE_ORIGIN ?? '').split(',')) {
+    const value = item.trim()
+    if (!value || value === 'null') continue
+    try {
+      const url = new URL(value)
+      if (url.protocol === 'http:' || url.protocol === 'https:') return url.origin
+    } catch {
+      // 다음 항목
+    }
+  }
+  return null
+}
+
 export function loadOpsConfig(env: Env): OpsConfig {
   const production = isProductionMode(env)
   const deletionPepper = resolvePepper(env, DELETION_PEPPER_ENV)
@@ -97,6 +118,7 @@ export function loadOpsConfig(env: Env): OpsConfig {
     analyticsPepper: resolvePepper(env, ANALYTICS_PEPPER_ENV),
     graceDays: intEnv(env, 'PEERCHIVE_DELETION_GRACE_DAYS', 7, 0, 90),
     batchSize: intEnv(env, 'PEERCHIVE_OPS_BATCH_SIZE', 500, 10, 10_000),
+    siteOrigin: siteOriginFrom(env),
     crons,
   }
 }

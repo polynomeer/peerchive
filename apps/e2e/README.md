@@ -38,7 +38,7 @@ docker compose -f ops/docker-compose.yml down
 | 경로 | 내용 |
 |---|---|
 | `playwright.config.ts` | Chromium 두 project: `desktop`(1280×800), `mobile`(360×740, 터치). 모든 시나리오를 두 project에서 돌립니다 |
-| `support/global-setup.ts` | ① `peerchive_e2e`를 지우고 새로 만든 뒤 migration ② 빌드한 web 서버(`apps/web/.output/server/index.mjs`)를 `NODE_ENV=development`·dev-console 메일·임시 디렉터리 filesystem 저장소로 시작 ③ worker(signature-only 검사기) 시작. PID와 임시 경로는 `.e2e-state/state.json` |
+| `support/global-setup.ts` | ① `peerchive_e2e`를 지우고 새로 만든 뒤 migration ② 빌드한 web 서버(`apps/web/.output/server/index.mjs`)를 `NODE_ENV=development`·dev-console 메일·임시 디렉터리 filesystem 저장소로 시작 ③ worker(signature-only 검사기, `NUXT_SITE_ORIGIN` 없음 — 소셜 링크 수집이 바깥에 접속하지 않음) 시작. PID와 임시 경로는 `.e2e-state/state.json` |
 | `support/global-teardown.ts` | setup이 띄운 두 프로세스 그룹만 멈추고 임시 저장소를 지웁니다. DB와 서버 로그(`.e2e-state/web.log`·`worker.log`)는 조사용으로 남깁니다 |
 | `support/fixtures.ts` | `newUser()`: 새 browser context에서 실제 로그인(로그인 화면 → 메일 링크 → `/auth/verify#token=…` → [로그인 계속하기] → 온보딩). `anon()`: 쿠키 없는 방문자 |
 | `support/mail.ts` | dev-console 메일 읽기(서버 로그에서 가린 수신 주소로 메일을 찾고 링크를 꺼냄) |
@@ -74,6 +74,7 @@ docker compose -f ops/docker-compose.yml down
 | `r-personas.spec.ts` | R(S-01) | 설정 화면에서 표시명 프로필 만들기(연결 꺼짐) → 비로그인 방문자: 실명·표시명 `/u/<handle>`·인쇄 보기의 HTML(SSR payload)·OG·제목, 공개 JSON·README 카드·이전 공개 프로필 API 어디에도 상대 프로필의 handle·이름·페르소나 id·소개 없음 → 연결 켜기(확인 대화상자) → 양쪽에 서로의 링크(따라가기)·인쇄 보기에 주소, id·소개는 여전히 없음 → 끄기 → 다음 요청부터 다시 0건 |
 | `s-visibility.spec.ts` | S(S-03) | 설정 화면에서 네 항목 전체 공개 + 과제 둘(지난 학기 팀 과제·엠바고 과제) 고르기 → 비로그인 방문자: `/u/<handle>`·인쇄 보기의 HTML(SSR payload)·공개 JSON·README 카드·이전 공개 프로필 API에 과목·학기·고른 과제 제목만, 엠바고 과제 제목·고르지 않은 비공개 과제·팀원 이름·handle·id·로그·동의 대기 후보·과제 id 0건 → `로그인 사용자`로 좁히면 비로그인 응답에서 빠지고 로그인한 다른 사용자 화면에만 붙음 → 과제 API 읽기 결과 그대로(외부인 404·팀원 200) → 남의 페르소나 PUT 404·공개 사례 항목 422 |
 | `t-follows.spec.ts` | T·U(S-04) | B가 설정 화면에서 비공개 계정으로 바꿈 → A가 B의 `/u/<handle>`에서 팔로우 요청(요청 취소 버튼으로 바뀜) → B가 `/settings/follows`에서 승인, 팔로워 1 → B가 A의 프로필 페이지 "차단·뮤트"에서 차단 → A에게 B의 관계·팔로워·세션 프로필 API와 팔로우 404, `/u/<B>`는 "프로필을 찾을 수 없습니다", 팔로우 삭제, 남의 팔로우 관리 API 404 |
+| `v-social-links.spec.ts` | V(S-06, 화면 부분) | `/settings/personas`에서 내부망 IP 주소 거부 문구 → GitHub 링크 넣기, `확인 전`·확인 요청 버튼 → 방문자의 `/u/<handle>`에 `nofollow` 링크, `링크 확인됨` 없음 → 지우면 사라짐. 바깥 인터넷에 접속하지 않도록 확인 요청은 누르지 않고 E2E worker에는 `NUXT_SITE_ORIGIN`을 주지 않음(수집·verified·lost·사설 IP redirect 거부는 worker 테스트) |
 | `community.spec.ts` | C-02 | 학교 인증(준비는 API) → 방 만들기 화면(예약어 이름 거부·학교 연결·표시명·초대 전용·링크로만) → 비멤버는 "찾을 수 없습니다"(API 404) → 초대 링크(화면) → 다른 인증 사용자가 수락 → 같은 링크 재사용 410 → 방장 나가기 → 남은 멤버가 방장(승계). API·페이지 `X-Robots-Tag: noindex, nofollow, noarchive`, 비로그인 API 401, 공개 검색에 방 이름 없음 |
 | `community.spec.ts` | C-03 | 방장이 화면에서 "익명으로 바꾸기" 예약(확인 대화상자) → 배너 "7일 뒤 … 이미 쓴 글은 바뀌지 않습니다." → 두 번째 예약 409·멤버 예약 403 → 멤버 화면 배너·`/community`의 읽지 않은 알림 수·`/community/notices`의 예약 알림 → 적용 시뮬레이션 → 이름 표시 방식 "익명"·배너 없음·이력 "적용됨"·적용 알림·모두 읽음 → 방장 선택지가 새 방식 기준 |
 | `community-posts.spec.ts` | C-04 | 익명 방(준비는 API): 게시판 화면의 "이 방은 익명으로 표시됩니다" → 멤버가 글(`글쓴이`·내 글) → 다른 멤버 댓글(`익명1`·내 댓글)·공감(비추천 버튼 없음) → 글쓴이 답(`글쓴이`) → 같은 사람 다시 `익명1` → 둘째 스레드는 따로 번호(첫 스레드의 글쓴이가 `익명1`) → 방장 화면도 같은 표시·신고 대화상자, API에 사람 id·이메일·핸들·표시 이름 없음, 비멤버 404(소스에 제목 없음), 문서 제목 고정 |

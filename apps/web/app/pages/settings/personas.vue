@@ -4,11 +4,12 @@
  * - 실명 프로필(채용자용 포트폴리오 기본)은 /onboarding에서 만들고 고칩니다. 여기서는 표시명 프로필 하나를 만들고 고칩니다.
  * - handle은 실명·표시명이 같은 공간을 씁니다(겹치면 "이미 사용 중"). 표시명 프로필에는 대표 케이스 스터디를 넣을 수 없습니다.
  * - 연결 표시는 기본으로 꺼져 있습니다. 켜면 두 공개 프로필에 서로의 링크가 보여 누구나 같은 사람임을 압니다. 끄면 다음 요청부터 사라집니다.
+ * - 소셜 링크(S-06, ADR 0034): 프로필마다 따로 관리합니다(`SocialLinksEditor`). 같은 주소는 한 프로필에만 넣을 수 있습니다.
  */
 import type { MyPersonaDto, MyPersonasDto } from '~~/shared/types/api'
 
 definePageMeta({ middleware: 'auth' })
-useHead({ title: '표시명 프로필 — Peerchive' })
+useHead({ title: '표시명 프로필·소셜 링크 — Peerchive' })
 
 const { data, refresh } = await useAsyncData('my-personas', () => useRequestFetch()<MyPersonasDto>('/api/v1/me/personas'))
 const real = computed(() => data.value?.personas.find((p) => p.kind === 'real' && p.profile) ?? null)
@@ -77,7 +78,7 @@ const err = (field: string) => fieldMessage(errors.value[field])
 
 <template>
   <div>
-    <h1>표시명 프로필</h1>
+    <h1>표시명 프로필·소셜 링크</h1>
     <p class="hint">
       실명 프로필과 따로 쓰는 공개 프로필을 하나 만들 수 있습니다. 표시명 프로필에는 실명 프로필의 이름·주소·소개·과제 기록이 보이지 않고,
       실명 프로필에도 표시명 프로필이 보이지 않습니다. 채용 담당자에게 보이는 포트폴리오는 실명 프로필이 기본입니다.
@@ -133,6 +134,16 @@ const err = (field: string) => fieldMessage(errors.value[field])
             <button type="submit" :disabled="busy === 'save'">{{ display ? '저장' : '만들기' }}</button>
           </p>
         </form>
+      </section>
+
+      <section aria-labelledby="social-links-heading">
+        <h2 id="social-links-heading">소셜 링크</h2>
+        <p class="hint">
+          GitHub·블로그 같은 링크를 프로필마다 따로 넣습니다. 한 프로필의 링크는 다른 프로필에 보이지 않으며, 같은 주소를 두 프로필에 넣을 수 없습니다
+          (두 프로필이 같은 사람으로 이어지지 않게). 링크는 공개 프로필의 기본 정보라 누구나 볼 수 있습니다.
+        </p>
+        <SocialLinksEditor :persona-id="real.id" :label="`실명 프로필 @${real.handle}`" />
+        <SocialLinksEditor v-if="display" :key="display.id" :persona-id="display.id" :label="`표시명 프로필 @${display.handle}`" />
       </section>
 
       <section v-if="display" aria-labelledby="link-heading">

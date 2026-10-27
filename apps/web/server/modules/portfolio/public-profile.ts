@@ -19,6 +19,7 @@
  *
  * 과제 수행 목록(S-03, ADR 0031): `projects`는 `canViewPersonaItem('project_list')`를 비로그인으로 판정해 통과할 때만(전체 공개) 싣습니다.
  * 팔로워 수(S-04, ADR 0033): `followCounts`는 주인이 `show_follower_count`를 켰을 때만 있습니다. 팔로우 목록 자체는 세션을 읽는 경로에서만 줍니다.
+ * 소셜 링크(S-06, ADR 0034): `socialLinks`는 그 페르소나의 링크(서비스·주소·되돌림 링크 확인 여부)입니다. 공개 범위 항목이 없는 기본 정보입니다.
  * 공개 사례·타임라인은 공개 범위 설정과 무관하게 공개 절차를 거친 것만입니다(설정으로 넓힐 수 없음, §8.3 불변조건 2).
  */
 import { ANONYMOUS_VIEWER, CASE_SECTIONS, clipText } from '@peerchive/domain'
@@ -37,6 +38,7 @@ import { toPublicProfileDto } from '../identity/profile-input'
 import { publicAffiliationBadges } from '../affiliation/affiliations'
 import { linkedPersonaFor, resolvePublicPersona } from '../social/personas'
 import { publicFollowCounts } from '../social/follows'
+import { publicSocialLinks } from '../social/social-links'
 import { visiblePersonaProjects } from '../social/visibility'
 import { loadCurrentEditionModel } from './editions'
 import { loadCaseStudiesWithRelease } from './release-scope'
@@ -117,6 +119,8 @@ export async function getPublicPortfolioProfile(db: DbExecutor, rawHandle: unkno
     projects: await visiblePersonaProjects(db, persona, ANONYMOUS_VIEWER, now),
     // 팔로워·팔로잉 수(S-04): `show_follower_count`를 끄면 키 자체를 싣지 않습니다(null·0도 아님).
     ...(await publicFollowCounts(db, persona)),
+    // 소셜 링크(S-06): 프로필 기본 정보라 늘 싣습니다. 이 페르소나의 것만(상대 페르소나의 링크는 연결을 켜도 붙이지 않음).
+    socialLinks: await publicSocialLinks(db, persona.id),
   }
 }
 

@@ -122,6 +122,8 @@ async function start(): Promise<void> {
   delete shared.PEERCHIVE_INTERNAL_SECRET
   delete shared.PEERCHIVE_MAINTENANCE
   delete shared.PEERCHIVE_PUBLIC_READS_DISABLED
+  // worker가 사이트 origin을 모르면 소셜 링크 되돌림 확인(S-06)을 건너뜁니다: E2E는 바깥 인터넷에 접속하지 않습니다(web에만 따로 넣음).
+  delete shared.NUXT_SITE_ORIGIN
 
   const state: E2eState = { webPid: null, workerPid: null, storageRoot }
   const save = () => writeFileSync(STATE_FILE, JSON.stringify(state, null, 2))

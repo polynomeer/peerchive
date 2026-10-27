@@ -49,6 +49,7 @@
  * 프로필·포트폴리오 판의 페르소나 귀속(profiles.persona_id 기본 키·portfolio_editions.persona_id). 결정은 ADR 0028.
  * S-02(0027 migration): 페르소나 활동(persona_activities, persona_id NOT NULL, 투영 검사 트리거), 커뮤니티 글·댓글의 작성 시점 페르소나
  * (community_posts·community_comments.persona_id, 익명이면 항상 null), social DB 역할(peerchive_social, 커뮤니티 테이블 권한 없음). 결정은 ADR 0029.
+ * S-06(0030 migration): 소셜 링크(social_links: 페르소나별, 사용자당 같은 주소 하나, 되돌림 링크 확인 상태·연속 실패 수). 결정은 ADR 0034.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -104,6 +105,12 @@ export const visibilityAudience = pgEnum('visibility_audience', ['public', 'sign
 export const followStatus = pgEnum('follow_status', ['pending', 'active'])
 /** 차단의 숨김 범위(S-04, SYSTEM_DESIGN §6.7.1 Block): 차단을 건 페르소나만(기본) / 내 모든 페르소나(사용자가 고를 때만). */
 export const blockScope = pgEnum('block_scope', ['origin_persona', 'all_personas'])
+/** 소셜 링크 서비스(S-06, @peerchive/domain SOCIAL_LINK_PROVIDERS). github·instagram·youtube·linkedin은 그 서비스의 주소만 받습니다. */
+export const socialLinkProvider = pgEnum('social_link_provider', ['github', 'blog', 'linkedin', 'instagram', 'youtube', 'other'])
+/** 되돌림 링크 확인 상태(S-06, @peerchive/domain SOCIAL_LINK_VERIFICATIONS). verified는 계정에 프로필 링크가 있음을 확인했다는 뜻일 뿐입니다. */
+export const socialLinkVerification = pgEnum('social_link_verification', ['unverified', 'verified', 'lost'])
+/** 마지막 확인 결과(S-06, @peerchive/domain SOCIAL_LINK_CHECK_RESULTS, 본인 화면에만). */
+export const socialLinkCheckResult = pgEnum('social_link_check_result', ['found', 'missing', 'fetch_failed', 'blocked'])
 export const contactPolicy = pgEnum('contact_policy', ['closed', 'on_request', 'open'])
 export const semester = pgEnum('semester', ['spring', 'summer', 'fall', 'winter'])
 /** 과제 종류. study는 스터디 방의 기록(C-08, ADR 0026): 스터디 방이 기록을 켜면 만들어지는 내부 과제 공간이고 멤버십은 방에서 파생됩니다. */
@@ -953,6 +960,45 @@ export const mutes = pgTable(
     unique('mutes_pair_key').on(t.muterUserId, t.mutedPersonaId),
     check('mutes_not_self_check', sql`${t.muterUserId} <> ${t.mutedUserId}`),
     foreignKey({ name: 'mutes_muted_persona_fk', columns: [t.mutedPersonaId, t.mutedUserId], foreignColumns: [personas.id, personas.userId] }),
+  ],
+)
+
+/**
+ * 소셜 링크(S-06, SYSTEM_DESIGN §6.7.1 SocialLink, ADR 0034). **페르소나마다 따로**이고 한 링크는 한 페르소나에만 속합니다.
+ * - user_id는 페르소나 주인의 사본입니다. 복합 외래 키 (persona_id, user_id)가 사본 = 주인을 보장하고, 유일 키 (user_id, url)가 같은 사용자의
+ *   다른 페르소나에 같은 주소를 거는 것을 막습니다(두 프로필이 같은 외부 계정으로 이어지면 연결 플래그와 무관하게 같은 사람임이 드러남).
+ * - url은 @peerchive/domain parseSocialLinkUrl이 정규화한 https 주소입니다(바꾸지 않음: 고치려면 지우고 다시 추가). 웹 서버는 이 주소에 접속하지 않고,
+ *   되돌림 링크 확인은 worker의 링크 수집기만 합니다(§10).
+ * - check_failures는 연속 가져오기 실패 수입니다. verified 링크가 3번 연속 실패하면 lost(@peerchive/domain nextSocialLinkState).
+ * - 감사에는 id·서비스·페르소나 종류만 남기고 주소는 남기지 않습니다.
+ */
+export const socialLinks = pgTable(
+  'social_links',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    personaId: uuid('persona_id').notNull(),
+    userId: uuid('user_id').notNull(),
+    provider: socialLinkProvider('provider').notNull(),
+    url: text('url').notNull(),
+    verification: socialLinkVerification('verification').notNull().default('unverified'),
+    /** verified가 된 시각(verified인 동안 그대로). verified가 아니면 null. */
+    verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    /** 마지막으로 수집기가 확인한 시각(성공·실패 모두). */
+    lastCheckedAt: timestamp('last_checked_at', { withTimezone: true }),
+    lastCheckResult: socialLinkCheckResult('last_check_result'),
+    checkFailures: integer('check_failures').notNull().default(0),
+    /** 마지막 확인 요청 시각. 이보다 늦은 last_checked_at이 없으면 화면은 "확인 중"으로 봅니다. */
+    verifyRequestedAt: timestamp('verify_requested_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('social_links_user_url_key').on(t.userId, t.url),
+    check('social_links_url_check', sql`${t.url} like 'https://%' and char_length(${t.url}) <= 300`),
+    check('social_links_verified_at_check', sql`(${t.verification} = 'verified') = (${t.verifiedAt} is not null)`),
+    check('social_links_failures_check', sql`${t.checkFailures} >= 0`),
+    foreignKey({ name: 'social_links_persona_fk', columns: [t.personaId, t.userId], foreignColumns: [personas.id, personas.userId] }),
+    index('social_links_persona_idx').on(t.personaId, t.createdAt),
+    index('social_links_recheck_idx').on(t.lastCheckedAt).where(sql`${t.verification} = 'verified'`),
   ],
 )
 

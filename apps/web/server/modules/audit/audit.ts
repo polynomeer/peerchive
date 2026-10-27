@@ -145,6 +145,9 @@ export type AuditAction =
   | 'persona.project_listing_update'
   | 'social.block'
   | 'social.unblock'
+  | 'social_link.add'
+  | 'social_link.remove'
+  | 'social_link.verify_request'
 
 export async function recordAudit(
   db: DbExecutor,
@@ -194,6 +197,7 @@ export async function recordAudit(
       | 'course_qa'
       | 'ops_time_entry'
       | 'metrics'
+      | 'social_link'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

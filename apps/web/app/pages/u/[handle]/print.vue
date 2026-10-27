@@ -6,6 +6,7 @@
  * - 링크는 종이에서도 따라갈 수 있게 주소를 함께 적습니다.
  * - 상대 페르소나(S-01)는 본인이 연결을 켰을 때만(`linkedPersona`) 주소를 적습니다. 꺼져 있으면 인쇄물에도 0건입니다.
  * - 과제 수행 목록(S-03)은 공개 API가 싣는 경우(전체 공개)에만 적습니다. 인쇄물은 로그인 상태를 반영하지 않습니다.
+ * - 소셜 링크(S-06)는 주소와 `링크 확인됨` 표시·설명(인물 검증 아님)을 함께 적습니다.
  */
 import type { PublicPortfolioProfileDto } from '~~/shared/types/api'
 
@@ -53,6 +54,7 @@ const printPage = () => window.print()
           <p v-if="profile.headline"><strong>“{{ profile.headline }}”</strong></p>
           <p class="report-small">연락: {{ profile.contactText }}</p>
         </header>
+        <ProfileSocialLinks :links="profile.socialLinks" print />
         <PortfolioView :view="profile" print id-prefix="print" />
         <section v-if="profile.projects && profile.projects.length" class="report-member">
           <h2>과제 수행 목록</h2>

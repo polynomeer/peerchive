@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Peerchive 작업 worker(pg-boss). 파일 검사, 공개 게시·철회 이벤트(검색 색인·유용성 신호 정리), 선배 노트 색인, 운영 주기 정리·탈퇴 계정 정리·삭제 장부 재적용·이름 표시 방식 변경 적용을 처리합니다.",
+  "description": "Peerchive 작업 worker(pg-boss). 파일 검사, 공개 게시·철회 이벤트(검색 색인·유용성 신호 정리), 선배 노트 색인, 운영 주기 정리·탈퇴 계정 정리·삭제 장부 재적용·이름 표시 방식 변경 적용, 소셜 링크 되돌림 확인(SSRF 방어 링크 수집기)을 처리합니다.",
   "scripts": {
     "dev": "NODE_ENV=development tsx src/main.ts",
     "start": "tsx src/main.ts",

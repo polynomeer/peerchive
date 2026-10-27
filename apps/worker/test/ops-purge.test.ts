@@ -54,6 +54,7 @@ import {
   follows,
   blocks,
   mutes,
+  socialLinks,
   visibilitySettings,
   portfolioEditions,
   profiles,
@@ -256,6 +257,12 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       { muterUserId: X.id, mutedPersonaId: displayPersona!.id, mutedUserId: U.id },
       { muterUserId: X.id, mutedPersonaId: tPersona!.id, mutedUserId: T.id },
     ])
+    // 소셜 링크(S-06): U의 두 페르소나에 하나씩, T에 하나(남아야 함).
+    await tx.insert(socialLinks).values([
+      { personaId: realPersona!.id, userId: U.id, provider: 'github', url: 'https://github.com/u-real' },
+      { personaId: displayPersona!.id, userId: U.id, provider: 'blog', url: 'https://u-display.example.com/', verification: 'verified', verifiedAt: NOW },
+      { personaId: tPersona!.id, userId: T.id, provider: 'github', url: 'https://github.com/t' },
+    ])
     const uTeamLog = await log(tx, team.id, U.id, 'U가 쓴 팀 로그')
     const tTeamLog = await log(tx, team.id, T.id, 'T가 쓴 팀 로그')
     const teamFile = await file(tx, team.id, U.id)
@@ -321,6 +328,7 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         follows: 2,
         blocks: 2,
         mutes: 2,
+        social_links: 2,
         sessions: 1,
         auth_accounts: 1,
         magic_link_tokens: 1,
@@ -354,6 +362,7 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         [follows, or(eq(follows.followerUserId, w.U.id), eq(follows.followeeUserId, w.U.id))],
         [blocks, or(eq(blocks.blockerUserId, w.U.id), eq(blocks.blockedUserId, w.U.id))],
         [mutes, or(eq(mutes.muterUserId, w.U.id), eq(mutes.mutedUserId, w.U.id))],
+        [socialLinks, eq(socialLinks.userId, w.U.id)],
         [sessions, eq(sessions.userId, w.U.id)],
         [authAccounts, eq(authAccounts.userId, w.U.id)],
         [magicLinkTokens, eq(magicLinkTokens.email, w.U.email)],
@@ -372,6 +381,7 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       // U와 무관한 X → T 팔로우·X의 T 뮤트는 그대로.
       expect(await count(tx, follows, eq(follows.followeePersonaId, w.tPersonaId))).toBe(1)
       expect(await count(tx, mutes, eq(mutes.mutedPersonaId, w.tPersonaId))).toBe(1)
+      expect(await count(tx, socialLinks, eq(socialLinks.personaId, w.tPersonaId))).toBe(1)
 
       // 혼자 과제 1: 행·파일 모두 없음.
       expect(await count(tx, projects, eq(projects.id, w.solo.id))).toBe(0)

@@ -55,3 +55,13 @@ export interface CourseQaOutboxPayload {
   courseQaItemId: string
   courseId: string
 }
+
+/**
+ * 소셜 링크 되돌림 확인 요청(S-06, ADR 0034). 웹은 링크 행과 이 행만 남기고 URL에 접속하지 않습니다. worker의 링크 수집기(SSRF 방어)가 가져와
+ * 상태를 바꿉니다. payload에는 링크 id만 넣습니다(주소 없음 — worker가 지금 행을 읽음).
+ */
+export const SOCIAL_LINK_VERIFY_TOPIC = 'social_link.verify'
+
+export interface SocialLinkVerifyOutboxPayload {
+  socialLinkId: string
+}

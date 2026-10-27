@@ -1668,6 +1668,11 @@ export interface PublicPortfolioProfileDto extends PortfolioViewDto {
    * 팔로워·팔로잉 수(S-04). 공개 경로는 비로그인 판정이라 주인이 `show_follower_count`를 켰을 때만 이 키가 있고, 끄면 키 자체가 없습니다.
    */
   followCounts?: FollowCountsDto
+  /**
+   * 소셜 링크(S-06). 프로필 기본 정보라 공개 범위 항목이 없고 늘 실립니다(차단당한 사용자는 세션 경로가 페르소나 자체를 404로). 이 페르소나의
+   * 링크만이고 상대 페르소나의 링크는 연결을 켜도 싣지 않습니다. `verified`는 되돌림 링크 확인일 뿐 인물 검증이 아닙니다.
+   */
+  socialLinks: PublicSocialLinkDto[]
 }
 
 // ── 학교 메일 인증 (C-01, ADR 0018) ──────────────────────────────────────
@@ -2884,4 +2889,40 @@ export interface OperatorRecruitmentItemDto {
   message: string | null
   status: string
   hidden: boolean
+}
+
+// ── 소셜 링크 (S-06, ADR 0034) ───────────────────────────────────────────
+
+export type SocialLinkProvider = 'github' | 'blog' | 'linkedin' | 'instagram' | 'youtube' | 'other'
+export type SocialLinkVerification = 'unverified' | 'verified' | 'lost'
+export type SocialLinkCheckResult = 'found' | 'missing' | 'fetch_failed' | 'blocked'
+
+/** 공개 프로필의 소셜 링크. 확인 끊김(lost)·마지막 결과는 싣지 않습니다(본인 화면에만). */
+export interface PublicSocialLinkDto {
+  provider: SocialLinkProvider
+  url: string
+  /** 되돌림 링크 확인됨(계정에 이 Peerchive 프로필 링크가 있음). 인물·경력 검증이 아님. */
+  verified: boolean
+}
+
+/** 내 페르소나의 소셜 링크(본인에게만). */
+export interface MySocialLinkDto {
+  id: string
+  provider: SocialLinkProvider
+  url: string
+  verification: SocialLinkVerification
+  verifiedAt: string | null
+  lastCheckedAt: string | null
+  lastCheckResult: SocialLinkCheckResult | null
+  /** 확인을 요청했고 아직 수집기가 결과를 쓰지 않았음. */
+  verifyPending: boolean
+  createdAt: string
+}
+
+export interface MySocialLinksDto {
+  links: MySocialLinkDto[]
+  /** 페르소나당 최대 개수. */
+  limit: number
+  /** 링크한 페이지에 넣어야 하는 이 페르소나의 공개 프로필 주소(`<사이트>/u/<handle>`). */
+  backLinkUrl: string
 }

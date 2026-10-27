@@ -12,7 +12,7 @@
 | `DATABASE_URL` | 서비스 전용 계정, TLS 접속, 비밀 저장소에서 주입. 0008 migration의 `pg_trgm` 확장 허용 | 운영자 확인 |
 | `pnpm db:migrate` | 배포마다 web·worker보다 먼저 | 절차 |
 | social DB 역할(S-02) | `peerchive_social`(NOLOGIN, 커뮤니티 테이블 권한 없음)이 있고 권한이 적용됨. migration 계정에 CREATEROLE이 없으면 0027 migration은 역할을 만들지 않고 넘어가므로 DB 관리자가 한 번 `CREATE ROLE peerchive_social NOLOGIN;` 실행 뒤 테이블 주인 계정으로 `SELECT peerchive_apply_social_grants();`(true여야 함). 확인 SQL은 아래 §2 GP([ADR 0029](../adr/0029-identity-boundary.md)). 0028 migration이 같은 함수에 과제 수행 목록 읽기 권한(두 표 + 과제·학기·과목·엠바고·학교 인증의 필요한 열만)을 더했으므로 역할을 나중에 만들었다면 함수를 다시 부르면 됩니다([ADR 0031](../adr/0031-visibility-settings.md)). 0029 migration은 팔로우·차단·뮤트 세 표의 SELECT를 더했습니다([ADR 0033](../adr/0033-follows-blocks.md)). 앱이 이 역할로 붙는 것은 아직 아님 | 절차 |
-| `NUXT_SITE_ORIGIN` | 실제 https origin(쉼표로 여러 개). 로그인 링크·CSRF 기준 | 운영자 확인 |
+| `NUXT_SITE_ORIGIN` | 실제 https origin(쉼표로 여러 개). 로그인 링크·CSRF 기준. **worker에도 같은 값**(소셜 링크 되돌림 확인이 찾을 `/u/<handle>` 주소의 origin, S-06 — 없으면 worker가 경고를 남기고 확인·재확인을 건너뜀) | 운영자 확인 |
 | 메일 | `PEERCHIVE_MAIL_TRANSPORT=smtp`, `PEERCHIVE_SMTP_URL`(`smtps://…:465` 또는 `smtp://…:587` STARTTLS 필수, 비밀 저장소), `PEERCHIVE_MAIL_FROM`(발송 도메인의 주소). TLS 없는 SMTP·dev-console·설정 누락이면 web이 시작하지 않음. 공급자 쪽: 발송 도메인 SPF·DKIM·DMARC DNS, 발송 한도, 반송 처리(아래 §1.1) | **구현됨 — 공급자 설정 필요** |
 | 파일 저장소 | `PEERCHIVE_STORAGE_DRIVER=s3` + `PEERCHIVE_S3_ENDPOINT`(https)·`_REGION`·`_BUCKET`·`_ACCESS_KEY_ID`·`_SECRET_ACCESS_KEY`(·`_FORCE_PATH_STYLE`·`_PREFIX`), web·worker 같은 값. 설정이 빠졌거나 http endpoint면 web·worker가 시작하지 않음. 공급자 쪽: 비공개 버킷·버전 관리·전용 키(아래 §1.1). 단일 서버 파일럿만 `PEERCHIVE_ALLOW_FS_STORAGE_IN_PRODUCTION=1` + 백업 대상 디스크 | **구현됨 — 공급자 설정 필요** |
 | 악성코드 검사 | `PEERCHIVE_MALWARE_SCANNER=clamav` + `CLAMAV_HOST/PORT`(signature-only는 production에서 worker가 거부). clamd 서명 갱신 확인 | 운영자 확인 |
@@ -22,6 +22,7 @@
 | 탈퇴 유예 | `PEERCHIVE_DELETION_GRACE_DAYS`(기본 7). web·worker 같은 값 | 기본값 |
 | 공개 색인 | `PEERCHIVE_PUBLIC_INDEXING`은 파일럿 동안 끔(noindex) | 기본값 |
 | 프록시 | 프록시·로드밸런서 뒤라면 `PEERCHIVE_TRUSTED_PROXIES`에 프록시 CIDR을 설정(설정하지 않으면 X-Forwarded-For를 무시하고 소켓 주소만 사용). 잘못된 CIDR이 있으면 production에서 서버가 뜨지 않음 | 구현됨 — 배포 환경 CIDR 설정 필요 |
+| worker egress(S-06) | worker의 링크 수집기만 사용자가 붙인 URL에 접속합니다(웹은 접속하지 않음). 수집기가 https·443만, DNS 결과 전부를 검사(사설·loopback·link-local·CGNAT·메타데이터 169.254.169.254·IPv4-mapped·ULA 거부)하고 그 주소로 고정해 접속하지만, **네트워크에서도 한 겹 더**: worker의 바깥 접속은 443(과 DB·저장소·clamd·SMTP 등 필요한 곳)만 열고, 클라우드 메타데이터 주소와 내부망 대역으로의 egress를 막습니다. 프록시를 거쳐야 하는 환경이면 수집기는 프록시를 쓰지 않으므로(`HTTPS_PROXY` 무시) 직접 443 egress가 필요합니다 | 운영자 확인 |
 | 운영자 | `pnpm --filter @peerchive/db grant-operator <email>`로 최소 두 사람 | 운영자 확인 |
 | 백업 | 아래 §5 일정이 실제로 돌고 복구 연습이 통과 | 절차 |
 | worker 상태 | `/operator/metrics`의 시스템 상태가 정상(worker 기록 3분 이내, dead-letter 없음) | 절차 |
@@ -138,13 +139,16 @@ curl -sI https://<도메인>/community/s/<slug> | grep -i 'x-robots-tag'   # noi
 
 ### GP: 공개 프로필·팔로우 개방
 
-공개 프로필·팔로우·피드는 이 표가 채워지기 전에는 열지 않습니다(DELIVERY_PLAN §7 GP). 지금은 S-01·S-02 행만 구현되었습니다.
+공개 프로필·팔로우·피드는 이 표가 채워지기 전에는 열지 않습니다(DELIVERY_PLAN §7 GP). 지금은 S-01~S-04·S-06 행이 구현되었고 S-07 신고 대상은 아직입니다.
 
 | 조건 | 구현·근거 | 개방 직전 확인 |
 |---|---|---|
 | S-01 표시명 ↔ 실명 연결 | 연결이 꺼져 있으면 두 공개 프로필의 JSON·HTML·OG·인쇄 보기·README 카드에 상대 정보 0건(통합 테스트·E2E `r-personas`, [ADR 0028](../adr/0028-personas.md)) | — |
 | S-02 정체성 누출 0건 | 모듈 의존 테스트(social·프로필 라우트·공개 프로필 경로에서 import로 닿는 파일에 커뮤니티 모듈·테이블 없음), social DB 역할(커뮤니티 테이블 권한 0), `persona_activities.persona_id NOT NULL` + 투영 트리거(익명 글 거부), 작성 시점 페르소나, 시드 고정 속성 기반 회귀 테스트(`identity-boundary.integration.test.ts`, [ADR 0029](../adr/0029-identity-boundary.md)) | 운영 DB에서 아래 SQL ①~③. 개방 전 한 번 `S02_PROPERTY_WORLDS=50`으로 회귀 테스트를 돌려 통과 확인 |
-| S-03 공개 범위·S-04 차단 404·S-07 신고 대상 | 아직 | — |
+| S-06 소셜 링크 | 페르소나별 링크·같은 주소 두 프로필 불가, 수집은 worker의 SSRF 방어 수집기만(수집기·주소 판정·시나리오 V worker 테스트, [ADR 0034](../adr/0034-social-links.md)), 배지 문구 "인물·경력을 검증하지 않습니다" | 파일럿 사용자 몇 명에게 `링크 확인됨`이 인물 검증으로 읽히지 않는지 확인. worker egress(§1)와 `NUXT_SITE_ORIGIN`(worker) 확인 |
+| S-03 공개 범위 | 계정 전체를 `전체 공개`로 바꿔도 동의 전 공개 후보·비공개 과제 공간·엠바고 중 제목 0건, 과제 수행 목록은 과목·학기·제목만(`visibility.integration.test.ts`·E2E `s-visibility`, [ADR 0031](../adr/0031-visibility-settings.md)) | — |
+| S-04 차단 404 | 차단당한 사용자는 숨긴 페르소나의 세션 경로·팔로우 목록에서 404, 차단·팔로워 삭제·뮤트에 알림 0건(`follows.integration.test.ts`·E2E `t-follows`, [ADR 0033](../adr/0033-follows-blocks.md)) | 로그아웃 공개 화면은 차단을 판별하지 못함(ADR 0033)을 공지 문구에 반영 |
+| S-07 신고 대상 | 아직 | — |
 
 ```sql
 -- ① social 역할: 로그인 불가, 커뮤니티 구역 테이블 권한 0행이어야 함(목록은 schema.ts 커뮤니티 구역)
@@ -376,6 +380,7 @@ RTO 목표 4시간 대비 로컬 연습은 수 초입니다. 운영 데이터 �
 | 학교 메일 인증(소속) | 메일 주소는 저장하지 않음(해시·도메인만). active는 해제·취소·탈퇴까지, 끝난 행은 해시 없이 이력만 | 탈퇴 정리 때 삭제 |
 | 탈퇴 계정 자료 | 요청 뒤 7일(유예) | `account-purge` 30분마다 |
 | 이름 표시 방식 변경 이력·커뮤니티 알림 | 이력은 공간이 있는 동안(행을 지우지 않음, 탈퇴 때 예약·취소한 사람만 비움), 알림은 받는 사람이 탈퇴할 때까지 | 탈퇴 정리 때. 예약 적용은 `name-mode-changes` 매분 |
+| 소셜 링크 | 사용자가 지우거나 탈퇴할 때까지. verified 링크는 `social-link-recheck`(매시, 링크마다 하루 한 번, 한 번에 100개)가 다시 확인해 되돌림 링크가 없으면(404·410 포함) lost, 가져오기 3번 연속 실패면 lost. 감사에는 주소를 남기지 않음 | 탈퇴 정리 때 삭제 |
 | 삭제 장부 | 무기한(개인정보 없음, 재적용에 필요) | 없음 |
 | 분석 이벤트 | 파일럿 기간 `<기간>`, 수집 거부·탈퇴 때 삭제(사용자 키 없는 이벤트 — `actor_hash` null — 는 사람과 이어지지 않아 탈퇴 때 지우지 않음) | 수동(`<절차>`) |
 | 주간 운영 시간(`ops_time_entries`) | 파일럿 기간 + 1년(운영 비용 산정 근거, ADR 0027). 탈퇴한 운영자는 메모만 지우고 분은 남김(가명) | 수동: `delete from ops_time_entries where week < '<보존 시작 주>'`(운영 회의 결정 뒤) |

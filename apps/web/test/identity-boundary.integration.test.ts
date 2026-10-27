@@ -28,6 +28,7 @@ import { createPublicProfileHandler, createReadmeCardHandler } from '../server/m
 import { listPersonaActivities, projectPersonaActivity } from '../server/modules/social/activities'
 import { followProfile, getFollowList, getProfileSocial } from '../server/modules/social/follows'
 import { setVisibility } from '../server/modules/social/visibility'
+import { publicSocialLinks } from '../server/modules/social/social-links'
 import { createDisplayPersona, listMyPersonas, resolvePublicPersona, setIdentityLink } from '../server/modules/social/personas'
 import { COMMUNITY_TABLES } from './community-tables'
 import { closeTestDb, createUser, databaseUrl, expectServiceError, verifiedAffiliation, withRollback } from './helpers'
@@ -106,7 +107,7 @@ export function boundaryViolations(file: string, text: string, strict: boolean):
 }
 
 /** 프로필·페르소나(·이후 팔로우·피드·활동)를 내보내는 라우트. 새 라우트도 이름으로 자동 포함됩니다. */
-const SOCIAL_ROUTE = /(^|\/)(personas?|profiles?|profile\.[a-z]+\.ts|identity-link[^/]*|follows?|followers|following|follow-requests|blocks?|mutes?|feeds?|activit(y|ies))(\/|\.|$)/
+const SOCIAL_ROUTE = /(^|\/)(personas?|profiles?|profile\.[a-z]+\.ts|identity-link[^/]*|follows?|followers|following|follow-requests|blocks?|mutes?|social-links?|feeds?|activit(y|ies))(\/|\.|$)/
 const SOCIAL_ROUTES = listTs(join(SERVER, 'api')).filter((f) => SOCIAL_ROUTE.test(relative(join(SERVER, 'api'), f)))
 const SOCIAL_MODULE = listTs(join(SERVER, 'modules/social'))
 /** 공개 프로필·포트폴리오 경로가 페르소나를 푸는 곳(S-01). */
@@ -157,7 +158,9 @@ describe('S-02 module boundary lint: social never reaches community posts (sourc
   })
 
   it('the social module and the profile/persona routes neither import community code/tables nor name a community table', () => {
-    expect(SOCIAL_MODULE.map(rel)).toEqual(expect.arrayContaining(['web/server/modules/social/personas.ts', 'web/server/modules/social/activities.ts']))
+    expect(SOCIAL_MODULE.map(rel)).toEqual(
+      expect.arrayContaining(['web/server/modules/social/personas.ts', 'web/server/modules/social/activities.ts', 'web/server/modules/social/social-links.ts']),
+    )
     expect(SOCIAL_ROUTES.map(rel)).toEqual(
       expect.arrayContaining([
         'web/server/api/v1/personas/index.post.ts',
@@ -166,6 +169,8 @@ describe('S-02 module boundary lint: social never reaches community posts (sourc
         'web/server/api/v1/profiles/[handle].get.ts',
         'web/server/api/v1/public/profiles/[handle]/index.get.ts',
         'web/server/api/v1/public/profiles/[handle]/readme-card.md.get.ts',
+        'web/server/api/v1/personas/[id]/social-links.post.ts',
+        'web/server/api/v1/social-links/[id]/verify.post.ts',
       ]),
     )
     const offenders = [...SOCIAL_MODULE, ...SOCIAL_ROUTES].flatMap((f) => boundaryViolations(f, readFileSync(f, 'utf8'), true).map((v) => `${rel(f)}: ${v}`))
@@ -259,8 +264,8 @@ const sha256 = (s: string) => createHash('sha256').update(s).digest('hex')
 // ── DB: social 역할 ───────────────────────────────────────────────────────
 
 const SOCIAL_ROLE = 'peerchive_social'
-/** social 읽기 경로가 쓰는 테이블(migration 0027·0028·0029 peerchive_apply_social_grants). 과제·학기·과목·엠바고·학교 인증은 열 단위 SELECT(S-03 테스트). */
-const SOCIAL_READ_TABLES = ['personas', 'profiles', 'identity_links', 'persona_activities', 'visibility_settings', 'project_listings', 'follows', 'blocks', 'mutes']
+/** social 읽기 경로가 쓰는 테이블(migration 0027~0030 peerchive_apply_social_grants). 과제·학기·과목·엠바고·학교 인증은 열 단위 SELECT(S-03 테스트). */
+const SOCIAL_READ_TABLES = ['personas', 'profiles', 'identity_links', 'persona_activities', 'visibility_settings', 'project_listings', 'follows', 'blocks', 'mutes', 'social_links']
 
 describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
   afterAll(closeTestDb)
@@ -328,6 +333,8 @@ describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
         // 팔로우 목록·관계 정보(S-04)도 같은 역할로: follows·blocks·mutes 읽기.
         expect(await getFollowList(inner, null, persona!.handle, 'followers')).toEqual({ entries: null })
         expect((await getProfileSocial(inner, { userId: user.id }, persona!.handle)).isOwner).toBe(true)
+        // 소셜 링크(S-06): social_links 읽기.
+        expect(await publicSocialLinks(inner, persona!.id)).toEqual([])
         await inner.execute(sql.raw('reset role'))
       })
     })
