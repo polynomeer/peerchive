@@ -160,13 +160,33 @@ export const caseJobTarget = pgEnum('case_job_target', ['backend', 'frontend', '
 /** 케이스 스터디 상태(T-14): 초안 → 게시 → (원본 release 철회·대체 시) 이용 불가. 이용 불가는 되돌리지 않습니다. */
 export const caseStudyStatus = pgEnum('case_study_status', ['draft', 'published', 'unavailable'])
 /** 신고 대상(T-15, @peerchive/domain REPORT_TARGET_TYPES). 지금 공개인 것만 신고할 수 있습니다(community_space는 신고자가 읽을 수 있는 공간, C-02). */
-export const reportTargetType = pgEnum('report_target_type', ['publication', 'publication_item', 'senior_note', 'case_study', 'profile', 'community_space'])
+export const reportTargetType = pgEnum('report_target_type', [
+  'publication',
+  'publication_item',
+  'senior_note',
+  'case_study',
+  'profile',
+  'community_space',
+  'community_post',
+  'community_comment',
+])
 /** 신고 사유(T-15, REPORT_REASONS). 개인정보·저작권은 공개 사례에 보류를 겁니다. */
 export const reportReason = pgEnum('report_reason', ['personal_info', 'answer_sharing', 'copyright', 'harassment', 'false_claim', 'spam', 'other'])
 /** 신고 상태(T-15): 접수 → 검토 중 → 처리됨/기각. 닫힌 신고는 다시 열지 않습니다. */
 export const reportStatus = pgEnum('report_status', ['open', 'in_review', 'resolved', 'dismissed'])
 /** 운영 조치 종류(T-15, MODERATION_ACTION_KINDS). 모두 공개 차단이며 삭제는 없습니다. */
-export const moderationActionKind = pgEnum('moderation_action_kind', ['none', 'restrict', 'hide_item', 'hide_note', 'hide_case_study', 'hide_profile', 'restrict_space', 'archive_space'])
+export const moderationActionKind = pgEnum('moderation_action_kind', [
+  'none',
+  'restrict',
+  'hide_item',
+  'hide_note',
+  'hide_case_study',
+  'hide_profile',
+  'restrict_space',
+  'archive_space',
+  'hide_post',
+  'hide_comment',
+])
 /** 공개 사례 안에서 가릴 수 있는 항목(T-15, HIDDEN_ITEM_KINDS). */
 export const hiddenItemKind = pgEnum('hidden_item_kind', ['log', 'claim', 'artifact'])
 /** 이의제기 상태(T-15): 열림 → 유지/되돌림. */
@@ -194,6 +214,9 @@ export const analyticsEventName = pgEnum('analytics_event_name', [
   'space_joined',
   'name_mode_scheduled',
   'name_mode_applied',
+  'post_created',
+  'comment_created',
+  'reaction_added',
 ])
 /** 기관 종류(C-01). 지금은 대학만. P2에서 bootcamp 등을 더합니다(SYSTEM_DESIGN §6.7.2 이관 원칙, ADR 0018). */
 export const institutionKind = pgEnum('institution_kind', ['university'])
@@ -226,7 +249,11 @@ export const officialRequestSource = pgEnum('official_request_source', ['student
 /** 이름 표시 방식 변경 상태(C-03): scheduled(7일 대기) → applied(worker 적용) / cancelled(방장이 기한 전 취소). */
 export const nameModeChangeStatus = pgEnum('name_mode_change_status', ['scheduled', 'applied', 'cancelled'])
 /** 커뮤니티 알림 종류(C-03, @peerchive/domain COMMUNITY_NOTICE_KINDS). */
-export const communityNoticeKind = pgEnum('community_notice_kind', ['name_mode_scheduled', 'name_mode_cancelled', 'name_mode_applied'])
+export const communityNoticeKind = pgEnum('community_notice_kind', ['name_mode_scheduled', 'name_mode_cancelled', 'name_mode_applied', 'post_commented'])
+/** 커뮤니티 글·댓글 상태(C-04). auto_hidden은 C-06(신고 누적 임시 숨김)이 씁니다. */
+export const communityItemStatus = pgEnum('community_item_status', ['published', 'deleted_by_author', 'hidden', 'auto_hidden'])
+/** 공감 종류(C-04). 공감만, 비추천 없음. */
+export const communityReactionKind = pgEnum('community_reaction_kind', ['empathy'])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -1843,6 +1870,9 @@ export const moderationActions = pgTable(
     profileUserId: uuid('profile_user_id').references(() => users.id),
     /** 커뮤니티 공간 조치(restrict_space, C-02 / 운영자 직접 보관 archive_space). */
     communitySpaceId: uuid('community_space_id').references((): AnyPgColumn => communitySpaces.id),
+    /** 커뮤니티 글·댓글 가리기(hide_post·hide_comment, C-04). */
+    communityPostId: uuid('community_post_id').references((): AnyPgColumn => communityPosts.id),
+    communityCommentId: uuid('community_comment_id').references((): AnyPgColumn => communityComments.id),
     internalNote: text('internal_note').notNull(),
     publicReason: text('public_reason'),
     notifyOwner: boolean('notify_owner').notNull().default(false),
@@ -1863,6 +1893,8 @@ export const moderationActions = pgTable(
     index('moderation_actions_case_study_idx').on(t.caseStudyId),
     index('moderation_actions_profile_user_idx').on(t.profileUserId),
     index('moderation_actions_community_space_idx').on(t.communitySpaceId),
+    index('moderation_actions_community_post_idx').on(t.communityPostId),
+    index('moderation_actions_community_comment_idx').on(t.communityCommentId),
     check('moderation_actions_outcome_check', sql`${t.outcome} in ('resolved', 'dismissed') and (${t.outcome} = 'resolved' or ${t.kind} = 'none')`),
     check('moderation_actions_internal_note_check', sql`char_length(${t.internalNote}) between 1 and 1000`),
     check('moderation_actions_public_reason_check', sql`${t.publicReason} is null or char_length(${t.publicReason}) between 1 and 300`),
@@ -1873,6 +1905,8 @@ export const moderationActions = pgTable(
     ),
     // ::text 비교: 같은 migration에서 더한 enum 값을 리터럴로 쓰면 PostgreSQL이 "unsafe use of new value"로 거부합니다.
     check('moderation_actions_space_check', sql`${t.kind}::text not in ('restrict_space', 'archive_space') or ${t.communitySpaceId} is not null`),
+    check('moderation_actions_post_check', sql`${t.kind}::text <> 'hide_post' or ${t.communityPostId} is not null`),
+    check('moderation_actions_comment_check', sql`${t.kind}::text <> 'hide_comment' or ${t.communityCommentId} is not null`),
     check('moderation_actions_item_check', sql`(${t.kind} <> 'hide_item') or (${t.itemKind} is not null and ${t.itemKey} is not null and ${t.publicationId} is not null)`),
   ],
 )
@@ -1905,6 +1939,9 @@ export const reports = pgTable(
     profileUserId: uuid('profile_user_id').references(() => users.id),
     /** 신고한 커뮤니티 공간(C-02). 내용은 복사하지 않습니다. */
     communitySpaceId: uuid('community_space_id').references((): AnyPgColumn => communitySpaces.id),
+    /** 신고한 커뮤니티 글·댓글(C-04). 내용은 복사하지 않습니다(운영자는 지금 행을 봄). */
+    communityPostId: uuid('community_post_id').references((): AnyPgColumn => communityPosts.id),
+    communityCommentId: uuid('community_comment_id').references((): AnyPgColumn => communityComments.id),
     reason: reportReason('reason').notNull(),
     details: text('details'),
     status: reportStatus('status').notNull().default('open'),
@@ -1931,7 +1968,9 @@ export const reports = pgTable(
         or (${t.targetType} = 'senior_note' and ${t.seniorNoteId} is not null and ${t.noteVersion} is not null)
         or (${t.targetType} = 'case_study' and ${t.caseStudyId} is not null and ${t.caseStudyVersion} is not null)
         or (${t.targetType} = 'profile' and ${t.profileUserId} is not null)
-        or (${t.targetType}::text = 'community_space' and ${t.communitySpaceId} is not null)`,
+        or (${t.targetType}::text = 'community_space' and ${t.communitySpaceId} is not null)
+        or (${t.targetType}::text = 'community_post' and ${t.communityPostId} is not null)
+        or (${t.targetType}::text = 'community_comment' and ${t.communityCommentId} is not null)`,
     ),
   ],
 )
@@ -2449,13 +2488,153 @@ export const communityNotices = pgTable(
       .references(() => communitySpaces.id),
     kind: communityNoticeKind('kind').notNull(),
     nameModeChangeId: uuid('name_mode_change_id').references(() => nameModeChanges.id),
-    payload: jsonb('payload').$type<Record<string, string | boolean>>().notNull().default({}),
+    /** 새 댓글 알림(post_commented, C-04)의 글. */
+    postId: uuid('post_id').references((): AnyPgColumn => communityPosts.id),
+    payload: jsonb('payload').$type<Record<string, string | boolean | number>>().notNull().default({}),
     createdAt: createdAt(),
     readAt: timestamp('read_at', { withTimezone: true }),
   },
   (t) => [
     uniqueIndex('community_notices_change_kind_user_key').on(t.nameModeChangeId, t.kind, t.userId).where(sql`${t.nameModeChangeId} is not null`),
     index('community_notices_user_created_idx').on(t.userId, t.createdAt),
+    // 새 댓글 알림은 읽기 전까지 글·사람마다 한 행(count를 올림).
+    uniqueIndex('community_notices_post_unread_key').on(t.postId, t.userId).where(sql`${t.postId} is not null and ${t.readAt} is null`),
+    check('community_notices_target_check', sql`(${t.postId} is null) or (${t.nameModeChangeId} is null)`),
     check('community_notices_payload_object_check', sql`jsonb_typeof(${t.payload}) = 'object'`),
+  ],
+)
+
+// C-04: 글·댓글·스레드 익명 번호·공감(ADR 0022). 같은 커뮤니티 구역이므로 C-05 경계 검사가 자동으로 덮습니다.
+
+/**
+ * 커뮤니티 글(C-04, SYSTEM_DESIGN §6.7 Post).
+ * - name_mode: **쓰는 순간 고정**(ADR 0020 계약). 같은 트랜잭션에서 공간 행을 FOR SHARE로 잠그고 @peerchive/domain nameModeAtWrite가 돌려준
+ *   값만 넣습니다. 이 열·author_id·space_id·board_id를 바꾸는 UPDATE는 DB 트리거(community_posts_frozen_columns, migration 0020)가 거부합니다.
+ * - space_id는 board의 공간(조회·잠금용 복사). 지운 글(deleted_by_author)은 제목·본문을 비우고 행은 남깁니다(스레드 익명 번호·댓글 유지).
+ *   가린 글(hidden·auto_hidden)은 본문을 남깁니다(이의제기로 되돌릴 수 있게). 탈퇴 정리는 제목·본문을 비우고 deleted_by_author로 바꿉니다.
+ * - version: 고칠 때마다 +1(낙관적 동시성). edited_at: 마지막으로 고친 시각.
+ */
+export const communityPosts = pgTable(
+  'community_posts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    boardId: uuid('board_id')
+      .notNull()
+      .references(() => boards.id),
+    spaceId: uuid('space_id')
+      .notNull()
+      .references(() => communitySpaces.id),
+    authorId: uuid('author_id')
+      .notNull()
+      .references(() => users.id),
+    nameMode: communityNameMode('name_mode').notNull(),
+    title: text('title').notNull(),
+    body: text('body').notNull(),
+    status: communityItemStatus('status').notNull().default('published'),
+    editedAt: timestamp('edited_at', { withTimezone: true }),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    version: integer('version').notNull().default(1),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('community_posts_board_created_idx').on(t.boardId, t.createdAt, t.id),
+    index('community_posts_author_idx').on(t.authorId),
+    index('community_posts_space_idx').on(t.spaceId),
+    check(
+      'community_posts_content_check',
+      sql`(${t.status} = 'deleted_by_author' and ${t.title} = '' and ${t.body} = '' and ${t.deletedAt} is not null)
+        or (${t.status} <> 'deleted_by_author' and char_length(${t.title}) between 1 and 120 and char_length(${t.body}) between 1 and 10000 and ${t.deletedAt} is null)`,
+    ),
+    check('community_posts_version_check', sql`${t.version} >= 1`),
+  ],
+)
+
+/**
+ * 커뮤니티 댓글(C-04, SYSTEM_DESIGN §6.7 Comment). 답글은 한 단계까지(parent는 같은 글의 최상위 댓글, 서비스가 확인).
+ * name_mode는 **댓글 자신의 작성 시점 방식**입니다(글의 방식이 아님: 글을 쓴 뒤 공간 방식이 바뀌면 그 뒤 댓글은 새 방식).
+ * 익명 번호는 스레드(글) 단위로 thread_aliases가 정합니다. 고정 열 트리거·지우기·탈퇴 정리 규칙은 글과 같습니다.
+ */
+export const communityComments = pgTable(
+  'community_comments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    postId: uuid('post_id')
+      .notNull()
+      .references(() => communityPosts.id),
+    parentCommentId: uuid('parent_comment_id').references((): AnyPgColumn => communityComments.id),
+    authorId: uuid('author_id')
+      .notNull()
+      .references(() => users.id),
+    nameMode: communityNameMode('name_mode').notNull(),
+    body: text('body').notNull(),
+    status: communityItemStatus('status').notNull().default('published'),
+    editedAt: timestamp('edited_at', { withTimezone: true }),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    version: integer('version').notNull().default(1),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('community_comments_post_created_idx').on(t.postId, t.createdAt, t.id),
+    index('community_comments_author_idx').on(t.authorId),
+    index('community_comments_parent_idx').on(t.parentCommentId),
+    check(
+      'community_comments_content_check',
+      sql`(${t.status} = 'deleted_by_author' and ${t.body} = '' and ${t.deletedAt} is not null)
+        or (${t.status} <> 'deleted_by_author' and char_length(${t.body}) between 1 and 3000 and ${t.deletedAt} is null)`,
+    ),
+    check('community_comments_version_check', sql`${t.version} >= 1`),
+    check('community_comments_parent_self_check', sql`${t.parentCommentId} is null or ${t.parentCommentId} <> ${t.id}`),
+  ],
+)
+
+/**
+ * 스레드 익명 번호(C-04, SYSTEM_DESIGN §6.7 ThreadAlias). 글(스레드)마다 사람마다 번호 하나: 익명 글의 글쓴이 0(`글쓴이`), 다른 사람은
+ * 그 스레드에 처음 익명으로 쓴 순서대로 1, 2, …(@peerchive/domain assignThreadAlias). 지워도 번호를 다시 쓰지 않고(행을 지우지 않음),
+ * 스레드 사이에 번호·키를 공유하지 않습니다. 이 행의 id·user_id는 어떤 응답에도 나가지 않습니다. UPDATE는 트리거가 거부합니다.
+ * 탈퇴 정리도 행을 남깁니다(users 행은 가명 처리되어 남음 — 스레드의 다른 번호가 바뀌지 않게).
+ */
+export const threadAliases = pgTable(
+  'thread_aliases',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    postId: uuid('post_id')
+      .notNull()
+      .references(() => communityPosts.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    aliasNo: integer('alias_no').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('thread_aliases_post_user_key').on(t.postId, t.userId),
+    uniqueIndex('thread_aliases_post_alias_key').on(t.postId, t.aliasNo),
+    check('thread_aliases_alias_no_check', sql`${t.aliasNo} >= 0`),
+  ],
+)
+
+/**
+ * 공감(C-04, SYSTEM_DESIGN §6.7 Reaction). 글 또는 댓글 하나에 사람마다 한 번(부분 unique). 공감만 있고 비추천은 없습니다.
+ * 개수만 보여 주고 누가 눌렀는지는 어떤 응답에도 싣지 않습니다. 탈퇴 정리 때 그 사람의 행을 지웁니다.
+ */
+export const communityReactions = pgTable(
+  'community_reactions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    postId: uuid('post_id').references(() => communityPosts.id),
+    commentId: uuid('comment_id').references(() => communityComments.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    kind: communityReactionKind('kind').notNull().default('empathy'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('community_reactions_post_user_key').on(t.postId, t.userId, t.kind).where(sql`${t.postId} is not null`),
+    uniqueIndex('community_reactions_comment_user_key').on(t.commentId, t.userId, t.kind).where(sql`${t.commentId} is not null`),
+    index('community_reactions_user_idx').on(t.userId),
+    check('community_reactions_target_check', sql`(${t.postId} is null) <> (${t.commentId} is null)`),
   ],
 )

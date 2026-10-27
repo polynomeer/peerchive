@@ -1,0 +1,182 @@
+<script setup lang="ts">
+/**
+ * 커뮤니티 댓글 하나(+ 답글 한 단계)(C-04, ADR 0022). 작성자는 이름·`글쓴이`·`익명N`으로만 보이고 사람 id·프로필 링크가 없습니다.
+ * 고치기·지우기는 내 댓글에만, 공감·신고는 남의 게시 중인 댓글에만 보입니다. 서버 응답(스레드 전체)을 부모에게 올려 다시 그립니다.
+ */
+import type { CommunityCommentDto, CommunityPostDto, CommunityReactionDto } from '~~/shared/types/api'
+
+const props = defineProps<{ comment: CommunityCommentDto; postId: string; official: boolean }>()
+const emit = defineEmits<{ thread: [CommunityPostDto]; error: [string]; status: [string] }>()
+
+const c = computed(() => props.comment)
+const editing = ref(false)
+const replying = ref(false)
+const editBody = ref('')
+const replyBody = ref('')
+const replyMode = ref<'' | 'display'>('')
+const busy = ref(false)
+const reaction = ref<CommunityReactionDto>({ count: props.comment.reactionCount, reacted: props.comment.reacted })
+watch(
+  () => props.comment,
+  (v) => (reaction.value = { count: v.reactionCount, reacted: v.reacted }),
+)
+
+function fail(e: unknown) {
+  const err = apiError(e)
+  emit('error', err.code === 'validation_failed' ? '입력한 내용을 확인하세요.' : communityErrorMessage(err.code))
+}
+
+function startEdit() {
+  editBody.value = c.value.body ?? ''
+  editing.value = true
+}
+
+async function saveEdit() {
+  busy.value = true
+  try {
+    emit('thread', await $fetch<CommunityPostDto>(`/api/v1/community/comments/${c.value.id}`, { method: 'PATCH', body: { body: editBody.value, expectedVersion: c.value.version } }))
+    editing.value = false
+    emit('status', '댓글을 고쳤습니다.')
+  } catch (e) {
+    fail(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function remove() {
+  if (!window.confirm('이 댓글을 지울까요? 지운 자리에는 "작성자가 삭제한 댓글입니다"가 남습니다.')) return
+  busy.value = true
+  try {
+    emit('thread', await $fetch<CommunityPostDto>(`/api/v1/community/comments/${c.value.id}`, { method: 'DELETE' }))
+    emit('status', '댓글을 지웠습니다.')
+  } catch (e) {
+    fail(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function reply() {
+  busy.value = true
+  try {
+    const body: Record<string, unknown> = { body: replyBody.value, parentCommentId: c.value.id }
+    if (props.official && replyMode.value) body.nameMode = replyMode.value
+    emit('thread', await $fetch<CommunityPostDto>(`/api/v1/community/posts/${props.postId}/comments`, { method: 'POST', body }))
+    replyBody.value = ''
+    replying.value = false
+    emit('status', '답글을 달았습니다.')
+  } catch (e) {
+    fail(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function toggleReaction() {
+  busy.value = true
+  try {
+    reaction.value = await $fetch<CommunityReactionDto>(`/api/v1/community/comments/${c.value.id}/reaction`, { method: reaction.value.reacted ? 'DELETE' : 'PUT' })
+  } catch (e) {
+    fail(e)
+  } finally {
+    busy.value = false
+  }
+}
+</script>
+
+<template>
+  <li class="comment" :data-testid="`comment-${c.id}`">
+    <p class="small comment-meta">
+      <strong class="comment-author">{{ c.author.label ?? '' }}</strong>
+      <span v-if="c.author.schoolVerified"> · 학교 인증</span>
+      <span v-if="c.author.mine" class="badge">내 댓글</span>
+      <span class="muted"> · {{ communityTimeText(c) }}<template v-if="c.edited"> · 수정됨</template></span>
+    </p>
+    <template v-if="editing">
+      <form class="stack" novalidate @submit.prevent="saveEdit">
+        <div class="field">
+          <label :for="`edit-${c.id}`">댓글 고치기</label>
+          <textarea :id="`edit-${c.id}`" v-model="editBody" rows="3" :maxlength="COMMENT_BODY_MAX" />
+        </div>
+        <p class="actions">
+          <button type="submit" :disabled="busy">저장</button>
+          <button type="button" class="secondary" @click="editing = false">취소</button>
+        </p>
+      </form>
+    </template>
+    <p v-else-if="c.body" class="pre comment-body">{{ c.body }}</p>
+    <p v-else class="muted comment-body">{{ c.placeholder }}</p>
+    <p v-if="!editing" class="actions small">
+      <button
+        v-if="c.canReact"
+        type="button"
+        class="link-button"
+        :aria-pressed="reaction.reacted"
+        :aria-label="`공감 ${reaction.count}개${reaction.reacted ? ', 공감함' : ''}`"
+        :disabled="busy"
+        @click="toggleReaction"
+      >
+        공감 {{ reaction.count }}
+      </button>
+      <span v-else-if="c.status === 'published'" class="muted">공감 {{ reaction.count }}</span>
+      <button v-if="c.canReply" type="button" class="link-button" :aria-expanded="replying" @click="replying = !replying">답글</button>
+      <button v-if="c.canEdit" type="button" class="link-button" @click="startEdit">고치기</button>
+      <button v-if="c.canDelete" type="button" class="link-button" :disabled="busy" @click="remove">지우기</button>
+      <ReportButton
+        v-if="c.canReport"
+        :id-prefix="`comment-${c.id}`"
+        :targets="[{ id: c.id, label: '이 댓글', targetType: 'community_comment', targetRef: { commentId: c.id } }]"
+      />
+    </p>
+    <form v-if="replying" class="stack" novalidate @submit.prevent="reply">
+      <fieldset v-if="official">
+        <legend>이름 표시</legend>
+        <div class="radio-row">
+          <input :id="`reply-anon-${c.id}`" v-model="replyMode" type="radio" :name="`reply-mode-${c.id}`" value="" />
+          <label :for="`reply-anon-${c.id}`">익명(기본)</label>
+        </div>
+        <div class="radio-row">
+          <input :id="`reply-display-${c.id}`" v-model="replyMode" type="radio" :name="`reply-mode-${c.id}`" value="display" />
+          <label :for="`reply-display-${c.id}`">표시명</label>
+        </div>
+      </fieldset>
+      <div class="field">
+        <label :for="`reply-${c.id}`">답글</label>
+        <textarea :id="`reply-${c.id}`" v-model="replyBody" rows="2" :maxlength="COMMENT_BODY_MAX" />
+      </div>
+      <p class="actions"><button type="submit" :disabled="busy">답글 달기</button></p>
+    </form>
+    <ul v-if="c.replies.length" class="plain replies">
+      <CommunityCommentItem
+        v-for="r in c.replies"
+        :key="r.id"
+        :comment="r"
+        :post-id="postId"
+        :official="official"
+        @thread="emit('thread', $event)"
+        @error="emit('error', $event)"
+        @status="emit('status', $event)"
+      />
+    </ul>
+  </li>
+</template>
+
+<style scoped>
+.comment {
+  border-top: 1px solid var(--border, #ddd);
+  padding: 0.5rem 0;
+  overflow-wrap: anywhere;
+}
+.replies {
+  margin-left: 1rem;
+  padding-left: 0.5rem;
+  border-left: 2px solid var(--border, #ddd);
+}
+.comment-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: baseline;
+}
+</style>

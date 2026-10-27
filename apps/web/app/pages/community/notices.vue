@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
- * 커뮤니티 알림(C-03, ADR 0020). 내가 멤버인 공간의 이름 표시 방식 변경 예약·취소·적용 소식입니다. 메일·푸시 없이 화면 안에서만 보입니다.
+ * 커뮤니티 알림(C-03, ADR 0020). 내가 멤버인 공간의 이름 표시 방식 변경 예약·취소·적용 소식과 내 글의 새 댓글(C-04, 개수만·쓴 사람 없음)입니다.
+ * 메일·푸시 없이 화면 안에서만 보입니다.
  * 나갔거나 내보내진 공간은 이름을 보여 주지 않습니다. 로그인 전용·noindex.
  */
 import type { CommunityNoticeDto, CommunityNoticesDto } from '~~/shared/types/api'
@@ -18,10 +19,13 @@ const KIND_TITLES: Record<CommunityNoticeDto['kind'], string> = {
   name_mode_scheduled: '이름 표시 방식 변경 예약',
   name_mode_cancelled: '이름 표시 방식 변경 취소',
   name_mode_applied: '이름 표시 방식 변경 적용',
+  post_commented: '내 글의 새 댓글',
 }
 
 const textOf = (n: CommunityNoticeDto) =>
-  noticeText(n.kind, { fromMode: n.fromMode, toMode: n.toMode, effectiveAt: n.effectiveAt, ...(n.kind === 'name_mode_scheduled' && { joinPolicyAdjusted: n.joinPolicyAdjusted }) })
+  n.kind === 'post_commented'
+    ? postNoticeText({ count: n.count })
+    : noticeText(n.kind, { fromMode: n.fromMode, toMode: n.toMode, effectiveAt: n.effectiveAt, ...(n.kind === 'name_mode_scheduled' && { joinPolicyAdjusted: n.joinPolicyAdjusted }) })
 
 async function markAll() {
   busy.value = true
@@ -41,7 +45,10 @@ async function markAll() {
 <template>
   <div class="community-page">
     <h1>커뮤니티 알림</h1>
-    <p class="hint">내가 멤버인 방의 이름 표시 방식이 바뀌면 여기에 알립니다. 이름 표시 방식이 바뀌어도 이미 쓴 글·댓글은 쓸 때의 방식 그대로입니다.</p>
+    <p class="hint">
+      내가 멤버인 방의 이름 표시 방식이 바뀌거나 내 글에 새 댓글이 달리면 여기에 알립니다. 이름 표시 방식이 바뀌어도 이미 쓴 글·댓글은 쓸 때의 방식
+      그대로입니다.
+    </p>
     <p v-if="status" class="notice" role="status">{{ status }}</p>
     <p v-if="error" class="notice error" role="alert">알림을 불러오지 못했습니다.</p>
     <template v-else-if="data?.items.length">
@@ -59,7 +66,10 @@ async function markAll() {
             <NuxtLink v-if="n.space" :to="`/community/s/${n.space.slug}`">{{ n.space.name }}</NuxtLink>
             <span v-else class="muted">지금은 볼 수 없는 공간</span>
           </p>
-          <p>{{ textOf(n) }}</p>
+          <p>
+            <NuxtLink v-if="n.kind === 'post_commented' && n.postId" :to="`/community/p/${n.postId}`">{{ textOf(n) }}</NuxtLink>
+            <template v-else>{{ textOf(n) }}</template>
+          </p>
           <p class="small muted">
             {{ formatDateTime(n.createdAt) }}<template v-if="n.kind === 'name_mode_scheduled'"> · 적용 예정 {{ formatDateTime(n.effectiveAt) }}</template>
           </p>

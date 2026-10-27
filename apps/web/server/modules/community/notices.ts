@@ -1,5 +1,6 @@
 /**
  * 커뮤니티 알림(C-03, ADR 0020): 이름 표시 방식 변경의 예약·취소·적용을 공간의 active 멤버에게 화면 안에서 알립니다(메일·푸시 없음).
+ * C-04(ADR 0022): 내 글의 새 댓글(`post_commented`, 글·사람마다 읽기 전까지 한 행, payload는 개수만)도 같은 목록에 나옵니다(posts.ts가 넣음).
  *
  * - 받는 사람: 알림을 만드는 순간 그 공간의 active 멤버이면서 계정이 active인 사람(나감·내보냄·승인 대기·탈퇴 요청 제외). 나중에 들어온 사람은
  *   알림 대신 공간 화면의 배너로 봅니다.
@@ -9,7 +10,7 @@
  * - 운영 조치 안내(moderation/notices.ts)와는 별개입니다: 그쪽은 조치 행에서 계산하는 당사자 안내이고, 이쪽은 멤버 전원에게 보내는 공간 소식입니다.
  */
 import { z } from 'zod'
-import { type CommunityNoticeKind, type NameModeNoticePayload, canReadSpace, sanitizeNoticePayload } from '@peerchive/domain'
+import { type NameModeNoticeKind, type NameModeNoticePayload, canReadSpace, sanitizeNoticePayload, sanitizePostNoticePayload } from '@peerchive/domain'
 import { and, communityNotices, communitySpaces, desc, eq, inArray, isNull, spaceMemberships, sql, type DbExecutor } from '@peerchive/db'
 import type { Actor } from '../errors'
 import { parseInput } from '../validation'
@@ -19,7 +20,7 @@ import type { CommunityNoticeDto, CommunityNoticesDto } from '../../../shared/ty
 /** 공간의 지금 active 멤버(계정도 active)에게 알림 한 줄씩. 넣은 수. 허용 목록을 통과하지 못하면 아무것도 넣지 않고 예외(코드 오류). */
 export async function notifyActiveMembers(
   tx: DbExecutor,
-  input: { spaceId: string; changeId: string; kind: CommunityNoticeKind; payload: NameModeNoticePayload; now: Date },
+  input: { spaceId: string; changeId: string; kind: NameModeNoticeKind; payload: NameModeNoticePayload; now: Date },
 ): Promise<number> {
   const payload = sanitizeNoticePayload(input.kind, input.payload as unknown as Record<string, unknown>)
   if (!payload) throw new Error(`community notice payload not allowed: ${input.kind}`)
@@ -66,12 +67,20 @@ export async function listMyCommunityNotices(db: DbExecutor, actor: Actor): Prom
   }
   const items: CommunityNoticeDto[] = []
   for (const r of rows) {
+    const space = readable.get(r.spaceId) ?? null
+    if (r.kind === 'post_commented') {
+      // 새 댓글(C-04): 개수만. 댓글 쓴 사람·내용은 저장하지 않습니다. 지금 읽을 수 없는 공간이면 글 주소도 싣지 않습니다.
+      const payload = sanitizePostNoticePayload(r.payload)
+      if (!payload) continue
+      items.push({ id: r.id, kind: r.kind, space, postId: space ? r.postId : null, count: payload.count, createdAt: r.createdAt.toISOString(), readAt: r.readAt?.toISOString() ?? null })
+      continue
+    }
     const payload = sanitizeNoticePayload(r.kind, r.payload)
     if (!payload) continue
     items.push({
       id: r.id,
       kind: r.kind,
-      space: readable.get(r.spaceId) ?? null,
+      space,
       fromMode: payload.fromMode,
       toMode: payload.toMode,
       effectiveAt: payload.effectiveAt,

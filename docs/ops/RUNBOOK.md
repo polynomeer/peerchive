@@ -71,7 +71,7 @@
 
 ### GC: 커뮤니티 개방
 
-커뮤니티는 이 표가 모두 채워지기 전에는 실제 사용자에게 열지 않습니다(DELIVERY_PLAN §7, apps/README 결정 기록). C-05 행은 구현됨, C-06 행은 아직입니다.
+커뮤니티는 이 표가 모두 채워지기 전에는 실제 사용자에게 열지 않습니다(DELIVERY_PLAN §7, apps/README 결정 기록). C-05 행과 C-04(작성자 비노출의 기반) 행은 구현됨, C-06 행은 아직입니다.
 
 | 필수 확인 | 구현된 것 | 남은 것 |
 |---|---|---|
@@ -80,7 +80,8 @@
 | C-05 소개(preview) 최소화 | listed 방만 소개 글, unlisted 방은 이름·멤버 수·가입 방식만, 초대 전용 방은 소개 없음(승인 대기 중이어도), 초대 링크도 학교 자격이 없으면 이름 없이 404 | — |
 | C-05 검색엔진 비노출 | `/robots.txt`(색인 꺼짐이면 전부 막음, 켜도 `/community`·`/api/v1/community`·개인 화면 차단), 모든 커뮤니티 응답 `X-Robots-Tag: noindex, nofollow, noarchive`·`no-store`·`no-referrer`, robots meta, 사이트맵 없음(생기면 커뮤니티 제외를 테스트가 강제) | 배포 도메인에서 `curl -s https://<도메인>/robots.txt` 확인, 검색엔진 콘솔에서 `/community` 색인 0건 확인(개방 뒤 주 1회) |
 | C-05 링크 미리보기 | 비로그인·봇(Slackbot·Discordbot·facebookexternalhit·Twitterbot 등)은 어떤 방 주소에도 같은 404 고정 HTML(이름·payload·OG 없음), 멤버 화면도 제목 고정 `Peerchive 커뮤니티`·og·description 없음 | 배포 도메인에서 아래 curl로 확인 |
-| C-05 데이터 경계(공개 검색·임베딩·집계에 커뮤니티 본문 0건) | schema.ts 커뮤니티 구역의 테이블(C-04 이후 자동 포함)을 커뮤니티 모듈과 문서화된 예외만 읽는 소스 검사, 센티넬 공간이 커뮤니티 밖 모든 테이블·공개 조회에 0건, 감사·분석은 id·코드만, 로그아웃 시 화면 데이터 버림 | C-04 글·댓글 추가 때 같은 테스트가 통과하는지(테이블을 커뮤니티 구역에 둠) |
+| C-05 데이터 경계(공개 검색·임베딩·집계에 커뮤니티 본문 0건) | schema.ts 커뮤니티 구역의 테이블(C-04의 `community_posts`·`community_comments`·`thread_aliases`·`community_reactions` 자동 포함)을 커뮤니티 모듈과 문서화된 예외만 읽는 소스 검사, 센티넬 공간·글·댓글이 커뮤니티 밖 모든 테이블·공개 조회에 0건, 감사·분석은 id·코드만(글 쓰기에는 감사 없음, 익명 글 분석은 사용자 키 없음), 로그아웃 시 화면 데이터 버림 | — |
+| C-04 작성자 비노출(익명 스레드 번호·방장/모더레이터 동일 응답) | 작성 시점 `name_mode` 고정(공간 행 FOR SHARE + `nameModeAtWrite`, DB 트리거가 UPDATE 거부), 스레드마다 `글쓴이`·`익명N`(스레드 사이 비연결), 응답·운영자 신고 상세에 사람 id·이메일·핸들 없음(통합 테스트·E2E `community-posts`), 신고 → `hide_post`·`hide_comment`(가리기, 삭제 아님)([ADR 0022](../adr/0022-community-posts.md)) | 개방 직전 운영 DB에서 `select tgname from pg_trigger where tgname like '%frozen%' or tgname = 'thread_aliases_immutable'`로 트리거 3개 확인 |
 | C-06 자동 숨김·작성자 비노출·이용 제한 | — | C-06 |
 | 신고 검토 담당·주간 시간·대응 시간 | 자리(§7) | 사람 지정 |
 | pilot 학교 모더레이터 2명 이상 | 지정 API(§4.2) | 사람 지정 |

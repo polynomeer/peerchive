@@ -52,7 +52,7 @@ import {
   type DbExecutor,
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
-import { operatorSpaceContent } from '../community/reporting'
+import { operatorCommunityItem, operatorSpaceContent } from '../community/reporting'
 import { requireOperator } from '../catalog/operators'
 import { publicNotePath } from '../course-hub/search'
 import { toPublicSeniorNote } from '../course-hub/hub'
@@ -251,6 +251,13 @@ async function contentFor(db: DbExecutor, report: ReportRow, now: Date): Promise
       const space = report.communitySpaceId ? await operatorSpaceContent(db, report.communitySpaceId) : null
       if (!space) return { content: unavailable('공간을 찾을 수 없습니다.'), publicPath: null, servedNow: false }
       return { content: { kind: 'community_space', space }, publicPath: null, servedNow: space.status === 'active' }
+    }
+    case 'community_post':
+    case 'community_comment': {
+      // 신고된 글·댓글 하나만(지금 행, 가린 것도 본문 포함). 작성자 id는 없고 익명은 `익명`입니다(작성자 확인은 C-06의 사유 기록 경로, ADR 0022).
+      const item = await operatorCommunityItem(db, { postId: report.communityPostId, commentId: report.communityCommentId })
+      if (!item) return { content: unavailable('글을 찾을 수 없습니다.'), publicPath: null, servedNow: false }
+      return { content: { kind: report.targetType, item }, publicPath: null, servedNow: item.status === 'published' }
     }
     case 'profile': {
       const [row] = await db

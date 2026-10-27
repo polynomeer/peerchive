@@ -4,6 +4,7 @@
  *
  * - 신고 대상은 **지금 공개인 것**뿐입니다(공개 사례·그 안의 항목·게시된 선배 노트·게시된 케이스 스터디·공개 프로필). 비공개 작업 공간은 대상이 아닙니다.
  *   예외: 커뮤니티 공간(`community_space`, C-02)은 공개가 아니라 **신고자가 읽을 수 있는(또는 소개를 볼 수 있는) 공간**이 대상이고, 조치는 공간 제한입니다.
+ *   커뮤니티 글·댓글(`community_post`·`community_comment`, C-04)도 신고자가 읽을 수 있는 게시 중인 것이 대상이고, 조치는 가리기(hide_post·hide_comment)입니다.
  * - 운영 조치는 "공개 차단"만 합니다(공개 제한·항목 가리기·노트/케이스/프로필 숨김). 삭제는 별도의 명시적 조치이며 여기에 없습니다(차단 ≠ 삭제, §8).
  * - 개인정보·저작권 신고는 그 공개에 **보류(hold)**를 걸어 신고가 처리될 때까지 게시·새 버전 게시를 막습니다(도메인 `hasOpenHold`).
  * - 이의제기는 조치마다 한 번, 조치의 당사자(공개 owner·노트/케이스 작성자·프로필 주인)만 합니다. 되돌리면 조치를 풉니다
@@ -11,7 +12,7 @@
  * 런타임 의존성이 없고, 스냅샷 타입은 필요한 부분만 구조적으로 선언합니다.
  */
 
-export const REPORT_TARGET_TYPES = ['publication', 'publication_item', 'senior_note', 'case_study', 'profile', 'community_space'] as const
+export const REPORT_TARGET_TYPES = ['publication', 'publication_item', 'senior_note', 'case_study', 'profile', 'community_space', 'community_post', 'community_comment'] as const
 export type ReportTargetType = (typeof REPORT_TARGET_TYPES)[number]
 
 export const REPORT_REASONS = ['personal_info', 'answer_sharing', 'copyright', 'harassment', 'false_claim', 'spam', 'other'] as const
@@ -20,7 +21,18 @@ export type ReportReason = (typeof REPORT_REASONS)[number]
 export const REPORT_STATUSES = ['open', 'in_review', 'resolved', 'dismissed'] as const
 export type ReportStatus = (typeof REPORT_STATUSES)[number]
 
-export const MODERATION_ACTION_KINDS = ['none', 'restrict', 'hide_item', 'hide_note', 'hide_case_study', 'hide_profile', 'restrict_space', 'archive_space'] as const
+export const MODERATION_ACTION_KINDS = [
+  'none',
+  'restrict',
+  'hide_item',
+  'hide_note',
+  'hide_case_study',
+  'hide_profile',
+  'restrict_space',
+  'archive_space',
+  'hide_post',
+  'hide_comment',
+] as const
 export type ModerationActionKind = (typeof MODERATION_ACTION_KINDS)[number]
 
 /** 공개 사례 안에서 가릴 수 있는 항목 종류(스냅샷 키: 로그·선언은 가명 키, 파일은 버전 id). */
@@ -51,8 +63,11 @@ export const ACTIONS_BY_TARGET: Readonly<Record<ReportTargetType, readonly Moder
   senior_note: ['none', 'hide_note'],
   case_study: ['none', 'hide_case_study'],
   profile: ['none', 'hide_profile'],
-  // 커뮤니티 공간(C-02): 공간 제한(읽기만, 목록·가입·쓰기 중지). 글·댓글 신고는 C-06.
+  // 커뮤니티 공간(C-02): 공간 제한(읽기만, 목록·가입·쓰기 중지).
   community_space: ['none', 'restrict_space'],
+  // 커뮤니티 글·댓글(C-04): 가리기(본문 대신 "운영 조치로 가려진 글입니다", 삭제 아님). 신고 누적 자동 숨김·제재는 C-06.
+  community_post: ['none', 'hide_post'],
+  community_comment: ['none', 'hide_comment'],
 }
 
 export function isActionApplicable(target: ReportTargetType, action: ModerationActionKind): boolean {
@@ -99,6 +114,8 @@ export type ReportTargetIdentity =
   | { type: 'case_study'; caseStudyId: string }
   | { type: 'profile'; userId: string }
   | { type: 'community_space'; spaceId: string }
+  | { type: 'community_post'; postId: string }
+  | { type: 'community_comment'; commentId: string }
 
 export function reportTargetKey(target: ReportTargetIdentity): string {
   switch (target.type) {
@@ -114,6 +131,10 @@ export function reportTargetKey(target: ReportTargetIdentity): string {
       return `profile:${target.userId}`
     case 'community_space':
       return `community_space:${target.spaceId}`
+    case 'community_post':
+      return `community_post:${target.postId}`
+    case 'community_comment':
+      return `community_comment:${target.commentId}`
   }
 }
 

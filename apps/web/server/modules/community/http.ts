@@ -10,7 +10,9 @@
  *   - API: 401 `unauthenticated`(모든 경로에서 같은 본문, 공간 조회 전이므로 존재 여부를 드러내지 않음). JSON 클라이언트가 "로그인 필요"를
  *     구분하도록 401을 유지합니다. 로그인한 사람에게 읽을 수 없는 공간은 서비스가 404입니다.
  */
-import { createError, defineEventHandler, setResponseHeaders, setResponseStatus, type EventHandler, type H3Event } from 'h3'
+import { createError, defineEventHandler, getRequestHeader, readRawBody, setResponseHeaders, setResponseStatus, type EventHandler, type H3Event } from 'h3'
+import { COMMUNITY_WRITE_BODY_BYTES } from '@peerchive/domain'
+import { ServiceError } from '../errors'
 import { COMMUNITY_PAGE_TITLE, COMMUNITY_ROBOTS, isCommunityApiPath, isCommunityPagePath } from '../../../shared/utils/community-visibility'
 
 export { COMMUNITY_PAGE_TITLE, COMMUNITY_ROBOTS, isCommunityApiPath, isCommunityPagePath }
@@ -63,4 +65,21 @@ export function createCommunityGuard(): EventHandler {
     setResponseHeaders(event, { 'content-type': 'text/html; charset=utf-8' })
     return event.method === 'HEAD' ? '' : COMMUNITY_NOT_FOUND_HTML
   })
+}
+
+/**
+ * 글·댓글 쓰기 요청 본문(C-04). 바이트 상한(COMMUNITY_WRITE_BODY_BYTES, 64KB)을 넘으면 파싱하기 전에 413 `too_large`,
+ * JSON이 아니면 빈 객체(스키마 검증 422에 맡김). 글자 수 상한(제목 120·본문 10000·댓글 3000)은 서비스가 422로 확인합니다.
+ */
+export async function readCommunityWriteBody(event: H3Event): Promise<unknown> {
+  const declared = Number(getRequestHeader(event, 'content-length') ?? '0')
+  if (Number.isFinite(declared) && declared > COMMUNITY_WRITE_BODY_BYTES) throw new ServiceError('PAYLOAD_TOO_LARGE', 'too_large')
+  const raw = await readRawBody(event, 'utf8')
+  if (!raw) return {}
+  if (Buffer.byteLength(raw, 'utf8') > COMMUNITY_WRITE_BODY_BYTES) throw new ServiceError('PAYLOAD_TOO_LARGE', 'too_large')
+  try {
+    return JSON.parse(raw) ?? {}
+  } catch {
+    return {}
+  }
 }

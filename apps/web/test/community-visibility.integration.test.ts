@@ -29,7 +29,9 @@ import { joinSpace, leaveSpace, listMembers, removeMember } from '../server/modu
 import { getNameModeState, scheduleNameModeChange } from '../server/modules/community/name-modes'
 import { listMyCommunityNotices } from '../server/modules/community/notices'
 import { createOfficialPage } from '../server/modules/community/official'
-import { resolveReportableSpace } from '../server/modules/community/reporting'
+import { createComment, createPost, editPost, getPost, listBoardPosts, setReaction } from '../server/modules/community/posts'
+import { updateRealName } from '../server/modules/identity/profiles'
+import { resolveReportableComment, resolveReportablePost, resolveReportableSpace } from '../server/modules/community/reporting'
 import {
   archiveSpace,
   createBoard,
@@ -109,6 +111,7 @@ const TABLE_ALLOWED = [
   /^web\/server\/api\/v1\/community\//,
   /^web\/server\/api\/v1\/operator\/community\//,
   // 운영 안내(T-15): 제한된 방의 방장에게 조치 안내를 보이려고 space_memberships에서 owner 여부만 확인(이름·내용 없음).
+  // C-04(ADR 0022): 가린 글·댓글의 당사자(작성자) 여부와 댓글 조치의 글 id만 읽음(제목·본문 없음).
   /^web\/server\/modules\/moderation\/notices\.ts$/,
   // worker: 탈퇴 정리(멤버십·초대·요청·알림 삭제, 승계)와 이름 표시 방식 변경 적용(C-03). 검색 색인·파생 데이터와 무관.
   /^worker\/src\/ops\/purge\.ts$/,
@@ -143,9 +146,22 @@ const rel = (file: string) => relative(join(ROOT, 'apps'), file)
 const COMMUNITY_IMPORT = /from\s+['"]([^'"]*\/community\/([a-z-]+))['"]/g
 
 describe('C-05 community tables come from the schema section (source)', () => {
-  it('finds every C-02/C-03 community table and requires community-like tables to live in that section', () => {
+  it('finds every C-02/C-03/C-04 community table and requires community-like tables to live in that section', () => {
     expect(COMMUNITY.map((t) => t.sqlName)).toEqual(
-      expect.arrayContaining(['community_spaces', 'space_memberships', 'boards', 'space_invitations', 'official_page_requests', 'name_mode_changes', 'community_notices']),
+      expect.arrayContaining([
+        'community_spaces',
+        'space_memberships',
+        'boards',
+        'space_invitations',
+        'official_page_requests',
+        'name_mode_changes',
+        'community_notices',
+        // C-04: 글·댓글·스레드 익명 번호·공감도 같은 구역에서 자동으로 읽힘(아래 모든 경계 검사가 덮음)
+        'community_posts',
+        'community_comments',
+        'thread_aliases',
+        'community_reactions',
+      ]),
     )
     // 다른 구역에 커뮤니티처럼 보이는 테이블이 있으면 경계 검사에서 빠지므로 실패합니다(C-04: posts·comments는 커뮤니티 구역에).
     const misplaced = TABLES.filter((t) => !t.community && COMMUNITY_LIKE_SQL.test(t.sqlName)).map((t) => t.sqlName)
@@ -472,6 +488,13 @@ async function world(tx: DbExecutor): Promise<World> {
   const invite = await createRoom(tx, owner, { name: `${sentinel} 초대방`, description: `${sentinel} 초대 소개`, nameMode: 'real', schoolId: school.id, joinPolicy: 'invite', discovery: 'unlisted' }, T0)
   const official = await createOfficialPage(tx, op, { schoolId: school.id, name: `${sentinel} 공식`, description: `${sentinel} 공식 소개` }, T0)
   for (const slug of [listed.slug, unlisted.slug, invite.slug]) await createBoard(tx, owner, slug, { kind: 'free', title: `${sentinel.slice(0, 12)} 판` }, at(1))
+  // C-04: 공간마다 센티넬 글·댓글 하나(실명 방은 방장이 실명을 입력한 뒤). 행위자 × 경로 매트릭스가 글 경로도 덮습니다.
+  await updateRealName(tx, owner, { realName: '방장실명' })
+  for (const detail of [listed, unlisted, invite, official]) {
+    const post = await createPost(tx, owner, detail.boards[0]!.id, { title: `${sentinel} 글`, body: `${sentinel} 본문` }, at(1))
+    const thread = await createComment(tx, owner, post.id, { body: `${sentinel} 댓글` }, at(1))
+    POSTS.set(detail.slug, { boardId: detail.boards[0]!.id, postId: post.id, commentId: thread.comments[0]!.id })
+  }
 
   await joinSpace(tx, member, listed.slug, at(2))
   for (const slug of [unlisted.slug, invite.slug]) {
@@ -514,6 +537,10 @@ async function world(tx: DbExecutor): Promise<World> {
 
 type Op = (tx: DbExecutor, actor: { userId: string }, slug: string) => Promise<unknown>
 
+/** 공간 slug → 그 공간의 게시판·센티넬 글·댓글(world가 채움, C-04). */
+const POSTS = new Map<string, { boardId: string; postId: string; commentId: string }>()
+const postOf = (slug: string) => POSTS.get(slug)!
+
 /** 공간 하나를 대상으로 하는 경로 종류(읽기·관리·쓰기). 모두 같은 정책 함수(loadReadableSpace/getSpaceDetail)를 거칩니다. */
 const SPACE_OPS: Record<string, Op> = {
   'GET spaces/:slug': (tx, a, s) => getSpaceDetail(tx, a, s, at(10)),
@@ -527,6 +554,16 @@ const SPACE_OPS: Record<string, Op> = {
   'PATCH spaces/:slug': (tx, a, s) => updateSpace(tx, a, s, { name: '바꾼 이름' }, at(10)),
   'POST archive': (tx, a, s) => archiveSpace(tx, a, s, at(10)),
   'POST reports (community_space)': (tx, a, s) => resolveReportableSpace(tx, a, { spaceSlug: s }),
+  // C-04 글·댓글·공감·신고: 같은 정책 함수(loadReadableSpace)를 거쳐 읽을 수 없으면 404
+  'GET boards/:id/posts': (tx, a, s) => listBoardPosts(tx, a, postOf(s).boardId, {}, at(10)),
+  'POST boards/:id/posts': (tx, a, s) => createPost(tx, a, postOf(s).boardId, { title: '제목', body: '본문' }, at(10)),
+  'GET posts/:id': (tx, a, s) => getPost(tx, a, postOf(s).postId, at(10)),
+  'PATCH posts/:id': (tx, a, s) => editPost(tx, a, postOf(s).postId, { body: '고침', expectedVersion: 1 }, at(10)),
+  'POST posts/:id/comments': (tx, a, s) => createComment(tx, a, postOf(s).postId, { body: '댓글' }, at(10)),
+  'PUT posts/:id/reaction': (tx, a, s) => setReaction(tx, a, 'post', postOf(s).postId, true, at(10)),
+  'PUT comments/:id/reaction': (tx, a, s) => setReaction(tx, a, 'comment', postOf(s).commentId, true, at(10)),
+  'POST reports (community_post)': (tx, a, s) => resolveReportablePost(tx, a, { postId: postOf(s).postId }),
+  'POST reports (community_comment)': (tx, a, s) => resolveReportableComment(tx, a, { commentId: postOf(s).commentId }),
 }
 
 describe.skipIf(!databaseUrl)('C-05 visibility matrix and data boundary (PostgreSQL)', () => {

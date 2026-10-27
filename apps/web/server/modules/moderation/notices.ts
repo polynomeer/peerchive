@@ -87,6 +87,19 @@ async function toNotices(db: DbExecutor, actions: readonly ActionRow[], viewerId
   const projectBy = new Map(pubRows.map((p) => [p.id, p.projectId]))
   const courseBy = new Map(noteRows.map((n) => [n.id, n.courseId]))
   const snapshotBy = new Map(releaseRows.map((r) => [r.id, r.snapshot as unknown as PublicSnapshot]))
+  // 댓글 조치의 당사자 화면 주소(그 글). 커뮤니티 모듈을 import하지 않고 글 id만 읽습니다(C-05 경계의 문서화된 예외, ADR 0022).
+  const commentIds = visible.map((a) => a.communityCommentId).filter((id): id is string => !!id)
+  const commentPostBy = new Map<string, string>()
+  if (commentIds.length) {
+    const rows = (await db.execute(sql`select id, post_id from community_comments where id in (${sql.join(
+      commentIds.map((id) => sql`${id}::uuid`),
+      sql`, `,
+    )})`)) as unknown as Array<{
+      id: string
+      post_id: string
+    }>
+    for (const r of rows) commentPostBy.set(r.id, r.post_id)
+  }
   const out: ModerationNoticeDto[] = []
   for (const a of visible) {
     const affected = await affectedUserIds(db, pointerOf(a))
@@ -97,6 +110,8 @@ async function toNotices(db: DbExecutor, actions: readonly ActionRow[], viewerId
     else if (a.caseStudyId) ownerPath = `/portfolio/case-studies/${a.caseStudyId}`
     else if (a.profileUserId) ownerPath = '/onboarding'
     else if (a.communitySpaceId) ownerPath = '/community'
+    else if (a.communityPostId) ownerPath = `/community/p/${a.communityPostId}`
+    else if (a.communityCommentId) ownerPath = `/community/p/${commentPostBy.get(a.communityCommentId) ?? ''}`
     const snapshot = a.releaseId ? snapshotBy.get(a.releaseId) : undefined
     out.push({
       actionId: a.id,
@@ -115,7 +130,7 @@ async function toNotices(db: DbExecutor, actions: readonly ActionRow[], viewerId
   return out
 }
 
-/** 이 사용자가 당사자인 조치 조건(공개 owner·노트 작성자·케이스 작성자·프로필 주인). */
+/** 이 사용자가 당사자인 조치 조건(공개 owner·노트 작성자·케이스 작성자·프로필 주인·커뮤니티 방장(공간 조치)·글/댓글 작성자(C-04)). */
 function affectedSql(userId: string): SQL {
   return sql`(
     (${moderationActions.publicationId} is not null and exists (select 1 from ${publications} p join ${projectMembers} pm on pm.project_id = p.project_id
@@ -124,7 +139,9 @@ function affectedSql(userId: string): SQL {
     or (${moderationActions.caseStudyId} is not null and exists (select 1 from ${caseStudies} c where c.id = ${moderationActions.caseStudyId} and c.user_id = ${userId}))
     or ${moderationActions.profileUserId} = ${userId}
     or (${moderationActions.communitySpaceId} is not null and exists (select 1 from space_memberships sm
-      where sm.space_id = ${moderationActions.communitySpaceId} and sm.user_id = ${userId} and sm.role = 'owner' and sm.status = 'active')))`
+      where sm.space_id = ${moderationActions.communitySpaceId} and sm.user_id = ${userId} and sm.role = 'owner' and sm.status = 'active'))
+    or (${moderationActions.communityPostId} is not null and exists (select 1 from community_posts cp where cp.id = ${moderationActions.communityPostId} and cp.author_id = ${userId}))
+    or (${moderationActions.communityCommentId} is not null and exists (select 1 from community_comments cc where cc.id = ${moderationActions.communityCommentId} and cc.author_id = ${userId})))`
 }
 
 /** GET /me/moderation-notices — 내가 당사자인 조치 중 운영자가 알림을 켠 것(되돌린 것 포함, 최근 50). */

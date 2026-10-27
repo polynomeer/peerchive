@@ -5,7 +5,8 @@
  *
  * 지우는 것(그 사람만의 자료): 프로필, 세션, 로그인 수단, 그 주소의 매직링크 토큰, 외부 연동(디스코드 id), 학교 메일 인증·인증 코드(C-01),
  * 커뮤니티 멤버십·그 사람이 만들거나 쓴 공간 초대·공식 페이지 개설 요청(C-02, 방장이었으면 먼저 승계: 가장 오래된 admin → 멤버, 없으면 방 보관),
- * 받은 커뮤니티 알림과 선택 실명(C-03; 이름 표시 방식 변경 이력 행은 공간의 기록이라 남기고 예약·취소한 사람만 null), 디스코드 코드·📌 요청,
+ * 받은 커뮤니티 알림과 선택 실명(C-03; 이름 표시 방식 변경 이력 행은 공간의 기록이라 남기고 예약·취소한 사람만 null), 커뮤니티 글·댓글의 제목·본문
+ * (C-04; 행·스레드 익명 번호는 남기고 "작성자가 삭제한 글"로)과 공감, 디스코드 코드·📌 요청,
  * 주간 체크인(모든 과제), 유용성 신호, 선배 노트(철회 + 삭제), 케이스 스터디·포트폴리오 판, 분석 이벤트, 업로드 의도,
  * **혼자만 쓴 과제 전체**(다른 사람이 멤버였던 적 없는 과제: 로그·할 일·마일스톤·선언·체크인·디스코드 연결·파일과 저장소 파일·공개·후보).
  *
@@ -33,7 +34,10 @@ import {
   caseSentences,
   caseStudies,
   claimEvidence,
+  communityComments,
   communityNotices,
+  communityPosts,
+  communityReactions,
   communitySpaces,
   claimRevisions,
   competencyEvidence,
@@ -368,6 +372,32 @@ async function purgeCommunity(tx: DbExecutor, userId: string, c: Counter, now: D
   const requested = await tx.update(nameModeChanges).set({ requestedBy: null }).where(eq(nameModeChanges.requestedBy, userId)).returning({ id: nameModeChanges.id })
   const cancelled = await tx.update(nameModeChanges).set({ cancelledBy: null }).where(eq(nameModeChanges.cancelledBy, userId)).returning({ id: nameModeChanges.id })
   c.add('name_mode_change_actors', requested.length + cancelled.length)
+  // 글·댓글(C-04, ADR 0022): 행은 남기고(스레드 익명 번호·답글·운영 기록이 이어지게) 제목·본문을 비워 "작성자가 삭제한 글"로 바꿉니다.
+  // 표시명·실명 글의 작성자는 읽을 때 "탈퇴한 사용자", 익명 글은 그대로 스레드 번호(탈퇴 여부를 드러내지 않음). 스레드 익명 번호 행은 남깁니다
+  // (가명 처리된 users 행을 가리킴, 다른 참여자의 번호가 바뀌지 않게). 그 사람의 공감과 지운 글·댓글에 달린 공감은 지웁니다.
+  const posts = await tx
+    .update(communityPosts)
+    .set({ status: 'deleted_by_author', title: '', body: '', deletedAt: sql`coalesce(${communityPosts.deletedAt}, ${now.toISOString()}::timestamptz)`, updatedAt: now })
+    .where(and(eq(communityPosts.authorId, userId), or(ne(communityPosts.status, 'deleted_by_author'), ne(communityPosts.body, ''))))
+    .returning({ id: communityPosts.id })
+  c.add('community_posts', posts.length)
+  const comments = await tx
+    .update(communityComments)
+    .set({ status: 'deleted_by_author', body: '', deletedAt: sql`coalesce(${communityComments.deletedAt}, ${now.toISOString()}::timestamptz)`, updatedAt: now })
+    .where(and(eq(communityComments.authorId, userId), or(ne(communityComments.status, 'deleted_by_author'), ne(communityComments.body, ''))))
+    .returning({ id: communityComments.id })
+  c.add('community_comments', comments.length)
+  const reactions = await tx
+    .delete(communityReactions)
+    .where(
+      or(
+        eq(communityReactions.userId, userId),
+        posts.length ? inArray(communityReactions.postId, idsOf(posts)) : sql`false`,
+        comments.length ? inArray(communityReactions.commentId, idsOf(comments)) : sql`false`,
+      ),
+    )
+    .returning({ id: communityReactions.id })
+  c.add('community_reactions', reactions.length)
 }
 
 const truncateToMinute = (date: Date) => new Date(Math.floor(date.getTime() / 60_000) * 60_000)

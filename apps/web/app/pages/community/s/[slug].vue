@@ -2,7 +2,7 @@
 /**
  * 커뮤니티 공간 화면(C-02, PROOFU_EVOLUTION_PLAN §8.9.2–§8.9.4, ADR 0019). 로그인 전용·noindex.
  * - 읽을 수 없는 공간은 "찾을 수 없습니다"(HTTP 404, 존재를 숨김). 멤버가 아니어도 들어갈 수 있는 방이면 소개와 가입 버튼만 보입니다.
- * - 게시판 목록(글쓰기는 C-04에서 열림), 이 공간의 이름 표시 방식, 나가기.
+ * - 게시판 목록(누르면 글 목록·글쓰기, C-04), 이 공간의 이름 표시 방식, 나가기.
  * - 방장·운영진: 설정, 게시판 더하기, 멤버(승인·거절·역할·내보내기), 초대 링크(7일·한 번만), 보관.
  * - 이름 표시 방식(C-03): 예약된 변경이 있으면 모두에게 배너("N일 뒤 … 바뀝니다. 이미 쓴 글은 바뀌지 않습니다."), 멤버에게 변경 이력,
  *   방장에게 예약·취소(7일 뒤 적용, 멤버 전원에게 알림).
@@ -328,10 +328,10 @@ const isMe = (m: SpaceMemberDto) => m.userId === me.value?.id
           <ul class="plain hub-list">
             <li v-for="b in space.boards" :key="b.id" class="hub-card">
               <p>
-                <strong>{{ b.title }}</strong>
+                <NuxtLink :to="`/community/b/${b.id}`"><strong>{{ b.title }}</strong></NuxtLink>
                 <span v-if="b.writeRole === 'moderator'" class="badge">{{ space.official ? '모더레이터만 씀' : '운영진만 씀' }}</span>
               </p>
-              <p class="small muted">글쓰기는 곧 열립니다.{{ b.canWrite ? '' : ' 이 게시판에 쓸 자격이 없습니다.' }}</p>
+              <p v-if="!b.canWrite" class="small muted">이 게시판에 글을 쓸 자격이 없습니다(읽기만).</p>
             </li>
           </ul>
         </section>

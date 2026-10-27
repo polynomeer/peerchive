@@ -33,6 +33,8 @@ export const REPORT_TARGET_LABELS: Record<ReportTargetType, string> = {
   case_study: '케이스 스터디',
   profile: '공개 프로필',
   community_space: '커뮤니티 공간',
+  community_post: '커뮤니티 글',
+  community_comment: '커뮤니티 댓글',
 }
 
 export const REPORTER_STATUS_LABELS: Record<MyReportDto['status'], string> = {
@@ -51,6 +53,8 @@ export const ACTION_LABELS: Record<ModerationActionKind, string> = {
   hide_profile: '공개 프로필 숨기기',
   restrict_space: '커뮤니티 공간 제한(읽기만, 가입·쓰기 중지)',
   archive_space: '커뮤니티 공간 보관(운영자 직접 조치)',
+  hide_post: '커뮤니티 글 가리기',
+  hide_comment: '커뮤니티 댓글 가리기',
 }
 
 /** 당사자에게 보이는 조치 설명. */
@@ -62,6 +66,8 @@ export const NOTICE_TITLES: Record<Exclude<ModerationActionKind, 'none'>, string
   hide_profile: '운영 조치로 숨겨진 공개 프로필',
   restrict_space: '운영 조치로 제한된 커뮤니티 공간',
   archive_space: '운영 조치로 보관된 커뮤니티 공간',
+  hide_post: '운영 조치로 가려진 커뮤니티 글',
+  hide_comment: '운영 조치로 가려진 커뮤니티 댓글',
 }
 
 export const APPEAL_STATUS_LABELS: Record<AppealStatus, string> = {

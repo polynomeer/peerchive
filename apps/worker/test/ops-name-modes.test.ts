@@ -8,7 +8,10 @@ import {
   analyticsEvents,
   and,
   auditEvents,
+  boards,
+  communityComments,
   communityNotices,
+  communityPosts,
   communitySpaces,
   createDb,
   eq,
@@ -112,6 +115,32 @@ describe.skipIf(!url)('name mode change apply (PostgreSQL)', () => {
       expect(audit[0]!.metadata).toEqual({ changeId: w.change.id, from: 'real', to: 'anonymous', notified: 2 })
       const events = await tx.select().from(analyticsEvents).where(and(eq(analyticsEvents.name, 'name_mode_applied'), eq(analyticsEvents.actorHash, hashSubject(PEPPER, w.O))))
       expect(events.map((e) => e.props)).toEqual([{ from: 'real', to: 'anonymous' }])
+    })
+  })
+
+  it('never touches posts or comments written before: their frozen name_mode survives the apply (C-04, ADR 0020)', async () => {
+    await rollback(async (tx) => {
+      const w = await world(tx)
+      const [board] = await tx.insert(boards).values({ spaceId: w.room.id, kind: 'general', title: '게시판', position: 0 }).returning()
+      const [post] = await tx
+        .insert(communityPosts)
+        .values({ boardId: board!.id, spaceId: w.room.id, authorId: w.M, nameMode: 'real', title: '실명 글', body: '본문', createdAt: REQUESTED })
+        .returning()
+      const [comment] = await tx.insert(communityComments).values({ postId: post!.id, authorId: w.O, nameMode: 'real', body: '실명 댓글', createdAt: REQUESTED }).returning()
+      expect(await applyNameModeChange(tx, w.change.id, { now: EFFECTIVE })).toMatchObject({ changeId: w.change.id })
+      expect((await tx.select().from(communitySpaces).where(eq(communitySpaces.id, w.room.id)))[0]!.currentNameMode).toBe('anonymous')
+      expect((await tx.select().from(communityPosts).where(eq(communityPosts.id, post!.id)))[0]).toMatchObject({ nameMode: 'real', version: 1, editedAt: null })
+      expect((await tx.select().from(communityComments).where(eq(communityComments.id, comment!.id)))[0]).toMatchObject({ nameMode: 'real' })
+      // DB 트리거가 소급 변경을 거부
+      const tried = await tx
+        .transaction(async (sp) => {
+          await sp.update(communityPosts).set({ nameMode: 'anonymous' }).where(eq(communityPosts.id, post!.id))
+        })
+        .then(
+          () => 'updated',
+          (e: unknown) => String((e as { cause?: { message?: string } }).cause?.message ?? e),
+        )
+      expect(tried).toMatch(/frozen at write time/)
     })
   })
 

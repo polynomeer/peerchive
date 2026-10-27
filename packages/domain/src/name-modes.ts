@@ -189,9 +189,11 @@ export function checkRealName(raw: unknown): RealNameCheck {
 
 // ── 커뮤니티 알림 ────────────────────────────────────────────────────────
 
-/** 커뮤니티 알림 종류(community_notices.kind). 지금은 이름 표시 방식 변경 셋. */
-export const COMMUNITY_NOTICE_KINDS = ['name_mode_scheduled', 'name_mode_cancelled', 'name_mode_applied'] as const
+/** 커뮤니티 알림 종류(community_notices.kind). 이름 표시 방식 변경 셋(C-03) + 내 글의 새 댓글(C-04, community-posts.ts). */
+export const COMMUNITY_NOTICE_KINDS = ['name_mode_scheduled', 'name_mode_cancelled', 'name_mode_applied', 'post_commented'] as const
 export type CommunityNoticeKind = (typeof COMMUNITY_NOTICE_KINDS)[number]
+export const NAME_MODE_NOTICE_KINDS = ['name_mode_scheduled', 'name_mode_cancelled', 'name_mode_applied'] as const
+export type NameModeNoticeKind = (typeof NAME_MODE_NOTICE_KINDS)[number]
 
 export interface NameModeNoticePayload {
   fromMode: NameMode
@@ -207,7 +209,7 @@ export interface NameModeNoticePayload {
  * (공간 이름은 읽을 때 멤버십을 확인하고 붙임). 목록 밖 키나 틀린 값이 있으면 null(넣지 않음).
  */
 export function sanitizeNoticePayload(kind: CommunityNoticeKind, raw: Readonly<Record<string, unknown>>): NameModeNoticePayload | null {
-  if (!(COMMUNITY_NOTICE_KINDS as readonly string[]).includes(kind)) return null
+  if (!(NAME_MODE_NOTICE_KINDS as readonly string[]).includes(kind)) return null
   const allowed = new Set(['fromMode', 'toMode', 'effectiveAt', ...(kind === 'name_mode_scheduled' ? ['joinPolicyAdjusted'] : [])])
   for (const key of Object.keys(raw)) if (!allowed.has(key) || raw[key] === undefined) return null
   const { fromMode, toMode, effectiveAt, joinPolicyAdjusted } = raw
@@ -218,7 +220,7 @@ export function sanitizeNoticePayload(kind: CommunityNoticeKind, raw: Readonly<R
 }
 
 /** 알림 문장(화면). 공간 이름은 호출자가 붙입니다. */
-export function noticeText(kind: CommunityNoticeKind, payload: NameModeNoticePayload): string {
+export function noticeText(kind: NameModeNoticeKind, payload: NameModeNoticePayload): string {
   const to = NAME_MODE_LABELS[payload.toMode]
   const from = NAME_MODE_LABELS[payload.fromMode]
   switch (kind) {

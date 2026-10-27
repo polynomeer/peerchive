@@ -158,6 +158,8 @@ export async function recordAudit(
       | 'mail'
       | 'affiliation'
       | 'community_space'
+      | 'community_post'
+      | 'community_comment'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

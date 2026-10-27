@@ -38,7 +38,7 @@ test('C-02: 방 만들기 → 초대 → 수락 → 방장 나가기(승계)', a
   const slug = new URL(page.url()).pathname.split('/').pop()!
   await expect(page.getByRole('heading', { level: 1, name: roomName })).toBeVisible()
   await expect(page.getByText('이 공간의 이름 표시 방식: 표시명')).toBeVisible()
-  await expect(page.getByText('글쓰기는 곧 열립니다.')).toBeVisible()
+  await expect(page.getByRole('link', { name: '게시판', exact: true })).toBeVisible()
   await expect(page.getByText('공식', { exact: true })).toHaveCount(0)
   await expectNoHorizontalScroll(page)
 

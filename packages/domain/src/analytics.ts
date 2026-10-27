@@ -1,7 +1,7 @@
 /**
  * pilot 분석 이벤트 규칙 (DELIVERY_PLAN §6 측정 계획, SYSTEM_DESIGN §14 관측, T-16, ADR 0016).
  *
- * - 이벤트 이름은 DELIVERY_PLAN §6의 최소 분석 이벤트 15개 + `login_succeeded`(활성화 지표의 가입 시점) + `affiliation_verified`(C-01, props는 standing만) + `space_created`·`space_joined`(C-02, 종류·가입 방식만) + `name_mode_scheduled`·`name_mode_applied`(C-03, 바꾸기 전·후 방식만)입니다.
+ * - 이벤트 이름은 DELIVERY_PLAN §6의 최소 분석 이벤트 15개 + `login_succeeded`(활성화 지표의 가입 시점) + `affiliation_verified`(C-01, props는 standing만) + `space_created`·`space_joined`(C-02, 종류·가입 방식만) + `name_mode_scheduled`·`name_mode_applied`(C-03, 바꾸기 전·후 방식만) + `post_created`·`comment_created`·`reaction_added`(C-04, 게시판 종류·방식·답글 여부·대상 종류만)입니다.
  * - props는 이벤트마다 허용 목록(ANALYTICS_PROP_SPECS)의 키만, 값은 정해진 enum 문자열·참거짓·범위 안의 정수만 받습니다.
  *   자유 문자열 필드는 없으므로 과제 본문·제목·파일 이름·URL·이메일·검색어가 들어갈 자리가 없습니다(§6 "본문·파일 내용·검색 원문·연락처 없음").
  *   목록 밖의 키·값이 하나라도 있으면 sanitizeAnalyticsProps가 거부하고, 웹 emitter는 그 이벤트를 버립니다(일부만 저장하지 않음).
@@ -31,6 +31,9 @@ export const ANALYTICS_EVENT_NAMES = [
   'space_joined',
   'name_mode_scheduled',
   'name_mode_applied',
+  'post_created',
+  'comment_created',
+  'reaction_added',
 ] as const
 export type AnalyticsEventName = (typeof ANALYTICS_EVENT_NAMES)[number]
 
@@ -95,6 +98,11 @@ export const ANALYTICS_PROP_SPECS: Readonly<Record<AnalyticsEventName, Readonly<
   // 이름 표시 방식 변경(C-03). 공간 id·이름은 넣지 않습니다. 바꾸기 전·후 방식만.
   name_mode_scheduled: { from: enumOf(NAME_MODE_VALUES), to: enumOf(NAME_MODE_VALUES) },
   name_mode_applied: { from: enumOf(NAME_MODE_VALUES), to: enumOf(NAME_MODE_VALUES) },
+  // 커뮤니티 글·댓글·공감(C-04). 글·공간·게시판 id·제목·본문은 넣지 않습니다. 게시판 종류·고정된 이름 표시 방식·답글 여부·공감 대상 종류만.
+  // 익명 글·댓글은 사용자 키 없이 기록합니다(웹 emitter의 unlinked, SYSTEM_DESIGN §6.7 "익명 글과 프로필의 분리").
+  post_created: { kind: enumOf(['free', 'freshmen', 'alumni', 'question', 'info', 'recruiting', 'notice', 'general']), mode: enumOf(NAME_MODE_VALUES) },
+  comment_created: { mode: enumOf(NAME_MODE_VALUES), reply: bool },
+  reaction_added: { target: enumOf(['post', 'comment']) },
 }
 
 export function isAnalyticsEventName(value: unknown): value is AnalyticsEventName {

@@ -1467,10 +1467,20 @@ export interface PublicAffiliationBadgeDto {
 
 // ── 신고·운영 조치·이의제기 (T-15, ADR 0015) ─────────────────────────────
 
-export type ReportTargetType = 'publication' | 'publication_item' | 'senior_note' | 'case_study' | 'profile' | 'community_space'
+export type ReportTargetType = 'publication' | 'publication_item' | 'senior_note' | 'case_study' | 'profile' | 'community_space' | 'community_post' | 'community_comment'
 export type ReportReason = 'personal_info' | 'answer_sharing' | 'copyright' | 'harassment' | 'false_claim' | 'spam' | 'other'
 export type ReportStatus = 'open' | 'in_review' | 'resolved' | 'dismissed'
-export type ModerationActionKind = 'none' | 'restrict' | 'hide_item' | 'hide_note' | 'hide_case_study' | 'hide_profile' | 'restrict_space' | 'archive_space'
+export type ModerationActionKind =
+  | 'none'
+  | 'restrict'
+  | 'hide_item'
+  | 'hide_note'
+  | 'hide_case_study'
+  | 'hide_profile'
+  | 'restrict_space'
+  | 'archive_space'
+  | 'hide_post'
+  | 'hide_comment'
 export type HiddenItemKind = 'log' | 'claim' | 'artifact'
 export type AppealStatus = 'open' | 'upheld' | 'reversed'
 
@@ -1483,6 +1493,9 @@ export type ReportTargetRef =
   | { handle: string }
   /** 커뮤니티 공간(C-02): 공간 주소. 신고자가 읽을 수 있거나 소개를 볼 수 있는 공간만. */
   | { spaceSlug: string }
+  /** 커뮤니티 글·댓글(C-04): 신고자가 읽을 수 있는 게시 중인 것만. */
+  | { postId: string }
+  | { commentId: string }
 
 export interface HiddenItemPlaceholderDto {
   kind: HiddenItemKind
@@ -1585,6 +1598,7 @@ export type OperatorTargetContentDto =
   | { kind: 'profile'; profile: PublicProfileDto }
   /** 커뮤니티 공간(C-02): 이름·소개·종류·상태·멤버 수만. 게시판 글·멤버 목록은 운영자에게도 싣지 않습니다. */
   | { kind: 'community_space'; space: OperatorSpaceDto }
+  | { kind: 'community_post' | 'community_comment'; item: OperatorCommunityItemDto }
   | { kind: 'unavailable'; message: string }
 
 export interface OperatorReportDetailDto {
@@ -1869,11 +1883,11 @@ export interface NameModeStateDto {
   history: NameModeChangeDto[]
 }
 
-export type CommunityNoticeKind = 'name_mode_scheduled' | 'name_mode_cancelled' | 'name_mode_applied'
+export type CommunityNoticeKind = 'name_mode_scheduled' | 'name_mode_cancelled' | 'name_mode_applied' | 'post_commented'
 
-export interface CommunityNoticeDto {
+export interface NameModeNoticeDto {
   id: string
-  kind: CommunityNoticeKind
+  kind: 'name_mode_scheduled' | 'name_mode_cancelled' | 'name_mode_applied'
   /** 지금도 읽을 수 있는 공간이면 이름·주소, 나갔거나 내보내졌으면 null. */
   space: { slug: string; name: string } | null
   fromMode: NameMode
@@ -1884,7 +1898,145 @@ export interface CommunityNoticeDto {
   readAt: string | null
 }
 
+/** 내 글의 새 댓글(C-04). 댓글 쓴 사람·내용은 없고 개수만. 지금 읽을 수 없는 공간이면 공간·글 주소 없음. */
+export interface PostCommentedNoticeDto {
+  id: string
+  kind: 'post_commented'
+  space: { slug: string; name: string } | null
+  postId: string | null
+  count: number
+  createdAt: string
+  readAt: string | null
+}
+
+export type CommunityNoticeDto = NameModeNoticeDto | PostCommentedNoticeDto
+
 export interface CommunityNoticesDto {
   items: CommunityNoticeDto[]
   unread: number
+}
+
+// ── 커뮤니티 글·댓글·공감 (C-04, ADR 0022) ──────────────────────────────
+
+export type CommunityItemStatus = 'published' | 'deleted_by_author' | 'hidden' | 'auto_hidden'
+export type CommunityTimeBucket = 'today' | 'this_week' | 'earlier'
+
+/**
+ * 작성자 표시. 사람 id·핸들·프로필 링크·별칭 id가 없습니다(방장·모더레이터·운영자에게도 같음).
+ * anonymous: `글쓴이`(익명 글의 글쓴이)·`익명N`(그 스레드에서 처음 익명으로 쓴 순서). 번호는 그 스레드 안에서만 뜻이 있습니다.
+ */
+export interface CommunityAuthorDto {
+  kind: 'real' | 'display' | 'anonymous' | 'withdrawn'
+  /** 지우거나 가린 표시명·실명 글은 null. */
+  label: string | null
+  schoolVerified: boolean
+  /** 내 글인지(내 응답에만 true). */
+  mine: boolean
+}
+
+interface CommunityTimesDto {
+  /** 정확한 시각. 소규모(멤버 10명 미만) 사용자 방의 익명 글·댓글은 null이고 createdBucket만 있습니다. */
+  createdAt: string | null
+  createdBucket: CommunityTimeBucket | null
+  edited: boolean
+  editedAt: string | null
+}
+
+export interface CommunityPostSummaryDto extends CommunityTimesDto {
+  id: string
+  boardId: string
+  status: CommunityItemStatus
+  /** 게시 중이 아니면 null(placeholder를 보여 줌). */
+  title: string | null
+  placeholder: string | null
+  nameMode: NameMode
+  author: CommunityAuthorDto
+  commentCount: number
+  reactionCount: number
+}
+
+export interface CommunityCommentDto extends CommunityTimesDto {
+  id: string
+  parentId: string | null
+  status: CommunityItemStatus
+  body: string | null
+  placeholder: string | null
+  nameMode: NameMode
+  author: CommunityAuthorDto
+  version: number
+  reactionCount: number
+  reacted: boolean
+  canEdit: boolean
+  canDelete: boolean
+  canReport: boolean
+  canReply: boolean
+  canReact: boolean
+  /** 답글(한 단계). 답글의 replies는 항상 []. */
+  replies: CommunityCommentDto[]
+}
+
+/** 글쓰기 화면이 항상 보여 줄 이름 표시 방식(§9.1). 서버가 쓰는 순간 다시 정하므로 화면 값은 안내용입니다. */
+export interface CommunityComposerDto {
+  canWrite: boolean
+  /** 지금 쓰면 고정될 방식(공식 페이지는 기본 anonymous). */
+  nameMode: NameMode
+  /** 고를 수 있는 방식: 공식 페이지 anonymous·display, 사용자 방은 공간 방식 하나. */
+  choices: NameMode[]
+  note: string
+  /** 익명일 때: 방장·모더레이터는 작성자를 볼 수 없고 운영자는 사유를 기록한 경우에만 확인한다는 안내. */
+  anonymityNote: string | null
+  /** 실명 방식인데 실명을 입력하지 않음(쓰기 전에 입력, 403 real_name_required). */
+  realNameRequired: boolean
+}
+
+export interface CommunityThreadSpaceDto {
+  slug: string
+  name: string
+  kind: SpaceKind
+  official: boolean
+  status: SpaceStatus
+}
+
+/** GET /community/boards/:id/posts */
+export interface BoardPostsDto {
+  space: CommunityThreadSpaceDto
+  board: { id: string; title: string; kind: BoardKind; writeRole: BoardWriteRole }
+  composer: CommunityComposerDto
+  items: CommunityPostSummaryDto[]
+  nextCursor: string | null
+}
+
+/** GET /community/posts/:id (글 + 댓글). 쓰기 응답도 같은 모양. */
+export interface CommunityPostDto extends CommunityPostSummaryDto {
+  body: string | null
+  version: number
+  reacted: boolean
+  canEdit: boolean
+  canDelete: boolean
+  canReport: boolean
+  canReact: boolean
+  space: CommunityThreadSpaceDto
+  board: { id: string; title: string; kind: BoardKind }
+  /** 댓글 쓰기 안내(이 글에 댓글을 쓸 수 있는지 포함). */
+  composer: CommunityComposerDto
+  comments: CommunityCommentDto[]
+}
+
+export interface CommunityReactionDto {
+  count: number
+  reacted: boolean
+}
+
+/** 운영자 신고 상세의 글·댓글(지금 행, 가린 글도 본문 포함). 작성자 id 없음 — 익명 작성자 확인은 C-06의 사유 기록 경로. */
+export interface OperatorCommunityItemDto {
+  space: { slug: string; name: string; kind: SpaceKind }
+  postId: string
+  title: string | null
+  body: string | null
+  status: CommunityItemStatus
+  nameMode: NameMode
+  /** 작성자 표시(익명은 `익명`, 표시명·실명은 그 이름). */
+  authorLabel: string
+  createdAt: string
+  edited: boolean
 }

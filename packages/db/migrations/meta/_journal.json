@@ -141,6 +141,13 @@
       "when": 1793075478874,
       "tag": "0019_space_action_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793076467460,
+      "tag": "0020_community_posts",
+      "breakpoints": true
     }
   ]
 }

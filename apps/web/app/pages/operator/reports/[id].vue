@@ -178,7 +178,25 @@ async function loadAudit() {
           </p>
           <p class="hint">운영자에게도 게시판 글·멤버 목록은 보이지 않습니다. 제한하면 멤버는 읽기만 하고 목록·가입·쓰기가 멈춥니다.</p>
         </template>
-        <p v-else class="muted">{{ data.content.message }}</p>
+        <template v-else-if="data.content.kind === 'community_post' || data.content.kind === 'community_comment'">
+          <p>
+            <strong>{{ data.content.item.space.name }}</strong>
+            <span class="badge">{{ data.content.kind === 'community_post' ? '글' : '댓글' }}</span>
+            <span class="badge">{{ COMMUNITY_ITEM_STATUS_LABELS[data.content.item.status] }}</span>
+          </p>
+          <p v-if="data.content.item.title"><strong>{{ data.content.item.title }}</strong></p>
+          <p v-if="data.content.item.body" class="pre">{{ data.content.item.body }}</p>
+          <p v-else class="muted">본문이 없습니다(작성자가 지웠거나 탈퇴했습니다).</p>
+          <p class="small muted">
+            {{ data.content.item.authorLabel }} · {{ NAME_MODE_LABELS[data.content.item.nameMode] }} · {{ formatDateTime(data.content.item.createdAt) }}
+            <template v-if="data.content.item.edited"> · 수정됨</template>
+          </p>
+          <p class="hint">
+            신고된 글·댓글 하나만 보입니다. 익명 작성자는 운영자에게도 보이지 않습니다(작성자 확인은 사유를 남기는 별도 절차). 가리면 본문 대신 "운영 조치로
+            가려진 글입니다"가 보이고, 이의제기로 되돌리면 다시 보입니다.
+          </p>
+        </template>
+        <p v-else-if="data.content.kind === 'unavailable'" class="muted">{{ data.content.message }}</p>
       </section>
 
       <section v-if="open" aria-labelledby="op-resolve">

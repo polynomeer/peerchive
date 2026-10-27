@@ -15,8 +15,14 @@ import {
   REAL_NAME_MAX,
   nameModeBannerText,
   noticeText,
+  postNoticeText,
+  COMMENT_BODY_MAX,
+  POST_BODY_MAX,
+  POST_TITLE_MAX,
+  COMMUNITY_TIME_BUCKET_LABELS,
 } from '@peerchive/domain'
-import type { SpaceStatus } from '~~/shared/types/api'
+import type { CommunityItemStatus, SpaceStatus } from '~~/shared/types/api'
+import { formatDateTime } from './build-log'
 
 export {
   BOARD_KIND_LABELS,
@@ -32,6 +38,25 @@ export {
   REAL_NAME_MAX,
   nameModeBannerText,
   noticeText,
+  postNoticeText,
+  COMMENT_BODY_MAX,
+  POST_BODY_MAX,
+  POST_TITLE_MAX,
+  COMMUNITY_TIME_BUCKET_LABELS,
+}
+
+/** 글·댓글 상태(운영 화면). */
+export const COMMUNITY_ITEM_STATUS_LABELS: Record<CommunityItemStatus, string> = {
+  published: '게시 중',
+  deleted_by_author: '작성자가 지움',
+  hidden: '운영 조치로 가려짐',
+  auto_hidden: '신고 누적으로 임시 숨김',
+}
+
+/** 글·댓글 시각(정확한 시각 또는 소규모 익명 방의 버킷). */
+export function communityTimeText(item: { createdAt: string | null; createdBucket: 'today' | 'this_week' | 'earlier' | null }): string {
+  if (item.createdAt) return formatDateTime(item.createdAt)
+  return item.createdBucket ? COMMUNITY_TIME_BUCKET_LABELS[item.createdBucket] : ''
 }
 
 export const SPACE_STATUS_LABELS: Record<SpaceStatus, string> = {
@@ -71,6 +96,16 @@ export const COMMUNITY_ERROR_MESSAGES: Record<string, string> = {
   already_effective: '이미 적용 시각이 지나 취소할 수 없습니다.',
   not_scheduled: '이미 적용되었거나 취소된 예약입니다.',
   not_found: '찾을 수 없습니다.',
+  write_not_allowed: '이 게시판에 쓸 자격이 없습니다.',
+  real_name_required: '이 방은 실명으로 표시됩니다. 커뮤니티 화면에서 실명(선택)을 먼저 입력하세요.',
+  post_not_open: '지워졌거나 가려진 글에는 댓글을 쓸 수 없습니다.',
+  parent_not_open: '지워졌거나 가려진 댓글에는 답글을 쓸 수 없습니다.',
+  not_open: '이미 지워졌거나 가려져 고칠 수 없습니다.',
+  not_author: '내가 쓴 글만 고치거나 지울 수 있습니다.',
+  version_conflict: '그사이 다른 곳에서 고쳐졌습니다. 새로 불러온 뒤 다시 고치세요.',
+  own_item: '내 글에는 공감할 수 없습니다.',
+  target_not_open: '지워졌거나 가려진 글입니다.',
+  too_large: '내용이 너무 깁니다.',
   forbidden: '이 작업을 할 권한이 없습니다.',
 }
 

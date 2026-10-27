@@ -29,7 +29,15 @@ import {
   users,
   type DbExecutor,
 } from '@peerchive/db'
-import { communitySpaceLabels, communitySpaceOwnerIds, resolveReportableSpace } from '../community/reporting'
+import {
+  communityItemAuthorIds,
+  communityItemLabels,
+  communitySpaceLabels,
+  communitySpaceOwnerIds,
+  resolveReportableComment,
+  resolveReportablePost,
+  resolveReportableSpace,
+} from '../community/reporting'
 import { type Actor, invalid, notFound } from '../errors'
 import { HANDLE_PATTERN } from '../identity/profiles'
 import { loadCurrentEditionModel } from '../portfolio/editions'
@@ -53,6 +61,8 @@ export interface TargetPointer {
   caseStudyVersion: number | null
   profileUserId: string | null
   communitySpaceId: string | null
+  communityPostId: string | null
+  communityCommentId: string | null
 }
 
 const empty = (targetType: ReportTargetType, identity: ReportTargetIdentity): TargetPointer => ({
@@ -68,6 +78,8 @@ const empty = (targetType: ReportTargetType, identity: ReportTargetIdentity): Ta
   caseStudyVersion: null,
   profileUserId: null,
   communitySpaceId: null,
+  communityPostId: null,
+  communityCommentId: null,
 })
 
 const slug = z.string({ error: 'invalid' }).trim().toLowerCase().min(3, { error: 'invalid' }).max(60, { error: 'invalid' })
@@ -112,6 +124,17 @@ export async function resolvePublicTarget(db: DbExecutor, type: ReportTargetType
       if (!actor) throw notFound()
       const spaceId = await resolveReportableSpace(db, actor, rawRef)
       return { ...empty(type, { type, spaceId }), communitySpaceId: spaceId }
+    }
+    // 커뮤니티 글·댓글(C-04): 신고자가 읽을 수 있는 게시 중인 것만. 공간 id는 넣지 않습니다(공간 조치가 아니므로 방장이 당사자가 되지 않게).
+    case 'community_post': {
+      if (!actor) throw notFound()
+      const postId = await resolveReportablePost(db, actor, rawRef)
+      return { ...empty(type, { type, postId }), communityPostId: postId }
+    }
+    case 'community_comment': {
+      if (!actor) throw notFound()
+      const commentId = await resolveReportableComment(db, actor, rawRef)
+      return { ...empty(type, { type, commentId }), communityCommentId: commentId }
     }
     case 'publication': {
       const ref = parseRef('publication', rawRef)
@@ -179,11 +202,17 @@ export async function resolvePublicTarget(db: DbExecutor, type: ReportTargetType
 /** 대상의 당사자(이의제기·조치 안내를 받는 사람). 공개 사례는 지금 active owner들. */
 export async function affectedUserIds(
   db: DbExecutor,
-  target: Pick<TargetPointer, 'targetType' | 'publicationId' | 'seniorNoteId' | 'caseStudyId' | 'profileUserId' | 'communitySpaceId'>,
+  target: Pick<
+    TargetPointer,
+    'targetType' | 'publicationId' | 'seniorNoteId' | 'caseStudyId' | 'profileUserId' | 'communitySpaceId' | 'communityPostId' | 'communityCommentId'
+  >,
 ): Promise<string[]> {
   switch (target.targetType) {
     case 'community_space':
       return target.communitySpaceId ? communitySpaceOwnerIds(db, target.communitySpaceId) : []
+    case 'community_post':
+    case 'community_comment':
+      return communityItemAuthorIds(db, { postId: target.communityPostId, commentId: target.communityCommentId })
     case 'publication':
     case 'publication_item': {
       if (!target.publicationId) return []
@@ -218,6 +247,11 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
   const caseIds = [...new Set(targets.map((t) => t.caseStudyId).filter((id): id is string => !!id))]
   const spaceIds = [...new Set(targets.map((t) => t.communitySpaceId).filter((id): id is string => !!id))]
   const spaceBy = await communitySpaceLabels(db, spaceIds)
+  const itemSpaceBy = await communityItemLabels(
+    db,
+    [...new Set(targets.map((t) => t.communityPostId).filter((id): id is string => !!id))],
+    [...new Set(targets.map((t) => t.communityCommentId).filter((id): id is string => !!id))],
+  )
   const [pubRows, noteRows, caseRows] = await Promise.all([
     pubIds.length ? db.select({ id: publications.id, slug: publications.slug }).from(publications).where(inArray(publications.id, pubIds)) : [],
     noteIds.length
@@ -261,6 +295,12 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
       case 'community_space':
         label = `커뮤니티 공간 · ${spaceBy.get(t.communitySpaceId ?? '')?.name ?? '공간'}`
         break
+      case 'community_post':
+        label = `커뮤니티 글 · ${itemSpaceBy.get(t.communityPostId ?? '') ?? '공간'}`
+        break
+      case 'community_comment':
+        label = `커뮤니티 댓글 · ${itemSpaceBy.get(t.communityCommentId ?? '') ?? '공간'}`
+        break
     }
     out.set(t.targetKey, label)
   }
@@ -269,10 +309,12 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
 
 /** 행(신고·조치)에서 포인터 열만. 조치 행에는 version 열이 없습니다. */
 export function pointerOf(
-  row: Omit<TargetPointer, 'noteVersion' | 'caseStudyVersion' | 'communitySpaceId'> & {
+  row: Omit<TargetPointer, 'noteVersion' | 'caseStudyVersion' | 'communitySpaceId' | 'communityPostId' | 'communityCommentId'> & {
     noteVersion?: number | null
     caseStudyVersion?: number | null
     communitySpaceId?: string | null
+    communityPostId?: string | null
+    communityCommentId?: string | null
   },
 ): TargetPointer {
   return {
@@ -288,6 +330,8 @@ export function pointerOf(
     caseStudyVersion: row.caseStudyVersion ?? null,
     profileUserId: row.profileUserId,
     communitySpaceId: row.communitySpaceId ?? null,
+    communityPostId: row.communityPostId ?? null,
+    communityCommentId: row.communityCommentId ?? null,
   }
 }
 

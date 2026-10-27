@@ -16,8 +16,13 @@ import {
   authAccounts,
   caseStudies,
   claimRevisions,
+  boards,
+  communityComments,
   communityNotices,
+  communityPosts,
+  communityReactions,
   communitySpaces,
+  threadAliases,
   consents,
   createDb,
   deletionLedger,
@@ -436,6 +441,61 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect(history.find((h) => h.id === cancelled!.id)).toMatchObject({ requestedBy: M.id, cancelledBy: null, status: 'cancelled' })
       const [row] = await tx.select().from(users).where(eq(users.id, U.id))
       expect(row).toMatchObject({ realName: null, displayName: DELETED_DISPLAY_NAME })
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('purges community posts and comments: rows and thread numbers stay, text is cleared, reactions go (C-04)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴글쓴이', 'deleted')
+      const M = await user(tx, '남는멤버')
+      const [room] = await tx
+        .insert(communitySpaces)
+        .values({ kind: 'user_room', name: '글 방', slug: id().replace(/-/g, '').slice(0, 10), currentNameMode: 'anonymous', createdBy: M.id })
+        .returning()
+      const [board] = await tx.insert(boards).values({ spaceId: room!.id, kind: 'general', title: '게시판', position: 0 }).returning()
+      const [anon] = await tx
+        .insert(communityPosts)
+        .values({ boardId: board!.id, spaceId: room!.id, authorId: U.id, nameMode: 'anonymous', title: '익명 글', body: '지울 본문' })
+        .returning()
+      const [named] = await tx
+        .insert(communityPosts)
+        .values({ boardId: board!.id, spaceId: room!.id, authorId: U.id, nameMode: 'display', title: '표시명 글', body: '지울 본문', status: 'hidden' })
+        .returning()
+      const [other] = await tx
+        .insert(communityPosts)
+        .values({ boardId: board!.id, spaceId: room!.id, authorId: M.id, nameMode: 'anonymous', title: '남의 글', body: '남는 본문' })
+        .returning()
+      await tx.insert(threadAliases).values([
+        { postId: anon!.id, userId: U.id, aliasNo: 0 },
+        { postId: anon!.id, userId: M.id, aliasNo: 1 },
+        { postId: other!.id, userId: M.id, aliasNo: 0 },
+        { postId: other!.id, userId: U.id, aliasNo: 1 },
+      ])
+      const [uComment] = await tx.insert(communityComments).values({ postId: other!.id, authorId: U.id, nameMode: 'anonymous', body: '지울 댓글' }).returning()
+      const [mComment] = await tx.insert(communityComments).values({ postId: anon!.id, authorId: M.id, nameMode: 'anonymous', body: '남는 댓글' }).returning()
+      await tx.insert(communityReactions).values([
+        { postId: other!.id, userId: U.id },
+        { commentId: mComment!.id, userId: U.id },
+        { postId: anon!.id, userId: M.id },
+        { commentId: uComment!.id, userId: M.id },
+      ])
+
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ community_posts: 2, community_comments: 1, community_reactions: 4 })
+      const posts = await tx.select().from(communityPosts).where(eq(communityPosts.authorId, U.id))
+      expect(posts.map((p) => ({ status: p.status, title: p.title, body: p.body, nameMode: p.nameMode })).sort((a, b) => a.nameMode.localeCompare(b.nameMode))).toEqual([
+        { status: 'deleted_by_author', title: '', body: '', nameMode: 'anonymous' },
+        { status: 'deleted_by_author', title: '', body: '', nameMode: 'display' },
+      ])
+      expect((await tx.select().from(communityComments).where(eq(communityComments.id, uComment!.id)))[0]).toMatchObject({ status: 'deleted_by_author', body: '' })
+      // 남의 글·댓글은 그대로, 스레드 번호는 모두 남음(다른 참여자의 번호가 바뀌지 않게)
+      expect((await tx.select().from(communityPosts).where(eq(communityPosts.id, other!.id)))[0]).toMatchObject({ body: '남는 본문', status: 'published' })
+      expect((await tx.select().from(communityComments).where(eq(communityComments.id, mComment!.id)))[0]).toMatchObject({ body: '남는 댓글' })
+      expect(await count(tx, threadAliases, eq(threadAliases.userId, U.id))).toBe(2)
+      expect(await count(tx, communityReactions, eq(communityReactions.userId, U.id))).toBe(0)
+      expect(await count(tx, communityReactions, eq(communityReactions.userId, M.id))).toBe(0)
+      // 지워도 다시 돌리면 바꿀 것이 없음
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })

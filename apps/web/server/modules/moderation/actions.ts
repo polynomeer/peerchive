@@ -9,6 +9,7 @@
  * | hide_case_study | case_studies.hidden_at | hidden_at = null(게시 상태는 그대로) |
  * | hide_profile | profiles.hidden_at | hidden_at = null |
  * | restrict_space | 커뮤니티 공간 active → restricted(C-02, 읽기만·목록·가입·쓰기 중지) | restricted → active |
+ * | hide_post·hide_comment | 커뮤니티 글·댓글 published → hidden(C-04, 본문 대신 "운영 조치로 가려진 글입니다", 본문은 남김) | hidden → published |
  *
  * 공개 읽기는 이 상태를 요청마다 읽으므로 커밋 즉시 효력이 있습니다(worker 무관). outbox `moderation.action`은 worker가 검색 문서 같은 남은 사본을
  * 맞추는 데만 씁니다. 삭제 조치는 없습니다(차단 ≠ 삭제).
@@ -32,6 +33,7 @@ import {
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
 import { liftSpaceRestrictionInTx, restrictSpaceInTx } from '../community/official'
+import { hideCommunityItemInTx, unhideCommunityItemInTx } from '../community/reporting'
 import { conflict, notFound } from '../errors'
 import { lockPublication } from '../publication/candidates'
 import { liftRestrictionInTx, restrictInTx } from '../publication/releases'
@@ -48,10 +50,16 @@ export interface ApplyInput {
   notifyOwner: boolean
 }
 
-function auditTarget(action: Pick<ActionRow, 'targetType' | 'publicationId' | 'seniorNoteId' | 'caseStudyId' | 'profileUserId' | 'communitySpaceId'>) {
+function auditTarget(
+  action: Pick<ActionRow, 'targetType' | 'publicationId' | 'seniorNoteId' | 'caseStudyId' | 'profileUserId' | 'communitySpaceId' | 'communityPostId' | 'communityCommentId'>,
+) {
   switch (action.targetType) {
     case 'community_space':
       return { targetType: 'community_space' as const, targetId: action.communitySpaceId }
+    case 'community_post':
+      return { targetType: 'community_post' as const, targetId: action.communityPostId }
+    case 'community_comment':
+      return { targetType: 'community_comment' as const, targetId: action.communityCommentId }
     case 'publication':
     case 'publication_item':
       return { targetType: 'publication' as const, targetId: action.publicationId }
@@ -122,6 +130,8 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
     // 효과(공간 제한)는 조치 행을 만든 뒤 restrictSpaceInTx가 적용합니다(active가 아니면 409 target_not_public, 같은 트랜잭션이라 함께 되돌아감).
     if (!target.communitySpaceId) throw notFound()
   }
+  if (input.kind === 'hide_post' && !target.communityPostId) throw notFound()
+  if (input.kind === 'hide_comment' && !target.communityCommentId) throw notFound()
   if (input.kind === 'hide_profile') {
     const [profile] = await tx.select().from(profiles).where(eq(profiles.userId, target.profileUserId!)).limit(1).for('update')
     if (!profile) throw notFound()
@@ -143,6 +153,8 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
       caseStudyId: target.caseStudyId,
       profileUserId: target.profileUserId,
       communitySpaceId: target.communitySpaceId,
+      communityPostId: target.communityPostId,
+      communityCommentId: target.communityCommentId,
       internalNote: input.internalNote,
       publicReason: input.publicReason,
       notifyOwner: input.notifyOwner,
@@ -180,6 +192,12 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
       break
     case 'restrict_space':
       await restrictSpaceInTx(tx, target.communitySpaceId!, now)
+      break
+    case 'hide_post':
+      await hideCommunityItemInTx(tx, 'post', target.communityPostId!, now)
+      break
+    case 'hide_comment':
+      await hideCommunityItemInTx(tx, 'comment', target.communityCommentId!, now)
       break
   }
   await emit(tx, action!.id, 'applied', now)
@@ -238,6 +256,12 @@ export async function undoModeration(
       break
     case 'restrict_space':
       await liftSpaceRestrictionInTx(tx, action.communitySpaceId!, now)
+      break
+    case 'hide_post':
+      await unhideCommunityItemInTx(tx, 'post', action.communityPostId!, now)
+      break
+    case 'hide_comment':
+      await unhideCommunityItemInTx(tx, 'comment', action.communityCommentId!, now)
       break
   }
   await tx
