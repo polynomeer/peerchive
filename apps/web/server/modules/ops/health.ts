@@ -88,11 +88,15 @@ export async function deepHealth(deps: DeepHealthDeps): Promise<DeepHealthDto> {
       backlog: row?.n ?? 0,
       oldestAgeSeconds: row?.oldest ? Math.max(0, Math.round((now.getTime() - new Date(row.oldest).getTime()) / 1000)) : null,
     }
+    // pg-boss 스키마는 worker가 처음 시작할 때 만들어지므로 없을 수 있습니다. 바깥 트랜잭션 안에서 실패하면
+    // 트랜잭션 전체가 중단되어 아래 조회까지 실패하므로, 자체 트랜잭션(트랜잭션 안에서는 savepoint)으로 감쌉니다.
     try {
-      const result = await db.execute(sql`
-        select name, state, count(*)::int as n from pgboss.job
-        where state = 'failed' or (name like '%-dead' and state <> 'completed')
-        group by name, state`)
+      const result = await db.transaction((q) =>
+        q.execute(sql`
+          select name, state, count(*)::int as n from pgboss.job
+          where state = 'failed' or (name like '%-dead' and state <> 'completed')
+          group by name, state`),
+      )
       const rows = result as unknown as Array<{ name: string; state: string; n: number }>
       jobs = { failed: {}, deadLetter: {}, available: true }
       for (const r of rows) {
