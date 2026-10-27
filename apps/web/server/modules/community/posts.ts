@@ -15,6 +15,8 @@
  * - 지운 글·댓글은 행을 남기고(번호·답글 유지) 제목·본문을 비웁니다. 가린 글(운영 조치)은 본문을 남기지만 응답에는 싣지 않습니다.
  * - C-09(ADR 0025): 질문 게시판 글의 글쓴이는 최상위 댓글 하나를 "채택된 답변"으로 고릅니다(바꾸기·풀기). 글 응답에 채택 여부와
  *   "아카이브로 옮겨짐" 표시, 보는 사람이 관련된 옮기기 요청 요약(archive-transfers.ts)이 붙습니다. 글·답변을 지우면 진행 중 옮기기는 취소됩니다.
+ * - **작성 시점 페르소나(S-02, ADR 0029)**: 실명·표시명 글·댓글은 그 순간의 같은 종류 페르소나 id를 `persona_id`에 함께 고정합니다(없으면 null).
+ *   익명은 항상 null(DB check). 표시명 글을 실명 페르소나에 붙이지 않습니다(DB 트리거가 종류·주인을 확인). 작성자 표시는 아직 이 열을 쓰지 않습니다.
  * - 감사 기록을 남기지 않습니다: 작성자 id와 글 id를 한 행에 남기면 익명 글의 작성자를 찾는 길(C-06의 사유 기록 경로 밖)이 생기기 때문입니다.
  *   분석 이벤트는 허용 목록(게시판 종류·방식·답글 여부·대상 종류)만, 익명 글·댓글은 사용자 키 없이(unlinked) 남깁니다.
  */
@@ -44,6 +46,7 @@ import {
   isOpenItem,
   itemPlaceholder,
   nameModeAtWrite,
+  personaKindForNameMode,
   resolveAuthorDisplay,
   shouldBucketTimes,
   threadAuthorView,
@@ -63,6 +66,7 @@ import {
   inArray,
   institutionAffiliations,
   ne,
+  personas,
   schools,
   sql,
   threadAliases,
@@ -479,6 +483,17 @@ async function decideNameMode(tx: DbExecutor, ctx: SpaceContext, now: Date, requ
   return decided.mode
 }
 
+/**
+ * 작성 시점에 고정할 페르소나(S-02, SYSTEM_DESIGN §6.7.1 "글의 페르소나 귀속"): real → 실명 페르소나, display → 표시명 페르소나, 없으면 null.
+ * anonymous는 조회하지 않고 null입니다(0단계 글은 페르소나와 이어지지 않음).
+ */
+async function writerPersonaId(tx: DbExecutor, userId: string, mode: NameMode): Promise<string | null> {
+  const kind = personaKindForNameMode(mode)
+  if (kind === null) return null
+  const [row] = await tx.select({ id: personas.id }).from(personas).where(and(eq(personas.userId, userId), eq(personas.kind, kind))).limit(1)
+  return row?.id ?? null
+}
+
 /** 익명으로 쓰면 그 스레드 번호를 정해 넣습니다(글 행을 잠근 트랜잭션 안에서). */
 async function ensureAlias(tx: DbExecutor, post: Pick<PostRow, 'id' | 'authorId' | 'nameMode'>, userId: string, writeMode: NameMode, now: Date): Promise<void> {
   const existing = await tx.select({ userId: threadAliases.userId, aliasNo: threadAliases.aliasNo }).from(threadAliases).where(eq(threadAliases.postId, post.id))
@@ -508,7 +523,17 @@ export async function createPost(db: DbExecutor, actor: Actor, boardId: unknown,
     await rateLimitOrThrow(tx, 'community_post_create', actor.userId, POST_RATE_LIMIT, now)
     const [post] = await tx
       .insert(communityPosts)
-      .values({ boardId: board.id, spaceId: board.spaceId, authorId: actor.userId, nameMode: mode, title, body, createdAt: now, updatedAt: now })
+      .values({
+        boardId: board.id,
+        spaceId: board.spaceId,
+        authorId: actor.userId,
+        nameMode: mode,
+        personaId: await writerPersonaId(tx, actor.userId, mode),
+        title,
+        body,
+        createdAt: now,
+        updatedAt: now,
+      })
       .returning()
     await ensureAlias(tx, post!, actor.userId, mode, now)
     const area = ctx.space.row.kind === 'user_room' ? 'room' : ctx.space.row.kind === 'study_room' ? 'study' : 'official'
@@ -551,7 +576,16 @@ export async function createComment(db: DbExecutor, actor: Actor, postId: unknow
     await rateLimitOrThrow(tx, 'community_comment_create', actor.userId, COMMENT_RATE_LIMIT, now)
     await tx
       .insert(communityComments)
-      .values({ postId: post.id, parentCommentId: parentId, authorId: actor.userId, nameMode: mode, body, createdAt: now, updatedAt: now })
+      .values({
+        postId: post.id,
+        parentCommentId: parentId,
+        authorId: actor.userId,
+        nameMode: mode,
+        personaId: await writerPersonaId(tx, actor.userId, mode),
+        body,
+        createdAt: now,
+        updatedAt: now,
+      })
     await ensureAlias(tx, post, actor.userId, mode, now)
     if (post.authorId !== actor.userId) await notifyPostAuthor(tx, post, now)
     await emitAnalytics(tx, { name: 'comment_created', actorId: actor.userId, unlinked: mode === 'anonymous', props: { mode, reply: parentId !== null }, now })

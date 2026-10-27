@@ -47,6 +47,8 @@
  * (community_sanction_requests), 조치 종류 space_hide·sanction, 알림 item_auto_hidden·item_restored, 분석 이벤트 3개. 결정은 ADR 0023.
  * S-01(0026 migration): 페르소나(personas: 계정당 real·display 하나씩, handle 전역 유일)·표시명 ↔ 실명 연결 플래그(identity_links, 기본 숨김),
  * 프로필·포트폴리오 판의 페르소나 귀속(profiles.persona_id 기본 키·portfolio_editions.persona_id). 결정은 ADR 0028.
+ * S-02(0027 migration): 페르소나 활동(persona_activities, persona_id NOT NULL, 투영 검사 트리거), 커뮤니티 글·댓글의 작성 시점 페르소나
+ * (community_posts·community_comments.persona_id, 익명이면 항상 null), social DB 역할(peerchive_social, 커뮤니티 테이블 권한 없음). 결정은 ADR 0029.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -89,6 +91,11 @@ export const personaKind = pgEnum('persona_kind', ['real', 'display'])
 export const personaAccountPrivacy = pgEnum('persona_account_privacy', ['public', 'private'])
 /** 페르소나 상태. deactivated는 공개 경로에서 없는 handle처럼 404입니다(S-01에는 바꾸는 API가 없음, ADR 0028). */
 export const personaStatus = pgEnum('persona_status', ['active', 'deactivated'])
+/**
+ * 페르소나 활동의 원천(S-02, SYSTEM_DESIGN §6.7.1 PersonaActivity, @peerchive/domain PERSONA_ACTIVITY_SOURCES).
+ * 커뮤니티 댓글·막힘 Q&A·스터디 기록 안의 로그는 원천이 아닙니다(투영 경로 자체가 없음).
+ */
+export const personaActivitySource = pgEnum('persona_activity_source', ['publication_release', 'senior_note', 'study_release', 'profile_post', 'community_post'])
 export const contactPolicy = pgEnum('contact_policy', ['closed', 'on_request', 'open'])
 export const semester = pgEnum('semester', ['spring', 'summer', 'fall', 'winter'])
 /** 과제 종류. study는 스터디 방의 기록(C-08, ADR 0026): 스터디 방이 기록을 켜면 만들어지는 내부 과제 공간이고 멤버십은 방에서 파생됩니다. */
@@ -528,6 +535,43 @@ export const identityLinks = pgTable(
     check('identity_links_distinct_check', sql`${t.realPersonaId} <> ${t.displayPersonaId}`),
     foreignKey({ name: 'identity_links_real_persona_fk', columns: [t.realPersonaId, t.userId], foreignColumns: [personas.id, personas.userId] }),
     foreignKey({ name: 'identity_links_display_persona_fk', columns: [t.displayPersonaId, t.userId], foreignColumns: [personas.id, personas.userId] }),
+  ],
+)
+
+/**
+ * 페르소나 활동(S-02, SYSTEM_DESIGN §6.7.1 PersonaActivity·§8.3 불변조건 1, ADR 0029). 공개 프로필의 활동 목록과 팔로우 피드(S-05)가 읽는 **유일한 원천**입니다.
+ * - persona_id NOT NULL: 페르소나가 없는 0~1단계(익명) 글은 이 테이블에 들어올 자리가 없습니다.
+ * - 원본 모듈이 투영합니다(@peerchive/domain decidePersonaActivityProjection → social `projectPersonaActivity`). 커뮤니티 글은 이름 표시 방식이
+ *   real·display이고 listed 공간의 글만, 익명 선배 노트·익명 스터디 release는 투영하지 않습니다.
+ * - **DB 트리거(persona_activities_projection_guard, migration 0027)가 같은 규칙을 원본 행으로 한 번 더 확인합니다**: 커뮤니티 글이면 그 글의
+ *   작성 시점 persona_id·방식·상태·공간 노출을 보고, 아니면 INSERT를 거부합니다. 그래서 애플리케이션 어디서 넣든 익명 글은 들어오지 못합니다.
+ *   투영한 뒤에는 withdrawn_at만 바꿀 수 있습니다(같은 트리거).
+ * - source_id는 원천마다 다른 테이블을 가리키므로 외래 키가 없습니다. item_kind는 공개 범위 항목(§6.7.1 VisibilitySetting) 대응이며 원천 종류로 정해집니다(check).
+ * - created_at은 원천의 시각(글 작성·release 게시 시각)이고, 숨김·삭제·철회·방식 재선택은 withdrawn_at을 채웁니다(행은 남김, S-05).
+ */
+export const personaActivities = pgTable(
+  'persona_activities',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    personaId: uuid('persona_id')
+      .notNull()
+      .references(() => personas.id),
+    sourceType: personaActivitySource('source_type').notNull(),
+    sourceId: uuid('source_id').notNull(),
+    itemKind: text('item_kind').notNull(),
+    createdAt: createdAt(),
+    withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
+  },
+  (t) => [
+    unique('persona_activities_source_key').on(t.personaId, t.sourceType, t.sourceId),
+    index('persona_activities_persona_created_idx').on(t.personaId, t.createdAt.desc()).where(sql`${t.withdrawnAt} is null`),
+    index('persona_activities_source_idx').on(t.sourceType, t.sourceId),
+    check(
+      'persona_activities_item_kind_check',
+      sql`(${t.sourceType} = 'publication_release' and ${t.itemKind} = 'cases')
+        or (${t.sourceType} in ('senior_note', 'study_release') and ${t.itemKind} = 'notes_and_studies')
+        or (${t.sourceType} in ('profile_post', 'community_post') and ${t.itemKind} = 'posts')`,
+    ),
   ],
 )
 
@@ -2848,6 +2892,12 @@ export const communityPosts = pgTable(
       .notNull()
       .references(() => users.id),
     nameMode: communityNameMode('name_mode').notNull(),
+    /**
+     * 작성 시점의 페르소나(S-02, SYSTEM_DESIGN §6.7.1 "글의 페르소나 귀속", ADR 0029). real이면 그 사람의 실명 페르소나, display면 표시명 페르소나(없으면 null).
+     * **anonymous면 항상 null**(check). 넣을 때 트리거(community_persona_attribution_guard)가 페르소나의 주인 = author_id, 종류 = name_mode를 확인하고,
+     * 고정 열 트리거가 null로 비우는 것(탈퇴 정리) 말고는 바꾸지 못하게 합니다. 이름 표시(작성자 표시)는 아직 이 열을 쓰지 않습니다(ADR 0029).
+     */
+    personaId: uuid('persona_id').references(() => personas.id),
     title: text('title').notNull(),
     body: text('body').notNull(),
     status: communityItemStatus('status').notNull().default('published'),
@@ -2865,6 +2915,8 @@ export const communityPosts = pgTable(
     index('community_posts_board_created_idx').on(t.boardId, t.createdAt, t.id),
     index('community_posts_author_idx').on(t.authorId),
     index('community_posts_space_idx').on(t.spaceId),
+    index('community_posts_persona_idx').on(t.personaId),
+    check('community_posts_persona_check', sql`${t.nameMode} <> 'anonymous' or ${t.personaId} is null`),
     check(
       'community_posts_content_check',
       sql`(${t.status} = 'deleted_by_author' and ${t.title} = '' and ${t.body} = '' and ${t.deletedAt} is not null)
@@ -2891,6 +2943,8 @@ export const communityComments = pgTable(
       .notNull()
       .references(() => users.id),
     nameMode: communityNameMode('name_mode').notNull(),
+    /** 작성 시점의 페르소나(S-02). 규칙은 글과 같습니다(anonymous면 null, 트리거로 주인·종류 확인). */
+    personaId: uuid('persona_id').references(() => personas.id),
     body: text('body').notNull(),
     status: communityItemStatus('status').notNull().default('published'),
     editedAt: timestamp('edited_at', { withTimezone: true }),
@@ -2903,6 +2957,8 @@ export const communityComments = pgTable(
     index('community_comments_post_created_idx').on(t.postId, t.createdAt, t.id),
     index('community_comments_author_idx').on(t.authorId),
     index('community_comments_parent_idx').on(t.parentCommentId),
+    index('community_comments_persona_idx').on(t.personaId),
+    check('community_comments_persona_check', sql`${t.nameMode} <> 'anonymous' or ${t.personaId} is null`),
     check(
       'community_comments_content_check',
       sql`(${t.status} = 'deleted_by_author' and ${t.body} = '' and ${t.deletedAt} is not null)

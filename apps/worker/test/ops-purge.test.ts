@@ -48,6 +48,7 @@ import {
   officialPageRequests,
   outboxEvents,
   planForks,
+  personaActivities,
   personas,
   portfolioEditions,
   profiles,
@@ -571,6 +572,32 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect(await count(tx, communityReactions, eq(communityReactions.userId, M.id))).toBe(0)
       // 지워도 다시 돌리면 바꿀 것이 없음
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('clears the write-time persona of the user\'s posts/comments and deletes persona activities before the personas (S-02)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴실명글쓴이', 'deleted')
+      const M = await user(tx, '방장')
+      const [real] = await tx.insert(personas).values({ userId: U.id, kind: 'real', handle: `s02-${id().slice(0, 8)}` }).returning()
+      const [room] = await tx
+        .insert(communitySpaces)
+        .values({ kind: 'user_room', name: '실명 방', slug: id().replace(/-/g, '').slice(0, 10), currentNameMode: 'real', createdBy: M.id })
+        .returning()
+      const [board] = await tx.insert(boards).values({ spaceId: room!.id, kind: 'general', title: '게시판', position: 0 }).returning()
+      const [post] = await tx
+        .insert(communityPosts)
+        .values({ boardId: board!.id, spaceId: room!.id, authorId: U.id, nameMode: 'real', personaId: real!.id, title: '실명 글', body: '본문' })
+        .returning()
+      await tx.insert(communityComments).values({ postId: post!.id, authorId: U.id, nameMode: 'real', personaId: real!.id, body: '실명 댓글' })
+      await tx.insert(personaActivities).values({ personaId: real!.id, sourceType: 'community_post', sourceId: post!.id, itemKind: 'posts' })
+
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ personas: 1, persona_activities: 1, community_persona_refs: 2, community_posts: 1, community_comments: 1 })
+      expect(await count(tx, personas, eq(personas.userId, U.id))).toBe(0)
+      expect(await count(tx, personaActivities, eq(personaActivities.sourceId, post!.id))).toBe(0)
+      expect((await tx.select().from(communityPosts).where(eq(communityPosts.id, post!.id)))[0]).toMatchObject({ personaId: null, status: 'deleted_by_author', nameMode: 'real' })
+      expect((await tx.select().from(communityComments).where(eq(communityComments.postId, post!.id)))[0]).toMatchObject({ personaId: null })
     })
   })
 

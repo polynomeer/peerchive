@@ -11,6 +11,7 @@
 | `NODE_ENV` | 지정하지 않거나 `production`(빌드 결과·worker는 기본 production). `development`로 두지 않음 | 운영자 확인 |
 | `DATABASE_URL` | 서비스 전용 계정, TLS 접속, 비밀 저장소에서 주입. 0008 migration의 `pg_trgm` 확장 허용 | 운영자 확인 |
 | `pnpm db:migrate` | 배포마다 web·worker보다 먼저 | 절차 |
+| social DB 역할(S-02) | `peerchive_social`(NOLOGIN, 커뮤니티 테이블 권한 없음)이 있고 권한이 적용됨. migration 계정에 CREATEROLE이 없으면 0027 migration은 역할을 만들지 않고 넘어가므로 DB 관리자가 한 번 `CREATE ROLE peerchive_social NOLOGIN;` 실행 뒤 테이블 주인 계정으로 `SELECT peerchive_apply_social_grants();`(true여야 함). 확인 SQL은 아래 §2 GP([ADR 0029](../adr/0029-identity-boundary.md)). 앱이 이 역할로 붙는 것은 아직 아님 | 절차 |
 | `NUXT_SITE_ORIGIN` | 실제 https origin(쉼표로 여러 개). 로그인 링크·CSRF 기준 | 운영자 확인 |
 | 메일 | `PEERCHIVE_MAIL_TRANSPORT=smtp`, `PEERCHIVE_SMTP_URL`(`smtps://…:465` 또는 `smtp://…:587` STARTTLS 필수, 비밀 저장소), `PEERCHIVE_MAIL_FROM`(발송 도메인의 주소). TLS 없는 SMTP·dev-console·설정 누락이면 web이 시작하지 않음. 공급자 쪽: 발송 도메인 SPF·DKIM·DMARC DNS, 발송 한도, 반송 처리(아래 §1.1) | **구현됨 — 공급자 설정 필요** |
 | 파일 저장소 | `PEERCHIVE_STORAGE_DRIVER=s3` + `PEERCHIVE_S3_ENDPOINT`(https)·`_REGION`·`_BUCKET`·`_ACCESS_KEY_ID`·`_SECRET_ACCESS_KEY`(·`_FORCE_PATH_STYLE`·`_PREFIX`), web·worker 같은 값. 설정이 빠졌거나 http endpoint면 web·worker가 시작하지 않음. 공급자 쪽: 비공개 버킷·버전 관리·전용 키(아래 §1.1). 단일 서버 파일럿만 `PEERCHIVE_ALLOW_FS_STORAGE_IN_PRODUCTION=1` + 백업 대상 디스크 | **구현됨 — 공급자 설정 필요** |
@@ -133,6 +134,32 @@ for ua in 'Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)' 'Mozilla/
   curl -s -o /tmp/unfurl.html -w '%{http_code} ' -A "$ua" https://<도메인>/community/s/<slug>; md5 -q /tmp/unfurl.html 2>/dev/null || md5sum /tmp/unfurl.html
 done   # 모두 404, 같은 해시, 본문에 방 이름 없음
 curl -sI https://<도메인>/community/s/<slug> | grep -i 'x-robots-tag'   # noindex, nofollow, noarchive
+```
+
+### GP: 공개 프로필·팔로우 개방
+
+공개 프로필·팔로우·피드는 이 표가 채워지기 전에는 열지 않습니다(DELIVERY_PLAN §7 GP). 지금은 S-01·S-02 행만 구현되었습니다.
+
+| 조건 | 구현·근거 | 개방 직전 확인 |
+|---|---|---|
+| S-01 표시명 ↔ 실명 연결 | 연결이 꺼져 있으면 두 공개 프로필의 JSON·HTML·OG·인쇄 보기·README 카드에 상대 정보 0건(통합 테스트·E2E `r-personas`, [ADR 0028](../adr/0028-personas.md)) | — |
+| S-02 정체성 누출 0건 | 모듈 의존 테스트(social·프로필 라우트·공개 프로필 경로에서 import로 닿는 파일에 커뮤니티 모듈·테이블 없음), social DB 역할(커뮤니티 테이블 권한 0), `persona_activities.persona_id NOT NULL` + 투영 트리거(익명 글 거부), 작성 시점 페르소나, 시드 고정 속성 기반 회귀 테스트(`identity-boundary.integration.test.ts`, [ADR 0029](../adr/0029-identity-boundary.md)) | 운영 DB에서 아래 SQL ①~③. 개방 전 한 번 `S02_PROPERTY_WORLDS=50`으로 회귀 테스트를 돌려 통과 확인 |
+| S-03 공개 범위·S-04 차단 404·S-07 신고 대상 | 아직 | — |
+
+```sql
+-- ① social 역할: 로그인 불가, 커뮤니티 구역 테이블 권한 0행이어야 함(목록은 schema.ts 커뮤니티 구역)
+select rolname, rolcanlogin from pg_roles where rolname = 'peerchive_social';
+select table_name, privilege_type from information_schema.role_table_grants
+where grantee = 'peerchive_social' and table_name in ('community_spaces','space_memberships','boards','space_invitations','official_page_requests',
+  'name_mode_changes','community_notices','community_posts','community_comments','thread_aliases','community_reactions','community_author_lookups',
+  'community_sanction_requests','community_sanctions','recruitments','recruitment_applications','archive_transfers','archive_transfer_consents','study_records');
+-- ② 익명 글·댓글에 페르소나가 붙은 행, 익명 글을 가리키는 페르소나 활동(모두 0이어야 함)
+select (select count(*) from community_posts where name_mode = 'anonymous' and persona_id is not null)
+     + (select count(*) from community_comments where name_mode = 'anonymous' and persona_id is not null)
+     + (select count(*) from persona_activities a join community_posts p on p.id = a.source_id
+        where a.source_type = 'community_post' and p.name_mode = 'anonymous') as must_be_zero;
+-- ③ 투영·귀속 트리거가 있는지(4개)
+select tgname from pg_trigger where tgname in ('persona_activities_projection_guard','community_posts_persona_attribution','community_comments_persona_attribution','community_posts_frozen_columns');
 ```
 
 ## 3. 사고 대응

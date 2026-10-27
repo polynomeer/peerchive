@@ -82,6 +82,7 @@ import {
   recruitments,
   or,
   outboxEvents,
+  personaActivities,
   personas,
   planForks,
   portfolioEditions,
@@ -239,7 +240,19 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
         .where(or(editionIds.length ? inArray(portfolioItems.editionId, editionIds) : sql`false`, caseIds.length ? inArray(portfolioItems.caseStudyId, caseIds) : sql`false`))
     }
     if (editionIds.length) c.add('portfolio_editions', (await tx.delete(portfolioEditions).where(inArray(portfolioEditions.id, editionIds)).returning({ id: portfolioEditions.id })).length)
-    if (personaIds.length) c.add('personas', (await tx.delete(personas).where(inArray(personas.id, personaIds)).returning({ id: personas.id })).length)
+    if (personaIds.length) {
+      // S-02(ADR 0029): 페르소나 활동은 지우고, 글·댓글에 고정한 작성 시점 페르소나는 비웁니다(고정 열 트리거가 null로 비우는 것만 허용).
+      // 글·댓글 행 자체는 위 커뮤니티 정리 규칙대로 남습니다(표시명·실명 글은 읽을 때 "탈퇴한 사용자").
+      c.add('persona_activities', (await tx.delete(personaActivities).where(inArray(personaActivities.personaId, personaIds)).returning({ id: personaActivities.id })).length)
+      const postRefs = await tx.update(communityPosts).set({ personaId: null }).where(inArray(communityPosts.personaId, personaIds)).returning({ id: communityPosts.id })
+      const commentRefs = await tx
+        .update(communityComments)
+        .set({ personaId: null })
+        .where(inArray(communityComments.personaId, personaIds))
+        .returning({ id: communityComments.id })
+      c.add('community_persona_refs', postRefs.length + commentRefs.length)
+      c.add('personas', (await tx.delete(personas).where(inArray(personas.id, personaIds)).returning({ id: personas.id })).length)
+    }
     if (caseIds.length) {
       await tx.delete(caseSentences).where(inArray(caseSentences.caseStudyId, caseIds))
       const referenced = await referencedIds(tx, caseIds, 'case')
