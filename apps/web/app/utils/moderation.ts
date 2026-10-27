@@ -55,6 +55,8 @@ export const ACTION_LABELS: Record<ModerationActionKind, string> = {
   archive_space: '커뮤니티 공간 보관(운영자 직접 조치)',
   hide_post: '커뮤니티 글 가리기',
   hide_comment: '커뮤니티 댓글 가리기',
+  space_hide: '방 운영진이 가림',
+  sanction: '이용 제한(제재)',
 }
 
 /** 당사자에게 보이는 조치 설명. */
@@ -68,6 +70,8 @@ export const NOTICE_TITLES: Record<Exclude<ModerationActionKind, 'none'>, string
   archive_space: '운영 조치로 보관된 커뮤니티 공간',
   hide_post: '운영 조치로 가려진 커뮤니티 글',
   hide_comment: '운영 조치로 가려진 커뮤니티 댓글',
+  space_hide: '방 운영진이 가린 커뮤니티 글·댓글',
+  sanction: '커뮤니티 이용 제한',
 }
 
 export const APPEAL_STATUS_LABELS: Record<AppealStatus, string> = {
@@ -88,6 +92,24 @@ export const MODERATION_ERROR_MESSAGES: Record<string, string> = {
   not_restricted: '운영 제한 상태가 아닙니다.',
   already_decided: '이미 결정한 이의제기입니다.',
   operator_only: '운영자만 할 수 있습니다.',
+  lookup_not_yours: '다른 운영자의 작성자 확인으로는 제재를 발급할 수 없습니다. 사유를 적고 직접 확인하세요.',
+  lookup_expired: '작성자 확인이 24시간이 지나 만료되었습니다. 사유를 적고 다시 확인하세요.',
+  author_unavailable: '탈퇴 정리된 작성자에게는 제재를 발급할 수 없습니다.',
+  already_revoked: '이미 해제된 제재입니다.',
+}
+
+/** 이용 제한 문구(C-06). */
+export const SANCTION_LEVEL_TEXT: Record<'warning' | 'write_suspended' | 'permanent', string> = {
+  warning: '경고(알림만)',
+  write_suspended: '쓰기 기간 제한',
+  permanent: '커뮤니티 영구 제한',
+}
+export const SANCTION_SCOPE_TEXT: Record<'community' | 'space', string> = { community: '커뮤니티 전체', space: '그 공간만' }
+
+/** 커뮤니티 신고 대상이면 대화상자에 보일 안내(C-06): 여러 사람의 신고가 모이면 임시로 가려짐, 권리 침해는 별도 절차. */
+export function communityReportHint(targetType: ReportTargetType): string | null {
+  if (targetType !== 'community_post' && targetType !== 'community_comment') return null
+  return '서로 다른 학교 인증 사용자의 신고가 일정 수 이상 모이면 운영 검토 전까지 임시로 가려집니다. 같은 글은 한 번만 신고할 수 있습니다. 저작권 등 권리 침해 게시 중단 요청은 운영자 안내에 따라 별도 절차로 처리합니다.'
 }
 
 export function moderationErrorMessage(code: string): string {

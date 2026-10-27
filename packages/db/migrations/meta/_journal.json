@@ -148,6 +148,13 @@
       "when": 1793076467460,
       "tag": "0020_community_posts",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793079024288,
+      "tag": "0021_community_moderation",
+      "breakpoints": true
     }
   ]
 }

@@ -12,6 +12,8 @@ import {
   type CommunityViewer,
   type MembershipFacts,
   type SpaceFacts,
+  type WriteRestriction,
+  activeWriteRestriction,
   canReadSpace,
   departmentKey,
   isOfficialKind,
@@ -19,8 +21,10 @@ import {
 } from '@peerchive/domain'
 import {
   and,
+  communitySanctions,
   communitySpaces,
   eq,
+  isNull,
   institutionAffiliations,
   schools,
   spaceMemberships,
@@ -29,14 +33,31 @@ import {
   type DbExecutor,
 } from '@peerchive/db'
 import { isOperator } from '../catalog/operators'
-import { type Actor, notFound } from '../errors'
+import { type Actor, ServiceError, notFound } from '../errors'
 import { isUuid } from '../projects/access'
 
 export type SpaceRow = typeof communitySpaces.$inferSelect
 export type MembershipRow = typeof spaceMemberships.$inferSelect
 
-/** 요청한 사람의 커뮤니티 자격: 계정 상태·운영자 여부·active 학교 인증(정본 학교 + 자기 신고 학과 키). */
-export async function loadViewer(db: DbExecutor, actor: Actor): Promise<CommunityViewer & { schools: Array<{ id: string; name: string; departmentLabel: string | null }> }> {
+export type LoadedViewer = CommunityViewer & {
+  schools: Array<{ id: string; name: string; departmentLabel: string | null }>
+  /** 판정하는 공간 기준으로 지금 쓰기를 막는 제재(C-06). 본인의 응답(글쓰기 안내)에만 씁니다. */
+  writeRestriction: WriteRestriction | null
+}
+
+/** 되돌리지 않은 제재(C-06). 효력(기한·범위)은 @peerchive/domain activeWriteRestriction이 판정합니다. */
+async function loadOpenSanctions(db: DbExecutor, userId: string) {
+  return db
+    .select({ scope: communitySanctions.scope, spaceId: communitySanctions.spaceId, level: communitySanctions.level, until: communitySanctions.until, revokedAt: communitySanctions.revokedAt })
+    .from(communitySanctions)
+    .where(and(eq(communitySanctions.userId, userId), isNull(communitySanctions.revokedAt)))
+}
+
+/**
+ * 요청한 사람의 커뮤니티 자격: 계정 상태·운영자 여부·active 학교 인증(정본 학교 + 자기 신고 학과 키) + 이용 제한(C-06).
+ * `spaceId`는 판정하는 공간(그 공간 범위 제재까지 셈). null이면 공간 밖 판정(방 만들기 등: 커뮤니티 전체 제재만).
+ */
+export async function loadViewer(db: DbExecutor, actor: Actor, spaceId: string | null = null, now = new Date()): Promise<LoadedViewer> {
   const [user] = await db.select({ status: users.status }).from(users).where(eq(users.id, actor.userId)).limit(1)
   const rows = await db
     .select({
@@ -47,13 +68,14 @@ export async function loadViewer(db: DbExecutor, actor: Actor): Promise<Communit
     .from(institutionAffiliations)
     .innerJoin(schools, eq(schools.id, institutionAffiliations.schoolId))
     .where(and(eq(institutionAffiliations.userId, actor.userId), eq(institutionAffiliations.status, 'active')))
+  const restriction = activeWriteRestriction(await loadOpenSanctions(db, actor.userId), spaceId, now)
   return {
     userId: actor.userId,
     status: user?.status ?? 'deleted',
     operator: await isOperator(db, actor.userId),
     affiliations: rows.map((r) => ({ schoolId: r.schoolId, departmentKey: departmentKey(r.departmentLabel) })),
-    // C-06(CommunitySanction)이 채웁니다.
-    communityWriteSuspended: false,
+    communityWriteSuspended: restriction !== null,
+    writeRestriction: restriction,
     schools: [...new Map(rows.map((r) => [r.schoolId, { id: r.schoolId, name: r.schoolName, departmentLabel: r.departmentLabel }])).values()],
   }
 }
@@ -125,17 +147,17 @@ export function spaceFacts(space: LoadedSpace, activeMembers: number): SpaceFact
 export const membershipFacts = (m: MembershipRow | null): MembershipFacts | null => (m ? { role: m.role, status: m.status } : null)
 
 export interface SpaceContext {
-  viewer: Awaited<ReturnType<typeof loadViewer>>
+  viewer: LoadedViewer
   space: LoadedSpace
   membership: MembershipRow | null
   facts: SpaceFacts
 }
 
-/** 공간 + 요청한 사람 + 멤버십 + 판정 재료를 한 번에. */
-export async function loadSpaceContext(db: DbExecutor, actor: Actor, ref: unknown, lock = false): Promise<SpaceContext> {
+/** 공간 + 요청한 사람(그 공간 기준의 제재 포함) + 멤버십 + 판정 재료를 한 번에. */
+export async function loadSpaceContext(db: DbExecutor, actor: Actor, ref: unknown, lock = false, now = new Date()): Promise<SpaceContext> {
   const space = await loadSpace(db, ref, lock)
   const [viewer, membership, count] = await Promise.all([
-    loadViewer(db, actor),
+    loadViewer(db, actor, space.row.id, now),
     findMembership(db, space.row.id, actor.userId, lock),
     isOfficialKind(space.row.kind) ? Promise.resolve(0) : activeMemberCount(db, space.row.id),
   ])
@@ -143,8 +165,13 @@ export async function loadSpaceContext(db: DbExecutor, actor: Actor, ref: unknow
 }
 
 /** 읽을 수 있는 공간만(아니면 404). */
-export async function loadReadableSpace(db: DbExecutor, actor: Actor, ref: unknown, lock = false): Promise<SpaceContext> {
-  const ctx = await loadSpaceContext(db, actor, ref, lock)
+export async function loadReadableSpace(db: DbExecutor, actor: Actor, ref: unknown, lock = false, now = new Date()): Promise<SpaceContext> {
+  const ctx = await loadSpaceContext(db, actor, ref, lock, now)
   if (!canReadSpace(ctx.viewer, ctx.facts, membershipFacts(ctx.membership))) throw notFound()
   return ctx
+}
+
+/** 403 `write_restricted`(C-06): 이용 제한 중. 수준·범위·기한만 싣습니다(어느 글·누구의 요청 때문인지는 없음). */
+export function writeRestricted(r: WriteRestriction): ServiceError {
+  return new ServiceError('FORBIDDEN', 'write_restricted', undefined, { level: r.level, scope: r.scope, until: r.until?.toISOString() ?? null })
 }

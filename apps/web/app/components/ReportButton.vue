@@ -20,6 +20,10 @@ const details = ref('')
 const busy = ref(false)
 const error = ref('')
 const done = ref<ReportReceiptDto | null>(null)
+const hint = computed(() => {
+  const target = props.targets.find((t) => t.id === choice.value)
+  return target ? communityReportHint(target.targetType) : null
+})
 
 async function open() {
   error.value = ''
@@ -71,7 +75,7 @@ async function submit() {
         </template>
         <template v-else-if="done">
           <p role="status">
-            {{ done.created ? '신고가 접수되었습니다.' : '이미 접수된 같은 신고가 있습니다.' }} 운영자가 검토합니다. 처리 상태는
+            {{ done.created ? '신고가 접수되었습니다.' : '이미 같은 대상을 신고했습니다.' }} 운영자가 검토합니다. 처리 상태는
             <NuxtLink to="/me/reports">내 신고</NuxtLink>에서 볼 수 있어요.
           </p>
           <p class="actions"><button type="button" @click="close">닫기</button></p>
@@ -84,6 +88,7 @@ async function submit() {
             </select>
           </div>
           <p v-else class="small">대상: {{ targets[0]?.label }}</p>
+          <p v-if="hint" class="hint" data-testid="community-report-hint">{{ hint }}</p>
           <fieldset>
             <legend>사유</legend>
             <div v-for="r in REASONS" :key="r" class="radio-row">

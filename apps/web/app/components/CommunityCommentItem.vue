@@ -2,11 +2,12 @@
 /**
  * 커뮤니티 댓글 하나(+ 답글 한 단계)(C-04, ADR 0022). 작성자는 이름·`글쓴이`·`익명N`으로만 보이고 사람 id·프로필 링크가 없습니다.
  * 고치기·지우기는 내 댓글에만, 공감·신고는 남의 게시 중인 댓글에만 보입니다. 서버 응답(스레드 전체)을 부모에게 올려 다시 그립니다.
+ * 방 운영진이면(spaceHiddenIds가 null이 아님, C-06) 가리기·되돌리기·제재 요청 도구가 보입니다.
  */
 import type { CommunityCommentDto, CommunityPostDto, CommunityReactionDto } from '~~/shared/types/api'
 
-const props = defineProps<{ comment: CommunityCommentDto; postId: string; official: boolean }>()
-const emit = defineEmits<{ thread: [CommunityPostDto]; error: [string]; status: [string] }>()
+const props = defineProps<{ comment: CommunityCommentDto; postId: string; official: boolean; spaceHiddenIds?: string[] | null }>()
+const emit = defineEmits<{ thread: [CommunityPostDto]; error: [string]; status: [string]; modChanged: [] }>()
 
 const c = computed(() => props.comment)
 const editing = ref(false)
@@ -107,6 +108,7 @@ async function toggleReaction() {
     </template>
     <p v-else-if="c.body" class="pre comment-body">{{ c.body }}</p>
     <p v-else class="muted comment-body">{{ c.placeholder }}</p>
+    <p v-if="c.status === 'auto_hidden' && c.author.mine" class="hint">내 댓글이 여러 사람의 신고로 운영 검토 중이라 다른 사람에게는 임시로 가려져 있습니다.</p>
     <p v-if="!editing" class="actions small">
       <button
         v-if="c.canReact"
@@ -127,6 +129,18 @@ async function toggleReaction() {
         v-if="c.canReport"
         :id-prefix="`comment-${c.id}`"
         :targets="[{ id: c.id, label: '이 댓글', targetType: 'community_comment', targetRef: { commentId: c.id } }]"
+      />
+      <CommunityModTools
+        v-if="spaceHiddenIds"
+        kind="comment"
+        :item-id="c.id"
+        :status="c.status"
+        :space-hidden="spaceHiddenIds.includes(c.id)"
+        :id-prefix="`comment-mod-${c.id}`"
+        @thread="emit('thread', $event)"
+        @changed="emit('modChanged')"
+        @error="emit('error', $event)"
+        @status="emit('status', $event)"
       />
     </p>
     <form v-if="replying" class="stack" novalidate @submit.prevent="reply">
@@ -154,7 +168,9 @@ async function toggleReaction() {
         :comment="r"
         :post-id="postId"
         :official="official"
+        :space-hidden-ids="spaceHiddenIds"
         @thread="emit('thread', $event)"
+        @mod-changed="emit('modChanged')"
         @error="emit('error', $event)"
         @status="emit('status', $event)"
       />

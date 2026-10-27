@@ -44,6 +44,21 @@ async function submit() {
     </p>
     <p v-if="showTarget" class="small">대상: {{ notice.targetLabel }}<template v-if="notice.ownerPath"> · <NuxtLink :to="notice.ownerPath">내 화면에서 보기</NuxtLink></template></p>
     <p v-if="notice.item" class="small">가려진 항목: {{ notice.item.label }}</p>
+    <template v-if="notice.sanction">
+      <p class="small" data-testid="sanction-summary">
+        {{ SANCTION_LEVEL_TEXT[notice.sanction.level] }} ·
+        {{ notice.sanction.scope === 'community' ? '커뮤니티 전체' : `공간: ${notice.sanction.spaceName ?? '알 수 없음'}` }}
+        <template v-if="notice.sanction.until"> · {{ formatDateTime(notice.sanction.until) }}까지</template>
+        · {{ notice.sanction.active ? '적용 중' : '끝남' }}
+      </p>
+      <p class="hint">
+        {{
+          notice.sanction.level === 'warning'
+            ? '경고는 알림이며 쓰기는 그대로 할 수 있습니다.'
+            : '커뮤니티 글·댓글·공감 쓰기만 제한됩니다. 과제 공간·포트폴리오·공개 프로필·과목 허브는 그대로 쓸 수 있습니다.'
+        }}
+      </p>
+    </template>
     <p class="small">사유: {{ notice.publicReason ?? '운영 정책에 따라 공개를 막았습니다.' }}</p>
     <p v-if="notice.kind === 'restrict' && !notice.reversedAt" class="hint">
       공개 페이지는 열리지 않습니다. 조치가 풀리면 새 공개 후보를 만들고 팀원 동의를 다시 받아 게시해야 합니다.

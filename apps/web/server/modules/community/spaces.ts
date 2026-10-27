@@ -71,6 +71,7 @@ import {
   loadSpaceContext,
   loadSpacesWhere,
   loadViewer,
+  writeRestricted,
   membershipFacts,
   spaceFacts,
 } from './access'
@@ -436,7 +437,9 @@ export async function createRoom(db: DbExecutor, actor: Actor, rawInput: unknown
   const input = parseInput(createRoomSchema, rawInput)
   const name = nameOrThrow(input.name, true)
   const { capacity, requested } = capacityOrThrow(input.capacity)
-  const viewer = await loadViewer(db, actor)
+  const viewer = await loadViewer(db, actor, null, now)
+  // 커뮤니티 전체 쓰기 제한(C-06) 중에는 방을 만들 수 없습니다(공간 범위 제한은 그 공간에만).
+  if (viewer.writeRestriction) throw writeRestricted(viewer.writeRestriction)
   const schoolId = input.schoolId ? await canonicalSchoolId(db, input.schoolId) : null
   if (!canCreateRoom(viewer, schoolId)) throw new ServiceError('FORBIDDEN', 'affiliation_required', undefined, { requirement: 'school_affiliation', schoolId })
   if (!(await hitRateLimit(db, 'community_room_create', actor.userId, ROOM_CREATE_LIMIT, now))) throw rateLimited()

@@ -50,7 +50,7 @@ export const COMMUNITY_ITEM_STATUS_LABELS: Record<CommunityItemStatus, string> =
   published: '게시 중',
   deleted_by_author: '작성자가 지움',
   hidden: '운영 조치로 가려짐',
-  auto_hidden: '신고 누적으로 임시 숨김',
+  auto_hidden: '신고 누적으로 임시 숨김(운영 검토 중)',
 }
 
 /** 글·댓글 시각(정확한 시각 또는 소규모 익명 방의 버킷). */
@@ -107,6 +107,9 @@ export const COMMUNITY_ERROR_MESSAGES: Record<string, string> = {
   target_not_open: '지워졌거나 가려진 글입니다.',
   too_large: '내용이 너무 깁니다.',
   forbidden: '이 작업을 할 권한이 없습니다.',
+  write_restricted: '이용 제한으로 지금은 글·댓글·공감을 쓸 수 없습니다. 운영 조치 안내에서 사유를 확인하고 이의를 제기할 수 있습니다.',
+  moderate_not_allowed: '이 공간의 운영진만 할 수 있습니다.',
+  not_space_hidden: '방 운영진이 가린 상태가 아닙니다(이미 되돌렸거나 운영자가 가렸습니다).',
 }
 
 export function communityErrorMessage(code: string): string {

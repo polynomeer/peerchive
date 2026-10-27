@@ -15,7 +15,10 @@ const { me } = useAuth()
 <template>
   <div>
     <h1>운영 안내</h1>
-    <p class="hint">운영자가 내 공개 사례·선배 노트·케이스 스터디·공개 프로필에 조치를 하면 여기에 보입니다. 사유가 맞지 않으면 이의를 제기할 수 있습니다.</p>
+    <p class="hint">
+      운영자가 내 공개 사례·선배 노트·케이스 스터디·공개 프로필·커뮤니티 글에 조치하거나 커뮤니티 이용 제한을 내리면 여기에 보입니다. 사유가 맞지 않으면
+      조치마다 한 번 이의를 제기할 수 있습니다.
+    </p>
     <p v-if="me?.profileHidden" class="notice error" role="status">내 공개 프로필이 운영 조치로 숨겨져 있습니다. 계정과 과제 공간은 그대로 쓸 수 있습니다.</p>
     <p><NuxtLink to="/me/reports">내가 한 신고 보기</NuxtLink></p>
     <p v-if="error" class="notice error" role="alert">목록을 불러오지 못했습니다.</p>

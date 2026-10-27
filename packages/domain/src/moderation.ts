@@ -32,6 +32,11 @@ export const MODERATION_ACTION_KINDS = [
   'archive_space',
   'hide_post',
   'hide_comment',
+  // C-06(ADR 0023): 방 운영진(방장·admin·moderator, 공식 페이지 모더레이터)의 글·댓글 가리기(자기 공간, 되돌릴 수 있음)와 운영자의 이용 제한(제재) 발급.
+  // 둘 다 신고 처리(resolve)로는 고르지 않고 별도 경로로만 만듭니다(ACTIONS_BY_TARGET에 없음). 대상 열은 글·댓글 id이고 공간 id는 넣지 않습니다
+  // (방장이 당사자가 되어 제재 안내를 받지 않게).
+  'space_hide',
+  'sanction',
 ] as const
 export type ModerationActionKind = (typeof MODERATION_ACTION_KINDS)[number]
 
@@ -65,7 +70,8 @@ export const ACTIONS_BY_TARGET: Readonly<Record<ReportTargetType, readonly Moder
   profile: ['none', 'hide_profile'],
   // 커뮤니티 공간(C-02): 공간 제한(읽기만, 목록·가입·쓰기 중지).
   community_space: ['none', 'restrict_space'],
-  // 커뮤니티 글·댓글(C-04): 가리기(본문 대신 "운영 조치로 가려진 글입니다", 삭제 아님). 신고 누적 자동 숨김·제재는 C-06.
+  // 커뮤니티 글·댓글(C-04): 가리기(본문 대신 "운영 조치로 가려진 글입니다", 삭제 아님). 신고 누적 임시 숨김(auto_hidden)은 'none'으로 처리하면
+  // 다시 보이고(복원), hide_post·hide_comment로 처리하면 가림이 확정됩니다(C-06). 제재는 작성자 확인 뒤 별도 경로(space_hide·sanction은 여기 없음).
   community_post: ['none', 'hide_post'],
   community_comment: ['none', 'hide_comment'],
 }

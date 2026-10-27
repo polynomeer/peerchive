@@ -4,7 +4,7 @@
  * 메일·푸시 없이 화면 안에서만 보입니다.
  * 나갔거나 내보내진 공간은 이름을 보여 주지 않습니다. 로그인 전용·noindex.
  */
-import type { CommunityNoticeDto, CommunityNoticesDto } from '~~/shared/types/api'
+import type { CommunityNoticeDto, CommunityNoticesDto, NameModeNoticeDto } from '~~/shared/types/api'
 
 definePageMeta({ middleware: 'auth' })
 // 제목·robots·referrer는 공통(C-05): 공간 이름으로 제목·OG를 만들지 않습니다. 헤더는 서버 미들웨어가 붙입니다.
@@ -20,12 +20,16 @@ const KIND_TITLES: Record<CommunityNoticeDto['kind'], string> = {
   name_mode_cancelled: '이름 표시 방식 변경 취소',
   name_mode_applied: '이름 표시 방식 변경 적용',
   post_commented: '내 글의 새 댓글',
+  item_auto_hidden: '내 글·댓글이 운영 검토 중',
+  item_restored: '내 글·댓글이 다시 보임',
 }
 
-const textOf = (n: CommunityNoticeDto) =>
-  n.kind === 'post_commented'
-    ? postNoticeText({ count: n.count })
-    : noticeText(n.kind, { fromMode: n.fromMode, toMode: n.toMode, effectiveAt: n.effectiveAt, ...(n.kind === 'name_mode_scheduled' && { joinPolicyAdjusted: n.joinPolicyAdjusted }) })
+function textOf(n: CommunityNoticeDto): string {
+  if (n.kind === 'post_commented') return postNoticeText({ count: n.count })
+  if (n.kind === 'item_auto_hidden' || n.kind === 'item_restored') return n.text
+  const m = n as NameModeNoticeDto
+  return noticeText(m.kind, { fromMode: m.fromMode, toMode: m.toMode, effectiveAt: m.effectiveAt, ...(m.kind === 'name_mode_scheduled' && { joinPolicyAdjusted: m.joinPolicyAdjusted }) })
+}
 
 async function markAll() {
   busy.value = true
@@ -46,7 +50,8 @@ async function markAll() {
   <div class="community-page">
     <h1>커뮤니티 알림</h1>
     <p class="hint">
-      내가 멤버인 방의 이름 표시 방식이 바뀌거나 내 글에 새 댓글이 달리면 여기에 알립니다. 이름 표시 방식이 바뀌어도 이미 쓴 글·댓글은 쓸 때의 방식
+      내가 멤버인 방의 이름 표시 방식이 바뀌거나, 내 글에 새 댓글이 달리거나, 내 글·댓글이 신고로 운영 검토 중이 되면 여기에 알립니다. 운영 조치·이용 제한의
+      사유와 이의제기는 <NuxtLink to="/me/moderation-notices">운영 조치 안내</NuxtLink>에서 봅니다. 이름 표시 방식이 바뀌어도 이미 쓴 글·댓글은 쓸 때의 방식
       그대로입니다.
     </p>
     <p v-if="status" class="notice" role="status">{{ status }}</p>
@@ -67,7 +72,9 @@ async function markAll() {
             <span v-else class="muted">지금은 볼 수 없는 공간</span>
           </p>
           <p>
-            <NuxtLink v-if="n.kind === 'post_commented' && n.postId" :to="`/community/p/${n.postId}`">{{ textOf(n) }}</NuxtLink>
+            <NuxtLink v-if="(n.kind === 'post_commented' || n.kind === 'item_auto_hidden' || n.kind === 'item_restored') && n.postId" :to="`/community/p/${n.postId}`">{{
+              textOf(n)
+            }}</NuxtLink>
             <template v-else>{{ textOf(n) }}</template>
           </p>
           <p class="small muted">

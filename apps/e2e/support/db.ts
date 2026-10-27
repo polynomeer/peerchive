@@ -24,6 +24,14 @@ export async function resetLoginIpRateLimit(): Promise<void> {
   await e2eSql()`delete from rate_limit_buckets where key like 'magic_link_ip:%'`
 }
 
+/**
+ * 학교 메일 인증 요청의 IP 한도 카운터만 비웁니다(C-06 시나리오가 늘어 모든 테스트가 같은 루프백 IP로 인증하면 한도에 걸림).
+ * 사용자별·주소별 한도는 그대로입니다. 로그인 IP 한도를 비우는 것과 같은 이유입니다.
+ */
+export async function resetAffiliationIpRateLimit(): Promise<void> {
+  await e2eSql()`delete from rate_limit_buckets where key like 'affiliation_ip:%'`
+}
+
 export function grantOperator(email: string): void {
   execFileSync('pnpm', ['--filter', '@peerchive/db', 'grant-operator', email], {
     cwd: REPO_ROOT,

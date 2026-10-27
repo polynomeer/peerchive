@@ -9,17 +9,21 @@
  * - 개인정보·저작권 신고는 그 공개에 보류(hold)를 겁니다: 신고가 처리될 때까지 게시·새 버전 게시가 막힙니다(이미 제공 중인 release는
  *   그대로이며 내리는 것은 운영자의 restrict).
  * - 감사 `report.create`에는 대상 종류·사유·보류 여부만(설명 글 없음).
+ * - 커뮤니티 글·댓글(C-06, ADR 0023): 같은 신고자는 같은 대상에 **한 번만**(닫힌 신고가 있어도 그것을 200으로 돌려줌), 저장 뒤 같은 트랜잭션에서
+ *   서로 다른 인증 신고자 수를 세어 기준(공식 5·방 3)에 이르면 임시 숨김합니다(afterReportCreated). 감사 metadata에 `autoHidden` 참거짓을 더하고,
+ *   분석 `community_report_filed {targetKind}`(사용자 키 없음)를 남깁니다.
  *
  * `GET /api/v1/me/reports` — 내가 한 신고의 상태만(접수·검토 중·처리됨·기각). 어떤 조치를 했는지는 알려 주지 않습니다.
  */
 import { z } from 'zod'
 import { REPORT_DETAILS_MAX, REPORT_REASONS, REPORT_TARGET_TYPES, reportCreatesHold, reporterVisibleStatus } from '@peerchive/domain'
 import { and, desc, eq, holds, inArray, reports, type DbExecutor } from '@peerchive/db'
+import { emitAnalytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
 import { type Actor, rateLimited, sqlState } from '../errors'
 import { type RateLimitRule, hitRateLimit } from '../security/rate-limit'
 import { parseInput } from '../validation'
-import { pointerOf, resolvePublicTarget, targetLabels } from './targets'
+import { afterReportCreated, pointerOf, resolvePublicTarget, targetLabels } from './targets'
 import type { MyReportDto, ReportReceiptDto } from '../../../shared/types/api'
 
 export const REPORT_RATE_LIMIT: RateLimitRule = { limit: 10, windowMs: 60 * 60 * 1000 }
@@ -46,11 +50,20 @@ export async function createReport(db: DbExecutor, actor: Actor, rawInput: unkno
   const input = parseInput(createReportSchema, rawInput)
   return db.transaction(async (tx) => {
     const target = await resolvePublicTarget(tx, input.targetType, input.targetRef, now, actor)
+    // 커뮤니티 글·댓글은 신고자·대상마다 한 번(C-06): 닫힌 신고가 있어도 새로 받지 않습니다(같은 사람이 기각 뒤 다시 숨기지 못하게).
+    const oncePerTarget = input.targetType === 'community_post' || input.targetType === 'community_comment'
     const existing = async () => {
       const [row] = await tx
         .select()
         .from(reports)
-        .where(and(eq(reports.reporterId, actor.userId), eq(reports.targetKey, target.targetKey), inArray(reports.status, ['open', 'in_review'])))
+        .where(
+          and(
+            eq(reports.reporterId, actor.userId),
+            eq(reports.targetKey, target.targetKey),
+            oncePerTarget ? undefined : inArray(reports.status, ['open', 'in_review']),
+          ),
+        )
+        .orderBy(desc(reports.createdAt))
         .limit(1)
       return row
     }
@@ -78,13 +91,16 @@ export async function createReport(db: DbExecutor, actor: Actor, rawInput: unkno
     if (hold) {
       await tx.insert(holds).values({ publicationId: target.publicationId!, reason: input.reason, createdByReportId: row.id, createdAt: now })
     }
+    const autoHidden = await afterReportCreated(tx, target, actor.userId, now)
     await recordAudit(tx, {
       actorId: actor.userId,
       action: 'report.create',
       targetType: 'report',
       targetId: row.id,
-      metadata: { targetType: input.targetType, reason: input.reason, hold, publicationId: target.publicationId, communitySpaceId: target.communitySpaceId },
+      metadata: { targetType: input.targetType, reason: input.reason, hold, publicationId: target.publicationId, communitySpaceId: target.communitySpaceId, autoHidden },
     })
+    const targetKind = input.targetType === 'community_space' ? 'space' : input.targetType === 'community_post' ? 'post' : input.targetType === 'community_comment' ? 'comment' : null
+    if (targetKind) await emitAnalytics(tx, { name: 'community_report_filed', actorId: actor.userId, unlinked: true, props: { targetKind }, now })
     return receipt(row, true)
   })
 }

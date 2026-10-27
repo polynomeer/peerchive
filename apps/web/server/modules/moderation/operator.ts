@@ -3,6 +3,7 @@
  *
  * 모든 함수는 운영자만(아니면 403 `operator_only`, 대상 존재 여부보다 먼저 확인). 화면 `/operator`는 운영자가 아니면 404로 보입니다.
  * - 대기열 `GET /operator/reports?status=`: 대상별로 묶은 신고(개수·사유별 개수·처음/마지막 신고 시각·담당자·보류 여부). 신고자 신원은 싣지 않습니다.
+ *   신고 누적으로 임시 숨김된 커뮤니티 글·댓글(C-06)은 `autoHidden: true`로 맨 앞에 옵니다(우선 검토). 처리하면서 가리기를 고르면 확정, 기각·조치 없음이면 복원.
  * - 상세 `GET /operator/reports/:id`: 같은 대상의 신고들(사유·설명), **공개됐던 내용만**(신고 때의 release 스냅샷, 신고 때 버전이 그대로인
  *   게시된·숨긴 노트·케이스 글, 공개 프로필 필드), 보류, 조치·이의제기 이력. 비공개 과제 공간은 운영자에게도 404입니다(§8).
  * - 담당 `POST .../assign`: 자기에게 배정, 그 대상의 처리 전 신고를 in_review로.
@@ -52,7 +53,7 @@ import {
   type DbExecutor,
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
-import { operatorCommunityItem, operatorSpaceContent } from '../community/reporting'
+import { communityItemStatuses, operatorCommunityItem, operatorSpaceContent } from '../community/reporting'
 import { requireOperator } from '../catalog/operators'
 import { publicNotePath } from '../course-hub/search'
 import { toPublicSeniorNote } from '../course-hub/hub'
@@ -139,6 +140,12 @@ export async function listReportGroups(db: DbExecutor, actor: Actor, rawQuery: R
     groups.set(r.report.targetKey, g)
   }
   const labels = await targetLabels(db, [...groups.values()].map((g) => pointerOf(g.first)))
+  const firsts = [...groups.values()].map((g) => g.first)
+  const itemStatus = await communityItemStatuses(
+    db,
+    firsts.map((f) => f.communityPostId).filter((id): id is string => !!id),
+    firsts.map((f) => f.communityCommentId).filter((id): id is string => !!id),
+  )
   const out = [...groups.values()].map(({ first, rows: members }) => {
     const reasons: OperatorReportGroupDto['reasons'] = {}
     for (const m of members) reasons[m.report.reason] = (reasons[m.report.reason] ?? 0) + 1
@@ -154,9 +161,12 @@ export async function listReportGroups(db: DbExecutor, actor: Actor, rawQuery: R
       status: first.status,
       assignee: assigned ? { userId: assigned.report.assignedTo!, displayName: assigned.assigneeName ?? '' } : null,
       hold: members.some((m) => held.has(m.report.id)),
+      autoHidden: itemStatus.get(first.communityCommentId ?? first.communityPostId ?? '') === 'auto_hidden',
     }
   })
   if (!isReportOpen(status as ReportStatus)) out.reverse()
+  // 임시 숨김(C-06)은 우선 검토: 맨 앞(그 안에서는 오래된 것부터). 정렬은 안정적이라 나머지 순서는 그대로입니다.
+  else out.sort((a, b) => Number(b.autoHidden) - Number(a.autoHidden))
   return out.slice(0, 100)
 }
 

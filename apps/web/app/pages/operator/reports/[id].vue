@@ -4,6 +4,7 @@
  * - 공개됐던 내용만: 신고 때의 release 스냅샷(PublicSnapshotView), 신고 때 버전 그대로인 노트·케이스 글, 공개 프로필 필드.
  * - 처리: 조치(대상별로 고를 수 있는 것만) + 내부 메모(필수) + 당사자에게 보일 사유(별도) + 당사자 알림. 같은 대상의 처리 전 신고를 함께 닫고 보류를 풉니다.
  * - 기각, 제한 해제(restricted → draft), 이의 결정(유지·되돌림), 감사 기록 보기.
+ * - 커뮤니티 글·댓글(C-06): 신고 누적 임시 숨김이면 "기각·조치 없음 = 복원, 가리기 = 확정" 안내, 사유를 기록하는 작성자 확인과 이용 제한 발급.
  */
 import type {
   ModerationActionKind,
@@ -195,6 +196,20 @@ async function loadAudit() {
             신고된 글·댓글 하나만 보입니다. 익명 작성자는 운영자에게도 보이지 않습니다(작성자 확인은 사유를 남기는 별도 절차). 가리면 본문 대신 "운영 조치로
             가려진 글입니다"가 보이고, 이의제기로 되돌리면 다시 보입니다.
           </p>
+          <p v-if="data.content.item.status === 'auto_hidden'" class="notice" data-testid="auto-hidden-guide">
+            서로 다른 인증 사용자의 신고가 기준 수에 이르러 임시로 가려졌습니다(우선 검토). <strong>기각하거나 조치 없이 처리하면 다시 보이고</strong>, 가리기로
+            처리하면 가림이 확정됩니다. 작성자에게는 결과가 알림으로 갑니다.
+          </p>
+          <details class="stack">
+            <summary>작성자 확인·이용 제한</summary>
+            <OperatorAuthorLookup
+              :target-type="data.content.kind === 'community_post' ? 'post' : 'comment'"
+              :target-id="data.content.item.commentId ?? data.content.item.postId"
+              :report-id="data.report.id"
+              id-prefix="op-lookup"
+              @issued="refresh()"
+            />
+          </details>
         </template>
         <p v-else-if="data.content.kind === 'unavailable'" class="muted">{{ data.content.message }}</p>
       </section>
@@ -252,7 +267,7 @@ async function loadAudit() {
             <p>
               <strong>{{ ACTION_LABELS[a.kind] }}</strong> · {{ a.outcome === 'dismissed' ? '기각' : '처리' }}
               <span class="small muted"> · {{ a.createdBy }} · {{ formatDateTime(a.createdAt) }}</span>
-              <span v-if="a.reversedAt" class="badge">풀림({{ a.reverseCause === 'appeal' ? '이의제기' : '제한 해제' }})</span>
+              <span v-if="a.reversedAt" class="badge">풀림({{ a.reverseCause === 'appeal' ? '이의제기' : a.reverseCause === 'space' ? '방 운영진' : '해제' }})</span>
             </p>
             <p class="small pre">내부 메모: {{ a.internalNote }}</p>
             <p v-if="a.publicReason" class="small">당사자 사유: {{ a.publicReason }}<template v-if="a.notifyOwner"> (알림)</template></p>

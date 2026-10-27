@@ -46,6 +46,7 @@ import {
   shouldBucketTimes,
   threadAuthorView,
   timeBucket,
+  writeRestrictionText,
 } from '@peerchive/domain'
 import {
   and,
@@ -71,7 +72,7 @@ import { type Actor, ServiceError, conflict, forbidden, invalid, notFound, rateL
 import { isUuid } from '../projects/access'
 import { hitRateLimit } from '../security/rate-limit'
 import { parseInput } from '../validation'
-import { type SpaceContext, loadReadableSpace, membershipFacts } from './access'
+import { type SpaceContext, loadReadableSpace, membershipFacts, writeRestricted } from './access'
 import { loadScheduledChange } from './name-modes'
 import type {
   BoardPostsDto,
@@ -120,9 +121,13 @@ async function shareLockSpace(tx: DbExecutor, spaceId: string): Promise<void> {
 
 const boardFacts = (b: BoardRow) => ({ kind: b.kind, writeRole: b.writeRole })
 
-/** 쓰기 공통 전제: 읽을 수 있음(아니면 404) → active 공간(아니면 409) → 자격(아니면 403). */
+/**
+ * 쓰기 공통 전제: 읽을 수 있음(아니면 404) → active 공간(아니면 409) → 이용 제한(C-06, 403 `write_restricted` + 수준·범위·기한) → 자격(아니면 403).
+ * 제한 안내에는 어느 글·누구의 요청 때문인지 싣지 않습니다(사유는 본인의 운영 조치 안내에).
+ */
 function assertWritable(ctx: SpaceContext, allowed: boolean): void {
   if (ctx.space.row.status !== 'active') throw conflict('space_not_active', { status: ctx.space.row.status })
+  if (ctx.viewer.writeRestriction) throw writeRestricted(ctx.viewer.writeRestriction)
   if (!allowed) throw forbidden('write_not_allowed')
 }
 
@@ -139,6 +144,14 @@ async function composerFor(db: DbExecutor, ctx: SpaceContext, board: BoardRow, n
   const [me] = mode === 'real' ? await db.select({ realName: users.realName }).from(users).where(eq(users.id, ctx.viewer.userId)).limit(1) : []
   return {
     canWrite: allowed && ctx.space.row.status === 'active',
+    restriction: ctx.viewer.writeRestriction
+      ? {
+          level: ctx.viewer.writeRestriction.level,
+          scope: ctx.viewer.writeRestriction.scope,
+          until: ctx.viewer.writeRestriction.until?.toISOString() ?? null,
+          message: writeRestrictionText(ctx.viewer.writeRestriction),
+        }
+      : null,
     nameMode: mode,
     choices: official ? ['anonymous', 'display'] : [mode],
     note: composerNameModeNote(ctx.space.row.kind, mode),
@@ -355,7 +368,7 @@ const listQuery = z.object({ cursor: z.uuid({ error: 'invalid' }).optional() })
 export async function listBoardPosts(db: DbExecutor, actor: Actor, boardId: unknown, rawQuery: unknown, now = new Date()): Promise<BoardPostsDto> {
   const { cursor } = parseInput(listQuery, rawQuery ?? {})
   const board = await findBoard(db, boardId)
-  const ctx = await loadReadableSpace(db, actor, board.spaceId)
+  const ctx = await loadReadableSpace(db, actor, board.spaceId, false, now)
   let after: { createdAt: Date; id: string } | null = null
   if (cursor) {
     const [row] = await db
@@ -398,7 +411,7 @@ export async function listBoardPosts(db: DbExecutor, actor: Actor, boardId: unkn
 /** GET /community/posts/:id — 글 + 댓글(답글 한 단계). 지운 글도 자리 표시와 남은 댓글을 보여 줍니다. 읽을 수 없으면 404. */
 export async function getPost(db: DbExecutor, actor: Actor, postId: unknown, now = new Date()): Promise<CommunityPostDto> {
   const post = await findPost(db, postId)
-  const ctx = await loadReadableSpace(db, actor, post.spaceId)
+  const ctx = await loadReadableSpace(db, actor, post.spaceId, false, now)
   return postDetail(db, ctx, post, now)
 }
 
@@ -481,7 +494,7 @@ export async function createPost(db: DbExecutor, actor: Actor, boardId: unknown,
   const postId = await db.transaction(async (tx) => {
     const board = await findBoard(tx, boardId)
     await shareLockSpace(tx, board.spaceId)
-    const ctx = await loadReadableSpace(tx, actor, board.spaceId)
+    const ctx = await loadReadableSpace(tx, actor, board.spaceId, false, now)
     assertWritable(ctx, canWriteBoard(ctx.viewer, ctx.facts, membershipFacts(ctx.membership), boardFacts(board)))
     const mode = await decideNameMode(tx, ctx, now, input.nameMode)
     await rateLimitOrThrow(tx, 'community_post_create', actor.userId, POST_RATE_LIMIT, now)
@@ -507,7 +520,7 @@ export async function createComment(db: DbExecutor, actor: Actor, postId: unknow
   const id = await db.transaction(async (tx) => {
     const peek = await findPost(tx, postId)
     await shareLockSpace(tx, peek.spaceId)
-    const ctx = await loadReadableSpace(tx, actor, peek.spaceId)
+    const ctx = await loadReadableSpace(tx, actor, peek.spaceId, false, now)
     // 같은 스레드의 번호를 정하려고 글 행을 잠급니다(공간 다음).
     const post = await findPost(tx, peek.id, true)
     const [board] = await tx.select().from(boards).where(eq(boards.id, post.boardId)).limit(1)
@@ -544,7 +557,7 @@ async function notifyPostAuthor(tx: DbExecutor, post: PostRow, now: Date): Promi
     insert into community_notices (user_id, space_id, kind, post_id, payload, created_at)
     select u.id, ${post.spaceId}, 'post_commented', ${post.id}, '{"count":1}'::jsonb, ${now.toISOString()}::timestamptz
     from users u where u.id = ${post.authorId} and u.status = 'active'
-    on conflict (post_id, user_id) where post_id is not null and read_at is null
+    on conflict (post_id, user_id, kind) where post_id is not null and read_at is null
     do update set payload = jsonb_build_object('count', least(coalesce((community_notices.payload->>'count')::int, 0) + 1, 999)), created_at = excluded.created_at`)
 }
 
@@ -658,8 +671,9 @@ export async function setReaction(
   return db.transaction(async (tx) => {
     const item = target === 'post' ? await findPost(tx, targetId) : await findComment(tx, targetId)
     const spaceId = target === 'post' ? (item as PostRow).spaceId : (await findPost(tx, (item as CommentRow).postId)).spaceId
-    const ctx = await loadReadableSpace(tx, actor, spaceId)
+    const ctx = await loadReadableSpace(tx, actor, spaceId, false, now)
     if (ctx.space.row.status !== 'active') throw conflict('space_not_active', { status: ctx.space.row.status })
+    if (ctx.viewer.writeRestriction) throw writeRestricted(ctx.viewer.writeRestriction)
     if (!canReact(ctx.viewer, ctx.facts, membershipFacts(ctx.membership))) throw forbidden('write_not_allowed')
     if (item.authorId === actor.userId) throw conflict('own_item')
     if (!isOpenItem(item.status)) throw conflict('target_not_open')

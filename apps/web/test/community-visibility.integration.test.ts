@@ -32,6 +32,7 @@ import { createOfficialPage } from '../server/modules/community/official'
 import { createComment, createPost, editPost, getPost, listBoardPosts, setReaction } from '../server/modules/community/posts'
 import { updateRealName } from '../server/modules/identity/profiles'
 import { resolveReportableComment, resolveReportablePost, resolveReportableSpace } from '../server/modules/community/reporting'
+import { createSanctionRequest, getSpaceModeration, issueSanction, lookupAuthor, spaceHideItem, spaceUnhideItem } from '../server/modules/community/moderation'
 import {
   archiveSpace,
   createBoard,
@@ -161,6 +162,10 @@ describe('C-05 community tables come from the schema section (source)', () => {
         'community_comments',
         'thread_aliases',
         'community_reactions',
+        // C-06: 이용 제한·작성자 확인 기록·제재 요청도 같은 구역(자동으로 덮임)
+        'community_sanctions',
+        'community_author_lookups',
+        'community_sanction_requests',
       ]),
     )
     // 다른 구역에 커뮤니티처럼 보이는 테이블이 있으면 경계 검사에서 빠지므로 실패합니다(C-04: posts·comments는 커뮤니티 구역에).
@@ -564,6 +569,12 @@ const SPACE_OPS: Record<string, Op> = {
   'PUT comments/:id/reaction': (tx, a, s) => setReaction(tx, a, 'comment', postOf(s).commentId, true, at(10)),
   'POST reports (community_post)': (tx, a, s) => resolveReportablePost(tx, a, { postId: postOf(s).postId }),
   'POST reports (community_comment)': (tx, a, s) => resolveReportableComment(tx, a, { commentId: postOf(s).commentId }),
+  // C-06 방 운영진 도구: 읽을 수 없으면 운영진 여부보다 먼저 404
+  'GET spaces/:slug/moderation': (tx, a, s) => getSpaceModeration(tx, a, s, at(10)),
+  'POST posts/:id/hide': (tx, a, s) => spaceHideItem(tx, a, 'post', postOf(s).postId, { publicReason: '사유' }, at(10)),
+  'POST posts/:id/unhide': (tx, a, s) => spaceUnhideItem(tx, a, 'post', postOf(s).postId, {}, at(10)),
+  'POST comments/:id/hide': (tx, a, s) => spaceHideItem(tx, a, 'comment', postOf(s).commentId, { publicReason: '사유' }, at(10)),
+  'POST sanction-requests': (tx, a, s) => createSanctionRequest(tx, a, { targetType: 'post', targetId: postOf(s).postId, reason: 'spam', details: '설명' }, at(10)),
 }
 
 describe.skipIf(!databaseUrl)('C-05 visibility matrix and data boundary (PostgreSQL)', () => {
@@ -758,6 +769,13 @@ describe.skipIf(!databaseUrl)('C-05 visibility matrix and data boundary (Postgre
       setAnalyticsEnvForTesting({ NODE_ENV: 'test', PEERCHIVE_ANALYTICS_PEPPER: 'visibility-analytics-pepper-for-tests-0123456789' })
       const w = await world(tx)
       await updateSpace(tx, w.owner, w.rooms.listedLinked, { name: `${w.sentinel} 새이름`, description: `${w.sentinel} 새소개` }, at(20))
+      // C-06: 방 운영진 가리기·되돌리기·제재 요청·작성자 확인·제재 발급도 감사는 id·코드만(사유·설명·메모 글은 감사에 없음)
+      const target = postOf(w.rooms.listedLinked)
+      await spaceHideItem(tx, w.owner, 'comment', target.commentId, { publicReason: `${w.sentinel} 사유`, note: `${w.sentinel} 메모` }, at(20))
+      await spaceUnhideItem(tx, w.owner, 'comment', target.commentId, { note: `${w.sentinel} 되돌림` }, at(20))
+      const req = await createSanctionRequest(tx, w.owner, { targetType: 'post', targetId: target.postId, reason: 'spam', details: `${w.sentinel} 설명` }, at(20))
+      const lookup = await lookupAuthor(tx, w.op, { targetType: 'post', targetId: target.postId, reason: `${w.sentinel} 확인 사유`, requestId: req.id }, at(20))
+      await issueSanction(tx, w.op, { lookupId: lookup.lookupId, level: 'warning', scope: 'space', note: `${w.sentinel} 내부`, publicReason: `${w.sentinel} 공개` }, at(20))
       await archiveSpace(tx, w.owner, w.rooms.inviteOnly, at(21))
       // 이 트랜잭션에서 남긴 행만(audit_events.at 기본값 now()는 트랜잭션 시작 시각).
       const mine = await tx

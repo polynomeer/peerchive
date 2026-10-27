@@ -17,11 +17,16 @@ import {
   caseStudies,
   claimRevisions,
   boards,
+  communityAuthorLookups,
   communityComments,
   communityNotices,
   communityPosts,
   communityReactions,
+  communitySanctionRequests,
+  communitySanctions,
   communitySpaces,
+  moderationActions,
+  operators,
   threadAliases,
   consents,
   createDb,
@@ -496,6 +501,51 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect(await count(tx, communityReactions, eq(communityReactions.userId, U.id))).toBe(0)
       expect(await count(tx, communityReactions, eq(communityReactions.userId, M.id))).toBe(0)
       // 지워도 다시 돌리면 바꿀 것이 없음
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('purges sanctions about the user, nulls the looked-up author on lookup records, scrubs their sanction-request details (C-06)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴제재대상', 'deleted')
+      const O = await user(tx, '운영자')
+      await tx.insert(operators).values({ userId: O.id })
+      const M = await user(tx, '방장')
+      const [room] = await tx
+        .insert(communitySpaces)
+        .values({ kind: 'user_room', name: '제재 방', slug: id().replace(/-/g, '').slice(0, 10), currentNameMode: 'anonymous', createdBy: M.id })
+        .returning()
+      const [board] = await tx.insert(boards).values({ spaceId: room!.id, kind: 'general', title: '게시판', position: 0 }).returning()
+      const [post] = await tx.insert(communityPosts).values({ boardId: board!.id, spaceId: room!.id, authorId: U.id, nameMode: 'anonymous', title: '글', body: '본문' }).returning()
+      const [mPost] = await tx.insert(communityPosts).values({ boardId: board!.id, spaceId: room!.id, authorId: M.id, nameMode: 'anonymous', title: '방장 글', body: '본문' }).returning()
+      const [request] = await tx
+        .insert(communitySanctionRequests)
+        .values({ spaceId: room!.id, requestedBy: M.id, postId: post!.id, targetKey: `community_post:${post!.id}`, reason: 'harassment', details: '반복 비방' })
+        .returning()
+      // 탈퇴자 U가 운영진으로서 남의 글에 쓴 요청(설명만 지움)
+      const [uRequest] = await tx
+        .insert(communitySanctionRequests)
+        .values({ spaceId: room!.id, requestedBy: U.id, postId: mPost!.id, targetKey: `community_post:${mPost!.id}`, reason: 'spam', details: '탈퇴자가 쓴 설명' })
+        .returning()
+      const [lookup] = await tx
+        .insert(communityAuthorLookups)
+        .values({ operatorId: O.id, targetType: 'post', postId: post!.id, authorId: U.id, reason: '요청 검토', requestId: request!.id })
+        .returning()
+      const [action] = await tx
+        .insert(moderationActions)
+        .values({ kind: 'sanction', outcome: 'resolved', targetType: 'community_post', targetKey: `community_post:${post!.id}`, communityPostId: post!.id, internalNote: '메모', publicReason: '사유', notifyOwner: true, createdBy: O.id })
+        .returning()
+      await tx.insert(communitySanctions).values({ userId: U.id, scope: 'space', spaceId: room!.id, level: 'write_suspended', until: new Date(NOW.getTime() + 7 * DAY), actionId: action!.id, lookupId: lookup!.id, requestId: request!.id, issuedBy: O.id })
+
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ community_sanctions: 1, community_author_lookup_subjects: 1, sanction_request_details: 1 })
+      expect(await count(tx, communitySanctions, eq(communitySanctions.userId, U.id))).toBe(0)
+      // 확인 기록(운영자의 접근 기록)은 남고 확인된 작성자 칸만 비움. 짝인 운영 조치 행도 남음.
+      expect((await tx.select().from(communityAuthorLookups).where(eq(communityAuthorLookups.id, lookup!.id)))[0]).toMatchObject({ authorId: null, operatorId: O.id, reason: '요청 검토' })
+      expect(await count(tx, moderationActions, eq(moderationActions.id, action!.id))).toBe(1)
+      // 남이 쓴 요청은 그대로, 탈퇴자가 쓴 요청은 설명만 지움
+      expect((await tx.select().from(communitySanctionRequests).where(eq(communitySanctionRequests.id, request!.id)))[0]).toMatchObject({ details: '반복 비방' })
+      expect((await tx.select().from(communitySanctionRequests).where(eq(communitySanctionRequests.id, uRequest!.id)))[0]).toMatchObject({ details: null, requestedBy: U.id })
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })

@@ -120,6 +120,13 @@ export type AuditAction =
   | 'community.space_lift'
   | 'community.space_restrict'
   | 'community.space_update'
+  | 'community.space_hide'
+  | 'community.space_unhide'
+  | 'community.sanction_request'
+  | 'community.sanction_request_dismiss'
+  | 'community.author_lookup'
+  | 'community.sanction_issue'
+  | 'community.sanction_revoke'
 
 export async function recordAudit(
   db: DbExecutor,
@@ -160,6 +167,8 @@ export async function recordAudit(
       | 'community_space'
       | 'community_post'
       | 'community_comment'
+      | 'community_sanction'
+      | 'community_sanction_request'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

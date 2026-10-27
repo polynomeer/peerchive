@@ -190,7 +190,7 @@ export function checkRealName(raw: unknown): RealNameCheck {
 // ── 커뮤니티 알림 ────────────────────────────────────────────────────────
 
 /** 커뮤니티 알림 종류(community_notices.kind). 이름 표시 방식 변경 셋(C-03) + 내 글의 새 댓글(C-04, community-posts.ts). */
-export const COMMUNITY_NOTICE_KINDS = ['name_mode_scheduled', 'name_mode_cancelled', 'name_mode_applied', 'post_commented'] as const
+export const COMMUNITY_NOTICE_KINDS = ['name_mode_scheduled', 'name_mode_cancelled', 'name_mode_applied', 'post_commented', 'item_auto_hidden', 'item_restored'] as const
 export type CommunityNoticeKind = (typeof COMMUNITY_NOTICE_KINDS)[number]
 export const NAME_MODE_NOTICE_KINDS = ['name_mode_scheduled', 'name_mode_cancelled', 'name_mode_applied'] as const
 export type NameModeNoticeKind = (typeof NAME_MODE_NOTICE_KINDS)[number]

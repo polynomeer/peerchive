@@ -6,6 +6,8 @@
  * - 방장·운영진: 설정, 게시판 더하기, 멤버(승인·거절·역할·내보내기), 초대 링크(7일·한 번만), 보관.
  * - 이름 표시 방식(C-03): 예약된 변경이 있으면 모두에게 배너("N일 뒤 … 바뀝니다. 이미 쓴 글은 바뀌지 않습니다."), 멤버에게 변경 이력,
  *   방장에게 예약·취소(7일 뒤 적용, 멤버 전원에게 알림).
+ * - 방 운영(C-06, 방장·admin·moderator): 방 운영진이 가린 글·댓글, 제재 요청과 상태(제재가 있었는지만), 이 방 범위 쓰기 제한 개수.
+ *   누구에게 무엇이 내려졌는지는 보이지 않습니다.
  */
 import type {
   BoardKind,
@@ -16,6 +18,7 @@ import type {
   SpaceInvitationDto,
   SpaceMemberDto,
   SpaceMembersDto,
+  SpaceModerationDto,
   SpaceRole,
 } from '~~/shared/types/api'
 
@@ -44,6 +47,19 @@ function fail(e: unknown) {
 const isMember = computed(() => space.value?.access === 'member')
 const perms = computed(() => space.value?.permissions)
 const isManager = computed(() => !!perms.value && (perms.value.reviewRequests || perms.value.removeMembers))
+
+// ── 방 운영(C-06) ──
+const moderation = ref<SpaceModerationDto | null>(null)
+async function loadModeration() {
+  if (!perms.value?.moderate) return
+  try {
+    moderation.value = await $fetch<SpaceModerationDto>(`/api/v1/community/spaces/${slug.value}/moderation`)
+  } catch {
+    moderation.value = null
+  }
+}
+onMounted(loadModeration)
+const REQUEST_STATUS_TEXT: Record<SpaceModerationDto['requests'][number]['status'], string> = { received: '접수됨', resolved: '처리됨', dismissed: '기각됨' }
 
 // ── 가입·나가기 ──
 async function join() {
@@ -339,6 +355,32 @@ const isMe = (m: SpaceMemberDto) => m.userId === me.value?.id
         <p v-if="space.myMembership" class="actions">
           <button type="button" class="secondary" :disabled="busy === 'leave'" @click="leave">{{ space.myMembership.role === 'owner' ? '방장 넘기고 나가기' : '나가기' }}</button>
         </p>
+
+        <section v-if="moderation" aria-labelledby="space-moderation" data-testid="space-moderation">
+          <h2 id="space-moderation">방 운영</h2>
+          <p class="hint">
+            방 운영진도 익명 작성자를 볼 수 없습니다. 글·댓글 화면에서 가리거나 제재를 요청하면 운영자가 사유를 기록하고 작성자를 확인해 결정합니다.
+          </p>
+          <p data-testid="space-restrictions">이 방 범위 쓰기 제한: {{ moderation.activeSpaceRestrictions }}건 적용 중(누구인지는 보이지 않습니다)</p>
+          <h3>운영진이 가린 글·댓글</h3>
+          <ul v-if="moderation.hides.length" class="plain">
+            <li v-for="h in moderation.hides" :key="h.actionId">
+              <NuxtLink :to="`/community/p/${h.postId}`">{{ h.targetType === 'post' ? '글' : '댓글' }}</NuxtLink> · {{ h.publicReason }} ·
+              <span class="small muted">{{ formatDateTime(h.createdAt) }}</span>
+            </li>
+          </ul>
+          <p v-else class="small muted">없습니다.</p>
+          <h3>제재 요청</h3>
+          <ul v-if="moderation.requests.length" class="plain" data-testid="sanction-requests">
+            <li v-for="r in moderation.requests" :key="r.id">
+              <NuxtLink :to="`/community/p/${r.postId}`">{{ r.targetType === 'post' ? '글' : '댓글' }}</NuxtLink> · {{ REPORT_REASON_LABELS[r.reason] }} ·
+              {{ REQUEST_STATUS_TEXT[r.status] }}<template v-if="r.outcome"> ({{ r.outcome === 'sanctioned' ? '제재가 내려졌습니다' : '제재 없음' }})</template>
+              <span v-if="r.mine" class="badge">내 요청</span>
+              <span class="small muted"> · {{ formatDateTime(r.createdAt) }}</span>
+            </li>
+          </ul>
+          <p v-else class="small muted">없습니다.</p>
+        </section>
 
         <section v-if="perms?.manage" aria-labelledby="space-settings">
           <h2 id="space-settings">설정</h2>

@@ -9,7 +9,10 @@
  * | hide_case_study | case_studies.hidden_at | hidden_at = null(게시 상태는 그대로) |
  * | hide_profile | profiles.hidden_at | hidden_at = null |
  * | restrict_space | 커뮤니티 공간 active → restricted(C-02, 읽기만·목록·가입·쓰기 중지) | restricted → active |
- * | hide_post·hide_comment | 커뮤니티 글·댓글 published → hidden(C-04, 본문 대신 "운영 조치로 가려진 글입니다", 본문은 남김) | hidden → published |
+ * | hide_post·hide_comment | 커뮤니티 글·댓글 published·auto_hidden·(방 운영진이 가린) hidden → hidden(C-04, 본문은 남김) | 다른 가리기가 없으면 hidden → published |
+ * | none(커뮤니티 글·댓글) | 신고 누적 임시 숨김(auto_hidden)이면 published로 복원 + 작성자 알림(C-06) | — |
+ * | space_hide(C-06, 방 운영진이 community 모듈에서 만듦) | — | 다른 가리기가 없으면 hidden → published |
+ * | sanction(C-06, 운영자가 community 모듈에서 발급) | — | 제재 revoked(쓰기 제한 풀림) |
  *
  * 공개 읽기는 이 상태를 요청마다 읽으므로 커밋 즉시 효력이 있습니다(worker 무관). outbox `moderation.action`은 worker가 검색 문서 같은 남은 사본을
  * 맞추는 데만 씁니다. 삭제 조치는 없습니다(차단 ≠ 삭제).
@@ -33,7 +36,7 @@ import {
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
 import { liftSpaceRestrictionInTx, restrictSpaceInTx } from '../community/official'
-import { hideCommunityItemInTx, unhideCommunityItemInTx } from '../community/reporting'
+import { hideCommunityItemInTx, restoreAutoHiddenInTx, revokeSanctionByActionInTx, unhideCommunityItemInTx } from '../community/reporting'
 import { conflict, notFound } from '../errors'
 import { lockPublication } from '../publication/candidates'
 import { liftRestrictionInTx, restrictInTx } from '../publication/releases'
@@ -165,6 +168,10 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
 
   switch (input.kind) {
     case 'none':
+      // 신고 누적 임시 숨김(C-06)은 조치 없이 닫으면(기각·조치 없음) 다시 보입니다.
+      if (target.communityPostId || target.communityCommentId) {
+        await restoreAutoHiddenInTx(tx, { postId: target.communityPostId, commentId: target.communityCommentId }, now)
+      }
       return action!
     case 'restrict':
       await restrictInTx(tx, publication!, now)
@@ -258,10 +265,17 @@ export async function undoModeration(
       await liftSpaceRestrictionInTx(tx, action.communitySpaceId!, now)
       break
     case 'hide_post':
-      await unhideCommunityItemInTx(tx, 'post', action.communityPostId!, now)
+      await unhideCommunityItemInTx(tx, 'post', action.communityPostId!, now, action.id)
       break
     case 'hide_comment':
-      await unhideCommunityItemInTx(tx, 'comment', action.communityCommentId!, now)
+      await unhideCommunityItemInTx(tx, 'comment', action.communityCommentId!, now, action.id)
+      break
+    case 'space_hide':
+      if (action.communityPostId) await unhideCommunityItemInTx(tx, 'post', action.communityPostId, now, action.id)
+      else await unhideCommunityItemInTx(tx, 'comment', action.communityCommentId!, now, action.id)
+      break
+    case 'sanction':
+      await revokeSanctionByActionInTx(tx, action.id, operatorId, now)
       break
   }
   await tx

@@ -11,8 +11,8 @@
  * - 가입: open → active, approval → pending(방장·admin 승인), invite → 초대 링크로만. 정원(기본 300)을 넘으면 409. 방장이 떠나면 가장 오래된
  *   admin → 가장 오래된 다른 active 멤버 순으로 넘기고, 없으면 보관(archived).
  * - 상태: archived(보관: 읽기만, 가입·쓰기·관리 없음), restricted(운영 조치: 읽기만, 목록·가입·쓰기·관리 없음, 운영자만 해제).
- * - 글쓰기 권한(canWriteBoard)만 여기서 정합니다. 실제 글·댓글은 C-04, 이름 표시 방식 변경은 C-03(name-modes.ts), 이용 제한(제재)은 C-06이며
- *   `communityWriteSuspended` 자리를 남겨 둡니다.
+ * - 글쓰기 권한(canWriteBoard)만 여기서 정합니다. 실제 글·댓글은 C-04, 이름 표시 방식 변경은 C-03(name-modes.ts), 이용 제한(제재)은 C-06
+ *   (community-moderation.ts)이며 서버가 그 공간 기준의 제재를 읽어 `communityWriteSuspended`를 채웁니다.
  *
  * 런타임 의존성 없음.
  */
@@ -190,7 +190,10 @@ export interface CommunityViewer {
   operator: boolean
   /** active 학교 인증들(C-01). */
   affiliations: ReadonlyArray<{ schoolId: string; departmentKey: string | null }>
-  /** 커뮤니티 이용 제한(C-06 CommunitySanction). 지금은 항상 false이며 C-06이 채웁니다. */
+  /**
+   * 커뮤니티 쓰기 제한(C-06 CommunitySanction). 서버가 **판정하는 공간 기준**으로 채웁니다: 커뮤니티 전체 제재(쓰기 기간 제한·영구) 또는
+   * 그 공간 범위 제재가 지금 효력이 있으면 true. 공간 밖 판정(방 만들기)은 커뮤니티 전체 제재만. 경고는 막지 않습니다.
+   */
   communityWriteSuspended?: boolean
 }
 
@@ -238,6 +241,8 @@ export function meetsRoomAffiliation(viewer: CommunityViewer, space: Pick<SpaceF
 /** 사용자 방을 만들 수 있는지: active 사용자 + active 학교 인증 하나 이상(+ 학교를 연결하면 그 학교 인증). */
 export function canCreateRoom(viewer: CommunityViewer | null | undefined, schoolId: string | null): boolean {
   if (!isActiveViewer(viewer)) return false
+  // 커뮤니티 전체 쓰기 제한(C-06) 중에는 방도 만들 수 없습니다.
+  if (viewer.communityWriteSuspended) return false
   return schoolId ? hasSchoolAffiliation(viewer, schoolId) : viewer.affiliations.length > 0
 }
 

@@ -33,7 +33,7 @@ export const POST_TITLE_MAX = 120
 export const POST_BODY_MAX = 10_000
 export const COMMENT_BODY_MAX = 3_000
 
-/** 글·댓글 상태. published 외에는 본문을 보여 주지 않고 자리 표시 글만 보여 줍니다. auto_hidden은 C-06(신고 누적 임시 숨김)이 씁니다. */
+/** 글·댓글 상태. published 외에는 본문을 보여 주지 않고 자리 표시 글만 보여 줍니다. auto_hidden은 신고 누적 임시 숨김(C-06, 운영 검토 중)입니다. */
 export const COMMUNITY_ITEM_STATUSES = ['published', 'deleted_by_author', 'hidden', 'auto_hidden'] as const
 export type CommunityItemStatus = (typeof COMMUNITY_ITEM_STATUSES)[number]
 
@@ -58,12 +58,12 @@ export const POST_AUTHOR_LABEL = '글쓴이'
 export const POST_PLACEHOLDERS: Readonly<Record<Exclude<CommunityItemStatus, 'published'>, string>> = {
   deleted_by_author: '작성자가 삭제한 글입니다',
   hidden: '운영 조치로 가려진 글입니다',
-  auto_hidden: '운영 조치로 가려진 글입니다',
+  auto_hidden: '신고가 모여 운영 검토 중인 글입니다',
 }
 export const COMMENT_PLACEHOLDERS: Readonly<Record<Exclude<CommunityItemStatus, 'published'>, string>> = {
   deleted_by_author: '작성자가 삭제한 댓글입니다',
   hidden: '운영 조치로 가려진 댓글입니다',
-  auto_hidden: '운영 조치로 가려진 댓글입니다',
+  auto_hidden: '신고가 모여 운영 검토 중인 댓글입니다',
 }
 
 export function isOpenItem(status: CommunityItemStatus): boolean {
@@ -186,7 +186,7 @@ export function canCommentOnBoard(
   return canWriteBoard(viewer, space, membership, memberLevel)
 }
 
-/** 공감할 수 있는지: active 공간을 읽을 수 있고 이용 제한(C-06)이 없을 것. 쓰기 역할과는 무관합니다. */
+/** 공감할 수 있는지: active 공간을 읽을 수 있고 이 공간에 쓰기 제한(C-06 제재)이 없을 것. 쓰기 역할과는 무관합니다. */
 export function canReact(viewer: CommunityViewer | null | undefined, space: SpaceFacts, membership: MembershipFacts | null | undefined): boolean {
   if (!viewer || viewer.status !== 'active' || space.status !== 'active') return false
   if (viewer.communityWriteSuspended) return false

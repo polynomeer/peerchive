@@ -1481,6 +1481,10 @@ export type ModerationActionKind =
   | 'archive_space'
   | 'hide_post'
   | 'hide_comment'
+  /** C-06: 방 운영진의 글·댓글 가리기(자기 공간, 되돌릴 수 있음). */
+  | 'space_hide'
+  /** C-06: 운영자의 이용 제한(제재) 발급. */
+  | 'sanction'
 export type HiddenItemKind = 'log' | 'claim' | 'artifact'
 export type AppealStatus = 'open' | 'upheld' | 'reversed'
 
@@ -1534,6 +1538,8 @@ export interface ModerationNoticeDto {
   /** hide_item이면 가린 항목(당사자 화면용 짧은 글). */
   item: { kind: HiddenItemKind; key: string; label: string } | null
   publicReason: string | null
+  /** 이용 제한(kind sanction, C-06)이면 수준·범위·공간 이름·기한·지금 효력. 누가 요청·확인했는지는 없습니다. */
+  sanction: { level: SanctionLevel; scope: SanctionScope; spaceName: string | null; until: string | null; active: boolean } | null
   createdAt: string
   reversedAt: string | null
   appeal: { status: AppealStatus; createdAt: string; decidedAt: string | null } | null
@@ -1561,6 +1567,8 @@ export interface OperatorReportGroupDto {
   status: ReportStatus
   assignee: { userId: string; displayName: string } | null
   hold: boolean
+  /** 신고 누적으로 임시 숨김된 커뮤니티 글·댓글(C-06, 우선 검토로 맨 앞). */
+  autoHidden: boolean
 }
 
 export interface OperatorReportDto {
@@ -1582,7 +1590,7 @@ export interface OperatorActionDto {
   createdAt: string
   createdBy: string
   reversedAt: string | null
-  reverseCause: 'lift' | 'appeal' | null
+  reverseCause: 'lift' | 'appeal' | 'space' | null
   reverseNote: string | null
   appeal: { id: string; status: AppealStatus; message: string; createdAt: string; decisionNote: string | null } | null
 }
@@ -1883,7 +1891,7 @@ export interface NameModeStateDto {
   history: NameModeChangeDto[]
 }
 
-export type CommunityNoticeKind = 'name_mode_scheduled' | 'name_mode_cancelled' | 'name_mode_applied' | 'post_commented'
+export type CommunityNoticeKind = 'name_mode_scheduled' | 'name_mode_cancelled' | 'name_mode_applied' | 'post_commented' | 'item_auto_hidden' | 'item_restored'
 
 export interface NameModeNoticeDto {
   id: string
@@ -1909,7 +1917,19 @@ export interface PostCommentedNoticeDto {
   readAt: string | null
 }
 
-export type CommunityNoticeDto = NameModeNoticeDto | PostCommentedNoticeDto
+/** 내 글·댓글의 임시 숨김(신고 누적, 운영 검토 중)·복원(C-06). 신고자·신고 수·사유 없음. */
+export interface ItemReviewNoticeDto {
+  id: string
+  kind: 'item_auto_hidden' | 'item_restored'
+  space: { slug: string; name: string } | null
+  postId: string | null
+  target: 'post' | 'comment'
+  text: string
+  createdAt: string
+  readAt: string | null
+}
+
+export type CommunityNoticeDto = NameModeNoticeDto | PostCommentedNoticeDto | ItemReviewNoticeDto
 
 export interface CommunityNoticesDto {
   items: CommunityNoticeDto[]
@@ -1987,6 +2007,18 @@ export interface CommunityComposerDto {
   anonymityNote: string | null
   /** 실명 방식인데 실명을 입력하지 않음(쓰기 전에 입력, 403 real_name_required). */
   realNameRequired: boolean
+  /** 이 공간에서 지금 내 쓰기를 막는 이용 제한(C-06). 본인 응답에만 있고 다른 사람에게는 항상 null입니다. */
+  restriction: CommunityWriteRestrictionDto | null
+}
+
+export type SanctionLevel = 'warning' | 'write_suspended' | 'permanent'
+export type SanctionScope = 'community' | 'space'
+
+export interface CommunityWriteRestrictionDto {
+  level: 'write_suspended' | 'permanent'
+  scope: SanctionScope
+  until: string | null
+  message: string
 }
 
 export interface CommunityThreadSpaceDto {
@@ -2031,6 +2063,8 @@ export interface CommunityReactionDto {
 export interface OperatorCommunityItemDto {
   space: { slug: string; name: string; kind: SpaceKind }
   postId: string
+  /** 댓글이면 그 댓글 id. */
+  commentId: string | null
   title: string | null
   body: string | null
   status: CommunityItemStatus
@@ -2039,4 +2073,122 @@ export interface OperatorCommunityItemDto {
   authorLabel: string
   createdAt: string
   edited: boolean
+}
+
+// ── 커뮤니티 신고 누적 임시 숨김·방 운영진 도구·이용 제한·작성자 확인 (C-06, ADR 0023) ─────────────
+
+/**
+ * GET /community/spaces/:slug/moderation — 방 운영진(방장·admin·moderator, 공식 페이지 모더레이터)의 공간 운영 화면.
+ * 작성자 id·핸들·이름은 어디에도 없습니다. 쓰기 제한은 이 공간 범위의 개수만.
+ */
+export interface SpaceModerationDto {
+  space: { slug: string; name: string; kind: SpaceKind }
+  /** 지금 효력이 있는 방 운영진 가리기(되돌릴 수 있음). */
+  hides: Array<{ actionId: string; targetType: 'post' | 'comment'; postId: string; commentId: string | null; publicReason: string | null; createdAt: string }>
+  /** 이 공간의 제재 요청(운영진 누구의 것이든). outcome은 처리됐을 때 제재가 있었는지만. */
+  requests: Array<{
+    id: string
+    targetType: 'post' | 'comment'
+    postId: string
+    commentId: string | null
+    reason: ReportReason
+    status: 'received' | 'resolved' | 'dismissed'
+    outcome: 'sanctioned' | 'no_action' | null
+    mine: boolean
+    createdAt: string
+    closedAt: string | null
+  }>
+  /** 이 공간 범위로 지금 쓰기를 막는 제재 수(누구인지는 없음). */
+  activeSpaceRestrictions: number
+}
+
+/** POST /community/sanction-requests 응답. 같은 사람·대상의 처리 전 요청이 있으면 그것(created false, 200). */
+export interface SanctionRequestReceiptDto {
+  id: string
+  status: 'received' | 'resolved' | 'dismissed'
+  created: boolean
+  createdAt: string
+}
+
+export interface OperatorSanctionRequestDto {
+  id: string
+  status: 'open' | 'resolved' | 'dismissed'
+  targetType: 'post' | 'comment'
+  targetId: string
+  reason: ReportReason
+  details: string | null
+  /** 요청한 방 운영진의 표시 이름(운영자에게만). */
+  requestedBy: string
+  createdAt: string
+  closedAt: string | null
+  closeNote: string | null
+  /** 대상 글·댓글(작성자 id 없음, 익명은 `익명`). */
+  item: OperatorCommunityItemDto | null
+  sanctionIds: string[]
+}
+
+/** POST /operator/community/author-lookups 응답(201). 이 응답만 작성자를 담습니다(이메일·실명 없음). */
+export interface AuthorLookupResultDto {
+  lookupId: string
+  targetType: 'post' | 'comment'
+  targetId: string
+  postId: string
+  spaceId: string
+  author: { userId: string; handle: string | null; status: 'active' | 'suspended' | 'deleted'; purged: boolean }
+  /** 그 사람의 제재 이력(최근 50). */
+  sanctions: OperatorSanctionDto[]
+  createdAt: string
+  /** 이 확인으로 제재를 발급할 수 있는 기한(같은 운영자, 24시간). */
+  validUntil: string
+}
+
+/** GET /operator/community/author-lookups — 확인 기록. 확인한 작성자는 싣지 않습니다. */
+export interface OperatorAuthorLookupDto {
+  id: string
+  operator: string
+  targetType: 'post' | 'comment'
+  targetId: string
+  postId: string
+  reason: string
+  reportId: string | null
+  requestId: string | null
+  createdAt: string
+  sanctioned: boolean
+}
+
+/** 제재(운영자 화면). 대상자(사람)는 싣지 않습니다. */
+export interface OperatorSanctionDto {
+  id: string
+  actionId: string
+  level: SanctionLevel
+  scope: SanctionScope
+  space: { slug: string; name: string } | null
+  until: string | null
+  active: boolean
+  createdAt: string
+  revokedAt: string | null
+  issuedBy: string
+  targetType: 'post' | 'comment'
+  targetId: string
+  postId: string
+  lookupId: string
+  reportId: string | null
+  requestId: string | null
+  internalNote: string
+  publicReason: string | null
+  appeal: { id: string; status: AppealStatus } | null
+}
+
+export interface OperatorSpaceHideDto {
+  actionId: string
+  space: { slug: string; name: string } | null
+  targetType: 'post' | 'comment'
+  postId: string
+  commentId: string | null
+  publicReason: string | null
+  internalNote: string
+  createdBy: string
+  createdAt: string
+  reversedAt: string | null
+  reverseCause: 'lift' | 'appeal' | 'space' | null
 }

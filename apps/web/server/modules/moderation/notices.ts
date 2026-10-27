@@ -6,9 +6,11 @@
  *   목록은 운영자가 "당사자에게 알림"을 켠 조치만, 화면 안내 상자는 지금 효력이 있는 조치 모두(owner가 상태를 이해하도록)입니다.
  * - 이의제기 `POST /api/v1/appeals {actionId | reportId, message}`: 조치의 당사자만(아니면 404), 조치마다 한 번(409 already_appealed),
  *   조치 없음 409 not_appealable, 이미 되돌린 조치 409 already_reversed. 감사에는 메시지 글을 넣지 않습니다.
+ * - C-06(ADR 0023): 방 운영진 가리기(space_hide)·이용 제한(sanction)도 같은 안내·이의제기를 씁니다(당사자는 글·댓글 작성자). 제재 안내에는 수준·범위·
+ *   공간 이름·기한·지금 효력만 싣고, 누가 요청·확인했는지는 싣지 않습니다(community_sanctions를 id로만 읽음, C-05 문서화된 예외).
  */
 import { z } from 'zod'
-import { APPEAL_MESSAGE_MAX, type HiddenItemKind, canAppeal, clipText } from '@peerchive/domain'
+import { APPEAL_MESSAGE_MAX, type HiddenItemKind, type SanctionLevel, type SanctionScope, canAppeal, clipText, isSanctionActive } from '@peerchive/domain'
 import {
   and,
   appeals,
@@ -100,6 +102,28 @@ async function toNotices(db: DbExecutor, actions: readonly ActionRow[], viewerId
     }>
     for (const r of rows) commentPostBy.set(r.id, r.post_id)
   }
+  // 이용 제한(C-06): 그 조치의 제재 행(수준·범위·기한·공간 이름).
+  const sanctionActionIds = visible.filter((a) => a.kind === 'sanction').map((a) => a.id)
+  const sanctionBy = new Map<string, NonNullable<ModerationNoticeDto['sanction']>>()
+  if (sanctionActionIds.length) {
+    const rows = (await db.execute(sql`select s.action_id, s.level, s.scope, s.until, s.revoked_at, sp.name as space_name
+      from community_sanctions s left join community_spaces sp on sp.id = s.space_id
+      where s.action_id in (${sql.join(
+        sanctionActionIds.map((id) => sql`${id}::uuid`),
+        sql`, `,
+      )})`)) as unknown as Array<{ action_id: string; level: SanctionLevel; scope: SanctionScope; until: string | Date | null; revoked_at: string | Date | null; space_name: string | null }>
+    const now = new Date()
+    for (const r of rows) {
+      const until = r.until ? new Date(r.until) : null
+      sanctionBy.set(r.action_id, {
+        level: r.level,
+        scope: r.scope,
+        spaceName: r.space_name,
+        until: until?.toISOString() ?? null,
+        active: isSanctionActive({ level: r.level, until, revokedAt: r.revoked_at ? new Date(r.revoked_at) : null }, now),
+      })
+    }
+  }
   const out: ModerationNoticeDto[] = []
   for (const a of visible) {
     const affected = await affectedUserIds(db, pointerOf(a))
@@ -109,7 +133,7 @@ async function toNotices(db: DbExecutor, actions: readonly ActionRow[], viewerId
     else if (a.seniorNoteId) ownerPath = `/senior-notes?course=${courseBy.get(a.seniorNoteId) ?? ''}`
     else if (a.caseStudyId) ownerPath = `/portfolio/case-studies/${a.caseStudyId}`
     else if (a.profileUserId) ownerPath = '/onboarding'
-    else if (a.communitySpaceId) ownerPath = '/community'
+    else if (a.communitySpaceId || a.kind === 'sanction') ownerPath = '/community'
     else if (a.communityPostId) ownerPath = `/community/p/${a.communityPostId}`
     else if (a.communityCommentId) ownerPath = `/community/p/${commentPostBy.get(a.communityCommentId) ?? ''}`
     const snapshot = a.releaseId ? snapshotBy.get(a.releaseId) : undefined
@@ -121,6 +145,7 @@ async function toNotices(db: DbExecutor, actions: readonly ActionRow[], viewerId
       ownerPath,
       item: a.kind === 'hide_item' && a.itemKind && a.itemKey ? { kind: a.itemKind, key: a.itemKey, label: snapshot ? itemLabel(snapshot, a.itemKind, a.itemKey) : a.itemKind } : null,
       publicReason: a.publicReason,
+      sanction: sanctionBy.get(a.id) ?? null,
       createdAt: a.createdAt.toISOString(),
       reversedAt: a.reversedAt?.toISOString() ?? null,
       appeal: appeal ? { status: appeal.status, createdAt: appeal.createdAt.toISOString(), decidedAt: appeal.decidedAt?.toISOString() ?? null } : null,

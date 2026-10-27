@@ -3,9 +3,11 @@
  * 커뮤니티 글과 댓글(C-04, PROOFU_EVOLUTION_PLAN §8.5·§8.9.6, ADR 0022). 로그인 전용·noindex·제목 고정(C-05).
  * - 익명 스레드: 글쓴이는 `글쓴이`, 다른 참여자는 처음 쓴 순서대로 `익명1`·`익명2`(스레드마다 따로). 방장·모더레이터 화면도 같습니다.
  * - 공감만 있고 비추천은 없습니다. 누가 공감했는지는 보이지 않습니다.
- * - 지운 글·댓글은 "작성자가 삭제한 …", 운영 조치로 가린 것은 "운영 조치로 가려진 …"으로 보입니다.
+ * - 지운 글·댓글은 "작성자가 삭제한 …", 운영 조치로 가린 것은 "운영 조치로 가려진 …", 신고 누적 임시 숨김은 "운영 검토 중"으로 보입니다(C-06).
+ * - 방 운영진(방장·admin·moderator)에게는 가리기·되돌리기·제재 요청 도구가 보입니다(C-06). 글 응답(DTO)은 누구에게나 같고, 운영진 여부는
+ *   공간 상세의 permissions.moderate와 별도 운영 화면(`/spaces/:slug/moderation`)으로만 압니다. 운영진도 익명 작성자를 볼 수 없습니다.
  */
-import type { CommunityPostDto, CommunityReactionDto } from '~~/shared/types/api'
+import type { CommunityPostDto, CommunityReactionDto, SpaceDetailDto, SpaceModerationDto } from '~~/shared/types/api'
 
 definePageMeta({ middleware: 'auth' })
 // 제목·robots·referrer는 공통(C-05): 글 제목으로 문서 제목·OG를 만들지 않습니다.
@@ -32,6 +34,21 @@ function fail(e: unknown) {
 function setThread(next: CommunityPostDto) {
   post.value = next
 }
+
+// ── 방 운영진 도구(C-06) ──
+const moderation = ref<SpaceModerationDto | null>(null)
+async function loadModeration() {
+  if (!post.value) return
+  try {
+    const space = await $fetch<SpaceDetailDto>(`/api/v1/community/spaces/${post.value.space.slug}`)
+    moderation.value = space.permissions.moderate ? await $fetch<SpaceModerationDto>(`/api/v1/community/spaces/${post.value.space.slug}/moderation`) : null
+  } catch {
+    moderation.value = null
+  }
+}
+onMounted(loadModeration)
+const spaceHiddenIds = computed(() => (moderation.value ? moderation.value.hides.map((h) => h.commentId ?? h.postId) : null))
+const postSpaceHidden = computed(() => !!moderation.value?.hides.some((h) => h.targetType === 'post' && h.postId === postId.value))
 
 // ── 글 고치기·지우기·공감 ──
 const editing = ref(false)
@@ -140,6 +157,10 @@ async function addComment() {
         </form>
         <p v-else-if="post.body" class="pre post-body">{{ post.body }}</p>
         <p v-else-if="post.title" class="muted">{{ post.placeholder }}</p>
+        <p v-if="post.status === 'auto_hidden' && post.author.mine" class="notice" role="status" data-testid="own-review-notice">
+          내 글이 여러 사람의 신고로 운영 검토 중이라 다른 사람에게는 임시로 가려져 있습니다. 검토가 끝나면
+          <NuxtLink to="/community/notices">커뮤니티 알림</NuxtLink>으로 결과를 알려 드립니다.
+        </p>
         <p v-if="!editing" class="actions">
           <button
             v-if="post.canReact"
@@ -160,6 +181,18 @@ async function addComment() {
             id-prefix="post"
             :targets="[{ id: post.id, label: '이 글', targetType: 'community_post', targetRef: { postId: post.id } }]"
           />
+          <CommunityModTools
+            v-if="moderation"
+            kind="post"
+            :item-id="post.id"
+            :status="post.status"
+            :space-hidden="postSpaceHidden"
+            id-prefix="post-mod"
+            @thread="setThread"
+            @changed="loadModeration"
+            @error="showError"
+            @status="showStatus"
+          />
         </p>
       </article>
 
@@ -172,7 +205,9 @@ async function addComment() {
             :comment="c"
             :post-id="post.id"
             :official="post.space.official"
+            :space-hidden-ids="spaceHiddenIds"
             @thread="setThread"
+            @mod-changed="loadModeration"
             @error="showError"
             @status="showStatus"
           />
@@ -203,6 +238,9 @@ async function addComment() {
           </div>
           <p class="actions"><button type="submit" :disabled="busy">댓글 달기</button></p>
         </form>
+        <p v-else-if="post.composer.restriction" class="notice error" role="status" data-testid="write-restriction">
+          {{ post.composer.restriction.message }}<template v-if="post.composer.restriction.until"> ({{ formatDateTime(post.composer.restriction.until) }}까지)</template>
+        </p>
         <p v-else-if="post.status !== 'published'" class="small muted">지워졌거나 가려진 글에는 댓글을 쓸 수 없습니다.</p>
       </section>
       <p><NuxtLink :to="`/community/b/${post.board.id}`">게시판으로 돌아가기</NuxtLink></p>

@@ -5,7 +5,7 @@
  */
 import { expect, type Page } from '@playwright/test'
 import { type Api, rand } from './api'
-import { registerSchoolDomain } from './db'
+import { registerSchoolDomain, resetAffiliationIpRateLimit } from './db'
 import { mailCount, waitForAffiliationCode } from './mail'
 
 /** 학교에 무작위 메일 도메인(`e2e<무작위>.ac.kr`)을 등록하고, 그 하위 도메인의 새 주소를 돌려줍니다. */
@@ -17,6 +17,7 @@ export function schoolMailbox(schoolId: string): { domain: string; email: string
 
 /** 지금 화면(/settings/affiliations, 학교를 이미 고른 상태)에서 코드를 받아 바로 입력합니다. */
 export async function requestAndVerify(page: Page, email: string, options: { wrongFirst?: boolean } = {}): Promise<void> {
+  await resetAffiliationIpRateLimit()
   const before = mailCount(email)
   await page.getByLabel('학교 메일 주소').fill(email)
   await page.getByRole('button', { name: '인증 코드 받기' }).click()
@@ -40,6 +41,7 @@ export async function requestAndVerify(page: Page, email: string, options: { wro
  */
 export async function verifyByApi(api: Api, schoolId: string, domain: string, prefix: string): Promise<string> {
   const email = `${prefix}${rand(3)}@stu.${domain}`
+  await resetAffiliationIpRateLimit()
   const before = mailCount(email)
   const res = await api.raw('POST', '/api/v1/me/affiliations', { schoolId, email, standing: 'student' })
   expect(res.status(), await res.text()).toBe(202)

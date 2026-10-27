@@ -42,6 +42,9 @@
  * C-03(0018 migration): 이름 표시 방식 변경 이력(name_mode_changes: 7일 예약·적용·취소, 공간마다 예약 하나), 커뮤니티 알림
  * (community_notices: 받는 사람·공간·종류·허용 목록 payload·읽음), 선택 실명(users.real_name, real 방식 글에만), 분석 이벤트
  * name_mode_scheduled·name_mode_applied. 결정은 ADR 0020.
+ * C-04(0020 migration): 글·댓글·스레드 익명 번호·공감. 결정은 ADR 0022.
+ * C-06(0021 migration): 이용 제한(community_sanctions)·운영자 작성자 확인 기록(community_author_lookups)·방 운영진의 제재 요청
+ * (community_sanction_requests), 조치 종류 space_hide·sanction, 알림 item_auto_hidden·item_restored, 분석 이벤트 3개. 결정은 ADR 0023.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -186,6 +189,8 @@ export const moderationActionKind = pgEnum('moderation_action_kind', [
   'archive_space',
   'hide_post',
   'hide_comment',
+  'space_hide',
+  'sanction',
 ])
 /** 공개 사례 안에서 가릴 수 있는 항목(T-15, HIDDEN_ITEM_KINDS). */
 export const hiddenItemKind = pgEnum('hidden_item_kind', ['log', 'claim', 'artifact'])
@@ -217,6 +222,9 @@ export const analyticsEventName = pgEnum('analytics_event_name', [
   'post_created',
   'comment_created',
   'reaction_added',
+  'community_report_filed',
+  'community_auto_hidden',
+  'community_sanction_issued',
 ])
 /** 기관 종류(C-01). 지금은 대학만. P2에서 bootcamp 등을 더합니다(SYSTEM_DESIGN §6.7.2 이관 원칙, ADR 0018). */
 export const institutionKind = pgEnum('institution_kind', ['university'])
@@ -249,11 +257,24 @@ export const officialRequestSource = pgEnum('official_request_source', ['student
 /** 이름 표시 방식 변경 상태(C-03): scheduled(7일 대기) → applied(worker 적용) / cancelled(방장이 기한 전 취소). */
 export const nameModeChangeStatus = pgEnum('name_mode_change_status', ['scheduled', 'applied', 'cancelled'])
 /** 커뮤니티 알림 종류(C-03, @peerchive/domain COMMUNITY_NOTICE_KINDS). */
-export const communityNoticeKind = pgEnum('community_notice_kind', ['name_mode_scheduled', 'name_mode_cancelled', 'name_mode_applied', 'post_commented'])
+export const communityNoticeKind = pgEnum('community_notice_kind', [
+  'name_mode_scheduled',
+  'name_mode_cancelled',
+  'name_mode_applied',
+  'post_commented',
+  'item_auto_hidden',
+  'item_restored',
+])
 /** 커뮤니티 글·댓글 상태(C-04). auto_hidden은 C-06(신고 누적 임시 숨김)이 씁니다. */
 export const communityItemStatus = pgEnum('community_item_status', ['published', 'deleted_by_author', 'hidden', 'auto_hidden'])
 /** 공감 종류(C-04). 공감만, 비추천 없음. */
 export const communityReactionKind = pgEnum('community_reaction_kind', ['empathy'])
+/** 이용 제한 범위(C-06, @peerchive/domain SANCTION_SCOPES): 커뮤니티 전체 / 공간 하나. */
+export const communitySanctionScope = pgEnum('community_sanction_scope', ['community', 'space'])
+/** 이용 제한 수준(C-06, SANCTION_LEVELS): 경고(알림만) / 쓰기 기간 제한 / 영구 제한(커뮤니티 전체). */
+export const communitySanctionLevel = pgEnum('community_sanction_level', ['warning', 'write_suspended', 'permanent'])
+/** 방 운영진의 제재 요청 상태(C-06): 접수 → 처리(제재 발급)/기각. */
+export const sanctionRequestStatus = pgEnum('sanction_request_status', ['open', 'resolved', 'dismissed'])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -1883,7 +1904,7 @@ export const moderationActions = pgTable(
     reversedAt: timestamp('reversed_at', { withTimezone: true }),
     reversedBy: uuid('reversed_by').references(() => users.id),
     reverseNote: text('reverse_note'),
-    /** lift(운영자 제한 해제) / appeal(이의제기 되돌림). */
+    /** lift(운영자 제한 해제·제재 해제) / appeal(이의제기 되돌림) / space(방 운영진이 자기 가리기를 되돌림, C-06). */
     reverseCause: text('reverse_cause'),
   },
   (t) => [
@@ -1901,12 +1922,17 @@ export const moderationActions = pgTable(
     check('moderation_actions_reverse_note_check', sql`${t.reverseNote} is null or char_length(${t.reverseNote}) between 1 and 1000`),
     check(
       'moderation_actions_reversed_check',
-      sql`(${t.reversedAt} is null) = (${t.reverseCause} is null) and (${t.reverseCause} is null or ${t.reverseCause} in ('lift', 'appeal')) and (${t.reversedAt} is null or ${t.kind} <> 'none')`,
+      sql`(${t.reversedAt} is null) = (${t.reverseCause} is null) and (${t.reverseCause} is null or ${t.reverseCause} in ('lift', 'appeal', 'space')) and (${t.reversedAt} is null or ${t.kind} <> 'none')`,
     ),
     // ::text 비교: 같은 migration에서 더한 enum 값을 리터럴로 쓰면 PostgreSQL이 "unsafe use of new value"로 거부합니다.
     check('moderation_actions_space_check', sql`${t.kind}::text not in ('restrict_space', 'archive_space') or ${t.communitySpaceId} is not null`),
     check('moderation_actions_post_check', sql`${t.kind}::text <> 'hide_post' or ${t.communityPostId} is not null`),
     check('moderation_actions_comment_check', sql`${t.kind}::text <> 'hide_comment' or ${t.communityCommentId} is not null`),
+    // C-06: 방 운영진 가리기·제재는 글 또는 댓글 하나를 가리키고 공간 id는 비웁니다(방장이 당사자가 되지 않게, ADR 0023).
+    check(
+      'moderation_actions_community_item_check',
+      sql`${t.kind}::text not in ('space_hide', 'sanction') or ((${t.communityPostId} is null) <> (${t.communityCommentId} is null) and ${t.communitySpaceId} is null)`,
+    ),
     check('moderation_actions_item_check', sql`(${t.kind} <> 'hide_item') or (${t.itemKind} is not null and ${t.itemKey} is not null and ${t.publicationId} is not null)`),
   ],
 )
@@ -2498,7 +2524,10 @@ export const communityNotices = pgTable(
     uniqueIndex('community_notices_change_kind_user_key').on(t.nameModeChangeId, t.kind, t.userId).where(sql`${t.nameModeChangeId} is not null`),
     index('community_notices_user_created_idx').on(t.userId, t.createdAt),
     // 새 댓글 알림은 읽기 전까지 글·사람마다 한 행(count를 올림).
-    uniqueIndex('community_notices_post_unread_key').on(t.postId, t.userId).where(sql`${t.postId} is not null and ${t.readAt} is null`),
+    // 글 알림은 읽기 전까지 글·사람·종류마다 한 행(새 댓글은 count를 올림, C-06의 임시 숨김·복원 알림도 글마다 한 행).
+    // 종류를 조건(where)이 아니라 열로 둡니다: enum을 text로 바꾸는 식은 IMMUTABLE이 아니라 부분 인덱스 조건에 쓸 수 없고, 리터럴 비교는
+    // 처음부터 migration을 한 트랜잭션에서 돌릴 때 같은 트랜잭션에서 더한 enum 값이라 거부됩니다.
+    uniqueIndex('community_notices_post_unread_key').on(t.postId, t.userId, t.kind).where(sql`${t.postId} is not null and ${t.readAt} is null`),
     check('community_notices_target_check', sql`(${t.postId} is null) or (${t.nameModeChangeId} is null)`),
     check('community_notices_payload_object_check', sql`jsonb_typeof(${t.payload}) = 'object'`),
   ],
@@ -2636,5 +2665,129 @@ export const communityReactions = pgTable(
     uniqueIndex('community_reactions_comment_user_key').on(t.commentId, t.userId, t.kind).where(sql`${t.commentId} is not null`),
     index('community_reactions_user_idx').on(t.userId),
     check('community_reactions_target_check', sql`(${t.postId} is null) <> (${t.commentId} is null)`),
+  ],
+)
+
+// C-06: 이용 제한·작성자 확인 기록·제재 요청(ADR 0023). 같은 커뮤니티 구역이므로 C-05 경계 검사가 자동으로 덮습니다.
+
+/**
+ * 운영자 작성자 확인 기록(C-06, SYSTEM_DESIGN §8.1 `operator_identity_lookup`). 운영자가 사유를 적고 글·댓글 하나의 작성자를 확인할 때마다 한 행.
+ * - 사유(reason)는 여기에만 둡니다(감사 metadata에는 id만). 근거 신고·제재 요청은 선택(법적 요청 대응 등).
+ * - author_id: 확인한 작성자(제재 발급에만 씀, 조회 기록 화면에는 싣지 않음). 그 작성자가 탈퇴 정리되면 null(기록은 남김).
+ * - operator_id는 탈퇴 정리 뒤에도 가명 처리된 users 행을 가리킵니다(감사와 같음).
+ */
+export const communityAuthorLookups = pgTable(
+  'community_author_lookups',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    operatorId: uuid('operator_id')
+      .notNull()
+      .references(() => users.id),
+    targetType: text('target_type').notNull(),
+    postId: uuid('post_id').references(() => communityPosts.id),
+    commentId: uuid('comment_id').references(() => communityComments.id),
+    authorId: uuid('author_id').references(() => users.id),
+    reason: text('reason').notNull(),
+    reportId: uuid('report_id').references((): AnyPgColumn => reports.id),
+    requestId: uuid('request_id').references((): AnyPgColumn => communitySanctionRequests.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('community_author_lookups_created_idx').on(t.createdAt),
+    index('community_author_lookups_operator_idx').on(t.operatorId, t.createdAt),
+    index('community_author_lookups_post_idx').on(t.postId),
+    index('community_author_lookups_comment_idx').on(t.commentId),
+    index('community_author_lookups_author_idx').on(t.authorId),
+    check(
+      'community_author_lookups_target_check',
+      sql`(${t.targetType} = 'post' and ${t.postId} is not null and ${t.commentId} is null) or (${t.targetType} = 'comment' and ${t.commentId} is not null and ${t.postId} is null)`,
+    ),
+    check('community_author_lookups_reason_check', sql`char_length(${t.reason}) between 1 and 1000`),
+    check('community_author_lookups_basis_check', sql`${t.reportId} is null or ${t.requestId} is null`),
+  ],
+)
+
+/**
+ * 방 운영진(방장·admin·moderator, 공식 페이지 모더레이터)의 제재 요청(C-06, SYSTEM_DESIGN §8.1 "대상 글을 지정해 요청").
+ * 요청한 사람은 작성자를 모르며 응답에도 작성자가 없습니다. 운영자가 작성자 확인 → 제재 발급(resolved) 또는 기각(dismissed)합니다.
+ * 같은 사람·대상의 처리 전 요청은 하나(부분 unique). details는 운영자만 봅니다(탈퇴 정리 때 지움).
+ */
+export const communitySanctionRequests = pgTable(
+  'community_sanction_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    spaceId: uuid('space_id')
+      .notNull()
+      .references(() => communitySpaces.id),
+    requestedBy: uuid('requested_by')
+      .notNull()
+      .references(() => users.id),
+    postId: uuid('post_id').references(() => communityPosts.id),
+    commentId: uuid('comment_id').references(() => communityComments.id),
+    targetKey: text('target_key').notNull(),
+    reason: reportReason('reason').notNull(),
+    details: text('details'),
+    status: sanctionRequestStatus('status').notNull().default('open'),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    closedBy: uuid('closed_by').references(() => users.id),
+    closeNote: text('close_note'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('community_sanction_requests_open_key').on(t.requestedBy, t.targetKey).where(sql`${t.status} = 'open'`),
+    index('community_sanction_requests_space_idx').on(t.spaceId, t.createdAt),
+    index('community_sanction_requests_status_idx').on(t.status, t.createdAt),
+    check('community_sanction_requests_target_check', sql`(${t.postId} is null) <> (${t.commentId} is null)`),
+    check('community_sanction_requests_details_check', sql`${t.details} is null or char_length(${t.details}) between 1 and 1000`),
+    check('community_sanction_requests_close_note_check', sql`${t.closeNote} is null or char_length(${t.closeNote}) between 1 and 1000`),
+    check('community_sanction_requests_closed_check', sql`(${t.status} = 'open') = (${t.closedAt} is null)`),
+  ],
+)
+
+/**
+ * 이용 제한(C-06, SYSTEM_DESIGN §6.7 CommunitySanction). 운영자가 작성자 확인(lookup_id, 같은 운영자·24시간 안) 뒤에만 발급합니다.
+ * - scope community(모든 공간) / space(그 글·댓글의 공간 하나). level warning(알림만) / write_suspended(until까지) / permanent(커뮤니티 전체).
+ * - 커뮤니티 쓰기 정책 함수(canWriteBoard·canReact·canCreateRoom)에서만 읽고 과제 공간·포트폴리오·공개 프로필·과목 허브에는 영향이 없습니다.
+ * - 사유: 내부 메모·당사자용 사유는 짝인 moderation_actions 행(kind sanction, action_id)에 있습니다(이의제기·안내를 그대로 씀).
+ * - 되돌림(revoked_*): 운영자 해제 또는 이의제기 되돌림. 행은 지우지 않습니다(탈퇴 정리 때 그 사람의 행만 지움).
+ */
+export const communitySanctions = pgTable(
+  'community_sanctions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    scope: communitySanctionScope('scope').notNull(),
+    spaceId: uuid('space_id').references(() => communitySpaces.id),
+    level: communitySanctionLevel('level').notNull(),
+    until: timestamp('until', { withTimezone: true }),
+    actionId: uuid('action_id')
+      .notNull()
+      .unique()
+      .references(() => moderationActions.id),
+    lookupId: uuid('lookup_id')
+      .notNull()
+      .references(() => communityAuthorLookups.id),
+    reportId: uuid('report_id').references((): AnyPgColumn => reports.id),
+    requestId: uuid('request_id').references(() => communitySanctionRequests.id),
+    issuedBy: uuid('issued_by')
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    revokedBy: uuid('revoked_by').references(() => users.id),
+  },
+  (t) => [
+    index('community_sanctions_user_idx').on(t.userId, t.revokedAt),
+    index('community_sanctions_space_idx').on(t.spaceId),
+    index('community_sanctions_request_idx').on(t.requestId),
+    check('community_sanctions_scope_check', sql`(${t.scope} = 'space') = (${t.spaceId} is not null)`),
+    check(
+      'community_sanctions_level_check',
+      sql`(${t.level} = 'write_suspended' and ${t.until} is not null) or (${t.level} <> 'write_suspended' and ${t.until} is null)`,
+    ),
+    check('community_sanctions_permanent_check', sql`${t.level} <> 'permanent' or ${t.scope} = 'community'`),
+    check('community_sanctions_revoked_check', sql`(${t.revokedAt} is null) = (${t.revokedBy} is null)`),
   ],
 )

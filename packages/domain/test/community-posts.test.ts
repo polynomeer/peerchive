@@ -161,7 +161,9 @@ describe('author view (resolveAuthorDisplay + thread alias)', () => {
     expect(itemPlaceholder('post', 'published')).toBeNull()
     expect(itemPlaceholder('post', 'deleted_by_author')).toBe('작성자가 삭제한 글입니다')
     expect(itemPlaceholder('post', 'hidden')).toBe('운영 조치로 가려진 글입니다')
-    expect(itemPlaceholder('comment', 'auto_hidden')).toBe('운영 조치로 가려진 댓글입니다')
+    // C-06: 신고 누적 임시 숨김은 "운영 검토 중"(운영 조치로 가려진 것과 구별).
+    expect(itemPlaceholder('comment', 'auto_hidden')).toBe('신고가 모여 운영 검토 중인 댓글입니다')
+    expect(itemPlaceholder('post', 'auto_hidden')).toBe('신고가 모여 운영 검토 중인 글입니다')
   })
 })
 

@@ -30,6 +30,7 @@ import {
   type DbExecutor,
 } from '@peerchive/db'
 import {
+  applyReportThresholdInTx,
   communityItemAuthorIds,
   communityItemLabels,
   communitySpaceLabels,
@@ -197,6 +198,17 @@ export async function resolvePublicTarget(db: DbExecutor, type: ReportTargetType
       return { ...empty(type, { type, userId: owner.userId }), profileUserId: owner.userId }
     }
   }
+}
+
+/**
+ * 신고를 저장한 같은 트랜잭션에서 부릅니다(C-06): 커뮤니티 글·댓글이면 서로 다른 인증 신고자 수를 세어 기준에 이르면 임시 숨김(community/reporting.ts).
+ * 임시 숨김으로 바꿨으면 true. 다른 대상은 아무것도 하지 않습니다.
+ */
+export async function afterReportCreated(tx: DbExecutor, target: TargetPointer, reporterId: string, now: Date): Promise<boolean> {
+  if (target.targetType === 'community_post' || target.targetType === 'community_comment') {
+    return applyReportThresholdInTx(tx, { postId: target.communityPostId, commentId: target.communityCommentId }, reporterId, now)
+  }
+  return false
 }
 
 /** 대상의 당사자(이의제기·조치 안내를 받는 사람). 공개 사례는 지금 active owner들. */

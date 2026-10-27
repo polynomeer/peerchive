@@ -97,6 +97,10 @@ async function submit() {
       <p v-if="data.space.status !== 'active'" class="notice error" role="status">{{ SPACE_STATUS_LABELS[data.space.status] }}</p>
       <p v-if="notice" :class="['notice', notice.kind]" :role="notice.kind === 'error' ? 'alert' : 'status'">{{ notice.text }}</p>
 
+      <p v-if="data.composer.restriction" class="notice error" role="status" data-testid="write-restriction">
+        {{ data.composer.restriction.message }}<template v-if="data.composer.restriction.until"> ({{ formatDateTime(data.composer.restriction.until) }}까지)</template>
+        <NuxtLink to="/me/moderation-notices">운영 조치 안내 보기</NuxtLink>
+      </p>
       <section v-if="data.composer.canWrite" aria-labelledby="compose">
         <h2 id="compose">글쓰기</h2>
         <p class="notice" data-testid="name-mode-note">{{ data.composer.note }}</p>
