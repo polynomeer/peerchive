@@ -37,7 +37,9 @@ async function create(slug: string, jobTarget: CaseJobTarget, revealSelf: boolea
   }
 }
 
-const currentEdition = computed(() => editions.value?.find((e) => e.current) ?? null)
+// 채용자용 기본은 실명 프로필의 판입니다(S-01). 표시명 프로필의 판은 /settings/personas에서.
+const realEditions = computed(() => (editions.value ?? []).filter((e) => e.persona.kind === 'real'))
+const currentEdition = computed(() => realEditions.value.find((e) => e.current) ?? null)
 </script>
 
 <template>
@@ -114,10 +116,10 @@ const currentEdition = computed(() => editions.value?.find((e) => e.current) ?? 
       <p class="actions">
         <NuxtLink to="/portfolio/edition">새 판 만들기</NuxtLink>
       </p>
-      <details v-if="(editions?.length ?? 0) > 1">
-        <summary>이전 판 {{ editions!.length - 1 }}개(공개하지 않음)</summary>
+      <details v-if="realEditions.length > 1">
+        <summary>이전 판 {{ realEditions.length - 1 }}개(공개하지 않음)</summary>
         <ul class="small">
-          <li v-for="e in editions!.filter((x) => !x.current)" :key="e.id">v{{ e.version }} · {{ formatDateTime(e.createdAt) }} · {{ e.featured.map((f) => f.title).join(', ') || '대표 케이스 없음' }}</li>
+          <li v-for="e in realEditions.filter((x) => !x.current)" :key="e.id">v{{ e.version }} · {{ formatDateTime(e.createdAt) }} · {{ e.featured.map((f) => f.title).join(', ') || '대표 케이스 없음' }}</li>
         </ul>
       </details>
     </section>

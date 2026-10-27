@@ -18,6 +18,7 @@ import {
   claimRevisions,
   boards,
   communityAuthorLookups,
+  identityLinks,
   communityComments,
   communityNotices,
   communityPosts,
@@ -47,6 +48,7 @@ import {
   officialPageRequests,
   outboxEvents,
   planForks,
+  personas,
   portfolioEditions,
   profiles,
   projectMembers,
@@ -188,7 +190,14 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
     await tx.update(users).set({ deletionRequestedAt: new Date('2000-01-01T00:00:00Z') }).where(eq(users.id, U.id))
     const T = await user(tx, '이팀원')
     const X = await user(tx, '박외부')
-    await tx.insert(profiles).values({ userId: U.id, handle: `u-${id().slice(0, 8)}`, headline: '백엔드 지망' })
+    // 실명 페르소나 + 프로필, 표시명 페르소나 + 프로필(user_id 없음) + 연결 플래그(S-01).
+    const realHandle = `u-${id().slice(0, 8)}`
+    const [realPersona] = await tx.insert(personas).values({ userId: U.id, kind: 'real', handle: realHandle }).returning()
+    await tx.insert(profiles).values({ personaId: realPersona!.id, personaKind: 'real', userId: U.id, handle: realHandle, headline: '백엔드 지망' })
+    const displayHandle = `d-${id().slice(0, 8)}`
+    const [displayPersona] = await tx.insert(personas).values({ userId: U.id, kind: 'display', handle: displayHandle, displayName: '밤의개발자' }).returning()
+    await tx.insert(profiles).values({ personaId: displayPersona!.id, personaKind: 'display', userId: null, handle: displayHandle, headline: '표시명 소개' })
+    await tx.insert(identityLinks).values({ userId: U.id, realPersonaId: realPersona!.id, displayPersonaId: displayPersona!.id, visible: true })
     await tx.insert(sessions).values({ id: `s-${id()}`, secretHash: 'h', userId: U.id, expiresAt: new Date(NOW.getTime() + DAY) })
     await tx.insert(authAccounts).values({ userId: U.id, provider: 'email', providerAccountId: U.email })
     await tx.insert(magicLinkTokens).values({ email: U.email, tokenHash: `t-${id()}`, expiresAt: NOW })
@@ -242,7 +251,10 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       .insert(caseStudies)
       .values({ userId: U.id, publicationId: teamPub.publication.id, releaseId: teamPub.release.id, releaseVersion: 1, memberKey: 'm_a', selfAnonymous: false, jobTarget: 'backend', title: '내 케이스' })
       .returning()
-    await tx.insert(portfolioEditions).values({ userId: U.id, version: 1, headline: '포트폴리오' })
+    await tx.insert(portfolioEditions).values([
+      { userId: U.id, personaId: realPersona!.id, version: 1, headline: '포트폴리오' },
+      { userId: U.id, personaId: displayPersona!.id, version: 1, headline: '표시명 판' },
+    ])
     // 학교 메일 인증(C-01): active 하나 + 코드가 남은 pending 하나. T의 인증은 그대로 남아야 합니다.
     const hex = () => id().replace(/-/g, '').repeat(2)
     const [school2] = await tx.insert(schools).values({ name: `학교 ${id()}`, nameKey: `school-${id()}` }).returning()
@@ -259,7 +271,7 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       { affiliationId: pendingAff!.id, codeHash: hex(), expiresAt: NOW },
     ])
     return {
-      tAffiliationId: tAff!.id, U, T, X, solo, soloLog, soloFile, soloPub, forkedSolo, forkedPub, xProject, team, uTeamLog, tTeamLog, teamFile, teamPub, note: note!, caseStudy: caseStudy! }
+      tAffiliationId: tAff!.id, displayPersonaId: displayPersona!.id, U, T, X, solo, soloLog, soloFile, soloPub, forkedSolo, forkedPub, xProject, team, uTeamLog, tTeamLog, teamFile, teamPub, note: note!, caseStudy: caseStudy! }
   }
 
   const count = async (tx: DbExecutor, table: Parameters<DbExecutor['select']>[0] extends never ? never : any, where: any) =>
@@ -271,7 +283,9 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       const counts = await purgeAccount(tx, deps(), w.U.id, { now: NOW, source: 'purge' })
       expect(counts).toMatchObject({
         account: 1,
-        profile: 1,
+        profile: 2,
+        personas: 2,
+        identity_links: 1,
         sessions: 1,
         auth_accounts: 1,
         magic_link_tokens: 1,
@@ -281,7 +295,7 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         analytics_events: 1,
         senior_notes: 1,
         case_studies: 1,
-        portfolio_editions: 1,
+        portfolio_editions: 2,
         institution_affiliations: 2,
         affiliation_codes: 2,
         notes_scrubbed: 4,
@@ -298,6 +312,9 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect(u!.purgedAt).toEqual(NOW)
       for (const [table, where] of [
         [profiles, eq(profiles.userId, w.U.id)],
+        [profiles, eq(profiles.personaId, w.displayPersonaId)],
+        [personas, eq(personas.userId, w.U.id)],
+        [identityLinks, eq(identityLinks.userId, w.U.id)],
         [sessions, eq(sessions.userId, w.U.id)],
         [authAccounts, eq(authAccounts.userId, w.U.id)],
         [magicLinkTokens, eq(magicLinkTokens.email, w.U.email)],
@@ -700,7 +717,9 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       // 오래된 백업을 복구한 것처럼: 계정이 active로, 프로필·세션·혼자 과제가 다시 나타남. 복구된 DB의 장부에는 이 항목이 없음.
       await tx.delete(deletionLedger).where(eq(deletionLedger.subjectHash, subject))
       await tx.update(users).set({ status: 'active', displayName: w.U.name, privateEmail: w.U.email, purgedAt: null }).where(eq(users.id, w.U.id))
-      await tx.insert(profiles).values({ userId: w.U.id, handle: `u-${id().slice(0, 8)}` })
+      const restoredHandle = `u-${id().slice(0, 8)}`
+      const [restored] = await tx.insert(personas).values({ userId: w.U.id, kind: 'real', handle: restoredHandle }).returning()
+      await tx.insert(profiles).values({ personaId: restored!.id, personaKind: 'real', userId: w.U.id, handle: restoredHandle })
       await tx.insert(sessions).values({ id: `s-${id()}`, secretHash: 'h', userId: w.U.id, expiresAt: new Date(NOW.getTime() + DAY) })
       const reappeared = await project(tx, w.U.id, '복구로 다시 나타난 과제')
       await log(tx, reappeared.id, w.U.id, '다시 나타난 로그')

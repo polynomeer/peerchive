@@ -3,7 +3,7 @@
  *
  * 탈퇴 요청(T-02)은 계정을 deleted로 바꾸고 세션을 끊기만 합니다. 유예 기간(기본 7일)이 지나면 이 작업이 한 트랜잭션에서 정리합니다.
  *
- * 지우는 것(그 사람만의 자료): 프로필, 세션, 로그인 수단, 그 주소의 매직링크 토큰, 외부 연동(디스코드 id), 학교 메일 인증·인증 코드(C-01),
+ * 지우는 것(그 사람만의 자료): 프로필(실명·표시명 페르소나·연결 플래그 포함, S-01), 세션, 로그인 수단, 그 주소의 매직링크 토큰, 외부 연동(디스코드 id), 학교 메일 인증·인증 코드(C-01),
  * 커뮤니티 멤버십·그 사람이 만들거나 쓴 공간 초대·공식 페이지 개설 요청(C-02, 방장이었으면 먼저 승계: 가장 오래된 admin → 멤버, 없으면 방 보관),
  * 받은 커뮤니티 알림과 선택 실명(C-03; 이름 표시 방식 변경 이력 행은 공간의 기록이라 남기고 예약·취소한 사람만 null), 커뮤니티 글·댓글의 제목·본문
  * (C-04; 행·스레드 익명 번호는 남기고 "작성자가 삭제한 글"로)과 공감, 그 사람에게 내려진 커뮤니티 이용 제한 행(C-06; 짝인 운영 조치 행은 운영 기록으로 남음)·
@@ -58,6 +58,7 @@ import {
   endorsements,
   eq,
   hashSubject,
+  identityLinks,
   inArray,
   institutionAffiliations,
   integrations,
@@ -81,6 +82,7 @@ import {
   recruitments,
   or,
   outboxEvents,
+  personas,
   planForks,
   portfolioEditions,
   portfolioItems,
@@ -191,7 +193,11 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
     c.add('auth_accounts', accounts.length)
     const emails = [...new Set([email, ...accounts.filter((a) => a.provider === 'email').map((a) => a.accountId.toLowerCase())])]
     c.add('magic_link_tokens', (await tx.delete(magicLinkTokens).where(inArray(magicLinkTokens.email, emails)).returning({ id: magicLinkTokens.id })).length)
-    c.add('profile', (await tx.delete(profiles).where(eq(profiles.userId, userId)).returning({ id: profiles.userId })).length)
+    // 프로필·페르소나(S-01, ADR 0028): 실명·표시명 프로필 모두(표시명 프로필은 user_id가 null이라 페르소나로 찾음)와 연결 플래그.
+    // 페르소나 행은 포트폴리오 판(외래 키)을 지운 뒤 3)에서 지웁니다.
+    const personaIds = idsOf(await tx.select({ id: personas.id }).from(personas).where(eq(personas.userId, userId)))
+    c.add('identity_links', (await tx.delete(identityLinks).where(eq(identityLinks.userId, userId)).returning({ id: identityLinks.userId })).length)
+    if (personaIds.length) c.add('profile', (await tx.delete(profiles).where(inArray(profiles.personaId, personaIds)).returning({ id: profiles.personaId })).length)
     c.add('integrations', (await tx.delete(integrations).where(eq(integrations.userId, userId)).returning({ id: integrations.id })).length)
     // 학교 메일 인증(C-01): 코드 → 소속 순서(외래 키). 이력(학교·도메인·인증 시각)도 그 사람만의 자료라 남기지 않습니다.
     const affiliationIds = idsOf(await tx.select({ id: institutionAffiliations.id }).from(institutionAffiliations).where(eq(institutionAffiliations.userId, userId)))
@@ -233,6 +239,7 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
         .where(or(editionIds.length ? inArray(portfolioItems.editionId, editionIds) : sql`false`, caseIds.length ? inArray(portfolioItems.caseStudyId, caseIds) : sql`false`))
     }
     if (editionIds.length) c.add('portfolio_editions', (await tx.delete(portfolioEditions).where(inArray(portfolioEditions.id, editionIds)).returning({ id: portfolioEditions.id })).length)
+    if (personaIds.length) c.add('personas', (await tx.delete(personas).where(inArray(personas.id, personaIds)).returning({ id: personas.id })).length)
     if (caseIds.length) {
       await tx.delete(caseSentences).where(inArray(caseSentences.caseStudyId, caseIds))
       const referenced = await referencedIds(tx, caseIds, 'case')

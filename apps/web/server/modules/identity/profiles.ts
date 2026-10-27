@@ -3,107 +3,32 @@
  *
  * 공개 DTO는 허용 목록 방식으로 필드를 하나씩 골라 만듭니다. DB 행을 펼쳐(...row) 내보내지 않습니다.
  * private_email, 내부 user id, 계정 상태는 공개 DTO에 들어가지 않습니다.
+ *
+ * S-01(ADR 0028)부터 이 파일의 "프로필"은 **실명(real) 페르소나의 프로필**입니다. 프로필을 처음 만들면 같은 트랜잭션에서 real 페르소나를 만들고,
+ * handle을 바꾸면 페르소나의 handle을 바꿉니다(profiles.handle은 외래 키 cascade로 따라옴). 표시명 페르소나는 social/personas.ts가 다룹니다.
  */
 import { z } from 'zod'
-import { and, eq, isNull, profiles, users, type DbExecutor } from '@peerchive/db'
-import { checkRealName } from '@peerchive/domain'
+import { and, eq, personas, profiles, users, type DbExecutor } from '@peerchive/db'
+import { HANDLE_PATTERN, RESERVED_HANDLES, checkRealName } from '@peerchive/domain'
+import { profileFields, profileInputSchema, toPublicProfileDto } from './profile-input'
 import { recordAudit } from '../audit/audit'
 import { isOperator } from '../catalog/operators'
 import { type Actor, invalid, notFound, sqlState } from '../errors'
 import { parseInput } from '../validation'
+import { linkedPersonaFor, resolvePublicPersona } from '../social/personas'
 import type { MeDto, ProfileFields, PublicProfileDto } from '../../../shared/types/api'
 
 export type { MeDto, ProfileFields, PublicProfileDto }
 
-/** URL 경로·운영 용어와 겹치는 handle. */
-export const RESERVED_HANDLES: ReadonlySet<string> = new Set([
-  'about', 'account', 'accounts', 'admin', 'administrator', 'api', 'app', 'assets', 'auth', 'courses',
-  'edit', 'health', 'help', 'invitations', 'invite', 'login', 'logout', 'me', 'new', 'null', 'onboarding',
-  'peerchive', 'profile', 'profiles', 'project', 'projects', 'proofu', 'root', 'schools', 'search',
-  'settings', 'signup', 'static', 'support', 'system', 'u', 'undefined', 'user', 'users', 'www',
-])
-
-export const HANDLE_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
-
-const optionalText = (max: number) =>
-  z
-    .string({ error: 'invalid' })
-    .trim()
-    .max(max, { error: 'too_long' })
-    .nullish()
-    .transform((value) => (value ? value : null))
-
-export const profileInputSchema = z.object({
-  handle: z
-    .string({ error: 'invalid' })
-    .trim()
-    .toLowerCase()
-    .min(3, { error: 'too_short' })
-    .max(30, { error: 'too_long' })
-    .regex(HANDLE_PATTERN, { error: 'invalid_format' })
-    .refine((value) => !RESERVED_HANDLES.has(value), { error: 'reserved' })
-    .optional(),
-  displayName: z
-    .string({ error: 'invalid' })
-    .trim()
-    .min(1, { error: 'required' })
-    .max(50, { error: 'too_long' })
-    .optional(),
-  headline: optionalText(120),
-  jobTargets: z
-    .array(z.string({ error: 'invalid' }).trim().min(1, { error: 'required' }).max(40, { error: 'too_long' }), {
-      error: 'invalid',
-    })
-    .max(10, { error: 'too_many' })
-    .optional(),
-  schoolLabel: optionalText(80),
-  /** 졸업(예정) 시기 YYYY-MM. */
-  gradTerm: z
-    .string({ error: 'invalid' })
-    .trim()
-    .regex(/^(\d{4}-(0[1-9]|1[0-2]))?$/, { error: 'invalid_format' })
-    .nullish()
-    .transform((value) => (value ? value : null)),
-  contactPolicy: z.enum(['closed', 'on_request', 'open'], { error: 'invalid' }).optional(),
-  openToWork: z.boolean({ error: 'invalid' }).optional(),
-  /** 공개 프로필에 학교 인증 배지를 보일지(C-01, 기본 false). */
-  showAffiliationBadge: z.boolean({ error: 'invalid' }).optional(),
-})
-export type ProfileInput = z.input<typeof profileInputSchema>
-/** 누구에게나 주는 공개 프로필 DTO. */
-type ProfileRow = typeof profiles.$inferSelect
-
-function profileFields(row: ProfileRow): ProfileFields {
-  return {
-    handle: row.handle,
-    headline: row.headline,
-    jobTargets: [...row.jobTargets],
-    schoolLabel: row.schoolLabel,
-    gradTerm: row.gradTerm,
-    contactPolicy: row.contactPolicy,
-    openToWork: row.openToWork,
-    showAffiliationBadge: row.showAffiliationBadge,
-  }
-}
-
-/** 허용 목록 변환. 필드를 추가할 때는 공개해도 되는지 먼저 확인하세요. */
-export function toPublicProfileDto(user: { displayName: string }, row: ProfileRow): PublicProfileDto {
-  return {
-    handle: row.handle,
-    displayName: user.displayName,
-    headline: row.headline,
-    jobTargets: [...row.jobTargets],
-    schoolLabel: row.schoolLabel,
-    gradTerm: row.gradTerm,
-    contactPolicy: row.contactPolicy,
-    openToWork: row.openToWork,
-  }
-}
+/** handle 규칙은 두 종류 페르소나가 함께 씁니다(@peerchive/domain checkHandle). 기존 import 경로를 위해 다시 내보냅니다. */
+export { HANDLE_PATTERN, RESERVED_HANDLES }
+export { type ProfileInput, displayNameSchema, handleSchema, profileFields, profileFieldsSchema, profileInputSchema, toPublicProfileDto } from './profile-input'
 
 export async function getMe(db: DbExecutor, actor: Actor): Promise<MeDto> {
   const [row] = await db
     .select({ user: users, profile: profiles })
     .from(users)
+    // profiles.user_id는 실명 프로필에만 있으므로 이 조인은 real 페르소나의 프로필만 집습니다(ADR 0028).
     .leftJoin(profiles, eq(profiles.userId, users.id))
     .where(and(eq(users.id, actor.userId), eq(users.status, 'active')))
     .limit(1)
@@ -142,13 +67,18 @@ export async function updateRealName(db: DbExecutor, actor: Actor, rawInput: unk
   return getMe(db, actor)
 }
 
-/** 프로필이 없으면 만들고(handle·displayName 필수), 있으면 보낸 필드만 바꿉니다. */
+/**
+ * 프로필(실명 페르소나)이 없으면 만들고(handle·displayName 필수), 있으면 보낸 필드만 바꿉니다.
+ * - 처음 만들 때 real 페르소나를 같은 트랜잭션에서 만듭니다. 이미 있는 real 페르소나(판만 있던 사용자의 자리표시, migration 0026)는 handle을 고른 값으로 바꿔 씁니다.
+ * - handle 변경은 personas.handle만 바꿉니다(profiles.handle은 외래 키 ON UPDATE CASCADE로 같은 문장에서 따라옴).
+ * - handle은 표시명 페르소나와 같은 공간에서 유일합니다: 겹치면 422 `handle: taken`(어느 종류와 겹쳤는지 밝히지 않음).
+ */
 export async function upsertProfile(db: DbExecutor, actor: Actor, rawInput: unknown): Promise<MeDto> {
   const input = parseInput(profileInputSchema, rawInput)
   try {
     await db.transaction(async (tx) => {
       const [current] = await tx
-        .select({ displayName: users.displayName, hasProfile: profiles.userId })
+        .select({ displayName: users.displayName, hasProfile: profiles.personaId })
         .from(users)
         .leftJoin(profiles, eq(profiles.userId, users.id))
         .where(and(eq(users.id, actor.userId), eq(users.status, 'active')))
@@ -171,7 +101,6 @@ export async function upsertProfile(db: DbExecutor, actor: Actor, rawInput: unkn
       }
 
       const fields = {
-        ...(input.handle !== undefined && { handle: input.handle }),
         ...(input.headline !== undefined && { headline: input.headline }),
         ...(input.jobTargets !== undefined && { jobTargets: input.jobTargets }),
         ...(input.schoolLabel !== undefined && { schoolLabel: input.schoolLabel }),
@@ -180,13 +109,28 @@ export async function upsertProfile(db: DbExecutor, actor: Actor, rawInput: unkn
         ...(input.openToWork !== undefined && { openToWork: input.openToWork }),
         ...(input.showAffiliationBadge !== undefined && { showAffiliationBadge: input.showAffiliationBadge }),
       }
+      const [real] = await tx
+        .select({ id: personas.id, handle: personas.handle })
+        .from(personas)
+        .where(and(eq(personas.userId, actor.userId), eq(personas.kind, 'real')))
+        .limit(1)
+      let personaId = real?.id
+      if (!personaId) {
+        const [created] = await tx
+          .insert(personas)
+          .values({ userId: actor.userId, kind: 'real', handle: input.handle! })
+          .returning({ id: personas.id })
+        personaId = created!.id
+      } else if (input.handle !== undefined && input.handle !== real!.handle) {
+        await tx.update(personas).set({ handle: input.handle, updatedAt: new Date() }).where(eq(personas.id, personaId))
+      }
       if (!current.hasProfile) {
-        await tx.insert(profiles).values({ userId: actor.userId, handle: input.handle!, ...fields })
+        await tx.insert(profiles).values({ personaId, personaKind: 'real', userId: actor.userId, handle: input.handle!, ...fields })
       } else if (Object.keys(fields).length > 0) {
         await tx
           .update(profiles)
           .set({ ...fields, updatedAt: new Date() })
-          .where(eq(profiles.userId, actor.userId))
+          .where(eq(profiles.personaId, personaId))
       }
     })
   } catch (error) {
@@ -196,16 +140,15 @@ export async function upsertProfile(db: DbExecutor, actor: Actor, rawInput: unkn
   return getMe(db, actor)
 }
 
-/** 활성 사용자의 공개 프로필. 없거나 비활성이거나 운영 조치로 숨겼으면(T-15) 404. */
+/**
+ * 활성 페르소나의 공개 프로필(실명·표시명 모두, S-01). 없거나 비활성이거나 운영 조치로 숨겼으면(T-15) 404.
+ * 연결 플래그가 꺼져 있으면 상대 페르소나 정보가 없습니다(`linkedPersona: null`, canSeeIdentityLink).
+ */
 export async function getPublicProfile(db: DbExecutor, rawHandle: string): Promise<PublicProfileDto> {
-  const handle = rawHandle.trim().toLowerCase()
-  if (!HANDLE_PATTERN.test(handle) || handle.length > 30) throw notFound()
-  const [row] = await db
-    .select({ displayName: users.displayName, profile: profiles })
-    .from(profiles)
-    .innerJoin(users, eq(users.id, profiles.userId))
-    .where(and(eq(profiles.handle, handle), eq(users.status, 'active'), isNull(profiles.hiddenAt)))
-    .limit(1)
-  if (!row) throw notFound()
-  return toPublicProfileDto(row, row.profile)
+  const found = await resolvePublicPersona(db, rawHandle)
+  return {
+    ...toPublicProfileDto({ displayName: found.displayName }, found.profile),
+    kind: found.persona.kind,
+    linkedPersona: await linkedPersonaFor(db, found.persona, { isOwner: false }),
+  }
 }

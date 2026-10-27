@@ -138,6 +138,9 @@ export type AuditAction =
   | 'ops_time.save'
   | 'ops_time.delete'
   | 'metrics.export'
+  | 'persona.create'
+  | 'persona.update'
+  | 'persona.identity_link_update'
 
 export async function recordAudit(
   db: DbExecutor,
@@ -170,6 +173,8 @@ export async function recordAudit(
       | 'senior_note'
       | 'case_study'
       | 'portfolio_edition'
+      | 'persona'
+      | 'identity_link'
       | 'report'
       | 'moderation_action'
       | 'appeal'

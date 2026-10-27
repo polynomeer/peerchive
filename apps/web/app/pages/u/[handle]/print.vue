@@ -4,6 +4,7 @@
  * 브라우저의 인쇄 → "PDF로 저장"으로 PDF를 만듭니다(서버 PDF 생성 없음).
  * - 공개 프로필과 같은 공개 조회 API만 부릅니다(쿠키 없음). 그래서 인쇄물에도 공개 프로필에 없는 정보(이메일·내부 id·비공개 기록)가 없습니다.
  * - 링크는 종이에서도 따라갈 수 있게 주소를 함께 적습니다.
+ * - 상대 페르소나(S-01)는 본인이 연결을 켰을 때만(`linkedPersona`) 주소를 적습니다. 꺼져 있으면 인쇄물에도 0건입니다.
  */
 import type { PublicPortfolioProfileDto } from '~~/shared/types/api'
 
@@ -44,6 +45,9 @@ const printPage = () => window.print()
         <header class="report-header">
           <p class="report-kicker">Peerchive 포트폴리오</p>
           <h1>{{ profile.displayName }} <span class="report-muted">@{{ profile.handle }}</span></h1>
+          <p v-if="profile.linkedPersona" class="report-small">
+            {{ profile.linkedPersona.kind === 'real' ? '실명 프로필' : '표시명 프로필' }}: {{ profile.linkedPersona.displayName }} @{{ profile.linkedPersona.handle }} (/u/{{ profile.linkedPersona.handle }})
+          </p>
           <p v-if="profile.jobTargets.length">{{ profile.jobTargets.join(', ') }} 지망<template v-if="profile.gradTerm"> · {{ profile.gradTerm }} 졸업(예정)</template></p>
           <p v-if="profile.headline"><strong>“{{ profile.headline }}”</strong></p>
           <p class="report-small">연락: {{ profile.contactText }}</p>

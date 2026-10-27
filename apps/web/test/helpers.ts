@@ -4,7 +4,7 @@
  * (서비스 안의 transaction()은 savepoint가 됩니다).
  */
 import { expect } from 'vitest'
-import { createDb, institutionAffiliations, profiles, users, type Database, type DbExecutor } from '@peerchive/db'
+import { createDb, institutionAffiliations, personas, profiles, users, type Database, type DbExecutor } from '@peerchive/db'
 import { ServiceError, type ServiceErrorCode } from '../server/modules/errors'
 
 export const databaseUrl = process.env.DATABASE_URL
@@ -44,8 +44,16 @@ export async function createUser(
     .values({ displayName: overrides.displayName ?? '테스트 사용자', privateEmail: email, status: overrides.status ?? 'active' })
     .returning({ id: users.id })
   if (!user) throw new Error('user not inserted')
-  if (overrides.handle) await db.insert(profiles).values({ userId: user.id, handle: overrides.handle })
+  if (overrides.handle) await insertRealProfile(db, user.id, overrides.handle)
   return { id: user.id, email }
+}
+
+/** 실명 페르소나 + 프로필 fixture(S-01: 프로필은 페르소나에 붙고, handle의 원본은 페르소나 행). */
+export async function insertRealProfile(db: DbExecutor, userId: string, handle: string): Promise<{ personaId: string }> {
+  const [persona] = await db.insert(personas).values({ userId, kind: 'real', handle }).returning({ id: personas.id })
+  if (!persona) throw new Error('persona not inserted')
+  await db.insert(profiles).values({ personaId: persona.id, personaKind: 'real', userId, handle })
+  return { personaId: persona.id }
 }
 
 /** 서비스 오류 코드(와 이유)를 확인합니다. */

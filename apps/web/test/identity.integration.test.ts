@@ -295,8 +295,11 @@ describe.skipIf(!databaseUrl)('identity services (PostgreSQL)', () => {
         expect(json).not.toContain('@')
         expect(json).not.toContain(user.id)
         expect(Object.keys(dto).sort()).toEqual(
-          ['contactPolicy', 'displayName', 'gradTerm', 'handle', 'headline', 'jobTargets', 'openToWork', 'schoolLabel'].sort(),
+          ['contactPolicy', 'displayName', 'gradTerm', 'handle', 'headline', 'jobTargets', 'kind', 'linkedPersona', 'openToWork', 'schoolLabel'].sort(),
         )
+        // 페르소나 종류(S-01)와 연결(표시명 페르소나 없음 → null).
+        expect(dto.kind).toBe('real')
+        expect(dto.linkedPersona).toBeNull()
         // 본인 DTO에는 이메일이 있습니다.
         expect((await getMe(tx, { userId: user.id })).email).toBe(user.email)
       })

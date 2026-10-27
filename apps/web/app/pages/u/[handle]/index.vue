@@ -7,6 +7,9 @@
  *   후배 기여 개수·4년 타임라인. 원본 사례가 철회·대체된 케이스는 "원본 사례를 더 이상 볼 수 없습니다"만.
  * - Open Graph는 이름과 한 줄 소개만 씁니다. 파일럿 동안 기본 noindex.
  * - 신고(T-15): 프로필 또는 볼 수 있는 대표 케이스(앵커 case-N로 가리킴, 내부 id 없음). 로그인 후.
+ * - 페르소나(S-01, ADR 0028): handle은 실명·표시명 프로필 어느 쪽이든 됩니다. 상대 프로필 링크는 본인이 연결을 켰을 때만 공개 API가
+ *   `linkedPersona`로 주며, 이 화면은 그 필드 말고는 상대 프로필을 알 길이 없습니다(HTML·payload·OG에 0건). 표시명 프로필에는 대표 케이스·
+ *   타임라인·후배 기여가 없고, 표시명 프로필 신고는 S-07에서 엽니다.
  */
 import type { PublicPortfolioProfileDto } from '~~/shared/types/api'
 import type { ReportChoice } from '~/utils/moderation'
@@ -47,7 +50,7 @@ useSeoMeta({
 
 const reportTargets = computed<ReportChoice[]>(() => {
   const p = profile.value
-  if (!p) return []
+  if (!p || p.kind !== 'real') return []
   return [
     { id: 'profile', label: `공개 프로필 @${p.handle}`, targetType: 'profile', targetRef: { handle: p.handle } },
     ...p.featured
@@ -83,6 +86,12 @@ const years = computed(() => {
     <article v-else class="profile-page" aria-labelledby="profile-name">
       <header class="profile-header">
         <h1 id="profile-name">{{ profile.displayName }} <span class="muted">@{{ profile.handle }}</span></h1>
+        <p v-if="profile.kind === 'display'" class="small muted">표시명 프로필</p>
+        <p v-if="profile.linkedPersona" class="small">
+          {{ profile.linkedPersona.kind === 'real' ? '실명 프로필' : '표시명 프로필' }}:
+          <NuxtLink :to="`/u/${profile.linkedPersona.handle}`">{{ profile.linkedPersona.displayName }} @{{ profile.linkedPersona.handle }}</NuxtLink>
+          <span class="muted"> · 본인이 두 프로필의 연결을 공개했습니다.</span>
+        </p>
         <p v-if="profile.jobTargets.length || profile.gradTerm" class="small">
           <template v-if="profile.jobTargets.length">{{ profile.jobTargets.join(', ') }} 지망</template>
           <template v-if="profile.gradTerm"> · {{ profile.gradTerm }} 졸업(예정)</template>
@@ -104,7 +113,7 @@ const years = computed(() => {
 
       <PortfolioView :view="profile" id-prefix="pf" />
 
-      <section aria-labelledby="junior-heading">
+      <section v-if="profile.kind === 'real'" aria-labelledby="junior-heading">
         <h2 id="junior-heading">후배 기여</h2>
         <p>
           공개한 계획을 포크한 사람 {{ profile.juniorContribution.planForks }}명 · 이름으로 남긴 선배 노트 {{ profile.juniorContribution.seniorNotes }}개
@@ -132,7 +141,7 @@ const years = computed(() => {
           원본 사례가 철회되면 그 케이스는 바로 닫힙니다. 팀원 확인은 팀원이 선언을 인정했다는 뜻이며 능력 인증이 아닙니다.
         </p>
         <p v-if="profile.edition" class="muted">포트폴리오 판 v{{ profile.edition.version }} · {{ formatDateTime(profile.edition.createdAt) }}</p>
-        <p>문제가 있는 내용이 있나요? <ReportButton :targets="reportTargets" id-prefix="profile" label="신고하기" /></p>
+        <p v-if="reportTargets.length">문제가 있는 내용이 있나요? <ReportButton :targets="reportTargets" id-prefix="profile" label="신고하기" /></p>
       </footer>
     </article>
   </div>

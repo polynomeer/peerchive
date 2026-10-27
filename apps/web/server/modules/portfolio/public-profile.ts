@@ -10,6 +10,12 @@
  * - 후배 기여: 위 공개들의 계획을 포크한 서로 다른 사람 수(본인 제외), 계정 이름으로 게시한 선배 노트 수. 개수만, 순위 없음.
  *   익명·표시명 선배 노트는 실명 프로필과 연결하지 않으려고 세지 않습니다.
  * 연락: 이메일을 싣지 않고 연락 정책 안내 문구만(연락 요청 기능은 P2).
+ *
+ * 페르소나(S-01, ADR 0028): handle은 실명·표시명 페르소나 어느 쪽이든 됩니다. 프로필 필드·지금 판은 그 페르소나의 것입니다.
+ * - **표시명 페르소나**에는 프로필 필드·판의 글(한 줄 소개·역량 이름·스킬)·본인이 켠 학교 인증 배지만 싣습니다. 대표 케이스·4년 타임라인·
+ *   후배 기여는 계정 단위 기록(공개 사례에 계정 표시 이름이 있음)이라 비워 둡니다 — 이것만으로도 두 프로필이 이어지기 때문입니다.
+ * - 상대 페르소나는 `linkedPersona` 한 필드에만, 연결 플래그가 켜져 있을 때만(`canSeeIdentityLink`, 공개 경로는 늘 "본인 아님") 싣습니다.
+ *   꺼져 있으면 상대 페르소나의 handle·이름·id·소개가 이 DTO(그리고 이것만 그리는 HTML·OG·인쇄 보기·README 카드)에 없습니다.
  */
 import { CASE_SECTIONS, clipText } from '@peerchive/domain'
 import {
@@ -17,18 +23,15 @@ import {
   caseStudies,
   eq,
   inArray,
-  isNull,
   ne,
   planForks,
-  profiles,
   seniorNotes,
   sql,
-  users,
   type DbExecutor,
 } from '@peerchive/db'
-import { notFound } from '../errors'
-import { HANDLE_PATTERN, toPublicProfileDto } from '../identity/profiles'
+import { toPublicProfileDto } from '../identity/profile-input'
 import { publicAffiliationBadges } from '../affiliation/affiliations'
+import { linkedPersonaFor, resolvePublicPersona } from '../social/personas'
 import { loadCurrentEditionModel } from './editions'
 import { loadCaseStudiesWithRelease } from './release-scope'
 import { buildPortfolioView, isPubliclyVisible } from './view'
@@ -42,29 +45,21 @@ export const CONTACT_POLICY_TEXT: Readonly<Record<ContactPolicy, string>> = {
 
 const SEMESTER_ORDER: Readonly<Record<string, number>> = { spring: 1, summer: 2, fall: 3, winter: 4 }
 
-/** 공개 프로필(지금 판 기준). 없는 handle·비활성 사용자·운영 조치로 숨긴 프로필(T-15)은 404. */
+/** 공개 프로필(그 페르소나의 지금 판 기준). 없는 handle·비활성 사용자·운영 조치로 숨긴 프로필(T-15)은 404. */
 export async function getPublicPortfolioProfile(db: DbExecutor, rawHandle: unknown, now = new Date()): Promise<PublicPortfolioProfileDto> {
-  const handle = typeof rawHandle === 'string' ? rawHandle.trim().toLowerCase() : ''
-  if (!HANDLE_PATTERN.test(handle) || handle.length > 30) throw notFound()
-  const [row] = await db
-    .select({ userId: users.id, displayName: users.displayName, profile: profiles })
-    .from(profiles)
-    .innerJoin(users, eq(users.id, profiles.userId))
-    .where(and(eq(profiles.handle, handle), eq(users.status, 'active'), isNull(profiles.hiddenAt)))
-    .limit(1)
-  if (!row) throw notFound()
-  const base = toPublicProfileDto(row, row.profile)
-  const current = await loadCurrentEditionModel(db, row.userId)
-  const view = await buildPortfolioView(
-    db,
-    current?.model ?? { userId: row.userId, headline: null, featured: [], competencies: [], evidence: [], skillsDeclared: [] },
-    now,
-  )
+  const { persona, profile, displayName } = await resolvePublicPersona(db, rawHandle)
+  const userId = persona.userId
+  const isReal = persona.kind === 'real'
+  const base = toPublicProfileDto({ displayName }, profile)
+  const current = await loadCurrentEditionModel(db, persona.id)
+  const model = current?.model ?? { userId, headline: null, featured: [], competencies: [], evidence: [], skillsDeclared: [] }
+  // 표시명 판은 대표 케이스를 받지 않지만(editions.ts), 읽을 때도 한 번 더 비웁니다.
+  const view = await buildPortfolioView(db, isReal ? model : { ...model, featured: [], evidence: [] }, now)
 
-  // 게시한 케이스 스터디(지금 제공 가능)의 공개들: 타임라인·포크 수.
-  const published = (await loadCaseStudiesWithRelease(db, and(eq(caseStudies.userId, row.userId), eq(caseStudies.status, 'published')), now)).filter(
-    isPubliclyVisible,
-  )
+  // 게시한 케이스 스터디(지금 제공 가능)의 공개들: 타임라인·포크 수. 실명 페르소나만.
+  const published = isReal
+    ? (await loadCaseStudiesWithRelease(db, and(eq(caseStudies.userId, userId), eq(caseStudies.status, 'published')), now)).filter(isPubliclyVisible)
+    : []
   const byPublication = new Map<string, (typeof published)[number]>()
   for (const p of published) if (!byPublication.has(p.caseStudy.publicationId)) byPublication.set(p.caseStudy.publicationId, p)
   const timeline: Array<PublicTimelineItemDto & { sort: [number, number, number] }> = [...byPublication.values()].map((p) => {
@@ -85,12 +80,14 @@ export async function getPublicPortfolioProfile(db: DbExecutor, rawHandle: unkno
     ? await db
         .select({ forks: sql<number>`count(distinct ${planForks.forkedBy})::int` })
         .from(planForks)
-        .where(and(inArray(planForks.sourcePublicationId, publicationIds), ne(planForks.forkedBy, row.userId)))
+        .where(and(inArray(planForks.sourcePublicationId, publicationIds), ne(planForks.forkedBy, userId)))
     : []
-  const [{ notes } = { notes: 0 }] = await db
-    .select({ notes: sql<number>`count(*)::int` })
-    .from(seniorNotes)
-    .where(and(eq(seniorNotes.authorId, row.userId), eq(seniorNotes.status, 'published'), eq(seniorNotes.displayMode, 'name')))
+  const [{ notes } = { notes: 0 }] = isReal
+    ? await db
+        .select({ notes: sql<number>`count(*)::int` })
+        .from(seniorNotes)
+        .where(and(eq(seniorNotes.authorId, userId), eq(seniorNotes.status, 'published'), eq(seniorNotes.displayMode, 'name')))
+    : []
 
   return {
     handle: base.handle,
@@ -107,7 +104,9 @@ export async function getPublicPortfolioProfile(db: DbExecutor, rawHandle: unkno
     juniorContribution: { planForks: forks, seniorNotes: notes },
     timeline: timeline.map(({ sort: _sort, ...item }) => item),
     // 학교 인증 배지(C-01): 본인이 켰을 때만. 학과·메일·도메인은 싣지 않습니다.
-    affiliationBadges: await publicAffiliationBadges(db, row.userId, row.profile.showAffiliationBadge),
+    affiliationBadges: await publicAffiliationBadges(db, userId, profile.showAffiliationBadge),
+    kind: persona.kind,
+    linkedPersona: await linkedPersonaFor(db, persona, { isOwner: false }),
   }
 }
 
@@ -118,7 +117,7 @@ export function escapeMarkdown(text: string): string {
 
 /**
  * GitHub 프로필 README용 마크다운 카드(§10.6). 공개 프로필과 같은 데이터만: 이름·한 줄 소개, 볼 수 있는 대표 케이스의 제목과 한 줄 요약
- * (첫 "문제와 결과" 문장), 공개 프로필·사례 링크. 볼 수 없는 케이스는 빼고, 이메일·id는 없습니다.
+ * (첫 "문제와 결과" 문장), 공개 프로필·사례 링크, 연결을 켠 상대 페르소나 링크(S-01). 볼 수 없는 케이스는 빼고, 이메일·id는 없습니다.
  */
 export function formatReadmeCard(profile: PublicPortfolioProfileDto, origin: string): string {
   const base = origin.replace(/\/+$/, '')
@@ -132,6 +131,9 @@ export function formatReadmeCard(profile: PublicPortfolioProfileDto, origin: str
     lines.push(`- [${escapeMarkdown(c.title)}](${base}${c.path})${summary}`)
   }
   if (cases.length) lines.push('')
+  // 연결 플래그가 켜져 있을 때만(공개 DTO에 linkedPersona가 있을 때만) 상대 프로필 링크를 붙입니다(S-01).
+  const linked = profile.linkedPersona
+  if (linked) lines.push(`${linked.kind === 'real' ? '실명 프로필' : '표시명 프로필'}: [${escapeMarkdown(linked.displayName)} @${linked.handle}](${base}/u/${linked.handle})`, '')
   lines.push(`[전체 포트폴리오 보기](${base}/u/${profile.handle}) · 모든 문장에 공개 기록 출처가 붙어 있습니다.`, '')
   return lines.join('\n')
 }

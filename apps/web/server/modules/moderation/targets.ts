@@ -117,10 +117,14 @@ function parseRef<T extends keyof typeof refSchemas>(type: T, raw: unknown): z.o
   return result.data as z.output<(typeof refSchemas)[T]>
 }
 
-async function publicProfileUser(db: DbExecutor, rawHandle: string): Promise<{ userId: string; handle: string } | null> {
+/**
+ * 신고할 수 있는 공개 프로필(실명 페르소나만, S-01). 표시명 프로필은 user_id가 없어 여기서 집히지 않습니다 — 표시명 페르소나 신고는
+ * 신고·조치가 사용자 단위(profile_user_id)라 실명 프로필과 연결되므로 S-07에서 페르소나 단위로 엽니다(ADR 0028).
+ */
+async function publicProfileUser(db: DbExecutor, rawHandle: string): Promise<{ userId: string; personaId: string; handle: string } | null> {
   if (!HANDLE_PATTERN.test(rawHandle)) return null
   const [row] = await db
-    .select({ userId: profiles.userId, handle: profiles.handle })
+    .select({ userId: users.id, personaId: profiles.personaId, handle: profiles.handle })
     .from(profiles)
     .innerJoin(users, eq(users.id, profiles.userId))
     .where(and(eq(profiles.handle, rawHandle), eq(users.status, 'active'), isNull(profiles.hiddenAt)))
@@ -215,7 +219,7 @@ export async function resolvePublicTarget(db: DbExecutor, type: ReportTargetType
       const ref = parseRef('case_study', rawRef)
       const owner = await publicProfileUser(db, ref.handle)
       if (!owner) throw notFound()
-      const current = await loadCurrentEditionModel(db, owner.userId)
+      const current = await loadCurrentEditionModel(db, owner.personaId)
       const caseStudyId = current?.model.featured[Number(ref.anchor.slice('case-'.length)) - 1]
       if (!caseStudyId) throw notFound()
       const [row] = await loadCaseStudiesWithRelease(db, eq(caseStudies.id, caseStudyId), now)

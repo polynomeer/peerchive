@@ -45,6 +45,8 @@
  * C-04(0020 migration): 글·댓글·스레드 익명 번호·공감. 결정은 ADR 0022.
  * C-06(0021 migration): 이용 제한(community_sanctions)·운영자 작성자 확인 기록(community_author_lookups)·방 운영진의 제재 요청
  * (community_sanction_requests), 조치 종류 space_hide·sanction, 알림 item_auto_hidden·item_restored, 분석 이벤트 3개. 결정은 ADR 0023.
+ * S-01(0026 migration): 페르소나(personas: 계정당 real·display 하나씩, handle 전역 유일)·표시명 ↔ 실명 연결 플래그(identity_links, 기본 숨김),
+ * 프로필·포트폴리오 판의 페르소나 귀속(profiles.persona_id 기본 키·portfolio_editions.persona_id). 결정은 ADR 0028.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -81,6 +83,12 @@ const updatedAt = () => timestamp('updated_at', { withTimezone: true }).notNull(
 // ── enums ────────────────────────────────────────────────────────────────
 
 export const userStatus = pgEnum('user_status', ['active', 'suspended', 'deleted'])
+/** 페르소나 종류(S-01, @peerchive/domain PERSONA_KINDS): 실명(3단계) / 표시명(2단계). 0~1단계(익명)는 페르소나를 만들지 않습니다(§6.7.1). */
+export const personaKind = pgEnum('persona_kind', ['real', 'display'])
+/** 계정 공개 여부(S-01에서는 저장만, 비공개 계정 흐름은 S-04). */
+export const personaAccountPrivacy = pgEnum('persona_account_privacy', ['public', 'private'])
+/** 페르소나 상태. deactivated는 공개 경로에서 없는 handle처럼 404입니다(S-01에는 바꾸는 API가 없음, ADR 0028). */
+export const personaStatus = pgEnum('persona_status', ['active', 'deactivated'])
 export const contactPolicy = pgEnum('contact_policy', ['closed', 'on_request', 'open'])
 export const semester = pgEnum('semester', ['spring', 'summer', 'fall', 'winter'])
 /** 과제 종류. study는 스터디 방의 기록(C-08, ADR 0026): 스터디 방이 기록을 켜면 만들어지는 내부 과제 공간이고 멤버십은 방에서 파생됩니다. */
@@ -408,12 +416,59 @@ export const rateLimitBuckets = pgTable(
   (t) => [primaryKey({ name: 'rate_limit_buckets_pkey', columns: [t.key, t.windowStart] })],
 )
 
+/**
+ * 페르소나(S-01, SYSTEM_DESIGN §6.7.1 Persona, ADR 0028). 계정당 `real` 하나·`display` 하나까지이고 handle은 두 종류가 같은 전역 공간에서 유일합니다.
+ * - `real`의 이름은 계정 표시 이름(`users.display_name`)이라 display_name을 두지 않습니다(같은 값을 두 곳에 두지 않음). `display`만 자기 이름을 가집니다.
+ * - handle의 원본은 이 행입니다. profiles.handle은 복합 외래 키(ON UPDATE CASCADE)로 묶인 사본이라 따로 바꿀 수 없습니다.
+ * - 이 행과 공개 DTO에는 같은 사용자의 다른 페르소나 id를 두지 않습니다. 두 페르소나의 연결은 identity_links에만 있습니다.
+ */
+export const personas = pgTable(
+  'personas',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    kind: personaKind('kind').notNull(),
+    handle: text('handle').notNull(),
+    /** display 페르소나의 표시명(1~50자). real은 null(users.display_name을 씀). */
+    displayName: text('display_name'),
+    accountPrivacy: personaAccountPrivacy('account_privacy').notNull().default('public'),
+    /** 공개 DTO에 팔로워 수를 실을지(팔로우는 S-04). */
+    showFollowerCount: boolean('show_follower_count').notNull().default(true),
+    status: personaStatus('status').notNull().default('active'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    unique('personas_user_kind_key').on(t.userId, t.kind),
+    // 두 종류가 같은 전역 공간에서 유일(대소문자는 아래 check가 소문자만 허용해 따로 접지 않습니다).
+    unique('personas_handle_key').on(t.handle),
+    // profiles의 (persona_id, persona_kind, handle)·(persona_id, user_id), identity_links·portfolio_editions의 (persona_id, user_id) 복합 외래 키 대상.
+    unique('personas_id_kind_handle_key').on(t.id, t.kind, t.handle),
+    unique('personas_id_user_key').on(t.id, t.userId),
+    check('personas_handle_format_check', sql`${t.handle} ~ '^[a-z0-9-]{3,30}$'`),
+    check(
+      'personas_display_name_check',
+      sql`(${t.kind} = 'real' and ${t.displayName} is null) or (${t.kind} = 'display' and char_length(${t.displayName}) between 1 and 50)`,
+    ),
+  ],
+)
+
+/**
+ * 프로필(§6.1, S-01부터 페르소나마다 하나, ADR 0028). 한 줄 소개·관심 직무·연락 정책 등은 페르소나별입니다.
+ * - 기본 키는 persona_id입니다. **user_id는 real 페르소나의 프로필에만 채웁니다**(display는 null, check). 과제 공간·커뮤니티 멤버 목록처럼
+ *   `profiles.user_id = users.id`로 handle을 붙이는 내부 조회가 표시명 프로필을 절대 집지 않게 하려는 것입니다.
+ * - handle은 personas.handle의 사본입니다. (persona_id, persona_kind, handle) 복합 외래 키가 ON UPDATE CASCADE라 페르소나 handle을 바꾸면
+ *   같은 문장에서 따라 바뀌고, 이 열만 다르게 바꾸는 update는 외래 키 위반입니다.
+ */
 export const profiles = pgTable(
   'profiles',
   {
-    userId: uuid('user_id')
-      .primaryKey()
-      .references(() => users.id),
+    personaId: uuid('persona_id').primaryKey(),
+    personaKind: personaKind('persona_kind').notNull(),
+    /** real 페르소나의 프로필만(display는 null). 내부 조회의 `profiles.user_id = users.id` 조인이 실명 프로필만 집습니다. */
+    userId: uuid('user_id').references(() => users.id),
     handle: text('handle').notNull().unique(),
     headline: text('headline'),
     jobTargets: text('job_targets').array().notNull().default(sql`'{}'::text[]`),
@@ -422,7 +477,10 @@ export const profiles = pgTable(
     gradTerm: text('grad_term'),
     contactPolicy: contactPolicy('contact_policy').notNull().default('closed'),
     openToWork: boolean('open_to_work').notNull().default(false),
-    /** 운영 조치로 공개 프로필을 숨긴 시각(T-15). 숨김이면 /u/:handle·README 카드·이전 공개 프로필 API가 404입니다. 계정·과제 공간은 그대로입니다. */
+    /**
+     * 운영 조치로 공개 프로필을 숨긴 시각(T-15). 숨김이면 /u/:handle·README 카드·이전 공개 프로필 API가 404입니다. 계정·과제 공간은 그대로입니다.
+     * 페르소나마다 따로입니다: 실명 프로필을 숨겨도 표시명 프로필은 그대로(함께 사라지면 같은 사람임이 드러남, ADR 0028).
+     */
     hiddenAt: timestamp('hidden_at', { withTimezone: true }),
     /** 공개 프로필에 학교 인증 배지("○○대학교 인증", 졸업생이면 "졸업생")를 보일지(C-01, 기본 끔). 학과·메일·도메인은 어떤 경우에도 공개하지 않습니다. */
     showAffiliationBadge: boolean('show_affiliation_badge').notNull().default(false),
@@ -430,7 +488,47 @@ export const profiles = pgTable(
     updatedAt: updatedAt(),
   },
   // 세부 규칙(예약어, 앞뒤 하이픈)은 애플리케이션이 검증하고, DB는 문자 집합·길이만 막습니다.
-  (t) => [check('profiles_handle_format_check', sql`${t.handle} ~ '^[a-z0-9-]{3,30}$'`)],
+  (t) => [
+    check('profiles_handle_format_check', sql`${t.handle} ~ '^[a-z0-9-]{3,30}$'`),
+    check('profiles_user_kind_check', sql`(${t.personaKind} = 'real') = (${t.userId} is not null)`),
+    unique('profiles_user_id_key').on(t.userId),
+    foreignKey({
+      name: 'profiles_persona_handle_fk',
+      columns: [t.personaId, t.personaKind, t.handle],
+      foreignColumns: [personas.id, personas.kind, personas.handle],
+    }).onUpdate('cascade'),
+    // user_id가 null(display)이면 MATCH SIMPLE이라 검사하지 않고, real이면 그 페르소나의 주인과 같아야 합니다.
+    foreignKey({
+      name: 'profiles_persona_user_fk',
+      columns: [t.personaId, t.userId],
+      foreignColumns: [personas.id, personas.userId],
+    }),
+  ],
+)
+
+/**
+ * 표시명 ↔ 실명 연결 플래그(S-01, SYSTEM_DESIGN §6.7.1 IdentityLink, ADR 0028). 사용자마다 하나이며 display 페르소나를 만들 때 visible = false로 생깁니다.
+ * visible = false이면 어떤 공개 DTO·HTML·OG·인쇄 보기·README 카드도 두 페르소나를 함께 내보내지 않습니다(@peerchive/domain canSeeIdentityLink).
+ * 켜고 끈 이력은 감사 이벤트(`persona.identity_link_update`, 플래그만)로만 남깁니다.
+ */
+export const identityLinks = pgTable(
+  'identity_links',
+  {
+    userId: uuid('user_id')
+      .primaryKey()
+      .references(() => users.id),
+    realPersonaId: uuid('real_persona_id').notNull(),
+    displayPersonaId: uuid('display_persona_id').notNull(),
+    visible: boolean('visible').notNull().default(false),
+    changedAt: timestamp('changed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('identity_links_real_persona_key').on(t.realPersonaId),
+    unique('identity_links_display_persona_key').on(t.displayPersonaId),
+    check('identity_links_distinct_check', sql`${t.realPersonaId} <> ${t.displayPersonaId}`),
+    foreignKey({ name: 'identity_links_real_persona_fk', columns: [t.realPersonaId, t.userId], foreignColumns: [personas.id, personas.userId] }),
+    foreignKey({ name: 'identity_links_display_persona_fk', columns: [t.displayPersonaId, t.userId], foreignColumns: [personas.id, personas.userId] }),
+  ],
 )
 
 // ── 운영자 (T-10) ────────────────────────────────────────────────────────
@@ -1897,8 +1995,8 @@ export const caseSentences = pgTable(
 )
 
 /**
- * 포트폴리오 판. 만들 때마다 새 version(사용자마다 1부터)이고 만든 뒤 바꾸지 않습니다. 사용자마다 지금 판(current)은 하나이며
- * 공개 프로필은 지금 판만 보여 줍니다(이전 판은 남지만 공개하지 않음).
+ * 포트폴리오 판. 만들 때마다 새 version(페르소나마다 1부터)이고 만든 뒤 바꾸지 않습니다. 페르소나마다 지금 판(current)은 하나이며
+ * 공개 프로필은 그 페르소나의 지금 판만 보여 줍니다(이전 판은 남지만 공개하지 않음). 채용자용 판의 기본은 real 페르소나입니다(S-01, ADR 0028).
  * - headline: 판의 한 줄 소개(없으면 프로필의 한 줄 소개). competencies: [{label, preset}] 행 순서. skills_declared: 자기 선언 스킬.
  */
 export const portfolioEditions = pgTable(
@@ -1908,6 +2006,8 @@ export const portfolioEditions = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id),
+    /** 판이 귀속된 페르소나(S-01). (persona_id, user_id) 복합 외래 키로 주인이 같은지 DB가 확인합니다. */
+    personaId: uuid('persona_id').notNull(),
     version: integer('version').notNull(),
     headline: text('headline'),
     competencies: jsonb('competencies').$type<Array<Record<string, unknown>>>().notNull().default([]),
@@ -1917,8 +2017,10 @@ export const portfolioEditions = pgTable(
     createdAt: createdAt(),
   },
   (t) => [
-    unique('portfolio_editions_user_version_key').on(t.userId, t.version),
-    uniqueIndex('portfolio_editions_current_key').on(t.userId).where(sql`${t.status} = 'current'`),
+    unique('portfolio_editions_persona_version_key').on(t.personaId, t.version),
+    uniqueIndex('portfolio_editions_current_key').on(t.personaId).where(sql`${t.status} = 'current'`),
+    index('portfolio_editions_user_id_idx').on(t.userId),
+    foreignKey({ name: 'portfolio_editions_persona_user_fk', columns: [t.personaId, t.userId], foreignColumns: [personas.id, personas.userId] }),
     check('portfolio_editions_status_check', sql`${t.status} in ('current', 'superseded')`),
     check('portfolio_editions_version_check', sql`${t.version} >= 1`),
     check('portfolio_editions_headline_check', sql`${t.headline} is null or char_length(${t.headline}) between 1 and 120`),

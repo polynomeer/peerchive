@@ -46,6 +46,42 @@ export interface PublicProfileDto {
   gradTerm: string | null
   contactPolicy: ContactPolicy
   openToWork: boolean
+  /** 이 프로필의 페르소나 종류(S-01). */
+  kind: PersonaKind
+  /** 연결을 켠 상대 페르소나(S-01). 연결이 꺼져 있으면 null이고, 다른 어느 필드에도 상대 페르소나 정보가 없습니다. */
+  linkedPersona: PublicLinkedPersonaDto | null
+}
+
+// ── 페르소나·표시명 ↔ 실명 연결 (S-01, ADR 0028) ───────────────────────────
+
+export type PersonaKind = 'real' | 'display'
+export type PersonaAccountPrivacy = 'public' | 'private'
+
+/** 공개 DTO에 싣는 상대 페르소나 링크. 연결(IdentityLink.visible)이 켜져 있을 때만 있습니다. id는 싣지 않습니다. */
+export interface PublicLinkedPersonaDto {
+  kind: PersonaKind
+  handle: string
+  displayName: string
+}
+
+/** 내 페르소나(본인에게만). 실명 페르소나의 이름은 계정 표시 이름이고, 프로필 필드는 페르소나마다 따로입니다. */
+export interface MyPersonaDto {
+  id: string
+  kind: PersonaKind
+  handle: string
+  displayName: string
+  accountPrivacy: PersonaAccountPrivacy
+  showFollowerCount: boolean
+  /** 운영 조치로 이 페르소나의 공개 프로필이 숨겨졌는지. */
+  profileHidden: boolean
+  profile: ProfileFields | null
+}
+
+/** GET /me/personas — 내 페르소나와 연결 플래그(본인에게만). */
+export interface MyPersonasDto {
+  personas: MyPersonaDto[]
+  /** 표시명 페르소나가 있을 때만. visible이면 두 공개 프로필에 서로의 링크가 보입니다. */
+  identityLink: { visible: boolean; changedAt: string } | null
 }
 
 /**
@@ -1358,6 +1394,8 @@ export interface CompetencyEvidenceInput {
 /** 작성자에게만 주는 포트폴리오 판. */
 export interface PortfolioEditionDto {
   id: string
+  /** 판이 귀속된 페르소나(S-01, 본인에게만 주는 DTO). */
+  persona: { id: string; kind: PersonaKind; handle: string }
   version: number
   current: boolean
   headline: string | null
@@ -1446,6 +1484,10 @@ export interface PublicPortfolioProfileDto extends PortfolioViewDto {
   timeline: PublicTimelineItemDto[]
   /** 학교 인증 배지(C-01). 본인이 켰을 때만, active 인증의 학교 이름 + 졸업생 여부. 학과·메일·도메인 없음. */
   affiliationBadges: PublicAffiliationBadgeDto[]
+  /** 페르소나 종류(S-01). 표시명 프로필에는 타임라인·후배 기여·대표 케이스가 없습니다(공개 사례에 계정 이름이 있으므로, ADR 0028). */
+  kind: PersonaKind
+  /** 연결을 켠 상대 페르소나(S-01). 꺼져 있으면 null. */
+  linkedPersona: PublicLinkedPersonaDto | null
 }
 
 // ── 학교 메일 인증 (C-01, ADR 0018) ──────────────────────────────────────
@@ -1693,7 +1735,7 @@ export type OperatorTargetContentDto =
   | { kind: 'release'; releaseVersion: number; snapshot: PublicSnapshot; focus: { kind: HiddenItemKind; key: string } | null; hiddenKeys: string[] }
   | { kind: 'senior_note'; note: PublicSeniorNoteDto }
   | { kind: 'case_study'; title: string; sections: Array<{ key: string; label: string; sentences: Array<{ text: string; citations: string[] }> }> }
-  | { kind: 'profile'; profile: PublicProfileDto }
+  | { kind: 'profile'; profile: Omit<PublicProfileDto, 'kind' | 'linkedPersona'> }
   /** 커뮤니티 공간(C-02): 이름·소개·종류·상태·멤버 수만. 게시판 글·멤버 목록은 운영자에게도 싣지 않습니다. */
   | { kind: 'community_space'; space: OperatorSpaceDto }
   | { kind: 'community_post' | 'community_comment'; item: OperatorCommunityItemDto }
