@@ -136,6 +136,8 @@ async function toNotices(db: DbExecutor, actions: readonly ActionRow[], viewerId
     else if (a.communitySpaceId || a.kind === 'sanction') ownerPath = '/community'
     else if (a.communityPostId) ownerPath = `/community/p/${a.communityPostId}`
     else if (a.communityCommentId) ownerPath = `/community/p/${commentPostBy.get(a.communityCommentId) ?? ''}`
+    else if (a.communityRecruitmentId) ownerPath = `/community/recruitments/${a.communityRecruitmentId}`
+    else if (a.communityApplicationId) ownerPath = '/community/recruitments'
     const snapshot = a.releaseId ? snapshotBy.get(a.releaseId) : undefined
     out.push({
       actionId: a.id,
@@ -155,7 +157,7 @@ async function toNotices(db: DbExecutor, actions: readonly ActionRow[], viewerId
   return out
 }
 
-/** 이 사용자가 당사자인 조치 조건(공개 owner·노트 작성자·케이스 작성자·프로필 주인·커뮤니티 방장(공간 조치)·글/댓글 작성자(C-04)). */
+/** 이 사용자가 당사자인 조치 조건(공개 owner·노트 작성자·케이스 작성자·프로필 주인·커뮤니티 방장(공간 조치)·글/댓글 작성자(C-04)·모집자/지원자(C-07, 모집 글·지원 메시지)). */
 function affectedSql(userId: string): SQL {
   return sql`(
     (${moderationActions.publicationId} is not null and exists (select 1 from ${publications} p join ${projectMembers} pm on pm.project_id = p.project_id
@@ -166,7 +168,9 @@ function affectedSql(userId: string): SQL {
     or (${moderationActions.communitySpaceId} is not null and exists (select 1 from space_memberships sm
       where sm.space_id = ${moderationActions.communitySpaceId} and sm.user_id = ${userId} and sm.role = 'owner' and sm.status = 'active'))
     or (${moderationActions.communityPostId} is not null and exists (select 1 from community_posts cp where cp.id = ${moderationActions.communityPostId} and cp.author_id = ${userId}))
-    or (${moderationActions.communityCommentId} is not null and exists (select 1 from community_comments cc where cc.id = ${moderationActions.communityCommentId} and cc.author_id = ${userId})))`
+    or (${moderationActions.communityCommentId} is not null and exists (select 1 from community_comments cc where cc.id = ${moderationActions.communityCommentId} and cc.author_id = ${userId}))
+    or (${moderationActions.communityRecruitmentId} is not null and exists (select 1 from recruitments rc where rc.id = ${moderationActions.communityRecruitmentId} and rc.created_by = ${userId}))
+    or (${moderationActions.communityApplicationId} is not null and exists (select 1 from recruitment_applications ra where ra.id = ${moderationActions.communityApplicationId} and ra.applicant_id = ${userId})))`
 }
 
 /** GET /me/moderation-notices — 내가 당사자인 조치 중 운영자가 알림을 켠 것(되돌린 것 포함, 최근 50). */

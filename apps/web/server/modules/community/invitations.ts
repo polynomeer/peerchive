@@ -51,14 +51,19 @@ export async function createSpaceInvitation(db: DbExecutor, actor: Actor, ref: u
     const ctx = await loadReadableSpace(tx, actor, ref, true)
     if (isOfficialKind(ctx.space.row.kind)) throw conflict('not_joinable')
     assertCanManage(ctx, 'invite')
-    const token = generateToken()
-    const [row] = await tx
-      .insert(spaceInvitations)
-      .values({ spaceId: ctx.space.row.id, tokenHash: sha256Hex(token), createdBy: actor.userId, expiresAt: new Date(now.getTime() + SPACE_INVITATION_TTL_MS), createdAt: now })
-      .returning()
-    await recordAudit(tx, { actorId: actor.userId, action: 'community.invitation_create', targetType: 'community_space', targetId: ctx.space.row.id, metadata: { invitationId: row!.id } })
-    return { invitation: toDto(row!, now), token }
+    return issueSpaceInvitationInTx(tx, ctx.space.row.id, actor.userId, now)
   })
+}
+
+/** 초대 한 장(호출자의 트랜잭션, 권한은 호출자가 확인). 공간 화면의 초대 만들기와 C-07 스터디 모집 마감(선정된 지원자의 초대 받기)이 함께 씁니다. */
+export async function issueSpaceInvitationInTx(tx: DbExecutor, spaceId: string, createdBy: string, now: Date): Promise<CreatedSpaceInvitation> {
+  const token = generateToken()
+  const [row] = await tx
+    .insert(spaceInvitations)
+    .values({ spaceId, tokenHash: sha256Hex(token), createdBy, expiresAt: new Date(now.getTime() + SPACE_INVITATION_TTL_MS), createdAt: now })
+    .returning()
+  await recordAudit(tx, { actorId: createdBy, action: 'community.invitation_create', targetType: 'community_space', targetId: spaceId, metadata: { invitationId: row!.id } })
+  return { invitation: toDto(row!, now), token }
 }
 
 /** GET /community/spaces/:slug/invitations — owner·admin. 최근 50개. */

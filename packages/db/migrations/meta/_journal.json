@@ -155,6 +155,13 @@
       "when": 1793079024288,
       "tag": "0021_community_moderation",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1793082850554,
+      "tag": "0022_recruitments",
+      "breakpoints": true
     }
   ]
 }

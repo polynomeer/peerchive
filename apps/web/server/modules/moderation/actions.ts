@@ -13,6 +13,7 @@
  * | none(커뮤니티 글·댓글) | 신고 누적 임시 숨김(auto_hidden)이면 published로 복원 + 작성자 알림(C-06) | — |
  * | space_hide(C-06, 방 운영진이 community 모듈에서 만듦) | — | 다른 가리기가 없으면 hidden → published |
  * | sanction(C-06, 운영자가 community 모듈에서 발급) | — | 제재 revoked(쓰기 제한 풀림) |
+ * | hide_recruitment·hide_application(C-07) | 모집 글 hidden_at(모집자 외 404·지원 받지 않음) / 지원 메시지 message_hidden_at(모집자에게 자리 표시) | 가림을 풂 |
  *
  * 공개 읽기는 이 상태를 요청마다 읽으므로 커밋 즉시 효력이 있습니다(worker 무관). outbox `moderation.action`은 worker가 검색 문서 같은 남은 사본을
  * 맞추는 데만 씁니다. 삭제 조치는 없습니다(차단 ≠ 삭제).
@@ -36,7 +37,14 @@ import {
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
 import { liftSpaceRestrictionInTx, restrictSpaceInTx } from '../community/official'
-import { hideCommunityItemInTx, restoreAutoHiddenInTx, revokeSanctionByActionInTx, unhideCommunityItemInTx } from '../community/reporting'
+import {
+  hideCommunityItemInTx,
+  hideRecruitmentItemInTx,
+  restoreAutoHiddenInTx,
+  revokeSanctionByActionInTx,
+  unhideCommunityItemInTx,
+  unhideRecruitmentItemInTx,
+} from '../community/reporting'
 import { conflict, notFound } from '../errors'
 import { lockPublication } from '../publication/candidates'
 import { liftRestrictionInTx, restrictInTx } from '../publication/releases'
@@ -54,7 +62,19 @@ export interface ApplyInput {
 }
 
 function auditTarget(
-  action: Pick<ActionRow, 'targetType' | 'publicationId' | 'seniorNoteId' | 'caseStudyId' | 'profileUserId' | 'communitySpaceId' | 'communityPostId' | 'communityCommentId'>,
+  action: Pick<
+    ActionRow,
+    | 'targetType'
+    | 'publicationId'
+    | 'seniorNoteId'
+    | 'caseStudyId'
+    | 'profileUserId'
+    | 'communitySpaceId'
+    | 'communityPostId'
+    | 'communityCommentId'
+    | 'communityRecruitmentId'
+    | 'communityApplicationId'
+  >,
 ) {
   switch (action.targetType) {
     case 'community_space':
@@ -63,6 +83,10 @@ function auditTarget(
       return { targetType: 'community_post' as const, targetId: action.communityPostId }
     case 'community_comment':
       return { targetType: 'community_comment' as const, targetId: action.communityCommentId }
+    case 'community_recruitment':
+      return { targetType: 'community_recruitment' as const, targetId: action.communityRecruitmentId }
+    case 'community_application':
+      return { targetType: 'community_application' as const, targetId: action.communityApplicationId }
     case 'publication':
     case 'publication_item':
       return { targetType: 'publication' as const, targetId: action.publicationId }
@@ -135,6 +159,8 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
   }
   if (input.kind === 'hide_post' && !target.communityPostId) throw notFound()
   if (input.kind === 'hide_comment' && !target.communityCommentId) throw notFound()
+  if (input.kind === 'hide_recruitment' && !target.communityRecruitmentId) throw notFound()
+  if (input.kind === 'hide_application' && !target.communityApplicationId) throw notFound()
   if (input.kind === 'hide_profile') {
     const [profile] = await tx.select().from(profiles).where(eq(profiles.userId, target.profileUserId!)).limit(1).for('update')
     if (!profile) throw notFound()
@@ -158,6 +184,8 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
       communitySpaceId: target.communitySpaceId,
       communityPostId: target.communityPostId,
       communityCommentId: target.communityCommentId,
+      communityRecruitmentId: target.communityRecruitmentId,
+      communityApplicationId: target.communityApplicationId,
       internalNote: input.internalNote,
       publicReason: input.publicReason,
       notifyOwner: input.notifyOwner,
@@ -205,6 +233,12 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
       break
     case 'hide_comment':
       await hideCommunityItemInTx(tx, 'comment', target.communityCommentId!, now)
+      break
+    case 'hide_recruitment':
+      await hideRecruitmentItemInTx(tx, 'recruitment', target.communityRecruitmentId!, now)
+      break
+    case 'hide_application':
+      await hideRecruitmentItemInTx(tx, 'application', target.communityApplicationId!, now)
       break
   }
   await emit(tx, action!.id, 'applied', now)
@@ -276,6 +310,12 @@ export async function undoModeration(
       break
     case 'sanction':
       await revokeSanctionByActionInTx(tx, action.id, operatorId, now)
+      break
+    case 'hide_recruitment':
+      await unhideRecruitmentItemInTx(tx, 'recruitment', action.communityRecruitmentId!, now)
+      break
+    case 'hide_application':
+      await unhideRecruitmentItemInTx(tx, 'application', action.communityApplicationId!, now)
       break
   }
   await tx

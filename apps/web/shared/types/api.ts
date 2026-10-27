@@ -1467,7 +1467,17 @@ export interface PublicAffiliationBadgeDto {
 
 // ── 신고·운영 조치·이의제기 (T-15, ADR 0015) ─────────────────────────────
 
-export type ReportTargetType = 'publication' | 'publication_item' | 'senior_note' | 'case_study' | 'profile' | 'community_space' | 'community_post' | 'community_comment'
+export type ReportTargetType =
+  | 'publication'
+  | 'publication_item'
+  | 'senior_note'
+  | 'case_study'
+  | 'profile'
+  | 'community_space'
+  | 'community_post'
+  | 'community_comment'
+  | 'community_recruitment'
+  | 'community_application'
 export type ReportReason = 'personal_info' | 'answer_sharing' | 'copyright' | 'harassment' | 'false_claim' | 'spam' | 'other'
 export type ReportStatus = 'open' | 'in_review' | 'resolved' | 'dismissed'
 export type ModerationActionKind =
@@ -1485,6 +1495,9 @@ export type ModerationActionKind =
   | 'space_hide'
   /** C-06: 운영자의 이용 제한(제재) 발급. */
   | 'sanction'
+  /** C-07: 모집 글 가리기·지원 메시지 가리기. */
+  | 'hide_recruitment'
+  | 'hide_application'
 export type HiddenItemKind = 'log' | 'claim' | 'artifact'
 export type AppealStatus = 'open' | 'upheld' | 'reversed'
 
@@ -1500,6 +1513,9 @@ export type ReportTargetRef =
   /** 커뮤니티 글·댓글(C-04): 신고자가 읽을 수 있는 게시 중인 것만. */
   | { postId: string }
   | { commentId: string }
+  /** 모집 글(C-07): 볼 수 있는 가려지지 않은 모집. 지원 메시지: 그 모집의 모집자만. */
+  | { recruitmentId: string }
+  | { applicationId: string }
 
 export interface HiddenItemPlaceholderDto {
   kind: HiddenItemKind
@@ -1607,6 +1623,8 @@ export type OperatorTargetContentDto =
   /** 커뮤니티 공간(C-02): 이름·소개·종류·상태·멤버 수만. 게시판 글·멤버 목록은 운영자에게도 싣지 않습니다. */
   | { kind: 'community_space'; space: OperatorSpaceDto }
   | { kind: 'community_post' | 'community_comment'; item: OperatorCommunityItemDto }
+  /** 모집 글·지원 메시지(C-07) 하나만. 모집자·지원자 id와 지원자 목록은 운영자에게도 싣지 않습니다. */
+  | { kind: 'community_recruitment' | 'community_application'; recruitmentItem: OperatorRecruitmentItemDto }
   | { kind: 'unavailable'; message: string }
 
 export interface OperatorReportDetailDto {
@@ -1891,7 +1909,16 @@ export interface NameModeStateDto {
   history: NameModeChangeDto[]
 }
 
-export type CommunityNoticeKind = 'name_mode_scheduled' | 'name_mode_cancelled' | 'name_mode_applied' | 'post_commented' | 'item_auto_hidden' | 'item_restored'
+export type CommunityNoticeKind =
+  | 'name_mode_scheduled'
+  | 'name_mode_cancelled'
+  | 'name_mode_applied'
+  | 'post_commented'
+  | 'item_auto_hidden'
+  | 'item_restored'
+  | 'recruitment_invited'
+  | 'recruitment_not_selected'
+  | 'recruitment_cancelled'
 
 export interface NameModeNoticeDto {
   id: string
@@ -1929,7 +1956,19 @@ export interface ItemReviewNoticeDto {
   readAt: string | null
 }
 
-export type CommunityNoticeDto = NameModeNoticeDto | PostCommentedNoticeDto | ItemReviewNoticeDto
+/** 모집 알림(C-07): 선정(초대 받기)·선정되지 않음(거절·마감, 사유 없음)·모집 취소. 제목·모집자는 싣지 않습니다(모집 주소만). */
+export interface RecruitmentNoticeDto {
+  id: string
+  kind: 'recruitment_invited' | 'recruitment_not_selected' | 'recruitment_cancelled'
+  space: null
+  recruitmentId: string
+  recruitmentKind: RecruitmentKind
+  text: string
+  createdAt: string
+  readAt: string | null
+}
+
+export type CommunityNoticeDto = NameModeNoticeDto | PostCommentedNoticeDto | ItemReviewNoticeDto | RecruitmentNoticeDto
 
 export interface CommunityNoticesDto {
   items: CommunityNoticeDto[]
@@ -2191,4 +2230,128 @@ export interface OperatorSpaceHideDto {
   createdAt: string
   reversedAt: string | null
   reverseCause: 'lift' | 'appeal' | 'space' | null
+}
+
+// ── 모집·지원 (C-07, ADR 0024) ───────────────────────────────────────────
+
+export type RecruitmentKind = 'team' | 'study'
+export type RecruitmentStatus = 'open' | 'closed' | 'cancelled'
+export type ApplicationStatus = 'pending' | 'accepted' | 'declined' | 'withdrawn'
+
+/** 모집 카드. 모집자는 싣지 않고(본인 여부 `mine`만) 지원자 수도 싣지 않습니다(모집자는 상세의 recruiter에서 봄). */
+export interface RecruitmentSummaryDto {
+  id: string
+  kind: RecruitmentKind
+  title: string
+  status: RecruitmentStatus
+  /** 모집 인원(수락할 수 있는 지원자 수, 모집자 제외). */
+  capacity: number
+  closesAt: string | null
+  createdAt: string
+  closedAt: string | null
+  /** 지금 지원을 받는지(모집 중 + 마감 예정 시각 전 + 가려지지 않음). */
+  accepting: boolean
+  course: { id: string; title: string; code: string | null; schoolName: string } | null
+  term: { id: string; year: number; semester: Semester } | null
+  space: { slug: string; name: string; official: boolean } | null
+  /** 스터디 방 이름 표시 방식(스터디만). */
+  roomNameMode: NameMode | null
+  mine: boolean
+  /** 운영 조치로 가려짐(모집자 본인에게만 true가 보임 — 다른 사람에게는 목록·상세에서 빠짐). */
+  hidden: boolean
+  /** 내 지원 상태(지원했으면). */
+  myApplicationStatus: ApplicationStatus | null
+}
+
+/** 지원 첨부: 지원자 자신의 공개 프로필·공개 사례. 읽을 때 다시 확인해 내려간(철회·숨김) 것은 빠집니다. */
+export interface ApplicationAttachmentsDto {
+  profile: { handle: string } | null
+  cases: Array<{ slug: string; title: string }>
+}
+
+/** 모집자만 보는 지원 하나. 활동량·포크 수·확인 수·점수·순위·거절 사유 필드는 없습니다(RECRUITER_APPLICATION_KEYS). */
+export interface RecruitmentApplicationDto {
+  id: string
+  applicant: { displayName: string }
+  message: string
+  messageHidden: boolean
+  attachments: ApplicationAttachmentsDto
+  status: ApplicationStatus
+  createdAt: string
+  decidedAt: string | null
+}
+
+/** 지원자 본인의 지원. 상태 문장은 거절·마감을 구분하지 않습니다. */
+export interface MyApplicationDto {
+  id: string
+  status: ApplicationStatus
+  statusText: string
+  message: string
+  attachments: ApplicationAttachmentsDto
+  createdAt: string
+  /** 선정 + 마감되어 초대를 받을 수 있음. */
+  invitationAvailable: boolean
+  /** 지금 볼 수 없는 모집이면 null(제목 없음). */
+  recruitment: Pick<RecruitmentSummaryDto, 'id' | 'kind' | 'title' | 'status'> | null
+}
+
+export interface RecruiterViewDto {
+  applicationCount: number
+  pendingCount: number
+  acceptedCount: number
+  result: { projectId: string | null; spaceSlug: string | null }
+}
+
+export interface RecruitmentDetailDto extends RecruitmentSummaryDto {
+  description: string
+  /** 지원할 수 있는지와 아니면 이유 코드(own_recruitment·not_open·already_applied·write_restricted). */
+  canApply: boolean
+  applyBlockedReason: string | null
+  myApplication: MyApplicationDto | null
+  /** 모집자 본인에게만. */
+  recruiter: RecruiterViewDto | null
+  canReport: boolean
+}
+
+export interface RecruitmentListDto {
+  context: { space: { slug: string; name: string; official: boolean } | null; course: { id: string; title: string; code: string | null; schoolName: string } | null }
+  items: RecruitmentSummaryDto[]
+  /** 이 맥락에서 올릴 수 있는 종류. */
+  canPost: { team: boolean; study: boolean }
+  /** 올릴 수 없는 이유(예: no_recruiting_board, team_finding_disabled, write_restricted). */
+  postBlockedReasons: { team: string | null; study: string | null }
+  teamFindingDisabled: boolean
+  /** 과목 맥락: 그 과목의 학기(팀원 찾기 마감 시 과제 공간에 연결). */
+  terms: Array<{ id: string; year: number; semester: Semester }>
+}
+
+export interface MyRecruitmentsDto {
+  created: RecruitmentSummaryDto[]
+  applications: MyApplicationDto[]
+}
+
+/** 지원 화면에서 고를 수 있는 내 공개 항목. */
+export interface ApplicationAttachmentOptionsDto {
+  profile: { handle: string } | null
+  cases: Array<{ slug: string; title: string }>
+}
+
+export interface RecruitmentInvitationDto {
+  kind: 'project' | 'space'
+  inviteUrl: string
+}
+
+export interface CourseTeamFindingEntryDto {
+  available: boolean
+}
+
+/** 운영자 신고 상세의 모집 글·지원 메시지(C-07). 모집자·지원자 id·지원자 목록 없음. */
+export interface OperatorRecruitmentItemDto {
+  target: 'recruitment' | 'application'
+  kind: RecruitmentKind
+  title: string
+  description: string | null
+  message: string | null
+  status: string
+  hidden: boolean
 }

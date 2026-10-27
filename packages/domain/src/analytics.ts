@@ -1,7 +1,7 @@
 /**
  * pilot 분석 이벤트 규칙 (DELIVERY_PLAN §6 측정 계획, SYSTEM_DESIGN §14 관측, T-16, ADR 0016).
  *
- * - 이벤트 이름은 DELIVERY_PLAN §6의 최소 분석 이벤트 15개 + `login_succeeded`(활성화 지표의 가입 시점) + `affiliation_verified`(C-01, props는 standing만) + `space_created`·`space_joined`(C-02, 종류·가입 방식만) + `name_mode_scheduled`·`name_mode_applied`(C-03, 바꾸기 전·후 방식만) + `post_created`·`comment_created`·`reaction_added`(C-04, 게시판 종류·방식·답글 여부·대상 종류만) + `community_report_filed`·`community_auto_hidden`·`community_sanction_issued`(C-06, 대상 종류·제재 수준·범위만)입니다.
+ * - 이벤트 이름은 DELIVERY_PLAN §6의 최소 분석 이벤트 15개 + `login_succeeded`(활성화 지표의 가입 시점) + `affiliation_verified`(C-01, props는 standing만) + `space_created`·`space_joined`(C-02, 종류·가입 방식만) + `name_mode_scheduled`·`name_mode_applied`(C-03, 바꾸기 전·후 방식만) + `post_created`·`comment_created`·`reaction_added`(C-04, 게시판 종류·방식·답글 여부·대상 종류만) + `community_report_filed`·`community_auto_hidden`·`community_sanction_issued`(C-06, 대상 종류·제재 수준·범위만) + `recruitment_created`·`application_submitted`·`recruitment_closed`(C-07, 모집 종류·마감 결과만)입니다.
  * - props는 이벤트마다 허용 목록(ANALYTICS_PROP_SPECS)의 키만, 값은 정해진 enum 문자열·참거짓·범위 안의 정수만 받습니다.
  *   자유 문자열 필드는 없으므로 과제 본문·제목·파일 이름·URL·이메일·검색어가 들어갈 자리가 없습니다(§6 "본문·파일 내용·검색 원문·연락처 없음").
  *   목록 밖의 키·값이 하나라도 있으면 sanitizeAnalyticsProps가 거부하고, 웹 emitter는 그 이벤트를 버립니다(일부만 저장하지 않음).
@@ -37,6 +37,9 @@ export const ANALYTICS_EVENT_NAMES = [
   'community_report_filed',
   'community_auto_hidden',
   'community_sanction_issued',
+  'recruitment_created',
+  'application_submitted',
+  'recruitment_closed',
 ] as const
 export type AnalyticsEventName = (typeof ANALYTICS_EVENT_NAMES)[number]
 
@@ -61,7 +64,7 @@ const count = (max: number, min = 0): AnalyticsPropSpec => ({ kind: 'int', min, 
  * 모든 키는 선택입니다(없어도 됨). 목록 밖 키는 거부합니다.
  */
 export const ANALYTICS_PROP_SPECS: Readonly<Record<AnalyticsEventName, Readonly<Record<string, AnalyticsPropSpec>>>> = {
-  project_created: { kind: enumOf(['individual', 'team']), retro: bool, withCourse: bool, origin: enumOf(['web', 'fork']) },
+  project_created: { kind: enumOf(['individual', 'team']), retro: bool, withCourse: bool, origin: enumOf(['web', 'fork', 'recruitment']) },
   log_saved: { tag: enumOf(LOG_TAGS), source: enumOf(LOG_SOURCES), revision: bool },
   evidence_attached: { target: enumOf(['log', 'claim']), files: count(20), links: count(10), logs: count(20) },
   milestone_snapshot_set: { retro: bool },
@@ -107,9 +110,13 @@ export const ANALYTICS_PROP_SPECS: Readonly<Record<AnalyticsEventName, Readonly<
   comment_created: { mode: enumOf(NAME_MODE_VALUES), reply: bool },
   reaction_added: { target: enumOf(['post', 'comment']) },
   // C-06(ADR 0023): 대상 종류·제재 수준·범위만. 신고·글·공간·사람 id, 사유, 신고 수는 없습니다.
-  community_report_filed: { targetKind: enumOf(['space', 'post', 'comment']) },
+  community_report_filed: { targetKind: enumOf(['space', 'post', 'comment', 'recruitment', 'application']) },
   community_auto_hidden: { targetKind: enumOf(['post', 'comment']) },
   community_sanction_issued: { level: enumOf(['warning', 'write_suspended', 'permanent']), scope: enumOf(['community', 'space']) },
+  // C-07(ADR 0024): 모집 종류·마감 결과만. 모집·공간·과목·사람 id, 제목, 지원자 수는 없습니다.
+  recruitment_created: { kind: enumOf(['team', 'study']) },
+  application_submitted: { kind: enumOf(['team', 'study']) },
+  recruitment_closed: { kind: enumOf(['team', 'study']), outcome: enumOf(['project', 'study_room', 'cancelled']) },
 }
 
 export function isAnalyticsEventName(value: unknown): value is AnalyticsEventName {

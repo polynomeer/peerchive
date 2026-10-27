@@ -30,8 +30,23 @@ import { getNameModeState, scheduleNameModeChange } from '../server/modules/comm
 import { listMyCommunityNotices } from '../server/modules/community/notices'
 import { createOfficialPage } from '../server/modules/community/official'
 import { createComment, createPost, editPost, getPost, listBoardPosts, setReaction } from '../server/modules/community/posts'
+import {
+  applyToRecruitment,
+  createRecruitment,
+  getRecruitment,
+  issueRecruitmentInvitation,
+  listApplications,
+  listRecruitments,
+  withdrawApplication,
+} from '../server/modules/community/recruitments'
 import { updateRealName } from '../server/modules/identity/profiles'
-import { resolveReportableComment, resolveReportablePost, resolveReportableSpace } from '../server/modules/community/reporting'
+import {
+  resolveReportableApplication,
+  resolveReportableComment,
+  resolveReportablePost,
+  resolveReportableRecruitment,
+  resolveReportableSpace,
+} from '../server/modules/community/reporting'
 import { createSanctionRequest, getSpaceModeration, issueSanction, lookupAuthor, spaceHideItem, spaceUnhideItem } from '../server/modules/community/moderation'
 import {
   archiveSpace,
@@ -166,6 +181,9 @@ describe('C-05 community tables come from the schema section (source)', () => {
         'community_sanctions',
         'community_author_lookups',
         'community_sanction_requests',
+        // C-07: 모집·지원도 같은 구역(자동으로 덮임)
+        'recruitments',
+        'recruitment_applications',
       ]),
     )
     // 다른 구역에 커뮤니티처럼 보이는 테이블이 있으면 경계 검사에서 빠지므로 실패합니다(C-04: posts·comments는 커뮤니티 구역에).
@@ -482,6 +500,8 @@ async function student(tx: DbExecutor, schoolId: string): Promise<{ userId: stri
 /** 방 셋(학교 연결 listed 자유 가입, 학교 무관 unlisted 승인, 학교 연결 초대 전용) + 공식 페이지, 여러 상태의 사람들. 모든 이름·소개에 센티넬. */
 async function world(tx: DbExecutor): Promise<World> {
   const sentinel = `VISSENT${rand()}`
+  RECS.clear()
+  APPS.clear()
   const op = { userId: (await createUser(tx)).id }
   await tx.insert(operators).values({ userId: op.userId })
   const school = await createSchool(tx, op, { name: `범위대${rand()}학교`, confirmNew: true }, T0)
@@ -500,12 +520,20 @@ async function world(tx: DbExecutor): Promise<World> {
     const thread = await createComment(tx, owner, post.id, { body: `${sentinel} 댓글` }, at(1))
     POSTS.set(detail.slug, { boardId: detail.boards[0]!.id, postId: post.id, commentId: thread.comments[0]!.id })
   }
+  // C-07: 공간마다 센티넬 스터디 모집 하나(방은 모집 게시판을 더함) + 다른 멤버 지원 하나. 행위자 × 경로 매트릭스가 모집 경로도 덮습니다.
+  for (const slug of [listed.slug, unlisted.slug, invite.slug]) await createBoard(tx, owner, slug, { kind: 'recruiting', title: '모집' }, at(1))
+  for (const detail of [listed, unlisted, invite, official]) {
+    const rec = await createRecruitment(tx, owner, { kind: 'study', spaceSlug: detail.slug, title: `${sentinel} 모집`, description: `${sentinel} 모집 소개`, capacity: 2 }, at(1))
+    RECS.set(detail.slug, rec.id)
+  }
 
   await joinSpace(tx, member, listed.slug, at(2))
   for (const slug of [unlisted.slug, invite.slug]) {
     const { token } = await createSpaceInvitation(tx, owner, slug, at(2))
     await acceptSpaceInvitation(tx, member, { token }, at(2))
   }
+  // C-07: 멤버가 네 모집 모두에 센티넬 메시지로 지원(지원 메시지 신고 경로도 매트릭스에 들어감)
+  for (const [slug, recId] of RECS) APPS.set(slug, (await applyToRecruitment(tx, member, recId, { message: `${sentinel} 지원` }, at(2))).id)
   const removed = await student(tx, school.id)
   const left = await student(tx, school.id)
   const revoked = await student(tx, school.id)
@@ -545,6 +573,11 @@ type Op = (tx: DbExecutor, actor: { userId: string }, slug: string) => Promise<u
 /** 공간 slug → 그 공간의 게시판·센티넬 글·댓글(world가 채움, C-04). */
 const POSTS = new Map<string, { boardId: string; postId: string; commentId: string }>()
 const postOf = (slug: string) => POSTS.get(slug)!
+/** 공간 slug → 그 공간의 센티넬 모집 id(C-07). */
+const RECS = new Map<string, string>()
+const recOf = (slug: string) => RECS.get(slug)!
+const APPS = new Map<string, string>()
+const appOf = (slug: string) => APPS.get(slug)!
 
 /** 공간 하나를 대상으로 하는 경로 종류(읽기·관리·쓰기). 모두 같은 정책 함수(loadReadableSpace/getSpaceDetail)를 거칩니다. */
 const SPACE_OPS: Record<string, Op> = {
@@ -575,6 +608,16 @@ const SPACE_OPS: Record<string, Op> = {
   'POST posts/:id/unhide': (tx, a, s) => spaceUnhideItem(tx, a, 'post', postOf(s).postId, {}, at(10)),
   'POST comments/:id/hide': (tx, a, s) => spaceHideItem(tx, a, 'comment', postOf(s).commentId, { publicReason: '사유' }, at(10)),
   'POST sanction-requests': (tx, a, s) => createSanctionRequest(tx, a, { targetType: 'post', targetId: postOf(s).postId, reason: 'spam', details: '설명' }, at(10)),
+  // C-07 모집·지원: 공간을 읽을 수 없으면 모집도 404(공간 읽기 정책을 따름)
+  'GET recruitments?space': (tx, a, s) => listRecruitments(tx, a, { space: s }, at(10)),
+  'POST recruitments (space)': (tx, a, s) => createRecruitment(tx, a, { kind: 'study', spaceSlug: s, title: '모집', capacity: 2 }, at(10)),
+  'GET recruitments/:id': (tx, a, s) => getRecruitment(tx, a, recOf(s), at(10)),
+  'POST recruitments/:id/applications': (tx, a, s) => applyToRecruitment(tx, a, recOf(s), { message: '지원' }, at(10)),
+  'GET recruitments/:id/applications': (tx, a, s) => listApplications(tx, a, recOf(s), at(10)),
+  'POST recruitments/:id/withdraw': (tx, a, s) => withdrawApplication(tx, a, recOf(s), at(10)),
+  'POST recruitments/:id/invitation': (tx, a, s) => issueRecruitmentInvitation(tx, a, recOf(s), at(10)),
+  'POST reports (community_recruitment)': (tx, a, s) => resolveReportableRecruitment(tx, a, { recruitmentId: recOf(s) }, at(10)),
+  'POST reports (community_application)': (tx, a, s) => resolveReportableApplication(tx, a, { applicationId: appOf(s) }, at(10)),
 }
 
 describe.skipIf(!databaseUrl)('C-05 visibility matrix and data boundary (PostgreSQL)', () => {

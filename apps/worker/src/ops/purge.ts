@@ -73,6 +73,8 @@ import {
   ne,
   officialPageRequests,
   operators,
+  recruitmentApplications,
+  recruitments,
   or,
   outboxEvents,
   planForks,
@@ -326,6 +328,8 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
 
 /** 커뮤니티 멤버십·초대·개설 요청 정리. 그 사람이 active owner인 방은 승계(없으면 보관)합니다. */
 async function purgeCommunity(tx: DbExecutor, userId: string, c: Counter, now: Date): Promise<void> {
+  // 모집·지원(C-07, ADR 0024)을 초대 삭제(아래·과제 정리)보다 먼저: 지원 행이 초대를 가리키므로.
+  await purgeRecruitments(tx, userId, c, now)
   const owned = await tx
     .select({ spaceId: spaceMemberships.spaceId })
     .from(spaceMemberships)
@@ -420,6 +424,87 @@ async function purgeCommunity(tx: DbExecutor, userId: string, c: Counter, now: D
         .returning({ id: communitySanctionRequests.id })
     ).length,
   )
+}
+
+/**
+ * 모집·지원 정리(C-07, ADR 0024).
+ * - 그 사람의 지원: 지웁니다. 신고·운영 조치가 가리키면 메시지·첨부를 비우고 지원 취소로 남깁니다(운영 기록이 깨지지 않게).
+ * - 그 사람이 올린 모집: 모집 중이면 취소하고 검토 중·선정된 지원자에게 취소 알림(웹 cancelRecruitment와 같은 알림 행), 모든 모집 글의 제목·소개를
+ *   비웁니다(행은 남김, created_by는 가명 처리된 users 행). 그 모집의 지원 행이 가리키던 초대(모집자 이름으로 발급)는 연결만 끊습니다
+ *   (초대 행은 과제·공간 정리에서 지우거나 취소).
+ */
+async function purgeRecruitments(tx: DbExecutor, userId: string, c: Counter, now: Date): Promise<void> {
+  const mineApps = await tx.select({ id: recruitmentApplications.id }).from(recruitmentApplications).where(eq(recruitmentApplications.applicantId, userId))
+  if (mineApps.length) {
+    const ids = idsOf(mineApps)
+    const referenced = await tx
+      .select({ id: reports.communityApplicationId })
+      .from(reports)
+      .where(inArray(reports.communityApplicationId, ids))
+      .union(tx.select({ id: moderationActions.communityApplicationId }).from(moderationActions).where(inArray(moderationActions.communityApplicationId, ids)))
+    const keep = new Set(referenced.map((r) => r.id).filter((id): id is string => !!id))
+    const deletable = ids.filter((id) => !keep.has(id))
+    let changed = 0
+    if (deletable.length) changed += (await tx.delete(recruitmentApplications).where(inArray(recruitmentApplications.id, deletable)).returning({ id: recruitmentApplications.id })).length
+    if (keep.size) {
+      // 이미 비운 행은 다시 세지 않습니다(재적용 idempotent).
+      const scrubbed = await tx
+        .update(recruitmentApplications)
+        .set({
+          message: '',
+          profileHandle: null,
+          caseSlugs: [],
+          status: 'withdrawn',
+          decidedAt: sql`coalesce(${recruitmentApplications.decidedAt}, ${now.toISOString()}::timestamptz)`,
+          projectInvitationId: null,
+          spaceInvitationId: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            inArray(recruitmentApplications.id, [...keep]),
+            or(
+              ne(recruitmentApplications.message, ''),
+              isNotNull(recruitmentApplications.profileHandle),
+              sql`cardinality(${recruitmentApplications.caseSlugs}) > 0`,
+              ne(recruitmentApplications.status, 'withdrawn'),
+              isNotNull(recruitmentApplications.projectInvitationId),
+              isNotNull(recruitmentApplications.spaceInvitationId),
+            ),
+          ),
+        )
+        .returning({ id: recruitmentApplications.id })
+      changed += scrubbed.length
+    }
+    c.add('recruitment_applications', changed)
+  }
+  const created = await tx.select({ id: recruitments.id, kind: recruitments.kind, status: recruitments.status, title: recruitments.title }).from(recruitments).where(eq(recruitments.createdBy, userId))
+  if (created.length === 0) return
+  const createdIds = idsOf(created)
+  await tx
+    .update(recruitmentApplications)
+    .set({ projectInvitationId: null, spaceInvitationId: null })
+    .where(and(inArray(recruitmentApplications.recruitmentId, createdIds), or(isNotNull(recruitmentApplications.projectInvitationId), isNotNull(recruitmentApplications.spaceInvitationId))))
+  const open = created.filter((r) => r.status === 'open')
+  for (const r of open) {
+    // 웹 모집 취소와 같은 알림(종류만, 모집·사람·종류마다 한 행). 계정이 active인 지원자에게만.
+    await tx.execute(sql`
+      insert into community_notices (user_id, space_id, recruitment_id, kind, payload, created_at)
+      select ra.applicant_id, null, ${r.id}, 'recruitment_cancelled', ${JSON.stringify({ recruitmentKind: r.kind })}::jsonb, ${now.toISOString()}::timestamptz
+      from recruitment_applications ra join users u on u.id = ra.applicant_id
+      where ra.recruitment_id = ${r.id} and ra.status in ('pending', 'accepted') and u.status = 'active'
+      on conflict (recruitment_id, kind, user_id) where recruitment_id is not null do nothing`)
+  }
+  if (open.length) {
+    await tx.update(recruitments).set({ status: 'cancelled', closedAt: now, updatedAt: now }).where(inArray(recruitments.id, idsOf(open)))
+    c.add('recruitments_cancelled', open.length)
+  }
+  const cleared = await tx
+    .update(recruitments)
+    .set({ title: '', description: '', updatedAt: now })
+    .where(and(inArray(recruitments.id, createdIds), or(ne(recruitments.title, ''), ne(recruitments.description, ''))))
+    .returning({ id: recruitments.id })
+  c.add('recruitment_texts', cleared.length)
 }
 
 const truncateToMinute = (date: Date) => new Date(Math.floor(date.getTime() / 60_000) * 60_000)

@@ -20,6 +20,15 @@ import {
   POST_BODY_MAX,
   POST_TITLE_MAX,
   COMMUNITY_TIME_BUCKET_LABELS,
+  RECRUITMENT_KIND_LABELS,
+  RECRUITMENT_STATUS_LABELS,
+  APPLICATION_STATUS_TEXT,
+  RECRUITMENT_TITLE_MAX,
+  RECRUITMENT_DESCRIPTION_MAX,
+  RECRUITMENT_CAPACITY_MIN,
+  RECRUITMENT_CAPACITY_MAX,
+  APPLICATION_MESSAGE_MAX,
+  APPLICATION_CASES_MAX,
 } from '@peerchive/domain'
 import type { CommunityItemStatus, SpaceStatus } from '~~/shared/types/api'
 import { formatDateTime } from './build-log'
@@ -43,6 +52,15 @@ export {
   POST_BODY_MAX,
   POST_TITLE_MAX,
   COMMUNITY_TIME_BUCKET_LABELS,
+  RECRUITMENT_KIND_LABELS,
+  RECRUITMENT_STATUS_LABELS,
+  APPLICATION_STATUS_TEXT,
+  RECRUITMENT_TITLE_MAX,
+  RECRUITMENT_DESCRIPTION_MAX,
+  RECRUITMENT_CAPACITY_MIN,
+  RECRUITMENT_CAPACITY_MAX,
+  APPLICATION_MESSAGE_MAX,
+  APPLICATION_CASES_MAX,
 }
 
 /** 글·댓글 상태(운영 화면). */
@@ -110,6 +128,22 @@ export const COMMUNITY_ERROR_MESSAGES: Record<string, string> = {
   write_restricted: '이용 제한으로 지금은 글·댓글·공감을 쓸 수 없습니다. 운영 조치 안내에서 사유를 확인하고 이의를 제기할 수 있습니다.',
   moderate_not_allowed: '이 공간의 운영진만 할 수 있습니다.',
   not_space_hidden: '방 운영진이 가린 상태가 아닙니다(이미 되돌렸거나 운영자가 가렸습니다).',
+  // C-07 모집·지원
+  no_recruiting_board: '이 공간에는 모집 게시판이 없습니다. 방장·운영진이 모집 게시판을 더하면 올릴 수 있습니다.',
+  team_finding_disabled: '수업에서 팀을 배정하는 과목이라 팀원 찾기를 쓸 수 없습니다(스터디 모집은 됩니다).',
+  course_required: '팀원 찾기는 과목을 골라야 합니다.',
+  host_required: '모집을 올릴 공간이나 과목이 필요합니다.',
+  own_recruitment: '내가 올린 모집에는 지원할 수 없습니다.',
+  recruitment_not_open: '모집 중이 아닙니다(마감·취소되었거나 마감 예정 시각이 지났습니다).',
+  already_applied: '이미 지원했습니다.',
+  not_applied: '지원한 적이 없습니다.',
+  not_withdrawable: '이미 처리된 지원이라 취소할 수 없습니다.',
+  recruiter_only: '모집자만 할 수 있습니다.',
+  capacity_full: '모집 인원만큼 이미 선정했습니다.',
+  no_accepted: '선정한 지원자가 한 명 이상 있어야 마감할 수 있습니다. 모집을 멈추려면 취소하세요.',
+  not_selected: '선정된 지원자만 초대를 받을 수 있습니다.',
+  not_closed: '모집이 마감된 뒤에 초대를 받을 수 있습니다.',
+  invitation_unavailable: '지금은 초대를 받을 수 없습니다(모집자가 더는 운영하지 않거나 공간이 닫혔습니다).',
 }
 
 export function communityErrorMessage(code: string): string {

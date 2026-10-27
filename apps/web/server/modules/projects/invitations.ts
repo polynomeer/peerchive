@@ -65,29 +65,41 @@ export async function createInvitation(
   return db.transaction(async (tx) => {
     const { project, membership } = await loadReadableProject(tx, actor, projectId)
     if (!canInvite({ userId: actor.userId }, project, membership, input.role)) throw forbidden()
-    const token = generateToken()
-    const [row] = await tx
-      .insert(invitations)
-      .values({
-        projectId: project.id,
-        tokenHash: sha256Hex(token),
-        role: input.role,
-        createdBy: actor.userId,
-        expiresAt: new Date(now.getTime() + INVITATION_TTL_MS),
-        createdAt: now,
-      })
-      .returning()
-    if (!row) throw new Error('invitation insert failed')
-    await recordAudit(tx, {
-      actorId: actor.userId,
-      action: 'invitation.create',
-      targetType: 'invitation',
-      targetId: row.id,
-      projectId: project.id,
-      metadata: { role: input.role },
-    })
-    return { invitation: toInvitationDto(row, now), token }
+    return issueInvitationInTx(tx, { projectId: project.id, role: input.role, createdBy: actor.userId }, now)
   })
+}
+
+/**
+ * 초대 한 장을 만듭니다(호출자의 트랜잭션, 권한은 호출자가 확인). 웹의 초대 만들기와 C-07 팀원 모집 마감(선정된 지원자의 초대 받기)이 함께 씁니다.
+ * 토큰은 해시만 저장하고 원문은 돌려준 값에만 있습니다(한 번만 응답).
+ */
+export async function issueInvitationInTx(
+  tx: DbExecutor,
+  input: { projectId: string; role: (typeof ASSIGNABLE_ROLES)[number]; createdBy: string },
+  now: Date,
+): Promise<CreatedInvitation> {
+  const token = generateToken()
+  const [row] = await tx
+    .insert(invitations)
+    .values({
+      projectId: input.projectId,
+      tokenHash: sha256Hex(token),
+      role: input.role,
+      createdBy: input.createdBy,
+      expiresAt: new Date(now.getTime() + INVITATION_TTL_MS),
+      createdAt: now,
+    })
+    .returning()
+  if (!row) throw new Error('invitation insert failed')
+  await recordAudit(tx, {
+    actorId: input.createdBy,
+    action: 'invitation.create',
+    targetType: 'invitation',
+    targetId: row.id,
+    projectId: input.projectId,
+    metadata: { role: input.role },
+  })
+  return { invitation: toInvitationDto(row, now), token }
 }
 
 export async function listInvitations(

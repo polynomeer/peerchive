@@ -27,6 +27,9 @@ import {
   communitySpaces,
   moderationActions,
   operators,
+  recruitmentApplications,
+  recruitments,
+  reports,
   threadAliases,
   consents,
   createDb,
@@ -546,6 +549,52 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       // 남이 쓴 요청은 그대로, 탈퇴자가 쓴 요청은 설명만 지움
       expect((await tx.select().from(communitySanctionRequests).where(eq(communitySanctionRequests.id, request!.id)))[0]).toMatchObject({ details: '반복 비방' })
       expect((await tx.select().from(communitySanctionRequests).where(eq(communitySanctionRequests.id, uRequest!.id)))[0]).toMatchObject({ details: null, requestedBy: U.id })
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('purges recruitments: applications go (scrubbed if a report points at them), own open recruitments are cancelled with notices, texts cleared (C-07)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴모집자', 'deleted')
+      const A = await user(tx, '지원자')
+      const B = await user(tx, '다른모집자')
+      const [school] = await tx.insert(schools).values({ name: `모집대${id().slice(0, 8)}`, nameKey: `모집대${id().slice(0, 8)}` }).returning()
+      const [course] = await tx.insert(courses).values({ schoolId: school!.id, title: '운영체제', titleKey: `os${id().slice(0, 8)}` }).returning()
+      // U가 올린 모집 둘(모집 중·마감), B가 올린 모집에 U가 낸 지원 둘(하나는 신고됨)
+      const [open] = await tx.insert(recruitments).values({ kind: 'study', courseId: course!.id, title: '탈퇴자 스터디 모집', description: '소개', capacity: 3, roomNameMode: 'display', createdBy: U.id }).returning()
+      const [closed] = await tx
+        .insert(recruitments)
+        .values({ kind: 'study', courseId: course!.id, title: '마감된 모집', description: '소개', capacity: 3, roomNameMode: 'display', createdBy: U.id, status: 'closed', closedAt: NOW })
+        .returning()
+      await tx.insert(recruitmentApplications).values({ recruitmentId: open!.id, applicantId: A.id, message: '지원합니다' })
+      const [other] = await tx.insert(recruitments).values({ kind: 'team', courseId: course!.id, title: 'B 모집', capacity: 2, createdBy: B.id }).returning()
+      const [other2] = await tx.insert(recruitments).values({ kind: 'team', courseId: course!.id, title: 'B 모집 2', capacity: 2, createdBy: B.id }).returning()
+      const [plain] = await tx.insert(recruitmentApplications).values({ recruitmentId: other!.id, applicantId: U.id, message: '탈퇴자 메시지', profileHandle: 'quit-user' }).returning()
+      const [reported] = await tx.insert(recruitmentApplications).values({ recruitmentId: other2!.id, applicantId: U.id, message: '신고된 메시지', caseSlugs: ['some-case'] }).returning()
+      await tx.insert(reports).values({ reporterId: B.id, targetType: 'community_application', targetKey: `community_application:${reported!.id}`, communityApplicationId: reported!.id, reason: 'spam' })
+
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ recruitment_applications: 2, recruitments_cancelled: 1, recruitment_texts: 2 })
+      expect(await count(tx, recruitmentApplications, eq(recruitmentApplications.id, plain!.id))).toBe(0)
+      expect((await tx.select().from(recruitmentApplications).where(eq(recruitmentApplications.id, reported!.id)))[0]).toMatchObject({
+        message: '',
+        profileHandle: null,
+        caseSlugs: [],
+        status: 'withdrawn',
+      })
+      const mine = await tx.select().from(recruitments).where(eq(recruitments.createdBy, U.id))
+      expect(mine.map((r) => [r.id === open!.id ? 'open' : 'closed', r.status, r.title, r.description]).sort()).toEqual(
+        [
+          ['closed', 'closed', '', ''],
+          ['open', 'cancelled', '', ''],
+        ].sort(),
+      )
+      // 모집 중이던 모집의 지원자에게 취소 알림(종류만)
+      const notices = await tx.select().from(communityNotices).where(eq(communityNotices.userId, A.id))
+      expect(notices.map((n) => [n.kind, n.recruitmentId, n.payload])).toEqual([['recruitment_cancelled', open!.id, { recruitmentKind: 'study' }]])
+      const ledger = await tx.select().from(deletionLedger).where(eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, U.id)))
+      expect(ledger.map((l) => l.entityKind)).toEqual(expect.arrayContaining(['recruitment_applications', 'recruitments_cancelled', 'recruitment_texts']))
+      expect(await count(tx, recruitments, eq(recruitments.id, closed!.id))).toBe(1)
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })

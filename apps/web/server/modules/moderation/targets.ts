@@ -35,8 +35,12 @@ import {
   communityItemLabels,
   communitySpaceLabels,
   communitySpaceOwnerIds,
+  recruitmentItemLabels,
+  recruitmentItemPartyIds,
+  resolveReportableApplication,
   resolveReportableComment,
   resolveReportablePost,
+  resolveReportableRecruitment,
   resolveReportableSpace,
 } from '../community/reporting'
 import { type Actor, invalid, notFound } from '../errors'
@@ -64,6 +68,8 @@ export interface TargetPointer {
   communitySpaceId: string | null
   communityPostId: string | null
   communityCommentId: string | null
+  communityRecruitmentId: string | null
+  communityApplicationId: string | null
 }
 
 const empty = (targetType: ReportTargetType, identity: ReportTargetIdentity): TargetPointer => ({
@@ -81,6 +87,8 @@ const empty = (targetType: ReportTargetType, identity: ReportTargetIdentity): Ta
   communitySpaceId: null,
   communityPostId: null,
   communityCommentId: null,
+  communityRecruitmentId: null,
+  communityApplicationId: null,
 })
 
 const slug = z.string({ error: 'invalid' }).trim().toLowerCase().min(3, { error: 'invalid' }).max(60, { error: 'invalid' })
@@ -136,6 +144,17 @@ export async function resolvePublicTarget(db: DbExecutor, type: ReportTargetType
       if (!actor) throw notFound()
       const commentId = await resolveReportableComment(db, actor, rawRef)
       return { ...empty(type, { type, commentId }), communityCommentId: commentId }
+    }
+    // 모집 글(C-07): 신고자가 볼 수 있는 가려지지 않은 모집. 지원 메시지: 그 모집의 모집자만(메시지를 보는 사람이 모집자뿐).
+    case 'community_recruitment': {
+      if (!actor) throw notFound()
+      const recruitmentId = await resolveReportableRecruitment(db, actor, rawRef, now)
+      return { ...empty(type, { type, recruitmentId }), communityRecruitmentId: recruitmentId }
+    }
+    case 'community_application': {
+      if (!actor) throw notFound()
+      const applicationId = await resolveReportableApplication(db, actor, rawRef, now)
+      return { ...empty(type, { type, applicationId }), communityApplicationId: applicationId }
     }
     case 'publication': {
       const ref = parseRef('publication', rawRef)
@@ -216,7 +235,16 @@ export async function affectedUserIds(
   db: DbExecutor,
   target: Pick<
     TargetPointer,
-    'targetType' | 'publicationId' | 'seniorNoteId' | 'caseStudyId' | 'profileUserId' | 'communitySpaceId' | 'communityPostId' | 'communityCommentId'
+    | 'targetType'
+    | 'publicationId'
+    | 'seniorNoteId'
+    | 'caseStudyId'
+    | 'profileUserId'
+    | 'communitySpaceId'
+    | 'communityPostId'
+    | 'communityCommentId'
+    | 'communityRecruitmentId'
+    | 'communityApplicationId'
   >,
 ): Promise<string[]> {
   switch (target.targetType) {
@@ -225,6 +253,9 @@ export async function affectedUserIds(
     case 'community_post':
     case 'community_comment':
       return communityItemAuthorIds(db, { postId: target.communityPostId, commentId: target.communityCommentId })
+    case 'community_recruitment':
+    case 'community_application':
+      return recruitmentItemPartyIds(db, { recruitmentId: target.communityRecruitmentId, applicationId: target.communityApplicationId })
     case 'publication':
     case 'publication_item': {
       if (!target.publicationId) return []
@@ -263,6 +294,11 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
     db,
     [...new Set(targets.map((t) => t.communityPostId).filter((id): id is string => !!id))],
     [...new Set(targets.map((t) => t.communityCommentId).filter((id): id is string => !!id))],
+  )
+  const recruitmentBy = await recruitmentItemLabels(
+    db,
+    [...new Set(targets.map((t) => t.communityRecruitmentId).filter((id): id is string => !!id))],
+    [...new Set(targets.map((t) => t.communityApplicationId).filter((id): id is string => !!id))],
   )
   const [pubRows, noteRows, caseRows] = await Promise.all([
     pubIds.length ? db.select({ id: publications.id, slug: publications.slug }).from(publications).where(inArray(publications.id, pubIds)) : [],
@@ -313,6 +349,12 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
       case 'community_comment':
         label = `커뮤니티 댓글 · ${itemSpaceBy.get(t.communityCommentId ?? '') ?? '공간'}`
         break
+      case 'community_recruitment':
+        label = `모집 글 · ${recruitmentBy.get(t.communityRecruitmentId ?? '') ?? '모집'}`
+        break
+      case 'community_application':
+        label = `지원 메시지 · ${recruitmentBy.get(t.communityApplicationId ?? '') ?? '모집'}`
+        break
     }
     out.set(t.targetKey, label)
   }
@@ -321,12 +363,17 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
 
 /** 행(신고·조치)에서 포인터 열만. 조치 행에는 version 열이 없습니다. */
 export function pointerOf(
-  row: Omit<TargetPointer, 'noteVersion' | 'caseStudyVersion' | 'communitySpaceId' | 'communityPostId' | 'communityCommentId'> & {
+  row: Omit<
+    TargetPointer,
+    'noteVersion' | 'caseStudyVersion' | 'communitySpaceId' | 'communityPostId' | 'communityCommentId' | 'communityRecruitmentId' | 'communityApplicationId'
+  > & {
     noteVersion?: number | null
     caseStudyVersion?: number | null
     communitySpaceId?: string | null
     communityPostId?: string | null
     communityCommentId?: string | null
+    communityRecruitmentId?: string | null
+    communityApplicationId?: string | null
   },
 ): TargetPointer {
   return {
@@ -344,6 +391,8 @@ export function pointerOf(
     communitySpaceId: row.communitySpaceId ?? null,
     communityPostId: row.communityPostId ?? null,
     communityCommentId: row.communityCommentId ?? null,
+    communityRecruitmentId: row.communityRecruitmentId ?? null,
+    communityApplicationId: row.communityApplicationId ?? null,
   }
 }
 

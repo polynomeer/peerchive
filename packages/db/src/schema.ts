@@ -172,6 +172,8 @@ export const reportTargetType = pgEnum('report_target_type', [
   'community_space',
   'community_post',
   'community_comment',
+  'community_recruitment',
+  'community_application',
 ])
 /** 신고 사유(T-15, REPORT_REASONS). 개인정보·저작권은 공개 사례에 보류를 겁니다. */
 export const reportReason = pgEnum('report_reason', ['personal_info', 'answer_sharing', 'copyright', 'harassment', 'false_claim', 'spam', 'other'])
@@ -191,6 +193,8 @@ export const moderationActionKind = pgEnum('moderation_action_kind', [
   'hide_comment',
   'space_hide',
   'sanction',
+  'hide_recruitment',
+  'hide_application',
 ])
 /** 공개 사례 안에서 가릴 수 있는 항목(T-15, HIDDEN_ITEM_KINDS). */
 export const hiddenItemKind = pgEnum('hidden_item_kind', ['log', 'claim', 'artifact'])
@@ -225,6 +229,9 @@ export const analyticsEventName = pgEnum('analytics_event_name', [
   'community_report_filed',
   'community_auto_hidden',
   'community_sanction_issued',
+  'recruitment_created',
+  'application_submitted',
+  'recruitment_closed',
 ])
 /** 기관 종류(C-01). 지금은 대학만. P2에서 bootcamp 등을 더합니다(SYSTEM_DESIGN §6.7.2 이관 원칙, ADR 0018). */
 export const institutionKind = pgEnum('institution_kind', ['university'])
@@ -264,6 +271,9 @@ export const communityNoticeKind = pgEnum('community_notice_kind', [
   'post_commented',
   'item_auto_hidden',
   'item_restored',
+  'recruitment_invited',
+  'recruitment_not_selected',
+  'recruitment_cancelled',
 ])
 /** 커뮤니티 글·댓글 상태(C-04). auto_hidden은 C-06(신고 누적 임시 숨김)이 씁니다. */
 export const communityItemStatus = pgEnum('community_item_status', ['published', 'deleted_by_author', 'hidden', 'auto_hidden'])
@@ -275,6 +285,12 @@ export const communitySanctionScope = pgEnum('community_sanction_scope', ['commu
 export const communitySanctionLevel = pgEnum('community_sanction_level', ['warning', 'write_suspended', 'permanent'])
 /** 방 운영진의 제재 요청 상태(C-06): 접수 → 처리(제재 발급)/기각. */
 export const sanctionRequestStatus = pgEnum('sanction_request_status', ['open', 'resolved', 'dismissed'])
+/** 모집 종류(C-07, @peerchive/domain RECRUITMENT_KINDS): 팀원 찾기 / 스터디 모집. 같은 테이블입니다(§8.8·§8.9.5). */
+export const recruitmentKind = pgEnum('recruitment_kind', ['team', 'study'])
+/** 모집 상태(C-07): 모집 중 → 마감(과제 공간·스터디 방 생성) / 취소. */
+export const recruitmentStatus = pgEnum('recruitment_status', ['open', 'closed', 'cancelled'])
+/** 지원 상태(C-07): 검토 중 → 선정 / 선정되지 않음(사유 없음) / 지원 취소. */
+export const applicationStatus = pgEnum('application_status', ['pending', 'accepted', 'declined', 'withdrawn'])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -468,6 +484,11 @@ export const courses = pgTable(
     /** 정규화는 삭제가 아니라 병합으로 합니다. 정본은 merged_into가 null(평탄화). */
     mergedInto: uuid('merged_into').references((): AnyPgColumn => courses.id),
     mergedAt: timestamp('merged_at', { withTimezone: true }),
+    /**
+     * 수업이 팀을 배정하는 과목이라 팀원 찾기를 숨김(C-07, PROOFU_EVOLUTION_PLAN §8.8 "과목 큐레이터가 표시"). 큐레이터 역할이 아직 없어 운영자가 정합니다.
+     * 정본 과목의 값만 봅니다. 공개 과목 허브 응답에는 싣지 않습니다.
+     */
+    teamFindingDisabled: boolean('team_finding_disabled').notNull().default(false),
     createdBy: uuid('created_by').references(() => users.id),
     createdAt: createdAt(),
   },
@@ -1894,6 +1915,9 @@ export const moderationActions = pgTable(
     /** 커뮤니티 글·댓글 가리기(hide_post·hide_comment, C-04). */
     communityPostId: uuid('community_post_id').references((): AnyPgColumn => communityPosts.id),
     communityCommentId: uuid('community_comment_id').references((): AnyPgColumn => communityComments.id),
+    /** 모집 글·지원 메시지 가리기(hide_recruitment·hide_application, C-07). */
+    communityRecruitmentId: uuid('community_recruitment_id').references((): AnyPgColumn => recruitments.id),
+    communityApplicationId: uuid('community_application_id').references((): AnyPgColumn => recruitmentApplications.id),
     internalNote: text('internal_note').notNull(),
     publicReason: text('public_reason'),
     notifyOwner: boolean('notify_owner').notNull().default(false),
@@ -1916,6 +1940,8 @@ export const moderationActions = pgTable(
     index('moderation_actions_community_space_idx').on(t.communitySpaceId),
     index('moderation_actions_community_post_idx').on(t.communityPostId),
     index('moderation_actions_community_comment_idx').on(t.communityCommentId),
+    index('moderation_actions_community_recruitment_idx').on(t.communityRecruitmentId),
+    index('moderation_actions_community_application_idx').on(t.communityApplicationId),
     check('moderation_actions_outcome_check', sql`${t.outcome} in ('resolved', 'dismissed') and (${t.outcome} = 'resolved' or ${t.kind} = 'none')`),
     check('moderation_actions_internal_note_check', sql`char_length(${t.internalNote}) between 1 and 1000`),
     check('moderation_actions_public_reason_check', sql`${t.publicReason} is null or char_length(${t.publicReason}) between 1 and 300`),
@@ -1928,6 +1954,8 @@ export const moderationActions = pgTable(
     check('moderation_actions_space_check', sql`${t.kind}::text not in ('restrict_space', 'archive_space') or ${t.communitySpaceId} is not null`),
     check('moderation_actions_post_check', sql`${t.kind}::text <> 'hide_post' or ${t.communityPostId} is not null`),
     check('moderation_actions_comment_check', sql`${t.kind}::text <> 'hide_comment' or ${t.communityCommentId} is not null`),
+    check('moderation_actions_recruitment_check', sql`${t.kind}::text <> 'hide_recruitment' or ${t.communityRecruitmentId} is not null`),
+    check('moderation_actions_application_check', sql`${t.kind}::text <> 'hide_application' or ${t.communityApplicationId} is not null`),
     // C-06: 방 운영진 가리기·제재는 글 또는 댓글 하나를 가리키고 공간 id는 비웁니다(방장이 당사자가 되지 않게, ADR 0023).
     check(
       'moderation_actions_community_item_check',
@@ -1968,6 +1996,9 @@ export const reports = pgTable(
     /** 신고한 커뮤니티 글·댓글(C-04). 내용은 복사하지 않습니다(운영자는 지금 행을 봄). */
     communityPostId: uuid('community_post_id').references((): AnyPgColumn => communityPosts.id),
     communityCommentId: uuid('community_comment_id').references((): AnyPgColumn => communityComments.id),
+    /** 신고한 모집 글·지원 메시지(C-07). 지원 메시지는 그 모집의 모집자만 신고합니다. 내용은 복사하지 않습니다. */
+    communityRecruitmentId: uuid('community_recruitment_id').references((): AnyPgColumn => recruitments.id),
+    communityApplicationId: uuid('community_application_id').references((): AnyPgColumn => recruitmentApplications.id),
     reason: reportReason('reason').notNull(),
     details: text('details'),
     status: reportStatus('status').notNull().default('open'),
@@ -1996,7 +2027,9 @@ export const reports = pgTable(
         or (${t.targetType} = 'profile' and ${t.profileUserId} is not null)
         or (${t.targetType}::text = 'community_space' and ${t.communitySpaceId} is not null)
         or (${t.targetType}::text = 'community_post' and ${t.communityPostId} is not null)
-        or (${t.targetType}::text = 'community_comment' and ${t.communityCommentId} is not null)`,
+        or (${t.targetType}::text = 'community_comment' and ${t.communityCommentId} is not null)
+        or (${t.targetType}::text = 'community_recruitment' and ${t.communityRecruitmentId} is not null)
+        or (${t.targetType}::text = 'community_application' and ${t.communityApplicationId} is not null)`,
     ),
   ],
 )
@@ -2509,10 +2542,11 @@ export const communityNotices = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id),
-    spaceId: uuid('space_id')
-      .notNull()
-      .references(() => communitySpaces.id),
+    /** 공간 소식이면 그 공간. 모집 알림(C-07)은 공간 없이 과목에만 걸린 모집도 있어 null일 수 있습니다(그때는 recruitment_id). */
+    spaceId: uuid('space_id').references(() => communitySpaces.id),
     kind: communityNoticeKind('kind').notNull(),
+    /** 모집 알림(recruitment_invited·recruitment_not_selected·recruitment_cancelled, C-07)의 모집. */
+    recruitmentId: uuid('recruitment_id').references((): AnyPgColumn => recruitments.id),
     nameModeChangeId: uuid('name_mode_change_id').references(() => nameModeChanges.id),
     /** 새 댓글 알림(post_commented, C-04)의 글. */
     postId: uuid('post_id').references((): AnyPgColumn => communityPosts.id),
@@ -2530,6 +2564,9 @@ export const communityNotices = pgTable(
     uniqueIndex('community_notices_post_unread_key').on(t.postId, t.userId, t.kind).where(sql`${t.postId} is not null and ${t.readAt} is null`),
     check('community_notices_target_check', sql`(${t.postId} is null) or (${t.nameModeChangeId} is null)`),
     check('community_notices_payload_object_check', sql`jsonb_typeof(${t.payload}) = 'object'`),
+    // C-07: 공간 소식 또는 모집 알림 중 하나 이상(모집 알림은 사람·모집·종류마다 한 행).
+    check('community_notices_subject_check', sql`${t.spaceId} is not null or ${t.recruitmentId} is not null`),
+    uniqueIndex('community_notices_recruitment_kind_user_key').on(t.recruitmentId, t.kind, t.userId).where(sql`${t.recruitmentId} is not null`),
   ],
 )
 
@@ -2789,5 +2826,107 @@ export const communitySanctions = pgTable(
     ),
     check('community_sanctions_permanent_check', sql`${t.level} <> 'permanent' or ${t.scope} = 'community'`),
     check('community_sanctions_revoked_check', sql`(${t.revokedAt} is null) = (${t.revokedBy} is null)`),
+  ],
+)
+
+// C-07: 모집(팀원 찾기·스터디 모집)·지원(ADR 0024). 같은 커뮤니티 구역이므로 C-05 경계 검사(테이블 목록·소스 경계·센티넬)가 자동으로 덮습니다.
+
+/**
+ * 모집(C-07, SYSTEM_DESIGN §6.7 Recruitment, PROOFU_EVOLUTION_PLAN §8.8·§8.9.5). 팀원 찾기와 스터디 모집이 같은 테이블이고 kind로 나눕니다.
+ * - 올린 곳: space_id(공식 페이지·사용자 방의 모집 게시판) 또는 course_id만(과목 맥락, 그 학교 인증 사용자만 봄). 팀원 찾기는 과목 필수.
+ *   읽기는 공간의 읽기 정책(canReadSpace) 또는 과목 학교(정본) active 인증입니다(@peerchive/domain canViewRecruitment).
+ * - 모집자(created_by)는 응답에 나오지 않습니다(본인 여부 `mine`만). 지원자 목록은 모집자만 봅니다.
+ * - 마감(closed): 팀원 찾기 → 비공개 과제 공간(result_project_id, 학기가 있으면 엠바고), 스터디 → 초대 전용 스터디 방(result_space_id).
+ *   취소(cancelled)·마감 모두 closed_at. 탈퇴 정리는 그 사람의 모집 중인 글을 취소하고(지원자에게 취소 알림) 모든 모집 글의 제목·소개를 비웁니다(행은 남김).
+ * - hidden_at: 운영 조치(hide_recruitment)로 가림. 모집자 외에는 404, 지원을 받지 않습니다.
+ */
+export const recruitments = pgTable(
+  'recruitments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    kind: recruitmentKind('kind').notNull(),
+    spaceId: uuid('space_id').references(() => communitySpaces.id),
+    /** 정본 과목(만들 때 병합을 따라감). */
+    courseId: uuid('course_id').references(() => courses.id),
+    /** 정본 학기(그 과목의 학기). 팀원 찾기를 마감하면 과제 공간에 연결되어 엠바고가 걸립니다(T-10). */
+    termId: uuid('term_id').references(() => courseTerms.id),
+    title: text('title').notNull(),
+    description: text('description').notNull().default(''),
+    /** 모집 인원(수락할 수 있는 지원자 수, 모집자 제외) 2~20. */
+    capacity: integer('capacity').notNull(),
+    /** 스터디 방 이름 표시 방식(스터디만, 표시명 기본). 팀원 찾기는 null. */
+    roomNameMode: communityNameMode('room_name_mode'),
+    status: recruitmentStatus('status').notNull().default('open'),
+    closesAt: timestamp('closes_at', { withTimezone: true }),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    resultProjectId: uuid('result_project_id').references(() => projects.id),
+    resultSpaceId: uuid('result_space_id').references(() => communitySpaces.id),
+    hiddenAt: timestamp('hidden_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('recruitments_space_created_idx').on(t.spaceId, t.createdAt),
+    index('recruitments_course_created_idx').on(t.courseId, t.createdAt),
+    index('recruitments_created_by_idx').on(t.createdBy),
+    check('recruitments_host_check', sql`${t.spaceId} is not null or ${t.courseId} is not null`),
+    check('recruitments_team_course_check', sql`${t.kind}::text <> 'team' or ${t.courseId} is not null`),
+    check('recruitments_term_course_check', sql`${t.termId} is null or ${t.courseId} is not null`),
+    check('recruitments_room_name_mode_check', sql`(${t.kind}::text = 'study') = (${t.roomNameMode} is not null)`),
+    check('recruitments_capacity_check', sql`${t.capacity} between 2 and 20`),
+    check(
+      'recruitments_title_check',
+      // 탈퇴 정리는 모집 글을 취소(모집 중이었으면)하고 제목·소개를 비웁니다. 비운 행은 모집 중이 아닙니다.
+      sql`char_length(${t.title}) between 1 and 80 or (${t.status}::text <> 'open' and ${t.title} = '' and ${t.description} = '')`,
+    ),
+    check('recruitments_description_check', sql`char_length(${t.description}) <= 2000`),
+    check('recruitments_closed_check', sql`(${t.status}::text = 'open') = (${t.closedAt} is null)`),
+    check('recruitments_result_project_check', sql`${t.resultProjectId} is null or (${t.kind}::text = 'team' and ${t.status}::text = 'closed')`),
+    check('recruitments_result_space_check', sql`${t.resultSpaceId} is null or (${t.kind}::text = 'study' and ${t.status}::text = 'closed')`),
+  ],
+)
+
+/**
+ * 지원(C-07, SYSTEM_DESIGN §6.7 Application). 모집·사람마다 하나(unique). **모집자만** 목록을 보고, 지원자는 자기 상태만 봅니다.
+ * - 순위·점수·활동량·거절 사유 열이 없습니다(§8.8). 목록은 created_at 순서로만 보여 줍니다.
+ * - 첨부(선택): 지원자 자신의 공개 프로필 handle, 자신이 팀원인 공개 사례(publication) slug 최대 3개. 지원할 때 확인하고 읽을 때 다시 확인합니다
+ *   (철회·숨김된 것은 응답에서 빠짐).
+ * - 마감 뒤 선정된 지원자가 초대를 받을 때 만든 과제 초대(project_invitation_id)·공간 초대(space_invitation_id)를 가리킵니다(다시 받으면 이전 것을 취소).
+ *   초대 원문 토큰은 저장하지 않습니다(해시만 각 초대 테이블에).
+ * - message_hidden_at: 운영 조치(hide_application)로 메시지를 가림(모집자에게 자리 표시).
+ * - 탈퇴 정리: 그 사람의 지원 행은 지웁니다(신고·조치가 가리키면 메시지·첨부를 비운 행으로 남김).
+ */
+export const recruitmentApplications = pgTable(
+  'recruitment_applications',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    recruitmentId: uuid('recruitment_id')
+      .notNull()
+      .references(() => recruitments.id),
+    applicantId: uuid('applicant_id')
+      .notNull()
+      .references(() => users.id),
+    message: text('message').notNull().default(''),
+    profileHandle: text('profile_handle'),
+    caseSlugs: text('case_slugs').array().notNull().default(sql`'{}'::text[]`),
+    status: applicationStatus('status').notNull().default('pending'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    projectInvitationId: uuid('project_invitation_id').references(() => invitations.id),
+    spaceInvitationId: uuid('space_invitation_id').references(() => spaceInvitations.id),
+    messageHiddenAt: timestamp('message_hidden_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('recruitment_applications_recruitment_applicant_key').on(t.recruitmentId, t.applicantId),
+    index('recruitment_applications_recruitment_created_idx').on(t.recruitmentId, t.createdAt, t.id),
+    index('recruitment_applications_applicant_idx').on(t.applicantId),
+    check('recruitment_applications_message_check', sql`char_length(${t.message}) <= 500`),
+    check('recruitment_applications_cases_check', sql`cardinality(${t.caseSlugs}) <= 3`),
+    check('recruitment_applications_handle_check', sql`${t.profileHandle} is null or ${t.profileHandle} ~ '^[a-z0-9-]{3,30}$'`),
+    check('recruitment_applications_decided_check', sql`(${t.status}::text = 'pending') = (${t.decidedAt} is null)`),
   ],
 )

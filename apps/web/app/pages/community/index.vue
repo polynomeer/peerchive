@@ -181,6 +181,7 @@ const spaceMeta = (s: SpaceSummaryDto) =>
     <p v-if="notice" :class="['notice', notice.kind]" :role="notice.kind === 'error' ? 'alert' : 'status'">{{ notice.text }}</p>
     <p>
       <NuxtLink to="/community/notices">커뮤니티 알림<template v-if="mine?.unreadNotices"> (읽지 않음 {{ mine.unreadNotices }}개)</template></NuxtLink>
+      · <NuxtLink to="/community/recruitments">모집·내 지원</NuxtLink>
     </p>
 
     <template v-if="!schools.length">

@@ -12,7 +12,19 @@
  * 런타임 의존성이 없고, 스냅샷 타입은 필요한 부분만 구조적으로 선언합니다.
  */
 
-export const REPORT_TARGET_TYPES = ['publication', 'publication_item', 'senior_note', 'case_study', 'profile', 'community_space', 'community_post', 'community_comment'] as const
+export const REPORT_TARGET_TYPES = [
+  'publication',
+  'publication_item',
+  'senior_note',
+  'case_study',
+  'profile',
+  'community_space',
+  'community_post',
+  'community_comment',
+  // C-07(ADR 0024): 모집 글(읽을 수 있는 사람)·지원 메시지(그 모집의 모집자만).
+  'community_recruitment',
+  'community_application',
+] as const
 export type ReportTargetType = (typeof REPORT_TARGET_TYPES)[number]
 
 export const REPORT_REASONS = ['personal_info', 'answer_sharing', 'copyright', 'harassment', 'false_claim', 'spam', 'other'] as const
@@ -37,6 +49,9 @@ export const MODERATION_ACTION_KINDS = [
   // (방장이 당사자가 되어 제재 안내를 받지 않게).
   'space_hide',
   'sanction',
+  // C-07(ADR 0024): 모집 글 가리기(목록·상세에서 빠지고 지원을 받지 않음, 모집자에게는 자리 표시)·지원 메시지 가리기(모집자에게 자리 표시).
+  'hide_recruitment',
+  'hide_application',
 ] as const
 export type ModerationActionKind = (typeof MODERATION_ACTION_KINDS)[number]
 
@@ -74,6 +89,8 @@ export const ACTIONS_BY_TARGET: Readonly<Record<ReportTargetType, readonly Moder
   // 다시 보이고(복원), hide_post·hide_comment로 처리하면 가림이 확정됩니다(C-06). 제재는 작성자 확인 뒤 별도 경로(space_hide·sanction은 여기 없음).
   community_post: ['none', 'hide_post'],
   community_comment: ['none', 'hide_comment'],
+  community_recruitment: ['none', 'hide_recruitment'],
+  community_application: ['none', 'hide_application'],
 }
 
 export function isActionApplicable(target: ReportTargetType, action: ModerationActionKind): boolean {
@@ -122,6 +139,8 @@ export type ReportTargetIdentity =
   | { type: 'community_space'; spaceId: string }
   | { type: 'community_post'; postId: string }
   | { type: 'community_comment'; commentId: string }
+  | { type: 'community_recruitment'; recruitmentId: string }
+  | { type: 'community_application'; applicationId: string }
 
 export function reportTargetKey(target: ReportTargetIdentity): string {
   switch (target.type) {
@@ -141,6 +160,10 @@ export function reportTargetKey(target: ReportTargetIdentity): string {
       return `community_post:${target.postId}`
     case 'community_comment':
       return `community_comment:${target.commentId}`
+    case 'community_recruitment':
+      return `community_recruitment:${target.recruitmentId}`
+    case 'community_application':
+      return `community_application:${target.applicationId}`
   }
 }
 

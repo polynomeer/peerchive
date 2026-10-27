@@ -22,11 +22,15 @@ const KIND_TITLES: Record<CommunityNoticeDto['kind'], string> = {
   post_commented: '내 글의 새 댓글',
   item_auto_hidden: '내 글·댓글이 운영 검토 중',
   item_restored: '내 글·댓글이 다시 보임',
+  recruitment_invited: '모집에 선정됨',
+  recruitment_not_selected: '모집 결과',
+  recruitment_cancelled: '모집 취소',
 }
 
 function textOf(n: CommunityNoticeDto): string {
   if (n.kind === 'post_commented') return postNoticeText({ count: n.count })
   if (n.kind === 'item_auto_hidden' || n.kind === 'item_restored') return n.text
+  if (n.kind === 'recruitment_invited' || n.kind === 'recruitment_not_selected' || n.kind === 'recruitment_cancelled') return n.text
   const m = n as NameModeNoticeDto
   return noticeText(m.kind, { fromMode: m.fromMode, toMode: m.toMode, effectiveAt: m.effectiveAt, ...(m.kind === 'name_mode_scheduled' && { joinPolicyAdjusted: m.joinPolicyAdjusted }) })
 }
@@ -50,7 +54,7 @@ async function markAll() {
   <div class="community-page">
     <h1>커뮤니티 알림</h1>
     <p class="hint">
-      내가 멤버인 방의 이름 표시 방식이 바뀌거나, 내 글에 새 댓글이 달리거나, 내 글·댓글이 신고로 운영 검토 중이 되면 여기에 알립니다. 운영 조치·이용 제한의
+      내가 멤버인 방의 이름 표시 방식이 바뀌거나, 내 글에 새 댓글이 달리거나, 내 글·댓글이 신고로 운영 검토 중이 되거나, 지원한 모집의 결과가 나오면 여기에 알립니다. 운영 조치·이용 제한의
       사유와 이의제기는 <NuxtLink to="/me/moderation-notices">운영 조치 안내</NuxtLink>에서 봅니다. 이름 표시 방식이 바뀌어도 이미 쓴 글·댓글은 쓸 때의 방식
       그대로입니다.
     </p>
@@ -67,6 +71,10 @@ async function markAll() {
             <strong>{{ KIND_TITLES[n.kind] }}</strong>
             <span v-if="!n.readAt" class="badge">새 알림</span>
           </p>
+          <p v-if="n.kind === 'recruitment_invited' || n.kind === 'recruitment_not_selected' || n.kind === 'recruitment_cancelled'">
+            <NuxtLink :to="`/community/recruitments/${n.recruitmentId}`">{{ textOf(n) }}</NuxtLink>
+          </p>
+          <template v-else>
           <p>
             <NuxtLink v-if="n.space" :to="`/community/s/${n.space.slug}`">{{ n.space.name }}</NuxtLink>
             <span v-else class="muted">지금은 볼 수 없는 공간</span>
@@ -77,6 +85,7 @@ async function markAll() {
             }}</NuxtLink>
             <template v-else>{{ textOf(n) }}</template>
           </p>
+          </template>
           <p class="small muted">
             {{ formatDateTime(n.createdAt) }}<template v-if="n.kind === 'name_mode_scheduled'"> · 적용 예정 {{ formatDateTime(n.effectiveAt) }}</template>
           </p>

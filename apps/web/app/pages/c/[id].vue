@@ -84,6 +84,7 @@ const difficultyText = computed(() => {
         <p class="hint">
           학교·과목 이름과 아래 내용은 학생이 직접 쓴 것입니다. 공식 강의 정보가 아니며, 교수 개인 평가나 과제 정답은 다루지 않습니다.
         </p>
+        <ClientOnly><CourseTeamFindingLink :course-id="data.course.id" /></ClientOnly>
         <p v-if="data.conceptTags.length" class="chips" aria-label="개념 태그">
           <span v-for="tag in data.conceptTags" :key="tag.id" class="chip static">#{{ tag.label }}</span>
         </p>

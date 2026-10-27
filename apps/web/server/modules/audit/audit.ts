@@ -127,6 +127,10 @@ export type AuditAction =
   | 'community.author_lookup'
   | 'community.sanction_issue'
   | 'community.sanction_revoke'
+  | 'community.recruitment_create'
+  | 'community.recruitment_close'
+  | 'community.recruitment_cancel'
+  | 'community.course_team_finding'
 
 export async function recordAudit(
   db: DbExecutor,
@@ -167,6 +171,8 @@ export async function recordAudit(
       | 'community_space'
       | 'community_post'
       | 'community_comment'
+      | 'community_recruitment'
+      | 'community_application'
       | 'community_sanction'
       | 'community_sanction_request'
     targetId?: string | null

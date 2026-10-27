@@ -53,7 +53,7 @@ import {
   type DbExecutor,
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
-import { communityItemStatuses, operatorCommunityItem, operatorSpaceContent } from '../community/reporting'
+import { communityItemStatuses, operatorCommunityItem, operatorRecruitmentItem, operatorSpaceContent } from '../community/reporting'
 import { requireOperator } from '../catalog/operators'
 import { publicNotePath } from '../course-hub/search'
 import { toPublicSeniorNote } from '../course-hub/hub'
@@ -268,6 +268,13 @@ async function contentFor(db: DbExecutor, report: ReportRow, now: Date): Promise
       const item = await operatorCommunityItem(db, { postId: report.communityPostId, commentId: report.communityCommentId })
       if (!item) return { content: unavailable('글을 찾을 수 없습니다.'), publicPath: null, servedNow: false }
       return { content: { kind: report.targetType, item }, publicPath: null, servedNow: item.status === 'published' }
+    }
+    case 'community_recruitment':
+    case 'community_application': {
+      // 신고된 모집 글 또는 지원 메시지 하나만(C-07). 모집자·지원자 id·지원자 목록은 싣지 않습니다(ADR 0024).
+      const recruitmentItem = await operatorRecruitmentItem(db, { recruitmentId: report.communityRecruitmentId, applicationId: report.communityApplicationId })
+      if (!recruitmentItem) return { content: unavailable('모집 글을 찾을 수 없습니다.'), publicPath: null, servedNow: false }
+      return { content: { kind: report.targetType, recruitmentItem }, publicPath: null, servedNow: !recruitmentItem.hidden }
     }
     case 'profile': {
       const [row] = await db

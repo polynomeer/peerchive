@@ -211,6 +211,20 @@ async function loadAudit() {
             />
           </details>
         </template>
+        <template v-else-if="data.content.kind === 'community_recruitment' || data.content.kind === 'community_application'">
+          <p>
+            <span class="badge">{{ data.content.kind === 'community_recruitment' ? '모집 글' : '지원 메시지' }}</span>
+            <span class="badge">{{ RECRUITMENT_KIND_LABELS[data.content.recruitmentItem.kind] }}</span>
+            <span v-if="data.content.recruitmentItem.hidden" class="badge">운영 조치로 가려짐</span>
+          </p>
+          <p><strong>{{ data.content.recruitmentItem.title || '(제목 없음: 작성자가 탈퇴했습니다)' }}</strong></p>
+          <p v-if="data.content.recruitmentItem.description" class="pre">{{ data.content.recruitmentItem.description }}</p>
+          <p v-if="data.content.recruitmentItem.message !== null" class="pre">{{ data.content.recruitmentItem.message || '(메시지 없음)' }}</p>
+          <p class="hint">
+            신고된 모집 글 또는 지원 메시지 하나만 보입니다. 모집자·지원자가 누구인지와 지원자 목록은 운영자에게도 보이지 않습니다. 가리면 모집 글은 모집자 외에는
+            보이지 않고 지원을 받지 않으며, 지원 메시지는 모집자에게 "운영 조치로 가려진 메시지입니다"로 보입니다.
+          </p>
+        </template>
         <p v-else-if="data.content.kind === 'unavailable'" class="muted">{{ data.content.message }}</p>
       </section>
 

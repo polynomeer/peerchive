@@ -99,7 +99,14 @@ export async function createReport(db: DbExecutor, actor: Actor, rawInput: unkno
       targetId: row.id,
       metadata: { targetType: input.targetType, reason: input.reason, hold, publicationId: target.publicationId, communitySpaceId: target.communitySpaceId, autoHidden },
     })
-    const targetKind = input.targetType === 'community_space' ? 'space' : input.targetType === 'community_post' ? 'post' : input.targetType === 'community_comment' ? 'comment' : null
+    const COMMUNITY_KINDS = {
+      community_space: 'space',
+      community_post: 'post',
+      community_comment: 'comment',
+      community_recruitment: 'recruitment',
+      community_application: 'application',
+    } as const
+    const targetKind = input.targetType in COMMUNITY_KINDS ? COMMUNITY_KINDS[input.targetType as keyof typeof COMMUNITY_KINDS] : null
     if (targetKind) await emitAnalytics(tx, { name: 'community_report_filed', actorId: actor.userId, unlinked: true, props: { targetKind }, now })
     return receipt(row, true)
   })

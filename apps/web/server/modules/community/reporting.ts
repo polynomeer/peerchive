@@ -108,3 +108,16 @@ export {
   revokeSanctionByActionInTx,
   unhideCommunityItemInTx,
 } from './moderation'
+
+// ── C-07(ADR 0024): 모집 글·지원 메시지 신고·가리기 — moderation 모듈은 이 어댑터만 부릅니다 ──────────
+
+export {
+  hideRecruitmentItemInTx,
+  operatorRecruitmentItem,
+  recruitmentItemLabels,
+  recruitmentItemPartyIds,
+  recruitmentItemVisible,
+  reportableApplication as resolveReportableApplication,
+  reportableRecruitment as resolveReportableRecruitment,
+  unhideRecruitmentItemInTx,
+} from './recruitments'

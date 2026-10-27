@@ -136,40 +136,54 @@ export async function createProject(
 ): Promise<ProjectDetailDto> {
   const input = parseInput(createProjectSchema, rawInput)
   return db.transaction(async (tx) => {
-    const courseTermId = input.courseTermId ? await resolveTermId(tx, input.courseTermId.toLowerCase()) : null
-    const embargoUntil = await nextEmbargoUntil(tx, null, null, courseTermId)
-    const [project] = await tx
-      .insert(projects)
-      .values({
-        ownerId: actor.userId,
-        title: input.title,
-        kind: input.kind,
-        courseTermId,
-        embargoUntil,
-        summaryByStudent: input.summaryByStudent,
-        goal: input.goal,
-        constraints: input.constraints,
-        retroMode: input.retroMode,
-      })
-      .returning()
-    if (!project) throw new Error('project insert failed')
-    await tx.insert(projectMembers).values({ projectId: project.id, userId: actor.userId, role: 'owner', status: 'active' })
-    await recordAudit(tx, {
-      actorId: actor.userId,
-      action: 'project.create',
-      targetType: 'project',
-      targetId: project.id,
-      projectId: project.id,
-      metadata: { retroMode: project.retroMode, courseTermId, embargoUntil: embargoUntil?.toISOString() ?? null },
-    })
-    await emitAnalytics(tx, {
-      name: 'project_created',
-      actorId: actor.userId,
-      projectId: project.id,
-      props: { kind: project.kind, retro: project.retroMode, withCourse: courseTermId !== null, origin },
-    })
+    const project = await insertProjectInTx(tx, actor.userId, input, origin)
     return toProjectDetailDto(tx, project, 'owner', now)
   })
+}
+
+/**
+ * 과제 공간 행 + owner 멤버십 + 감사 + 분석을 호출자의 트랜잭션 안에서 만듭니다(웹 만들기·포크·C-07 팀원 모집 마감이 함께 씀).
+ * 항상 비공개이고, 학기를 주면 정본 학기로 연결해 엠바고를 겁니다(T-10). 학기가 없으면 422 `courseTermId: not_found`.
+ */
+export async function insertProjectInTx(
+  tx: DbExecutor,
+  ownerId: string,
+  input: z.output<typeof createProjectSchema>,
+  origin: 'web' | 'fork' | 'recruitment',
+): Promise<ProjectRow> {
+  const courseTermId = input.courseTermId ? await resolveTermId(tx, input.courseTermId.toLowerCase()) : null
+  const embargoUntil = await nextEmbargoUntil(tx, null, null, courseTermId)
+  const [project] = await tx
+    .insert(projects)
+    .values({
+      ownerId,
+      title: input.title,
+      kind: input.kind,
+      courseTermId,
+      embargoUntil,
+      summaryByStudent: input.summaryByStudent,
+      goal: input.goal,
+      constraints: input.constraints,
+      retroMode: input.retroMode,
+    })
+    .returning()
+  if (!project) throw new Error('project insert failed')
+  await tx.insert(projectMembers).values({ projectId: project.id, userId: ownerId, role: 'owner', status: 'active' })
+  await recordAudit(tx, {
+    actorId: ownerId,
+    action: 'project.create',
+    targetType: 'project',
+    targetId: project.id,
+    projectId: project.id,
+    metadata: { retroMode: project.retroMode, courseTermId, embargoUntil: embargoUntil?.toISOString() ?? null },
+  })
+  await emitAnalytics(tx, {
+    name: 'project_created',
+    actorId: ownerId,
+    projectId: project.id,
+    props: { kind: project.kind, retro: project.retroMode, withCourse: courseTermId !== null, origin },
+  })
+  return project
 }
 
 /** 요청자가 active 멤버인 프로젝트 목록(최근 수정순). */

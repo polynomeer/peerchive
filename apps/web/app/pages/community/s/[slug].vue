@@ -348,6 +348,9 @@ const isMe = (m: SpaceMemberDto) => m.userId === me.value?.id
                 <span v-if="b.writeRole === 'moderator'" class="badge">{{ space.official ? '모더레이터만 씀' : '운영진만 씀' }}</span>
               </p>
               <p v-if="!b.canWrite" class="small muted">이 게시판에 글을 쓸 자격이 없습니다(읽기만).</p>
+              <p v-if="b.kind === 'recruiting'" class="small">
+                <NuxtLink :to="`/community/recruitments?space=${space.slug}`" data-testid="recruiting-link">팀원·스터디 모집 보기·올리기</NuxtLink>
+              </p>
             </li>
           </ul>
         </section>
