@@ -242,28 +242,36 @@ export function canCreateRoom(viewer: CommunityViewer | null | undefined, school
 }
 
 /**
- * 공간 내용(게시판·멤버 수·내 권한)을 읽을 수 있는지. 아니면 API는 404입니다(존재를 숨김).
+ * 공간 내용(게시판·멤버 수·내 권한, C-04 이후 글·댓글)을 읽을 수 있는지. 아니면 API·화면은 404입니다(존재를 숨김).
+ * 커뮤니티의 모든 읽기(API·화면·알림의 공간 이름·신고 대상 확인·C-04 글 목록)는 이 함수와 canPreviewSpace만 거칩니다(ADR 0021).
  * - 공식 페이지: 그 학교 active 인증(학과 페이지도 학교 인증이면 읽음) 또는 운영자.
- * - 사용자 방·스터디 방: active 멤버만(보관·제한 상태여도 멤버는 읽기만). 운영자도 멤버가 아니면 못 읽습니다.
+ * - 사용자 방·스터디 방: active 멤버 + 지금도 학교 자격이 있을 것(C-05). 학교 연결 방은 그 학교 active 인증, 학교 무관 방은 아무 학교
+ *   active 인증 하나(들어올 때의 조건과 같음). 인증이 해제·취소되면 멤버십이 남아도 다음 요청부터 404이고, 다시 인증하면 돌아옵니다.
+ *   보관·제한 상태여도 멤버는 읽기만. 운영자도 멤버가 아니면 못 읽습니다.
  */
 export function canReadSpace(viewer: CommunityViewer | null | undefined, space: SpaceFacts, membership: MembershipFacts | null | undefined): boolean {
   if (!isActiveViewer(viewer)) return false
   if (isOfficialKind(space.kind)) return viewer.operator || hasSchoolAffiliation(viewer, space.schoolId)
-  return activeMember(membership)
+  return activeMember(membership) && meetsRoomAffiliation(viewer, space)
 }
 
 /**
- * 멤버가 아닌 사람에게 방 소개(이름·소개·멤버 수·가입 방식)만 보여 줄 수 있는지(§8.1 "listed 방도 이름·소개·멤버 수만 로그인 사용자에게").
- * 링크를 아는 사람도 볼 수 있게 listed·unlisted 모두 해당합니다(unlisted = 목록에 없고 링크로만). 초대 전용 방·보관·제한된 방·학교 자격이
- * 없는 사람·내보내진 사람은 소개도 404입니다. 승인 대기 중이면 소개를 봅니다.
+ * 멤버가 아닌 사람에게 방 소개만 보여 줄 수 있는지(§8.1 "listed 방도 이름·소개·멤버 수만 로그인 사용자에게").
+ * 링크를 아는 사람도 볼 수 있게 listed·unlisted 모두 해당합니다(unlisted = 목록에 없고 링크로만). 소개에 싣는 항목은
+ * `previewIncludesDescription`·서버 DTO가 정합니다(unlisted 방은 소개 글 없이 이름·멤버 수·가입 방식만, ADR 0021).
+ * 초대 전용 방(승인 대기 중이어도)·보관·제한된 방·학교 자격이 없는 사람·내보내진 사람은 소개도 404입니다. 승인 대기 중이면 소개를 봅니다.
  */
 export function canPreviewSpace(viewer: CommunityViewer | null | undefined, space: SpaceFacts, membership: MembershipFacts | null | undefined): boolean {
   if (!isActiveViewer(viewer)) return false
   if (space.kind !== 'user_room' || space.status !== 'active') return false
+  if (space.joinPolicy === 'invite') return false
   if (!meetsRoomAffiliation(viewer, space)) return false
-  if (membership?.status === 'pending') return true
-  if (membership?.status === 'removed') return false
-  return space.joinPolicy !== 'invite'
+  return membership?.status !== 'removed'
+}
+
+/** 소개(preview)에 방 소개 글을 싣는지: 목록에 노출된(listed) 방만. unlisted 방의 소개 글은 멤버에게만 보입니다(링크가 전달돼도 이름·멤버 수뿐). */
+export function previewIncludesDescription(space: Pick<SpaceFacts, 'discovery'>): boolean {
+  return space.discovery === 'listed'
 }
 
 export type JoinDecision =

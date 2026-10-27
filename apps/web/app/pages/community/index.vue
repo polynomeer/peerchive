@@ -19,8 +19,8 @@ import type {
 } from '~~/shared/types/api'
 
 definePageMeta({ middleware: 'auth' })
-useHead({ title: '커뮤니티 — Peerchive', meta: [{ name: 'robots', content: 'noindex, nofollow' }] })
-if (import.meta.server) useResponseHeader('x-robots-tag').value = 'noindex, nofollow'
+// 제목·robots·referrer는 공통(C-05): 공간 이름으로 제목·OG를 만들지 않습니다. 헤더는 서버 미들웨어가 붙입니다.
+useCommunityPage()
 
 const { me, refresh: refreshMe } = useAuth()
 const fetcher = useRequestFetch()

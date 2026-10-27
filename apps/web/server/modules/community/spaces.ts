@@ -38,6 +38,7 @@ import {
   defaultJoinPolicy,
   effectiveWriteRole,
   isOfficialKind,
+  previewIncludesDescription,
 } from '@peerchive/domain'
 import {
   and,
@@ -71,6 +72,7 @@ import {
   loadSpacesWhere,
   loadViewer,
   membershipFacts,
+  spaceFacts,
 } from './access'
 import type {
   BoardDto,
@@ -170,12 +172,19 @@ function joinActionFor(ctx: SpaceContext): SpaceDetailDto['joinAction'] {
   return decision.reason === 'already_pending' ? 'pending' : 'none'
 }
 
+/**
+ * 상세 DTO. preview(멤버가 아닌 사람의 소개, C-05·ADR 0021)는 이름·멤버 수·가입 방식·이름 표시 방식만 싣습니다:
+ * 게시판·권한·멤버 목록 없음, 정원 검토 요청값 없음, unlisted 방은 소개 글도 없음(`previewIncludesDescription`).
+ * 초대 전용 방은 preview 자체가 없습니다(canPreviewSpace → 404).
+ */
 async function detailFor(db: DbExecutor, ctx: SpaceContext, access: 'member' | 'preview', now: Date): Promise<SpaceDetailDto> {
   const official = isOfficialKind(ctx.space.row.kind)
   const boardRows = access === 'member' ? await loadBoards(db, ctx.space.row.id) : []
   const { mode, pending } = nameModeNow(ctx.space.row.currentNameMode, official ? null : await loadScheduledChange(db, ctx.space.row.id), now)
+  const summary = toSpaceSummary(ctx.space, ctx.facts.activeMembers, ctx.membership)
   return {
-    ...toSpaceSummary(ctx.space, ctx.facts.activeMembers, ctx.membership),
+    ...summary,
+    description: access === 'member' || previewIncludesDescription(ctx.facts) ? summary.description : null,
     nameMode: mode,
     pendingNameModeChange: pending,
     access,
@@ -183,7 +192,7 @@ async function detailFor(db: DbExecutor, ctx: SpaceContext, access: 'member' | '
     permissions: access === 'member' ? permissionsFor(ctx) : NO_PERMISSIONS,
     joinAction: joinActionFor(ctx),
     capacity: official ? null : ctx.space.row.capacity,
-    capacityRequested: official ? null : ctx.space.row.capacityRequested,
+    capacityRequested: official || access === 'preview' ? null : ctx.space.row.capacityRequested,
     createdAt: ctx.space.row.createdAt.toISOString(),
   }
 }
@@ -222,8 +231,14 @@ export async function listMySpaces(db: DbExecutor, actor: Actor): Promise<MySpac
   const pending: SpaceSummaryDto[] = []
   for (const s of sortSpaces(spaces)) {
     const m = mine.get(s.row.id) ?? null
-    const dto = toSpaceSummary(s, counts.get(s.row.id) ?? 0, m)
-    if (!isOfficialKind(s.row.kind) && m?.status === 'pending') pending.push(dto)
+    const count = counts.get(s.row.id) ?? 0
+    // 상세와 같은 정책 함수로 거릅니다(C-05): 학교 인증이 해제된 학교 연결 방, 초대 전용으로 바뀐 방의 승인 대기는 목록에도 없습니다.
+    const facts = spaceFacts(s, count)
+    const isPending = !isOfficialKind(s.row.kind) && m?.status === 'pending'
+    const mf = m ? { role: m.role, status: m.status } : null
+    if (isPending ? !canPreviewSpace(viewer, facts, mf) : !canReadSpace(viewer, facts, mf)) continue
+    const dto = toSpaceSummary(s, count, m)
+    if (isPending) pending.push({ ...dto, description: previewIncludesDescription(facts) ? dto.description : null })
     else items.push(dto)
   }
   return { items, pending, canCreateRoom: canCreateRoom(viewer, null), schools: viewer.schools, unreadNotices: await unreadNoticeCount(db, actor.userId) }

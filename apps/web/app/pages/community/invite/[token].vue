@@ -6,11 +6,11 @@
 import type { JoinResultDto, SpaceInvitationPreviewDto } from '~~/shared/types/api'
 
 definePageMeta({ middleware: 'auth' })
-useHead({ title: '방 초대 — Peerchive', meta: [{ name: 'robots', content: 'noindex, nofollow' }, { name: 'referrer', content: 'no-referrer' }] })
-if (import.meta.server) useResponseHeader('x-robots-tag').value = 'noindex, nofollow'
+// 제목·robots·referrer는 공통(C-05): 공간 이름으로 제목·OG를 만들지 않습니다. 헤더는 서버 미들웨어가 붙입니다.
+useCommunityPage()
 
 const preview = ref<SpaceInvitationPreviewDto | null>(null)
-const state = ref<'loading' | 'ready' | 'accepting' | 'gone' | 'error'>('loading')
+const state = ref<'loading' | 'ready' | 'accepting' | 'gone' | 'ineligible' | 'error'>('loading')
 const message = ref('')
 let token: string | null = null
 
@@ -25,7 +25,9 @@ onMounted(async () => {
     preview.value = await $fetch<SpaceInvitationPreviewDto>('/api/v1/community/invitations/preview', { method: 'POST', body: { token } })
     state.value = 'ready'
   } catch (e) {
-    state.value = apiError(e).status === 410 ? 'gone' : 'error'
+    const err = apiError(e)
+    // 학교 자격이 없으면 서버가 방 이름·소개 없이 404 not_eligible을 줍니다(C-05).
+    state.value = err.status === 410 ? 'gone' : err.status === 404 && err.code === 'not_eligible' ? 'ineligible' : 'error'
   }
 })
 
@@ -59,6 +61,9 @@ const REASONS: Record<SpaceInvitationPreviewDto['reason'], string> = {
     <p v-if="state === 'loading'" role="status">초대를 확인하는 중입니다.</p>
     <p v-else-if="state === 'gone'" class="notice error" role="alert">
       초대 링크를 사용할 수 없습니다. 만료되었거나, 이미 사용되었거나, 취소된 링크입니다. 초대한 사람에게 새 링크를 요청하세요.
+    </p>
+    <p v-else-if="state === 'ineligible'" class="notice" role="status">
+      {{ REASONS.not_eligible }} <NuxtLink to="/settings/affiliations">학교 인증하러 가기</NuxtLink>
     </p>
     <p v-else-if="state === 'error'" class="notice error" role="alert">초대를 확인하지 못했습니다. 잠시 뒤 다시 시도하세요.</p>
     <template v-else-if="preview">

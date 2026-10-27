@@ -2209,6 +2209,9 @@ export const affiliationCodes = pgTable(
 //
 // 이 테이블들은 web `server/modules/community`만 읽고 씁니다. 공개 조회 경로(`/api/v1/public/**`, 검색 색인 search_documents, 과목 집계,
 // 공개 release)는 이 테이블을 읽지 않습니다(SYSTEM_DESIGN §8.2·§11). 예외는 운영(신고 처리·탈퇴 정리)뿐입니다.
+//
+// C-05(ADR 0021): 경계 검사(apps/web/test/community-visibility)는 머리말에 "커뮤니티"가 들어간 구역의 pgTable을 커뮤니티 테이블로 읽습니다.
+// C-04 이후의 커뮤니티 테이블(글·댓글·스레드 익명 번호·공감·모집 등)도 이 구역에 두세요. 다른 구역에 두면 검사가 실패합니다.
 
 /**
  * 커뮤니티 공간(공식 학교·학과 페이지, 사용자 방, 스터디 방).

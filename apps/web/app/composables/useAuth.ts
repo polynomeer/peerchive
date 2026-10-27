@@ -22,12 +22,19 @@ export function useAuth() {
     return me.value
   }
 
+  /**
+   * 로그아웃. 서버 세션을 지운 뒤 화면에 남은 비공개 데이터(useAsyncData 캐시·useState, 첫 SSR 응답에 담긴 payload)를 버리도록
+   * 앱을 새로 불러옵니다(C-05: 커뮤니티 방 이름·게시판이 로그아웃 뒤 뒤로 가기·같은 키 재사용으로 다시 보이지 않게).
+   */
   async function logout(): Promise<void> {
     try {
       await $fetch('/api/v1/auth/logout', { method: 'POST' })
     } finally {
       me.value = null
-      await navigateTo('/login')
+      clearNuxtData()
+      clearNuxtState((key) => key !== 'me')
+      if (import.meta.client) reloadNuxtApp({ path: '/login', force: true, persistState: false })
+      else await navigateTo('/login')
     }
   }
 

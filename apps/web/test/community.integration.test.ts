@@ -280,7 +280,8 @@ describe.skipIf(!databaseUrl)('community spaces (PostgreSQL)', () => {
       await expectServiceError(createSpaceInvitation(tx, a, invite.slug), 'NOT_FOUND')
       const { token: t1 } = await createSpaceInvitation(tx, owner, invite.slug, at(4))
       expect(await previewSpaceInvitation(tx, c, t1, at(5))).toMatchObject({ acceptable: true, reason: 'ok', space: { slug: invite.slug } })
-      expect(await previewSpaceInvitation(tx, outsider, t1, at(5))).toMatchObject({ acceptable: false, reason: 'not_eligible' })
+      // C-05: 학교 자격이 없으면 토큰이 있어도 방 이름·소개 없이 404 not_eligible
+      await expectServiceError(previewSpaceInvitation(tx, outsider, t1, at(5)), 'NOT_FOUND', 'not_eligible')
       await expectServiceError(acceptSpaceInvitation(tx, outsider, { token: t1 }, at(5)), 'NOT_FOUND') // 다른 학교 인증(토큰은 남음)
       expect(await acceptSpaceInvitation(tx, c, { token: t1 }, at(5))).toMatchObject({ status: 'active', space: { slug: invite.slug } })
       await expectServiceError(acceptSpaceInvitation(tx, a, { token: t1 }, at(6)), 'GONE') // 한 번만
@@ -517,6 +518,7 @@ describe.skipIf(!databaseUrl)('community spaces (PostgreSQL)', () => {
       expect(await restrictSpace(tx, f.op, spaceId, { note: '직접 제한' }, at(6))).toMatchObject({ status: 'restricted' })
       expect(await archiveSpaceByOperator(tx, f.op, spaceId, { note: '정리' }, at(7))).toMatchObject({ status: 'archived' })
       await expectServiceError(archiveSpaceByOperator(tx, f.op, spaceId, { note: '정리' }), 'CONFLICT', 'already_archived')
+
     })
   })
 

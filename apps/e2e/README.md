@@ -71,8 +71,9 @@ docker compose -f ops/docker-compose.yml down
 | `g-retrospective.spec.ts` | G | 사후 작성 과제·마일스톤·로그 배지, 기억·파일 기준 날짜, 공개 화면·JSON까지 `사후 작성` |
 | `h-mobile-keyboard.spec.ts` | H | 파일 먼저 → 나중에 설명, 오프라인 저장 실패에도 입력 보존·"오류 — 재시도"·재시도 성공, 새로고침 뒤 입력 복원, 할 일·마일스톤 키보드 순서 변경(포커스 유지) |
 | `i-public-profile.spec.ts` | I | 익명 검토자가 `/u/<handle>`에서 문제·내 역할·근거 칩 → 공개 기록, HTML·JSON·OG·인쇄·README 카드에 이메일·체크인 메모·비공개 로그·내부 id 없음 |
-| `community.spec.ts` | C-02 | 학교 인증(준비는 API) → 방 만들기 화면(예약어 이름 거부·학교 연결·표시명·초대 전용·링크로만) → 비멤버는 "찾을 수 없습니다"(API 404) → 초대 링크(화면) → 다른 인증 사용자가 수락 → 같은 링크 재사용 410 → 방장 나가기 → 남은 멤버가 방장(승계). API·페이지 `X-Robots-Tag: noindex, nofollow`, 비로그인 401, 공개 검색에 방 이름 없음 |
+| `community.spec.ts` | C-02 | 학교 인증(준비는 API) → 방 만들기 화면(예약어 이름 거부·학교 연결·표시명·초대 전용·링크로만) → 비멤버는 "찾을 수 없습니다"(API 404) → 초대 링크(화면) → 다른 인증 사용자가 수락 → 같은 링크 재사용 410 → 방장 나가기 → 남은 멤버가 방장(승계). API·페이지 `X-Robots-Tag: noindex, nofollow, noarchive`, 비로그인 API 401, 공개 검색에 방 이름 없음 |
 | `community.spec.ts` | C-03 | 방장이 화면에서 "익명으로 바꾸기" 예약(확인 대화상자) → 배너 "7일 뒤 … 이미 쓴 글은 바뀌지 않습니다." → 두 번째 예약 409·멤버 예약 403 → 멤버 화면 배너·`/community`의 읽지 않은 알림 수·`/community/notices`의 예약 알림 → 적용 시뮬레이션 → 이름 표시 방식 "익명"·배너 없음·이력 "적용됨"·적용 알림·모두 읽음 → 방장 선택지가 새 방식 기준 |
+| `community-visibility.spec.ts` | C-05 | 비로그인 방문자: 실제 방·없는 방·초대·첫 화면 모두 같은 404 고정 HTML(방 이름·`__NUXT`·OG 없음, robots meta·noindex/no-store/no-referrer 헤더, 쿠키 없음), API 401 → 링크 미리보기 봇 UA 4종도 같은 404 → 다른 학교 인증 사용자는 "공간을 찾을 수 없습니다"(HTTP 404, 소스에 방 이름 없음) → 방장 화면도 제목 `Peerchive 커뮤니티`·og/description meta 없음 → 로그아웃 뒤 화면·`__NUXT_DATA__`·뒤로 가기·같은 주소에 방 이름 없음 → `/robots.txt`는 `Disallow: /` |
 | `moderation.spec.ts` | T-15 | 신고(화면) → 운영자 "항목 하나 가리기" → 공개 페이지에 "운영 조치로 가려진 항목" |
 | `a11y-and-layout.spec.ts` | 접근성 | 주요 화면 15곳(학교 인증·커뮤니티·커뮤니티 알림 화면 포함): 보이는 h1 하나, 이름 있는 입력 칸, Tab 포커스 표시(첫 Tab은 건너뛰기 링크), 가로 스크롤 없음 |
 

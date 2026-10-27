@@ -12,7 +12,7 @@ import { SPACE_INVITATION_TTL_MS, canJoinSpace, isOfficialKind } from '@peerchiv
 import { and, desc, eq, spaceInvitations, type DbExecutor } from '@peerchive/db'
 import { emitAnalytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
-import { type Actor, conflict, gone, notFound } from '../errors'
+import { type Actor, ServiceError, conflict, gone, notFound } from '../errors'
 import { generateToken, looksLikeToken, sha256Hex } from '../security/tokens'
 import { isUuid } from '../projects/access'
 import { parseInput } from '../validation'
@@ -99,13 +99,16 @@ async function loadUsableInvitation(db: DbExecutor, token: unknown, now: Date, l
   return row
 }
 
-/** POST /community/invitations/preview {token} — 초대받은 사람의 방 소개(이름·소개·이름 표시 방식)와 수락 가능 여부. 410. */
+/** POST /community/invitations/preview {token} — 초대받은 사람의 방 소개(이름·소개·이름 표시 방식)와 수락 가능 여부. 410, 404 `not_eligible`(학교 자격 없음). */
 export async function previewSpaceInvitation(db: DbExecutor, actor: Actor, token: unknown, now = new Date()): Promise<SpaceInvitationPreviewDto> {
   const invitation = await loadUsableInvitation(db, token, now, false)
   const space = await loadSpace(db, invitation.spaceId)
   if (space.row.status !== 'active') throw gone()
   const [viewer, membership, count] = await Promise.all([loadViewer(db, actor), findMembership(db, space.row.id, actor.userId), activeMemberCount(db, space.row.id)])
   const decision = canJoinSpace(viewer, spaceFacts(space, count), membershipFacts(membership), 'invite')
+  // 학교 자격이 없는 사람(다른 학교·미인증·해제)에게는 토큰이 있어도 방 이름·소개를 보여 주지 않습니다(C-05, ADR 0021).
+  // 404 `not_eligible`: 초대가 쓸 수 있는 상태라는 것만 알려 화면이 학교 인증을 안내합니다.
+  if (!decision.ok && decision.reason === 'not_found') throw new ServiceError('NOT_FOUND', 'not_eligible')
   const summary = toSpaceSummary(space, count, null)
   return {
     space: { slug: summary.slug, kind: summary.kind, name: summary.name, description: summary.description, nameMode: summary.nameMode, school: summary.school },

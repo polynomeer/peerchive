@@ -24,5 +24,6 @@ Peerchive 신규 앱(`apps/`, `packages/`)의 기술 결정을 짧게 남깁니�
 | [0016](0016-deletion-ledger-maintenance-analytics.md) | 탈퇴 정리·삭제 장부·점검 모드·pilot 분석: 유예 뒤 한 트랜잭션 정리(팀 기록은 가명 처리) + HMAC 장부 재적용 + 헬스 체크만 여는 점검 모드 + 허용 목록 이벤트 | 채택 |
 | [0017](0017-smtp-mail-and-s3-storage.md) | 배포 준비: 공급자 무관 SMTP 메일 transport(TLS 필수·실패해도 같은 202) + S3 호환 저장소 driver(비공개 버킷·서버 경유 스트림·공급자 쪽 파일 백업) | 채택 |
 | [0018](0018-school-affiliation.md) | 학교 메일 인증·학과 자기 신고: institution_affiliations(HMAC만, 주소 미저장) + 운영자 등록 도메인 + 열거 안전 코드 흐름 + 과목 허브 작성 자격 | 채택 |
-| [0019](0019-community-spaces.md) | 커뮤니티 공간·게시판·멤버십·가입 방식: 별도 community 모듈 + 학교 인증에서 파생하는 공식 페이지 자격 + 정책 함수 한 곳 + 운영자만 여는 공식 페이지 | 채택(이름 표시 방식 변경은 0020으로 보완) |
+| [0019](0019-community-spaces.md) | 커뮤니티 공간·게시판·멤버십·가입 방식: 별도 community 모듈 + 학교 인증에서 파생하는 공식 페이지 자격 + 정책 함수 한 곳 + 운영자만 여는 공식 페이지 | 채택(열람 범위·소개 내용은 0021로 보완) |
 | [0020](0020-name-modes.md) | 이름 표시 방식·변경 이력: 작성 시점 고정 계약 + 방장만 하는 7일 예약 + worker 적용 + 멤버 전원 화면 알림 + 실명 방 가입 방식 기본값 적용 | 채택 |
+| [0021](0021-community-visibility.md) | 커뮤니티 열람 범위·검색엔진 비노출: 정책 함수 한 곳 + 비로그인 화면은 SSR 전 404 고정 HTML(API는 401) + 항상 noindex·noarchive + robots.txt + 고정 제목·OG 없음 + 스키마 구역 기반 경계 검사 | 채택 |

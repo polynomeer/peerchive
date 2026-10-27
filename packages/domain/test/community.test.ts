@@ -25,6 +25,7 @@ import {
   effectiveWriteRole,
   isSpaceSlug,
   officialRequestThresholdReached,
+  previewIncludesDescription,
 } from '../src/index'
 
 const SCHOOL = 'school-a'
@@ -133,11 +134,32 @@ describe('canReadSpace / canPreviewSpace', () => {
     expect(canReadSpace(viewer({ status: 'deleted' }), room(), m('owner'))).toBe(false)
   })
 
+  it('C-05: members lose read the moment the room\'s school qualification is gone (revoked affiliation), and regain it on re-verification', () => {
+    // 학교 연결 방: 그 학교 인증이 해제되면 멤버여도 404
+    expect(canReadSpace(viewer(), room({ schoolId: SCHOOL }), m('owner'))).toBe(true)
+    expect(canReadSpace(otherSchool, room({ schoolId: SCHOOL }), m('owner'))).toBe(false)
+    expect(canReadSpace(unaffiliated, room({ schoolId: SCHOOL }), m('member'))).toBe(false)
+    // 학교 무관 방: 아무 학교 인증도 없으면 404(들어올 때와 같은 조건)
+    expect(canReadSpace(otherSchool, room(), m('member'))).toBe(true)
+    expect(canReadSpace(unaffiliated, room(), m('member'))).toBe(false)
+    expect(canReadSpace(unaffiliated, room({ kind: 'study_room', joinPolicy: 'invite' }), m('owner'))).toBe(false)
+    // 읽기에 묶인 권한도 함께 사라짐
+    expect(canModerate(unaffiliated, room(), m('owner'))).toBe(false)
+    expect(canWriteBoard(unaffiliated, room(), m('owner'), board)).toBe(false)
+  })
+
+  it('C-05: previews carry the description only for listed rooms', () => {
+    expect(previewIncludesDescription(room())).toBe(true)
+    expect(previewIncludesDescription(room({ discovery: 'unlisted' }))).toBe(false)
+  })
+
   it('previews only joinable active rooms for eligible viewers (listed or link-only), never invite-only/archived/other school', () => {
     expect(canPreviewSpace(viewer(), room(), null)).toBe(true)
     expect(canPreviewSpace(viewer(), room({ discovery: 'unlisted' }), null)).toBe(true)
     expect(canPreviewSpace(viewer(), room({ joinPolicy: 'invite' }), null)).toBe(false)
-    expect(canPreviewSpace(viewer(), room({ joinPolicy: 'invite' }), m('member', 'pending'))).toBe(true)
+    // C-05: 초대 전용 방은 승인 대기 중이어도 소개가 없습니다(초대 전용으로 바뀐 방).
+    expect(canPreviewSpace(viewer(), room({ joinPolicy: 'invite' }), m('member', 'pending'))).toBe(false)
+    expect(canPreviewSpace(viewer(), room({ joinPolicy: 'approval' }), m('member', 'pending'))).toBe(true)
     expect(canPreviewSpace(viewer(), room({ status: 'archived' }), null)).toBe(false)
     expect(canPreviewSpace(viewer(), room({ status: 'restricted' }), null)).toBe(false)
     expect(canPreviewSpace(unaffiliated, room(), null)).toBe(false)

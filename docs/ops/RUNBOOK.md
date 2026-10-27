@@ -69,6 +69,32 @@
 | 삭제 절차 | 탈퇴 요청 → 유예 7일 → 정리 + 장부(T-16), 이 문서 §4 | 법무·학교 규정 검토(완료로 치지 않음) |
 | 신고 담당자·대응 시간 | 자리(apps/README.md "운영", §7) | 사람·연락 채널 지정 |
 
+### GC: 커뮤니티 개방
+
+커뮤니티는 이 표가 모두 채워지기 전에는 실제 사용자에게 열지 않습니다(DELIVERY_PLAN §7, apps/README 결정 기록). C-05 행은 구현됨, C-06 행은 아직입니다.
+
+| 필수 확인 | 구현된 것 | 남은 것 |
+|---|---|---|
+| G3 통과 | — | G3 게이트 |
+| C-05 열람 범위(비로그인·다른 학교·미인증·비멤버·내보냄·나감·인증 해제 404) | 정책 함수 `canReadSpace`·`canPreviewSpace` 한 곳, 인증 해제 다음 요청부터 404(학교 무관 방도 인증 하나 필요), 행위자 × 경로 매트릭스 통합 테스트·E2E(`community-visibility`)([ADR 0021](../adr/0021-community-visibility.md)) | 개방 직전 운영 DB에서 §4.2 "확인"을 다른 학교·미인증 계정으로 다시 실행 |
+| C-05 소개(preview) 최소화 | listed 방만 소개 글, unlisted 방은 이름·멤버 수·가입 방식만, 초대 전용 방은 소개 없음(승인 대기 중이어도), 초대 링크도 학교 자격이 없으면 이름 없이 404 | — |
+| C-05 검색엔진 비노출 | `/robots.txt`(색인 꺼짐이면 전부 막음, 켜도 `/community`·`/api/v1/community`·개인 화면 차단), 모든 커뮤니티 응답 `X-Robots-Tag: noindex, nofollow, noarchive`·`no-store`·`no-referrer`, robots meta, 사이트맵 없음(생기면 커뮤니티 제외를 테스트가 강제) | 배포 도메인에서 `curl -s https://<도메인>/robots.txt` 확인, 검색엔진 콘솔에서 `/community` 색인 0건 확인(개방 뒤 주 1회) |
+| C-05 링크 미리보기 | 비로그인·봇(Slackbot·Discordbot·facebookexternalhit·Twitterbot 등)은 어떤 방 주소에도 같은 404 고정 HTML(이름·payload·OG 없음), 멤버 화면도 제목 고정 `Peerchive 커뮤니티`·og·description 없음 | 배포 도메인에서 아래 curl로 확인 |
+| C-05 데이터 경계(공개 검색·임베딩·집계에 커뮤니티 본문 0건) | schema.ts 커뮤니티 구역의 테이블(C-04 이후 자동 포함)을 커뮤니티 모듈과 문서화된 예외만 읽는 소스 검사, 센티넬 공간이 커뮤니티 밖 모든 테이블·공개 조회에 0건, 감사·분석은 id·코드만, 로그아웃 시 화면 데이터 버림 | C-04 글·댓글 추가 때 같은 테스트가 통과하는지(테이블을 커뮤니티 구역에 둠) |
+| C-06 자동 숨김·작성자 비노출·이용 제한 | — | C-06 |
+| 신고 검토 담당·주간 시간·대응 시간 | 자리(§7) | 사람 지정 |
+| pilot 학교 모더레이터 2명 이상 | 지정 API(§4.2) | 사람 지정 |
+| 게시 중단 요청 절차 법률 검토·이용 규칙 공지 | — | 검토·공지 |
+
+링크 미리보기 확인(배포 도메인, 방 주소는 시험 방):
+
+```sh
+for ua in 'Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)' 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)' 'facebookexternalhit/1.1' 'Twitterbot/1.0'; do
+  curl -s -o /tmp/unfurl.html -w '%{http_code} ' -A "$ua" https://<도메인>/community/s/<slug>; md5 -q /tmp/unfurl.html 2>/dev/null || md5sum /tmp/unfurl.html
+done   # 모두 404, 같은 해시, 본문에 방 이름 없음
+curl -sI https://<도메인>/community/s/<slug> | grep -i 'x-robots-tag'   # noindex, nofollow, noarchive
+```
+
 ## 3. 사고 대응
 
 공통: 처음 5분 안에 "막기"부터 합니다. 원인 조사는 막은 뒤에 합니다. 모든 조치는 감사 기록(`/operator/audit`)에 남고, 사고 기록(시각·범위·조치·후속)은 `<사고 기록 위치>`에 둡니다.

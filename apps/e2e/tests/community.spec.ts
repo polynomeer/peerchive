@@ -1,7 +1,7 @@
 /**
  * C-02 커뮤니티 공간(DELIVERY_PLAN §4.1, ADR 0019). 화면으로:
  * 학교 인증한 사람이 방 만들기(이름 표시 방식 선택, 초대 전용) → 초대 링크 → 같은 학교 인증한 다른 사람이 수락 → 방장이 나가면
- * 남은 멤버가 방장이 됨(승계). 커뮤니티 API·페이지는 noindex이고 비로그인은 401, 공개 검색에는 방 이름이 나오지 않음.
+ * 남은 멤버가 방장이 됨(승계). 커뮤니티 API·페이지는 noindex이고 비로그인 API는 401(화면은 404, community-visibility.spec.ts), 공개 검색에는 방 이름이 나오지 않음.
  * C-03 이름 표시 방식(ADR 0020): 방장이 화면에서 변경 예약 → 멤버에게 배너·알림 → (적용 시뮬레이션: 예약 시각을 7일 앞당기고 worker 적용 명령)
  * → 새 방식·적용 알림·변경 이력.
  */
@@ -77,9 +77,9 @@ test('C-02: 방 만들기 → 초대 → 수락 → 방장 나가기(승계)', a
 
   // 비공개 경계: noindex, 비로그인 401, 공개 검색에 방 이름 없음
   const api = await guest.api.raw('GET', `/api/v1/community/spaces/${slug}`)
-  expect(api.headers()['x-robots-tag']).toBe('noindex, nofollow')
+  expect(api.headers()['x-robots-tag']).toBe('noindex, nofollow, noarchive')
   const html = await guest.page.request.get(`/community/s/${slug}`)
-  expect(html.headers()['x-robots-tag']).toBe('noindex, nofollow')
+  expect(html.headers()['x-robots-tag']).toBe('noindex, nofollow, noarchive')
   const visitor = await anon()
   const denied = await visitor.api.raw('GET', `/api/v1/community/spaces/${slug}`)
   expect(denied.status()).toBe(401)

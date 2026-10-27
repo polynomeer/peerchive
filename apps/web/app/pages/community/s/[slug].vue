@@ -20,8 +20,8 @@ import type {
 } from '~~/shared/types/api'
 
 definePageMeta({ middleware: 'auth' })
-useHead({ title: '커뮤니티 공간 — Peerchive', meta: [{ name: 'robots', content: 'noindex, nofollow' }, { name: 'referrer', content: 'no-referrer' }] })
-if (import.meta.server) useResponseHeader('x-robots-tag').value = 'noindex, nofollow'
+// 제목·robots·referrer는 공통(C-05): 공간 이름으로 제목·OG를 만들지 않습니다. 헤더는 서버 미들웨어가 붙입니다.
+useCommunityPage()
 
 const route = useRoute()
 const slug = computed(() => String(route.params.slug ?? ''))
@@ -33,7 +33,6 @@ if (import.meta.server && missing.value) {
   const event = useRequestEvent()
   if (event) setResponseStatus(event, 404)
 }
-useHead({ title: () => (space.value ? `${space.value.name} — Peerchive` : '찾을 수 없음 — Peerchive') })
 
 const notice = ref<{ kind: 'ok' | 'error'; text: string } | null>(null)
 const busy = ref<string | null>(null)
