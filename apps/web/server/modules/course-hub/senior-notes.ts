@@ -30,8 +30,10 @@ import {
   type SeniorNoteAnswers,
 } from '@peerchive/domain'
 import {
+  PERSONA_ACTIVITY_PROJECT_TOPIC,
   SENIOR_NOTE_PUBLISHED_TOPIC,
   SENIOR_NOTE_WITHDRAWN_TOPIC,
+  type PersonaActivityProjectOutboxPayload,
   and,
   courses,
   desc,
@@ -412,6 +414,15 @@ export async function publishSeniorNote(
       .where(eq(seniorNotes.id, row.id))
       .returning()
     await emit(tx, SENIOR_NOTE_PUBLISHED_TOPIC, updated!, now)
+    // S-05(ADR 0035): 이름·표시명 노트만 작성자의 같은 종류 페르소나 활동으로 투영 요청. 익명 노트는 이벤트가 없습니다(§6.7.1 "기존 규칙과의 관계").
+    // 아카이브로 옮겨 온 초안(C-09)도 여기서 게시되므로 복사본 노트만 투영됩니다(원 글과의 연결은 싣지 않음). 거두기는 DB 트리거.
+    if (updated!.displayMode !== 'anonymous') {
+      await tx.insert(outboxEvents).values({
+        topic: PERSONA_ACTIVITY_PROJECT_TOPIC,
+        payload: { sourceType: 'senior_note', sourceId: updated!.id } satisfies PersonaActivityProjectOutboxPayload,
+        createdAt: now,
+      })
+    }
     await recordAudit(tx, {
       actorId: actor.userId,
       action: 'senior_note.publish',

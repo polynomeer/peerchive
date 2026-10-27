@@ -56,7 +56,7 @@ export type PersonaActivitySourceFacts =
   | { type: 'senior_note'; displayMode: 'name' | 'display' | 'anonymous'; published: boolean }
   | { type: 'publication_release'; snapshot: { kind?: unknown; studyNameMode?: unknown }; published: boolean; consented: boolean }
   | { type: 'study_release'; snapshot: { kind?: unknown; studyNameMode?: unknown }; published: boolean; consented: boolean }
-  | { type: 'profile_post'; ownPersonaId: string }
+  | { type: 'profile_post'; ownPersonaId: string; published: boolean }
 
 export type ProjectionRefusal =
   | 'anonymous'
@@ -78,7 +78,7 @@ const refuse = (reason: ProjectionRefusal): ProjectionDecision => ({ project: fa
  * - senior_note: 익명 거부, name → 실명 페르소나만, display → 표시명 페르소나만, 게시 중.
  * - publication_release·study_release: 실명 페르소나만(스냅샷에 계정 이름·팀 정보, ADR 0028), 본인 동의, 게시 중. 스터디 release는
  *   익명 스터디 방이면 `anonymous`(ADR 0026), 공개 사례 원천에 스터디 스냅샷을 넣거나 그 반대면 `source_kind`.
- * - profile_post: 자기 페르소나의 글만.
+ * - profile_post: 자기 페르소나의 게시 중인 글만(S-05).
  */
 export function decidePersonaActivityProjection(source: PersonaActivitySourceFacts, persona: ProjectionPersona): ProjectionDecision {
   const ok = (): ProjectionDecision => ({ project: true, itemKind: personaActivityItemKind(source.type) })
@@ -110,6 +110,7 @@ export function decidePersonaActivityProjection(source: PersonaActivitySourceFac
       return ok()
     }
     case 'profile_post':
-      return source.ownPersonaId === persona.id ? ok() : refuse('persona_mismatch')
+      if (source.ownPersonaId !== persona.id) return refuse('persona_mismatch')
+      return source.published ? ok() : refuse('not_published')
   }
 }

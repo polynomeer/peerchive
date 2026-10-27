@@ -50,6 +50,7 @@ import {
   outboxEvents,
   planForks,
   personaActivities,
+  profilePosts,
   personas,
   follows,
   blocks,
@@ -642,9 +643,14 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         .returning()
       await tx.insert(communityComments).values({ postId: post!.id, authorId: U.id, nameMode: 'real', personaId: real!.id, body: '실명 댓글' })
       await tx.insert(personaActivities).values({ personaId: real!.id, sourceType: 'community_post', sourceId: post!.id, itemKind: 'posts' })
+      // S-05(ADR 0035): 프로필 글(게시 중·지운 글)과 그 활동도 지웁니다.
+      const [profilePost] = await tx.insert(profilePosts).values({ personaId: real!.id, userId: U.id, body: '프로필 글' }).returning()
+      await tx.insert(profilePosts).values({ personaId: real!.id, userId: U.id, body: '', status: 'deleted', deletedAt: NOW })
+      await tx.insert(personaActivities).values({ personaId: real!.id, sourceType: 'profile_post', sourceId: profilePost!.id, itemKind: 'posts' })
 
       const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
-      expect(counts).toMatchObject({ personas: 1, persona_activities: 1, community_persona_refs: 2, community_posts: 1, community_comments: 1 })
+      expect(counts).toMatchObject({ personas: 1, persona_activities: 2, profile_posts: 2, community_persona_refs: 2, community_posts: 1, community_comments: 1 })
+      expect(await count(tx, profilePosts, eq(profilePosts.userId, U.id))).toBe(0)
       expect(await count(tx, personas, eq(personas.userId, U.id))).toBe(0)
       expect(await count(tx, personaActivities, eq(personaActivities.sourceId, post!.id))).toBe(0)
       expect((await tx.select().from(communityPosts).where(eq(communityPosts.id, post!.id)))[0]).toMatchObject({ personaId: null, status: 'deleted_by_author', nameMode: 'real' })

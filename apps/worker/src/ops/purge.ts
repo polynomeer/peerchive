@@ -85,6 +85,7 @@ import {
   outboxEvents,
   personaActivities,
   personas,
+  profilePosts,
   planForks,
   portfolioEditions,
   portfolioItems,
@@ -255,6 +256,8 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
       // S-02(ADR 0029): 페르소나 활동은 지우고, 글·댓글에 고정한 작성 시점 페르소나는 비웁니다(고정 열 트리거가 null로 비우는 것만 허용).
       // 글·댓글 행 자체는 위 커뮤니티 정리 규칙대로 남습니다(표시명·실명 글은 읽을 때 "탈퇴한 사용자").
       c.add('persona_activities', (await tx.delete(personaActivities).where(inArray(personaActivities.personaId, personaIds)).returning({ id: personaActivities.id })).length)
+      // S-05(ADR 0035): 프로필 글(그 사람만의 글, 지운 글 포함). 활동을 먼저 지웠으므로 거두기 트리거가 할 일은 없습니다.
+      c.add('profile_posts', (await tx.delete(profilePosts).where(eq(profilePosts.userId, userId)).returning({ id: profilePosts.id })).length)
       // S-03(ADR 0031): 항목별 공개 범위와 과제 수행 목록 행(그 사람의 선택일 뿐이라 남기지 않음). 과제·멤버십은 아래 규칙대로.
       c.add('visibility_settings', (await tx.delete(visibilitySettings).where(inArray(visibilitySettings.personaId, personaIds)).returning({ id: visibilitySettings.personaId })).length)
       c.add('project_listings', (await tx.delete(projectListings).where(inArray(projectListings.personaId, personaIds)).returning({ id: projectListings.personaId })).length)

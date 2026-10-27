@@ -66,8 +66,10 @@ describe('decidePersonaActivityProjection (S-02: 0~1단계 투영 경로 없음)
   })
 
   it('프로필 글은 자기 페르소나에만', () => {
-    expect(decidePersonaActivityProjection({ type: 'profile_post', ownPersonaId: DISPLAY.id }, DISPLAY)).toEqual({ project: true, itemKind: 'posts' })
-    expect(decidePersonaActivityProjection({ type: 'profile_post', ownPersonaId: DISPLAY.id }, REAL)).toEqual({ project: false, reason: 'persona_mismatch' })
+    expect(decidePersonaActivityProjection({ type: 'profile_post', ownPersonaId: DISPLAY.id, published: true }, DISPLAY)).toEqual({ project: true, itemKind: 'posts' })
+    expect(decidePersonaActivityProjection({ type: 'profile_post', ownPersonaId: DISPLAY.id, published: true }, REAL)).toEqual({ project: false, reason: 'persona_mismatch' })
+    // S-05: 지운·숨긴 프로필 글은 투영하지 않습니다.
+    expect(decidePersonaActivityProjection({ type: 'profile_post', ownPersonaId: DISPLAY.id, published: false }, DISPLAY)).toEqual({ project: false, reason: 'not_published' })
   })
 
   it('모든 조합에서 익명 원천은 어떤 페르소나에도 투영되지 않는다(전수)', () => {

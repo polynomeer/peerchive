@@ -109,6 +109,8 @@ export const blockScope = pgEnum('block_scope', ['origin_persona', 'all_personas
 export const socialLinkProvider = pgEnum('social_link_provider', ['github', 'blog', 'linkedin', 'instagram', 'youtube', 'other'])
 /** 되돌림 링크 확인 상태(S-06, @peerchive/domain SOCIAL_LINK_VERIFICATIONS). verified는 계정에 프로필 링크가 있음을 확인했다는 뜻일 뿐입니다. */
 export const socialLinkVerification = pgEnum('social_link_verification', ['unverified', 'verified', 'lost'])
+/** 프로필 글 상태(S-05, @peerchive/domain PROFILE_POST_STATUSES): 게시 중 / 작성자가 지움(soft) / 운영 조치로 숨김(S-07 신고 처리). */
+export const profilePostStatus = pgEnum('profile_post_status', ['published', 'deleted', 'hidden'])
 /** 마지막 확인 결과(S-06, @peerchive/domain SOCIAL_LINK_CHECK_RESULTS, 본인 화면에만). */
 export const socialLinkCheckResult = pgEnum('social_link_check_result', ['found', 'missing', 'fetch_failed', 'blocked'])
 export const contactPolicy = pgEnum('contact_policy', ['closed', 'on_request', 'open'])
@@ -565,6 +567,8 @@ export const identityLinks = pgTable(
  *   투영한 뒤에는 withdrawn_at만 바꿀 수 있습니다(같은 트리거).
  * - source_id는 원천마다 다른 테이블을 가리키므로 외래 키가 없습니다. item_kind는 공개 범위 항목(§6.7.1 VisibilitySetting) 대응이며 원천 종류로 정해집니다(check).
  * - created_at은 원천의 시각(글 작성·release 게시 시각)이고, 숨김·삭제·철회·방식 재선택은 withdrawn_at을 채웁니다(행은 남김, S-05).
+ * - S-05(migration 0031, ADR 0035): 거두기는 원본 테이블(커뮤니티 글·공간 노출·선배 노트·공개 후보·동의·프로필 글)의 상태가 바뀌는 같은 트랜잭션의
+ *   트리거가 하고, 공개 상태로 돌아오면 원천을 다시 확인해 되살립니다. 읽기는 `persona_activity_cards`가 원본을 다시 봅니다.
  */
 export const personaActivities = pgTable(
   'persona_activities',
@@ -999,6 +1003,36 @@ export const socialLinks = pgTable(
     foreignKey({ name: 'social_links_persona_fk', columns: [t.personaId, t.userId], foreignColumns: [personas.id, personas.userId] }),
     index('social_links_persona_idx').on(t.personaId, t.createdAt),
     index('social_links_recheck_idx').on(t.lastCheckedAt).where(sql`${t.verification} = 'verified'`),
+  ],
+)
+
+/**
+ * 프로필 글(S-05, SYSTEM_DESIGN §6.7.1 ProfilePost, ADR 0035). 페르소나의 프로필에 직접 쓰는 짧은 글이고 노출은 그 페르소나의 `posts` 공개 범위를 따릅니다.
+ * - user_id는 페르소나 주인의 사본입니다(복합 외래 키 (persona_id, user_id)). 공개 응답에는 싣지 않습니다.
+ * - 지우기는 status = deleted(본문을 비움), 운영 숨김은 hidden(S-07). 상태가 published를 떠나면 같은 트랜잭션의 DB 트리거가 페르소나 활동의
+ *   withdrawn_at을 채웁니다(migration 0031).
+ * - media_version_ids: 설계의 "§10 파일 검사를 거친 버전만" 자리입니다. 이번 범위는 글만이라 빈 배열만 받습니다(check, 후속 ADR 0035).
+ */
+export const profilePosts = pgTable(
+  'profile_posts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    personaId: uuid('persona_id').notNull(),
+    userId: uuid('user_id').notNull(),
+    body: text('body').notNull(),
+    mediaVersionIds: uuid('media_version_ids').array().notNull().default(sql`'{}'::uuid[]`),
+    status: profilePostStatus('status').notNull().default('published'),
+    createdAt: createdAt(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (t) => [
+    foreignKey({ name: 'profile_posts_persona_fk', columns: [t.personaId, t.userId], foreignColumns: [personas.id, personas.userId] }),
+    index('profile_posts_persona_created_idx').on(t.personaId, t.createdAt.desc()).where(sql`${t.status} = 'published'`),
+    index('profile_posts_user_idx').on(t.userId),
+    // 지운 글은 본문을 비웁니다. 게시 중·숨김 글은 1~500자(@peerchive/domain PROFILE_POST_MAX).
+    check('profile_posts_body_check', sql`(${t.status} = 'deleted' and ${t.body} = '') or (${t.status} <> 'deleted' and char_length(${t.body}) between 1 and 500)`),
+    check('profile_posts_deleted_check', sql`(${t.status} = 'deleted') = (${t.deletedAt} is not null)`),
+    check('profile_posts_media_check', sql`cardinality(${t.mediaVersionIds}) = 0`),
   ],
 )
 

@@ -15,6 +15,8 @@
  *   내용이 SSR HTML·payload에 들어가지 않습니다. 과목·학기·제목만, 엠바고 중이면 제목 없이.
  * - 팔로우·차단·뮤트(S-04, ADR 0033): `ProfileSocial`이 화면이 뜬 뒤 브라우저에서만 세션을 읽는 관계 API를 부릅니다. 차단당한 사용자에게는 그 API가
  *   404이고, 이 화면은 "프로필을 찾을 수 없습니다"로 바뀝니다(공개 경로 자체는 쿠키를 읽지 않으므로 로그아웃한 방문자와 같은 SSR 응답).
+ * - 활동 목록·프로필 글(S-05, ADR 0035): `ProfileActivity`가 화면이 뜬 뒤 브라우저에서만 세션을 읽는 활동 API를 부릅니다(보는 사람의 공개 범위·
+ *   팔로우·차단에 따라 다름 → SSR HTML·payload에 없음). 본인이면 짧은 글을 쓰고 지웁니다.
  * - 소셜 링크(S-06, ADR 0034): 그 페르소나의 링크와 `링크 확인됨` 배지(인물 검증이 아니라는 설명과 함께). 프로필 기본 정보라 SSR에 늘 들어갑니다.
  */
 import type { PublicPortfolioProfileDto, PublicProfileWithProjectsDto, PublicProjectListingDto } from '~~/shared/types/api'
@@ -135,6 +137,8 @@ const years = computed(() => {
       </header>
 
       <ClientOnly><ProfileSocial :handle="profile.handle" @hidden="hiddenForViewer = true" /></ClientOnly>
+
+      <ClientOnly><ProfileActivity :handle="profile.handle" @hidden="hiddenForViewer = true" /></ClientOnly>
 
       <PortfolioView :view="profile" id-prefix="pf" />
 

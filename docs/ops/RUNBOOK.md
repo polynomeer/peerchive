@@ -11,7 +11,7 @@
 | `NODE_ENV` | 지정하지 않거나 `production`(빌드 결과·worker는 기본 production). `development`로 두지 않음 | 운영자 확인 |
 | `DATABASE_URL` | 서비스 전용 계정, TLS 접속, 비밀 저장소에서 주입. 0008 migration의 `pg_trgm` 확장 허용 | 운영자 확인 |
 | `pnpm db:migrate` | 배포마다 web·worker보다 먼저 | 절차 |
-| social DB 역할(S-02) | `peerchive_social`(NOLOGIN, 커뮤니티 테이블 권한 없음)이 있고 권한이 적용됨. migration 계정에 CREATEROLE이 없으면 0027 migration은 역할을 만들지 않고 넘어가므로 DB 관리자가 한 번 `CREATE ROLE peerchive_social NOLOGIN;` 실행 뒤 테이블 주인 계정으로 `SELECT peerchive_apply_social_grants();`(true여야 함). 확인 SQL은 아래 §2 GP([ADR 0029](../adr/0029-identity-boundary.md)). 0028 migration이 같은 함수에 과제 수행 목록 읽기 권한(두 표 + 과제·학기·과목·엠바고·학교 인증의 필요한 열만)을 더했으므로 역할을 나중에 만들었다면 함수를 다시 부르면 됩니다([ADR 0031](../adr/0031-visibility-settings.md)). 0029 migration은 팔로우·차단·뮤트 세 표의 SELECT를 더했습니다([ADR 0033](../adr/0033-follows-blocks.md)). 앱이 이 역할로 붙는 것은 아직 아님 | 절차 |
+| social DB 역할(S-02) | `peerchive_social`(NOLOGIN, 커뮤니티 테이블 권한 없음)이 있고 권한이 적용됨. migration 계정에 CREATEROLE이 없으면 0027 migration은 역할을 만들지 않고 넘어가므로 DB 관리자가 한 번 `CREATE ROLE peerchive_social NOLOGIN;` 실행 뒤 테이블 주인 계정으로 `SELECT peerchive_apply_social_grants();`(true여야 함). 확인 SQL은 아래 §2 GP([ADR 0029](../adr/0029-identity-boundary.md)). 0028 migration이 같은 함수에 과제 수행 목록 읽기 권한(두 표 + 과제·학기·과목·엠바고·학교 인증의 필요한 열만)을 더했으므로 역할을 나중에 만들었다면 함수를 다시 부르면 됩니다([ADR 0031](../adr/0031-visibility-settings.md)). 0029 migration은 팔로우·차단·뮤트 세 표의 SELECT를 더했습니다([ADR 0033](../adr/0033-follows-blocks.md)). 0031 migration은 프로필 글 SELECT와 활동 카드 함수 `persona_activity_cards` 실행 권한을 더했습니다. **S-05부터 앱이 활동 목록·피드·추천을 이 역할로 읽습니다**(트랜잭션마다 `SET LOCAL ROLE peerchive_social`, [ADR 0035](../adr/0035-profile-feed.md)): 앱 DB 계정이 역할의 멤버여야 합니다 — `GRANT peerchive_social TO <앱 계정>;`(확인: `select pg_has_role('<앱 계정>', 'peerchive_social', 'MEMBER')`가 true). 빠지면 그 세 API가 500으로 실패합니다(fail closed, production은 `PEERCHIVE_SOCIAL_DB_ROLE=off`를 받지 않음) | 절차 |
 | `NUXT_SITE_ORIGIN` | 실제 https origin(쉼표로 여러 개). 로그인 링크·CSRF 기준. **worker에도 같은 값**(소셜 링크 되돌림 확인이 찾을 `/u/<handle>` 주소의 origin, S-06 — 없으면 worker가 경고를 남기고 확인·재확인을 건너뜀) | 운영자 확인 |
 | 메일 | `PEERCHIVE_MAIL_TRANSPORT=smtp`, `PEERCHIVE_SMTP_URL`(`smtps://…:465` 또는 `smtp://…:587` STARTTLS 필수, 비밀 저장소), `PEERCHIVE_MAIL_FROM`(발송 도메인의 주소). TLS 없는 SMTP·dev-console·설정 누락이면 web이 시작하지 않음. 공급자 쪽: 발송 도메인 SPF·DKIM·DMARC DNS, 발송 한도, 반송 처리(아래 §1.1) | **구현됨 — 공급자 설정 필요** |
 | 파일 저장소 | `PEERCHIVE_STORAGE_DRIVER=s3` + `PEERCHIVE_S3_ENDPOINT`(https)·`_REGION`·`_BUCKET`·`_ACCESS_KEY_ID`·`_SECRET_ACCESS_KEY`(·`_FORCE_PATH_STYLE`·`_PREFIX`), web·worker 같은 값. 설정이 빠졌거나 http endpoint면 web·worker가 시작하지 않음. 공급자 쪽: 비공개 버킷·버전 관리·전용 키(아래 §1.1). 단일 서버 파일럿만 `PEERCHIVE_ALLOW_FS_STORAGE_IN_PRODUCTION=1` + 백업 대상 디스크 | **구현됨 — 공급자 설정 필요** |
@@ -139,7 +139,7 @@ curl -sI https://<도메인>/community/s/<slug> | grep -i 'x-robots-tag'   # noi
 
 ### GP: 공개 프로필·팔로우 개방
 
-공개 프로필·팔로우·피드는 이 표가 채워지기 전에는 열지 않습니다(DELIVERY_PLAN §7 GP). 지금은 S-01~S-04·S-06 행이 구현되었고 S-07 신고 대상은 아직입니다.
+공개 프로필·팔로우·피드는 이 표가 채워지기 전에는 열지 않습니다(DELIVERY_PLAN §7 GP). 지금은 S-01~S-06 행이 구현되었고 S-07 신고 대상은 아직입니다.
 
 | 조건 | 구현·근거 | 개방 직전 확인 |
 |---|---|---|
@@ -148,6 +148,7 @@ curl -sI https://<도메인>/community/s/<slug> | grep -i 'x-robots-tag'   # noi
 | S-06 소셜 링크 | 페르소나별 링크·같은 주소 두 프로필 불가, 수집은 worker의 SSRF 방어 수집기만(수집기·주소 판정·시나리오 V worker 테스트, [ADR 0034](../adr/0034-social-links.md)), 배지 문구 "인물·경력을 검증하지 않습니다" | 파일럿 사용자 몇 명에게 `링크 확인됨`이 인물 검증으로 읽히지 않는지 확인. worker egress(§1)와 `NUXT_SITE_ORIGIN`(worker) 확인 |
 | S-03 공개 범위 | 계정 전체를 `전체 공개`로 바꿔도 동의 전 공개 후보·비공개 과제 공간·엠바고 중 제목 0건, 과제 수행 목록은 과목·학기·제목만(`visibility.integration.test.ts`·E2E `s-visibility`, [ADR 0031](../adr/0031-visibility-settings.md)) | — |
 | S-04 차단 404 | 차단당한 사용자는 숨긴 페르소나의 세션 경로·팔로우 목록에서 404, 차단·팔로워 삭제·뮤트에 알림 0건(`follows.integration.test.ts`·E2E `t-follows`, [ADR 0033](../adr/0033-follows-blocks.md)) | 로그아웃 공개 화면은 차단을 판별하지 못함(ADR 0033)을 공지 문구에 반영 |
+| S-05 프로필 글·피드·추천 | 활동 목록·피드·추천은 `persona_activities`만 원천으로 읽고(social DB 역할 트랜잭션), 항목마다 원본 상태·공개 범위·차단·뮤트를 다시 확인(`persona_activity_cards`). 거두기는 원본 상태가 바뀌는 같은 트랜잭션의 DB 트리거, 투영은 outbox → worker. 인기·팔로워 수 정렬 없음, 추천은 과목·학교(배지 공개 실명만)·관심 직무 교집합(`feed.integration.test.ts`·S-02 속성 테스트의 피드·활동·추천 확장·E2E `s05-feed`, [ADR 0035](../adr/0035-profile-feed.md)). 알림·프로필 글 사진은 후속 | 앱 계정이 `peerchive_social` 멤버인지(§1), 아래 SQL ④(거둔 원본인데 남은 활동 0행), worker의 `persona_activity.project` 큐가 밀리지 않는지(`GET /api/v1/health?deep=1`의 outbox 대기) |
 | S-07 신고 대상 | 아직 | — |
 
 ```sql
@@ -164,6 +165,12 @@ select (select count(*) from community_posts where name_mode = 'anonymous' and p
         where a.source_type = 'community_post' and p.name_mode = 'anonymous') as must_be_zero;
 -- ③ 투영·귀속 트리거가 있는지(4개)
 select tgname from pg_trigger where tgname in ('persona_activities_projection_guard','community_posts_persona_attribution','community_comments_persona_attribution','community_posts_frozen_columns');
+-- ④ S-05: 원본이 더는 공개 상태가 아닌데 거두지 않은 활동(0이어야 함 — 읽기 경로도 거르지만 거두기 트리거가 빠졌는지 확인)
+select source_type, count(*) from persona_activities a
+where a.withdrawn_at is null and not persona_activity_source_ok(a.persona_id, a.source_type, a.source_id) group by source_type;
+-- ⑤ S-05: 거두기 트리거가 있는지(6개)
+select tgname from pg_trigger where tgname in ('community_posts_persona_activity_sync','community_spaces_persona_activity_sync','senior_notes_persona_activity_sync',
+  'profile_posts_persona_activity_sync','publication_candidates_persona_activity_sync','consents_persona_activity_sync');
 ```
 
 ## 3. 사고 대응

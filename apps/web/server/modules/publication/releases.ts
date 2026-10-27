@@ -17,8 +17,10 @@
 import { z } from 'zod'
 import { canManagePublication, transition, type PublicationEvent } from '@peerchive/domain'
 import {
+  PERSONA_ACTIVITY_PROJECT_TOPIC,
   PUBLICATION_PUBLISHED_TOPIC,
   PUBLICATION_WITHDRAWN_TOPIC,
+  type PersonaActivityProjectOutboxPayload,
   and,
   consents,
   desc,
@@ -184,6 +186,19 @@ export async function publishCandidate(
       } satisfies PublicationOutboxPayload,
       createdAt: now,
     })
+    // S-05(ADR 0035): 동의한 당사자의 실명 페르소나 활동으로 투영 요청(worker가 동의·실명 페르소나를 다시 확인). 익명 스터디 방 release는
+    // 이벤트를 만들지 않습니다(ADR 0026). 철회·대체·동의 철회의 거두기는 DB 트리거가 같은 트랜잭션에서 합니다.
+    const releaseSnapshot = release!.snapshot as { kind?: unknown; studyNameMode?: unknown }
+    if (!(releaseSnapshot.kind === 'study' && releaseSnapshot.studyNameMode === 'anonymous')) {
+      await tx.insert(outboxEvents).values({
+        topic: PERSONA_ACTIVITY_PROJECT_TOPIC,
+        payload: {
+          sourceType: releaseSnapshot.kind === 'study' ? 'study_release' : 'publication_release',
+          sourceId: release!.id,
+        } satisfies PersonaActivityProjectOutboxPayload,
+        createdAt: now,
+      })
+    }
     await recordAudit(tx, {
       actorId: actor.userId,
       action: 'publication.publish',

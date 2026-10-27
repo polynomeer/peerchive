@@ -15,8 +15,24 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { createApp, createRouter, toWebHandler } from 'h3'
 import { afterAll, describe, expect, it } from 'vitest'
 import { NAME_MODE_CHANGE_DELAY_MS } from '@peerchive/domain'
-import { communityComments, communityPosts, communitySpaces, eq, operators, personaActivities, personas, sql, type DbExecutor } from '@peerchive/db'
+import {
+  PERSONA_ACTIVITY_PROJECT_TOPIC,
+  and,
+  communityComments,
+  communityPosts,
+  communitySpaces,
+  eq,
+  gte,
+  isNull,
+  operators,
+  outboxEvents,
+  personaActivities,
+  personas,
+  sql,
+  type DbExecutor,
+} from '@peerchive/db'
 import { applyNameModeChange } from '../../worker/src/ops/name-modes'
+import { handlePersonaActivityProject } from '../../worker/src/persona-activities'
 import { createSchool } from '../server/modules/catalog/catalog'
 import { joinSpace } from '../server/modules/community/memberships'
 import { scheduleNameModeChange } from '../server/modules/community/name-modes'
@@ -26,6 +42,8 @@ import { createRoom } from '../server/modules/community/spaces'
 import { getPublicProfile, updateRealName, upsertProfile } from '../server/modules/identity/profiles'
 import { createPublicProfileHandler, createReadmeCardHandler } from '../server/modules/portfolio/public-http'
 import { listPersonaActivities, projectPersonaActivity } from '../server/modules/social/activities'
+import { withSocialRole } from '../server/modules/social/db-role'
+import { getFeed, getFollowSuggestions, getProfileActivity } from '../server/modules/social/feed'
 import { followProfile, getFollowList, getProfileSocial } from '../server/modules/social/follows'
 import { setVisibility } from '../server/modules/social/visibility'
 import { publicSocialLinks } from '../server/modules/social/social-links'
@@ -159,7 +177,14 @@ describe('S-02 module boundary lint: social never reaches community posts (sourc
 
   it('the social module and the profile/persona routes neither import community code/tables nor name a community table', () => {
     expect(SOCIAL_MODULE.map(rel)).toEqual(
-      expect.arrayContaining(['web/server/modules/social/personas.ts', 'web/server/modules/social/activities.ts', 'web/server/modules/social/social-links.ts']),
+      expect.arrayContaining([
+        'web/server/modules/social/personas.ts',
+        'web/server/modules/social/activities.ts',
+        'web/server/modules/social/social-links.ts',
+        'web/server/modules/social/feed.ts',
+        'web/server/modules/social/profile-posts.ts',
+        'web/server/modules/social/db-role.ts',
+      ]),
     )
     expect(SOCIAL_ROUTES.map(rel)).toEqual(
       expect.arrayContaining([
@@ -171,6 +196,12 @@ describe('S-02 module boundary lint: social never reaches community posts (sourc
         'web/server/api/v1/public/profiles/[handle]/readme-card.md.get.ts',
         'web/server/api/v1/personas/[id]/social-links.post.ts',
         'web/server/api/v1/social-links/[id]/verify.post.ts',
+        // S-05: 활동·피드·추천·프로필 글 라우트도 이름으로 자동 포함.
+        'web/server/api/v1/profiles/[handle]/activity.get.ts',
+        'web/server/api/v1/feed/index.get.ts',
+        'web/server/api/v1/feed/suggestions.get.ts',
+        'web/server/api/v1/personas/[id]/posts.post.ts',
+        'web/server/api/v1/personas/[id]/posts/[postId].delete.ts',
       ]),
     )
     const offenders = [...SOCIAL_MODULE, ...SOCIAL_ROUTES].flatMap((f) => boundaryViolations(f, readFileSync(f, 'utf8'), true).map((v) => `${rel(f)}: ${v}`))
@@ -265,7 +296,19 @@ const sha256 = (s: string) => createHash('sha256').update(s).digest('hex')
 
 const SOCIAL_ROLE = 'peerchive_social'
 /** social 읽기 경로가 쓰는 테이블(migration 0027~0030 peerchive_apply_social_grants). 과제·학기·과목·엠바고·학교 인증은 열 단위 SELECT(S-03 테스트). */
-const SOCIAL_READ_TABLES = ['personas', 'profiles', 'identity_links', 'persona_activities', 'visibility_settings', 'project_listings', 'follows', 'blocks', 'mutes', 'social_links']
+const SOCIAL_READ_TABLES = [
+  'personas',
+  'profiles',
+  'identity_links',
+  'persona_activities',
+  'visibility_settings',
+  'project_listings',
+  'follows',
+  'blocks',
+  'mutes',
+  'social_links',
+  'profile_posts',
+]
 
 describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
   afterAll(closeTestDb)
@@ -297,6 +340,12 @@ describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
       // 원천 테이블(선배 노트·공개 후보)도 social 역할은 읽지 않습니다(투영 검사는 트리거가 테이블 주인 권한으로).
       for (const t of ['senior_notes', 'publication_candidates', 'course_qa_items', 'audit_events'])
         expect((await tx.execute(sql`select has_table_privilege(${SOCIAL_ROLE}, ${`public.${t}`}, 'SELECT') as sel`))[0], t).toEqual({ sel: false })
+      // S-05: 원본 재확인·카드는 SECURITY DEFINER 함수 하나만 실행(원천 확인·거두기 함수는 실행 권한 없음, PUBLIC에서도 거둠).
+      const fn = async (signature: string) =>
+        ((await tx.execute(sql`select has_function_privilege(${SOCIAL_ROLE}, ${signature}, 'EXECUTE') as ex`)) as unknown as Array<{ ex: boolean }>)[0]!.ex
+      expect(await fn('public.persona_activity_cards(uuid, uuid[])')).toBe(true)
+      expect(await fn('public.persona_activity_source_ok(uuid, persona_activity_source, uuid)')).toBe(false)
+      expect(await fn('public.persona_activities_sync(persona_activity_source, uuid, boolean)')).toBe(false)
     })
   })
 
@@ -313,6 +362,9 @@ describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
         })
         expect(code, table).toBe('42501') // insufficient_privilege
       }
+      // S-05: social 읽기 도우미(withSocialRole) 안에서 커뮤니티 테이블을 읽으면 실패합니다(코드 실수의 두 번째 겹).
+      for (const table of ['community_posts', 'community_spaces', 'space_memberships', 'senior_notes', 'publication_candidates'])
+        expect(await failsWith(tx, (inner) => withSocialRole(inner, (r) => r.execute(sql.raw(`select 1 from public.${table} limit 1`)))), table).toBe('42501')
       // 계정의 이메일·실명 열도 거부.
       expect(
         await failsWith(tx, async (inner) => {
@@ -335,6 +387,10 @@ describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
         expect((await getProfileSocial(inner, { userId: user.id }, persona!.handle)).isOwner).toBe(true)
         // 소셜 링크(S-06): social_links 읽기.
         expect(await publicSocialLinks(inner, persona!.id)).toEqual([])
+        // S-05: 활동 목록·피드·추천도 같은 역할(이 세 함수는 스스로 SET LOCAL ROLE을 겁니다).
+        expect((await getProfileActivity(inner, null, persona!.handle)).items).toEqual([])
+        expect((await getFeed(inner, { userId: user.id })).items).toEqual([])
+        expect((await getFollowSuggestions(inner, { userId: user.id })).suggestions).toEqual([])
         await inner.execute(sql.raw('reset role'))
       })
     })
@@ -614,14 +670,36 @@ async function buildWorld(tx: DbExecutor, seed: number) {
       })
     }
   }
+  // S-05: 원본 모듈이 남긴 투영 요청(outbox)을 worker 처리기로도 처리합니다(위의 "모든 페르소나로 시도"와 같은 결과여야 함).
+  const events = await tx
+    .select({ id: outboxEvents.id, payload: outboxEvents.payload })
+    .from(outboxEvents)
+    .where(and(eq(outboxEvents.topic, PERSONA_ACTIVITY_PROJECT_TOPIC), isNull(outboxEvents.dispatchedAt), gte(outboxEvents.createdAt, T0)))
+  for (const e of events) {
+    expect(items.find((i) => i.id === (e.payload as { sourceId: string }).sourceId)?.mode, `seed ${seed} event for anonymous post`).not.toBe('anonymous')
+    await handlePersonaActivityProject(tx, e.payload)
+  }
   return { people, items, now: new Date(clock + HOUR) }
+}
+
+/** 활동 목록 전부(cursor를 따라감). */
+async function allActivity(tx: DbExecutor, actor: { userId: string } | null, handle: string) {
+  const out = []
+  let cursor: string | null = null
+  for (let i = 0; i < 20; i++) {
+    const page = await getProfileActivity(tx, actor, handle, cursor ? { cursor } : {})
+    out.push(...page.items)
+    if (!page.nextCursor) break
+    cursor = page.nextCursor
+  }
+  return out
 }
 
 describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a persona (PostgreSQL)', () => {
   afterAll(closeTestDb)
 
-  it(`for ${WORLDS} seeded random worlds, every persona's public JSON, README card, old profile DTO, activity list and follow lists carry 0 anonymous post ids, bodies, body hashes or timestamps`, async () => {
-    const totals = { worlds: 0, personas: 0, anonymous: 0, projected: 0, follows: 0 }
+  it(`for ${WORLDS} seeded random worlds, every persona's public JSON, README card, old profile DTO, activity list (raw and API for every viewer), follow lists, every person's feed and suggestions carry 0 anonymous post ids, bodies, body hashes or timestamps`, async () => {
+    const totals = { worlds: 0, personas: 0, anonymous: 0, projected: 0, follows: 0, feedItems: 0 }
     for (let w = 0; w < WORLDS; w++) {
       const seed = BASE_SEED + w
       await withRollback(async (tx) => {
@@ -658,7 +736,18 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
             const activities = await listPersonaActivities(tx, persona.id)
             const followers = await getFollowList(tx, null, persona.handle, 'followers')
             const following = await getFollowList(tx, null, persona.handle, 'following')
-            const body = [await publicBodies(tx, persona.handle, now), JSON.stringify(activities), JSON.stringify(followers), JSON.stringify(following)].join('\n')
+            // S-05: 활동 목록 API(비로그인·본인·다른 모든 사람의 눈으로).
+            const ownView = await allActivity(tx, { userId: p.userId }, persona.handle)
+            const views = [await allActivity(tx, null, persona.handle), ownView]
+            for (const q of people) if (q !== p) views.push(await allActivity(tx, { userId: q.userId }, persona.handle))
+            for (const view of views) for (const item of view) expect(item.author.handle, `seed ${seed} activity author`).toBe(persona.handle)
+            const body = [
+              await publicBodies(tx, persona.handle, now),
+              JSON.stringify(activities),
+              JSON.stringify(followers),
+              JSON.stringify(following),
+              JSON.stringify(views),
+            ].join('\n')
             // 팔로우 목록은 정확히 실제 팔로우한(받은) 페르소나의 handle·이름·종류뿐: 같은 사람의 다른 페르소나·실명·id는 들어올 자리가 없음.
             expect(followers.entries!.map((e) => e.handle).sort(), `seed ${seed} @${persona.handle} followers`).toEqual(edges.filter((e) => e.to === persona.handle).map((e) => e.from).sort())
             expect(following.entries!.map((e) => e.handle).sort(), `seed ${seed} @${persona.handle} following`).toEqual(edges.filter((e) => e.from === persona.handle).map((e) => e.to).sort())
@@ -675,9 +764,26 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
             // 활동 목록은 정확히 "이 페르소나로 작성 시점에 고정된, listed 공간의 같은 종류 방식 글"뿐(다른 종류·익명·unlisted 없음).
             const expected = postRows.filter((r) => r.personaId === persona.id && r.nameMode === kind && r.discovery === 'listed').map((r) => r.id)
             expect(activities.map((a) => a.sourceId).sort(), `seed ${seed} ${kind} @${persona.handle} activities`).toEqual(expected.sort())
+            // 본인 눈의 활동 목록 API도 정확히 같은 글(본인은 모든 방의 멤버이고 학교 인증이 있어 모두 읽을 수 있음).
+            expect(ownView.map((i) => i.href).sort(), `seed ${seed} ${kind} @${persona.handle} activity API`).toEqual(expected.map((id) => `/community/p/${id}`).sort())
             totals.personas++
             totals.projected += activities.length
           }
+        }
+        // S-05: 사람마다 팔로우 피드·추천. 익명 글 값 0건, 피드 작성자는 내가 팔로우한 페르소나뿐, 추천에 내 페르소나·한 사람의 두 페르소나 없음.
+        const handlesOf = (q: Person) => [q.real?.handle, q.display?.handle].filter((h): h is string => !!h)
+        for (const p of people) {
+          const feed = await getFeed(tx, { userId: p.userId })
+          const suggestions = (await getFollowSuggestions(tx, { userId: p.userId })).suggestions
+          const text = JSON.stringify([feed, suggestions])
+          for (const value of forbidden) expect(text.includes(value), `seed ${seed} feed/suggestions leak ${value.slice(0, 24)}`).toBe(false)
+          expect(text.includes(p.userId), `seed ${seed} feed leaks user id`).toBe(false)
+          const mine = handlesOf(p)
+          const followed = new Set(edges.filter((e) => mine.includes(e.from)).map((e) => e.to))
+          for (const item of feed.items) expect(followed.has(item.author.handle), `seed ${seed} feed author ${item.author.handle}`).toBe(true)
+          for (const s of suggestions) expect(mine.includes(s.handle), `seed ${seed} suggests own persona`).toBe(false)
+          for (const q of people) expect(suggestions.filter((s) => handlesOf(q).includes(s.handle)).length, `seed ${seed} two personas of one person`).toBeLessThanOrEqual(1)
+          totals.feedItems += feed.items.length
         }
         // DB 전체로도: 이 세계의 익명 글은 어떤 페르소나 활동에도 없고, 익명 글·댓글의 persona_id는 모두 null.
         const anonIds = anonymous.map((i) => i.id)
@@ -699,5 +805,6 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
     expect(totals.projected).toBeGreaterThan(0)
     expect(totals.follows).toBeGreaterThan(WORLDS)
     expect(totals.personas).toBeGreaterThan(WORLDS)
+    expect(totals.feedItems).toBeGreaterThan(0)
   })
 })

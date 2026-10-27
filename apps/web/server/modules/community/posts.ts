@@ -21,6 +21,8 @@
  *   + `requirement: 'display_persona'`, 실명 방식의 `real_name_required`와 같은 모양). 표시명 글·댓글의 작성자 이름은 고정한 persona_id의
  *   지금 표시명이고(핸들·프로필 링크 없음), persona_id가 없는 예전 표시명 글은 `표시명 없음`입니다. 계정 표시 이름(= 실명 프로필의 공개 이름)은
  *   어디에도 쓰지 않습니다.
+ * - **페르소나 활동(S-05, ADR 0035)**: 실명·표시명이고 작성 시점 페르소나가 있는 listed 공간 글을 쓰면 같은 트랜잭션에 `persona_activity.project`
+ *   outbox 행을 남깁니다(worker가 투영). 익명 글은 이벤트를 만들지 않습니다. 지우기·숨김·unlisted 전환의 거두기는 DB 트리거가 같은 트랜잭션에서 합니다.
  * - 감사 기록을 남기지 않습니다: 작성자 id와 글 id를 한 행에 남기면 익명 글의 작성자를 찾는 길(C-06의 사유 기록 경로 밖)이 생기기 때문입니다.
  *   분석 이벤트는 허용 목록(게시판 종류·방식·답글 여부·대상 종류)만, 익명 글·댓글은 사용자 키 없이(unlinked) 남깁니다.
  */
@@ -45,6 +47,7 @@ import {
   checkItemBody,
   checkPostTitle,
   composerNameModeNote,
+  decidePersonaActivityProjection,
   effectiveNameMode,
   isOfficialKind,
   isOpenItem,
@@ -58,6 +61,8 @@ import {
   writeRestrictionText,
 } from '@peerchive/domain'
 import {
+  PERSONA_ACTIVITY_PROJECT_TOPIC,
+  type PersonaActivityProjectOutboxPayload,
   and,
   asc,
   boards,
@@ -70,6 +75,7 @@ import {
   inArray,
   institutionAffiliations,
   ne,
+  outboxEvents,
   personas,
   schools,
   sql,
@@ -567,6 +573,20 @@ export async function createPost(db: DbExecutor, actor: Actor, boardId: unknown,
       })
       .returning()
     await ensureAlias(tx, post!, actor.userId, mode, now)
+    // S-05(ADR 0035): 실명·표시명이고 작성 시점 페르소나가 있는 listed 공간 글만 페르소나 활동 투영을 요청합니다(같은 트랜잭션의 outbox).
+    // 익명 글은 이벤트 자체를 만들지 않습니다(§8.3 불변조건 1 "0~1단계는 투영 경로 자체가 없음"). 숨김·삭제·unlisted 전환의 거두기는 DB 트리거.
+    // 판정은 이 모듈이 자기 행으로(@peerchive/domain 규칙), worker는 커뮤니티 테이블을 읽지 않고 DB 트리거가 원본 행으로 다시 확인합니다.
+    const personaKind = personaKindForNameMode(mode)
+    if (personaId && personaKind) {
+      const facts = { type: 'community_post' as const, nameMode: mode, personaId, discovery: ctx.space.row.discovery, published: true }
+      if (decidePersonaActivityProjection(facts, { id: personaId, kind: personaKind }).project) {
+        await tx.insert(outboxEvents).values({
+          topic: PERSONA_ACTIVITY_PROJECT_TOPIC,
+          payload: { sourceType: 'community_post', sourceId: post!.id, personaId, occurredAt: now.toISOString() } satisfies PersonaActivityProjectOutboxPayload,
+          createdAt: now,
+        })
+      }
+    }
     const area = ctx.space.row.kind === 'user_room' ? 'room' : ctx.space.row.kind === 'study_room' ? 'study' : 'official'
     await emitAnalytics(tx, { name: 'post_created', actorId: actor.userId, unlinked: mode === 'anonymous', props: { kind: board.kind, mode, area }, now })
     return post!.id

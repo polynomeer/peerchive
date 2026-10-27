@@ -65,3 +65,23 @@ export const SOCIAL_LINK_VERIFY_TOPIC = 'social_link.verify'
 export interface SocialLinkVerifyOutboxPayload {
   socialLinkId: string
 }
+
+/**
+ * 페르소나 활동 투영 요청(S-05, ADR 0035, SYSTEM_DESIGN §6.7.1 PersonaActivity "원본 모듈이 outbox로 투영"). 원본 모듈이 원천을 처음 공개하는
+ * 트랜잭션에서 남기고(커뮤니티 글 작성: real·display이고 페르소나가 고정된 listed 공간 글만, 선배 노트 게시: 익명이 아닌 것만, release 게시:
+ * 익명 스터디가 아닌 것만), worker가 persona_activities에 넣습니다 — 선배 노트·release는 지금 원본 행을 다시 읽어 @peerchive/domain 규칙으로,
+ * 커뮤니티 글은 커뮤니티 모듈이 판정해 넘긴 페르소나로(worker는 커뮤니티 테이블을 읽지 않음). 어느 쪽이든 DB 트리거가 원본 행으로 한 번 더 확인합니다.
+ * 거두기(withdrawn_at)는 이 이벤트가 아니라 원본 상태가 바뀌는 같은 트랜잭션의 DB 트리거가 합니다. payload에는 원천 종류·id만.
+ */
+export const PERSONA_ACTIVITY_PROJECT_TOPIC = 'persona_activity.project'
+
+export interface PersonaActivityProjectOutboxPayload {
+  sourceType: 'publication_release' | 'senior_note' | 'study_release' | 'community_post'
+  sourceId: string
+  /**
+   * 커뮤니티 글만: 작성 시점에 고정한 페르소나와 작성 시각. 커뮤니티 모듈이 자기 행으로 규칙을 판정해 넣고, worker는 커뮤니티 테이블을 읽지 않습니다
+   * (C-05 경계: worker 파생 처리기는 커뮤니티 테이블에 닿지 않음). DB 트리거가 원본 행으로 다시 확인합니다.
+   */
+  personaId?: string
+  occurredAt?: string
+}

@@ -10,7 +10,9 @@
  * - 원본이 숨김·삭제·철회·방식 재선택되면 `withdrawPersonaActivities`로 withdrawn_at을 채웁니다(행은 남김). 읽기(S-05)는 withdrawn_at이 없는
  *   행만 보고, 항목마다 원본 상태를 다시 확인합니다(§11.3).
  *
- * 지금(S-02)은 원본 모듈이 이 함수를 아직 부르지 않습니다: 활동 목록·피드 화면(S-05)과 철회 연결을 함께 붙입니다(ADR 0029).
+ * S-05(ADR 0035): 프로필 글(`profile-posts.ts`)이 같은 트랜잭션에서 이 함수로 투영합니다. 커뮤니티 글·선배 노트·release는 원본 모듈의 outbox를
+ * worker 처리기(`apps/worker/src/persona-activities.ts`, 같은 규칙)가 넣고, 거두기는 원본 상태가 바뀌는 같은 트랜잭션의 DB 트리거가 합니다
+ * (`withdrawPersonaActivities`는 수동 정리용으로 남김). 활동 목록·피드는 `feed.ts`가 읽습니다.
  */
 import { and, desc, eq, isNull, personaActivities, personas, type DbExecutor } from '@peerchive/db'
 import {

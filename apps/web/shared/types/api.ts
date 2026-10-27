@@ -173,6 +173,65 @@ export interface FollowPersonaDto {
   displayName: string
 }
 
+/** 활동 카드의 원천 종류(S-05). 익명 글은 들어올 자리가 없습니다(PersonaActivity, ADR 0029). */
+export type ActivitySourceDto = 'profile_post' | 'community_post' | 'senior_note' | 'publication_release' | 'study_release'
+/** 공개 범위 묶음: 공개 사례 / 선배 노트·스터디 기록 / 글. */
+export type ActivityKindDto = 'cases' | 'notes_and_studies' | 'posts'
+
+/**
+ * 활동 카드 한 줄(S-05, ADR 0035). 내용은 읽을 때 원본을 다시 확인한 것만: 프로필 글 본문, 커뮤니티 글 제목·공간 이름(그 공간을 읽을 수 있을 때만),
+ * 선배 노트의 과목·학기(원 글 연결 없음), 공개 사례 제목·요약·학기. 작성자 계정 id·원 글 id·이메일은 없습니다.
+ */
+export interface ActivityItemDto {
+  /** 활동 행 id(불투명). */
+  id: string
+  source: ActivitySourceDto
+  kind: ActivityKindDto
+  createdAt: string
+  title: string | null
+  body: string | null
+  /** 사이트 안 경로(/p/…, /c/…, /community/p/…). 프로필 글은 null. */
+  href: string | null
+  /** 공간 이름·학기 등 짧은 보조 글. */
+  context: string | null
+  author: FollowPersonaDto
+  /** 본인 프로필 글일 때만: 지우기에 쓰는 글 id. */
+  profilePostId?: string
+}
+
+/** GET /profiles/:handle/activity?kind=&cursor= — 보는 사람이 볼 수 있는 종류(`kinds`)와 그 활동(최근 순). 차단당했으면 404. */
+export interface ProfileActivityDto {
+  kinds: ActivityKindDto[]
+  items: ActivityItemDto[]
+  nextCursor: string | null
+}
+
+/** GET /feed?cursor= — 내가(어느 프로필로든) 팔로우하는 프로필의 활동. 하루 단위로 기록(사례·노트·스터디)이 글보다 먼저(ADR 0035). */
+export interface FeedDto {
+  items: ActivityItemDto[]
+  nextCursor: string | null
+  /** 팔로우 중인 프로필 수(내 쪽 숫자, 0이면 화면이 추천을 먼저 보여 줌). */
+  following: number
+}
+
+/** GET /feed/suggestions — 같은 과목·같은 학교·관심 직무 교집합으로만 고른 추천(팔로워 수·활동량 정렬 없음). */
+export interface FollowSuggestionDto extends FollowPersonaDto {
+  accountPrivacy: 'public' | 'private'
+  reasons: Array<'course' | 'institution' | 'job_target'>
+}
+
+export interface FollowSuggestionsDto {
+  suggestions: FollowSuggestionDto[]
+}
+
+/** POST /personas/:id/posts {body} — 만든 프로필 글. */
+export interface ProfilePostDto {
+  id: string
+  personaId: string
+  body: string
+  createdAt: string
+}
+
 /** GET /profiles/:handle/followers·following — 볼 수 없으면(`follow_lists` 공개 범위) `entries: null`. 차단당했으면 404. */
 export interface FollowListDto {
   entries: FollowPersonaDto[] | null
