@@ -3,7 +3,8 @@
  * 커뮤니티 첫 화면(C-02, PROOFU_EVOLUTION_PLAN §8.9, ADR 0019). 로그인 전용·검색엔진 비노출(noindex).
  * - 내 공간: 내가 멤버인 방 + 내 학교 인증으로 들어가는 공식 페이지(`공식` 배지는 운영자가 연 공간에만).
  * - 찾기: 내 학교 공식 페이지와 목록에 노출된 방(학교 연결 방은 그 학교 인증 계정만).
- * - 방 만들기: 학교 인증이 하나라도 있어야 합니다. 이름 표시 방식(실명·표시명·익명)은 만들 때 정하고, 바꾸기는 다음 단계에서 열립니다.
+ * - 방 만들기: 학교 인증이 하나라도 있어야 합니다. 이름 표시 방식(실명·표시명·익명)은 만들 때 정하고, 방장이 7일 뒤 적용으로 바꿀 수 있습니다(C-03).
+ * - 알림(C-03): 읽지 않은 수와 `/community/notices` 링크. 실명(선택): 실명 방의 글에만 보이는 이름.
  * - 공식 페이지 개설 요청: 학교 인증 계정이 요청하고, 운영자가 검토해 엽니다(요청 수는 운영자만 봄).
  */
 import type {
@@ -21,7 +22,7 @@ definePageMeta({ middleware: 'auth' })
 useHead({ title: '커뮤니티 — Peerchive', meta: [{ name: 'robots', content: 'noindex, nofollow' }] })
 if (import.meta.server) useResponseHeader('x-robots-tag').value = 'noindex, nofollow'
 
-const { me } = useAuth()
+const { me, refresh: refreshMe } = useAuth()
 const fetcher = useRequestFetch()
 const { data: mine, refresh: refreshMine } = await useAsyncData('community-mine', () => fetcher<MySpacesDto>('/api/v1/community/spaces/mine'))
 const { data: requests, refresh: refreshRequests } = await useAsyncData('community-official-requests', () =>
@@ -133,6 +134,32 @@ async function requestOfficial() {
   }
 }
 
+// ── 실명(선택, C-03) ──
+const realName = ref(me.value?.realName ?? '')
+watch(
+  () => me.value?.realName,
+  (v) => {
+    realName.value = v ?? ''
+  },
+)
+const realNameError = ref('')
+async function saveRealName() {
+  busy.value = 'real-name'
+  notice.value = null
+  realNameError.value = ''
+  try {
+    await $fetch('/api/v1/me/real-name', { method: 'PUT', body: { realName: realName.value.trim() || null } })
+    await refreshMe()
+    notice.value = { kind: 'ok', text: realName.value.trim() ? '실명을 저장했습니다.' : '실명을 지웠습니다.' }
+  } catch (e) {
+    const err = apiError(e)
+    realNameError.value = err.fields.realName === 'too_long' ? `실명은 ${REAL_NAME_MAX}자까지입니다.` : '쓸 수 없는 글자가 있습니다.'
+    notice.value = { kind: 'error', text: '입력한 내용을 확인하세요.' }
+  } finally {
+    busy.value = null
+  }
+}
+
 const spaceMeta = (s: SpaceSummaryDto) =>
   [
     s.official ? SPACE_KIND_LABELS[s.kind] : s.school ? s.school.name : '학교 무관',
@@ -152,6 +179,9 @@ const spaceMeta = (s: SpaceSummaryDto) =>
       학교 인증 구성원끼리 모이는 공간입니다. 로그인한 사람에게만 보이고 검색엔진·공개 검색에 나오지 않습니다. 글쓰기는 곧 열립니다.
     </p>
     <p v-if="notice" :class="['notice', notice.kind]" :role="notice.kind === 'error' ? 'alert' : 'status'">{{ notice.text }}</p>
+    <p>
+      <NuxtLink to="/community/notices">커뮤니티 알림<template v-if="mine?.unreadNotices"> (읽지 않음 {{ mine.unreadNotices }}개)</template></NuxtLink>
+    </p>
 
     <template v-if="!schools.length">
       <p class="notice">
@@ -235,7 +265,7 @@ const spaceMeta = (s: SpaceSummaryDto) =>
             <label><input v-model="room.nameMode" type="radio" name="room-name-mode" :value="mode" /> {{ NAME_MODE_LABELS[mode] }}</label>
             <p class="hint">{{ NAME_MODE_HINTS[mode] }}</p>
           </div>
-          <p class="hint">만든 뒤 바꾸는 기능은 다음 단계에서 열립니다. 바꿔도 이후 글에만 적용되고 이전 글은 그대로입니다.</p>
+          <p class="hint">만든 뒤에는 방장이 바꿀 수 있습니다. 바꾸면 멤버에게 알리고 7일 뒤부터 쓰는 글에만 적용되며, 이전 글은 그대로입니다.</p>
         </fieldset>
         <div class="field">
           <label for="room-join">가입 방식</label>
@@ -259,6 +289,21 @@ const spaceMeta = (s: SpaceSummaryDto) =>
           <p v-if="roomErrors.capacity" class="field-error">{{ fieldMessage(roomErrors.capacity) }}</p>
         </div>
         <p class="actions"><button type="submit" :disabled="busy === 'create'">방 만들기</button></p>
+      </form>
+    </section>
+
+    <section aria-labelledby="real-name">
+      <h2 id="real-name">실명 (선택)</h2>
+      <form class="stack" novalidate @submit.prevent="saveRealName">
+        <div class="field">
+          <label for="real-name-input">실명</label>
+          <input id="real-name-input" v-model="realName" :maxlength="REAL_NAME_MAX" autocomplete="name" aria-describedby="real-name-hint" />
+          <p id="real-name-hint" class="hint">
+            이름 표시 방식이 실명인 방에서 쓴 글에만 보입니다. 공개 프로필·검색에는 나오지 않으며 Peerchive가 신분을 확인하지 않습니다. 비우고 저장하면 지웁니다.
+          </p>
+          <p v-if="realNameError" class="field-error">{{ realNameError }}</p>
+        </div>
+        <p class="actions"><button type="submit" :disabled="busy === 'real-name'">실명 저장</button></p>
       </form>
     </section>
 

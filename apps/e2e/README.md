@@ -44,7 +44,7 @@ docker compose -f ops/docker-compose.yml down
 | `support/mail.ts` | dev-console 메일 읽기(서버 로그에서 가린 수신 주소로 메일을 찾고 링크를 꺼냄) |
 | `support/api.ts` | 준비 단계용 API 도우미(같은 context의 쿠키와 사이트 `Origin` 헤더 사용). 시험 대상 동작은 화면으로 조작합니다 |
 | `support/scenarios.ts` | 여러 시나리오가 함께 쓰는 "지난 학기 과목에 게시된 사례" 만들기 |
-| `support/db.ts` | E2E DB 직접 작업: 로그인 IP rate limit 카운터 비우기, 운영자 부여 CLI·학교 메일 도메인 등록 CLI 실행 |
+| `support/db.ts` | E2E DB 직접 작업: 로그인 IP rate limit 카운터 비우기, 운영자 부여 CLI·학교 메일 도메인 등록 CLI 실행, 이름 표시 방식 변경 적용 시뮬레이션(그 방 예약의 `requested_at`·`effective_at`을 7일 1분 앞당긴 뒤 worker 적용 명령 `pnpm --filter worker apply-name-modes`, C-03) |
 | `support/affiliation.ts` | 학교 메일 인증(C-01): CLI로 학교마다 무작위 도메인 등록, 화면에서 코드 요청 → dev-console 메일에서 6자리 코드 읽기 → 입력. 다른 시나리오의 준비용 `verifyByApi`(API로 인증, C-02) |
 
 ## 설계 결정
@@ -55,6 +55,7 @@ docker compose -f ops/docker-compose.yml down
 - **운영자**: 실제 운영 절차와 같은 `pnpm --filter @peerchive/db grant-operator <email>`를 E2E DB로 실행합니다.
 - **학교 메일 인증**: 도메인 등록은 운영 절차와 같은 `school-email-domain add` CLI, 코드는 로그인 링크처럼 dev-console 메일(서버 로그)에서 읽습니다. 수신 주소가 첫 글자 + 도메인으로 가려지므로 학교마다 무작위 도메인(`e2e<무작위>.ac.kr`)을 등록하고 하위 도메인 주소를 씁니다.
 - **파일 검사**: worker가 signature-only 검사기로 실제 검사 작업을 처리합니다(ClamAV 컨테이너 불필요). PDF는 테스트마다 주석 한 줄을 바꿔 같은 내용 합치기를 피합니다.
+- **7일 예약(C-03)**: 시계를 바꾸지 않고 그 방의 예약 시각만 DB에서 7일 1분 앞당긴 뒤 worker와 같은 적용 함수를 명령으로 한 번 돌립니다. E2E worker의 매분 작업이 먼저 적용해도 결과가 같습니다(조건부 update).
 
 ## 시나리오
 
@@ -71,8 +72,9 @@ docker compose -f ops/docker-compose.yml down
 | `h-mobile-keyboard.spec.ts` | H | 파일 먼저 → 나중에 설명, 오프라인 저장 실패에도 입력 보존·"오류 — 재시도"·재시도 성공, 새로고침 뒤 입력 복원, 할 일·마일스톤 키보드 순서 변경(포커스 유지) |
 | `i-public-profile.spec.ts` | I | 익명 검토자가 `/u/<handle>`에서 문제·내 역할·근거 칩 → 공개 기록, HTML·JSON·OG·인쇄·README 카드에 이메일·체크인 메모·비공개 로그·내부 id 없음 |
 | `community.spec.ts` | C-02 | 학교 인증(준비는 API) → 방 만들기 화면(예약어 이름 거부·학교 연결·표시명·초대 전용·링크로만) → 비멤버는 "찾을 수 없습니다"(API 404) → 초대 링크(화면) → 다른 인증 사용자가 수락 → 같은 링크 재사용 410 → 방장 나가기 → 남은 멤버가 방장(승계). API·페이지 `X-Robots-Tag: noindex, nofollow`, 비로그인 401, 공개 검색에 방 이름 없음 |
+| `community.spec.ts` | C-03 | 방장이 화면에서 "익명으로 바꾸기" 예약(확인 대화상자) → 배너 "7일 뒤 … 이미 쓴 글은 바뀌지 않습니다." → 두 번째 예약 409·멤버 예약 403 → 멤버 화면 배너·`/community`의 읽지 않은 알림 수·`/community/notices`의 예약 알림 → 적용 시뮬레이션 → 이름 표시 방식 "익명"·배너 없음·이력 "적용됨"·적용 알림·모두 읽음 → 방장 선택지가 새 방식 기준 |
 | `moderation.spec.ts` | T-15 | 신고(화면) → 운영자 "항목 하나 가리기" → 공개 페이지에 "운영 조치로 가려진 항목" |
-| `a11y-and-layout.spec.ts` | 접근성 | 주요 화면 14곳(학교 인증·커뮤니티 화면 포함): 보이는 h1 하나, 이름 있는 입력 칸, Tab 포커스 표시(첫 Tab은 건너뛰기 링크), 가로 스크롤 없음 |
+| `a11y-and-layout.spec.ts` | 접근성 | 주요 화면 15곳(학교 인증·커뮤니티·커뮤니티 알림 화면 포함): 보이는 h1 하나, 이름 있는 입력 칸, Tab 포커스 표시(첫 Tab은 건너뛰기 링크), 가로 스크롤 없음 |
 
 ## 한계
 

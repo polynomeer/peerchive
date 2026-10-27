@@ -8,6 +8,7 @@ import { WORKER_HEARTBEAT_NAME, type DbExecutor } from '@peerchive/db'
 import type { ObjectStorage } from '@peerchive/files'
 import { CLEANUP_TASKS, beat, runRecordedTask } from './cleanup'
 import { OPS_TASK_NAMES, OPS_TIMEZONE, type OpsConfig, type OpsTaskName } from './config'
+import { applyDueNameModeChanges } from './name-modes'
 import { purgeDueAccounts } from './purge'
 
 export const opsQueueName = (task: OpsTaskName) => `ops.${task}`
@@ -29,6 +30,7 @@ export function opsTaskRunner(db: DbExecutor, storage: ObjectStorage, config: Op
       { now, graceDays: config.graceDays, limit: 50 },
     )
   }
+  if (task === 'name-mode-changes') return applyDueNameModeChanges(db, { now, analyticsPepper: config.analyticsPepper, limit: 100 })
   return CLEANUP_TASKS[task](db, { storage, batchSize: config.batchSize }, now)
 }
 

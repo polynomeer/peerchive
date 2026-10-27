@@ -63,9 +63,8 @@ describe('maintenance mode', () => {
 })
 
 describe('analytics emitters (static)', () => {
-  /** server/modules 아래 모든 .ts 파일의 내용. */
+  /** server/modules 아래 모든 .ts 파일 + worker 소스(worker가 내는 이벤트: name_mode_applied, C-03)의 내용. */
   const sources = (() => {
-    const root = path.resolve(__dirname, '../server/modules')
     const out: string[] = []
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {
@@ -74,7 +73,8 @@ describe('analytics emitters (static)', () => {
         else if (name.endsWith('.ts')) out.push(readFileSync(full, 'utf8'))
       }
     }
-    walk(root)
+    walk(path.resolve(__dirname, '../server/modules'))
+    walk(path.resolve(__dirname, '../../worker/src'))
     return out.join('\n')
   })()
 

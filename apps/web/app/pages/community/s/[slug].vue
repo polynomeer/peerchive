@@ -4,10 +4,14 @@
  * - 읽을 수 없는 공간은 "찾을 수 없습니다"(HTTP 404, 존재를 숨김). 멤버가 아니어도 들어갈 수 있는 방이면 소개와 가입 버튼만 보입니다.
  * - 게시판 목록(글쓰기는 C-04에서 열림), 이 공간의 이름 표시 방식, 나가기.
  * - 방장·운영진: 설정, 게시판 더하기, 멤버(승인·거절·역할·내보내기), 초대 링크(7일·한 번만), 보관.
+ * - 이름 표시 방식(C-03): 예약된 변경이 있으면 모두에게 배너("N일 뒤 … 바뀝니다. 이미 쓴 글은 바뀌지 않습니다."), 멤버에게 변경 이력,
+ *   방장에게 예약·취소(7일 뒤 적용, 멤버 전원에게 알림).
  */
 import type {
   BoardKind,
   JoinResultDto,
+  NameMode,
+  NameModeStateDto,
   SpaceDetailDto,
   SpaceInvitationDto,
   SpaceMemberDto,
@@ -156,9 +160,65 @@ async function loadInvitations() {
     invitations.value = []
   }
 }
+// ── 이름 표시 방식(C-03) ──
+const nameModes = ref<NameModeStateDto | null>(null)
+const nextMode = ref<NameMode | ''>('')
+async function loadNameModes() {
+  if (!isMember.value || space.value?.official) return
+  try {
+    nameModes.value = await $fetch<NameModeStateDto>(`/api/v1/community/spaces/${slug.value}/name-mode-changes`)
+  } catch {
+    nameModes.value = null
+  }
+}
+const nowMs = ref(Date.now())
+const banner = computed(() => {
+  const p = space.value?.pendingNameModeChange
+  return p ? nameModeBannerText(p.toMode, new Date(p.effectiveAt), new Date(nowMs.value)) : null
+})
+const modeChoices = computed(() => (['real', 'display', 'anonymous'] as const).filter((m) => m !== space.value?.nameMode))
+async function scheduleMode() {
+  if (!nextMode.value) {
+    notice.value = { kind: 'error', text: '바꿀 이름 표시 방식을 고르세요.' }
+    return
+  }
+  const to = NAME_MODE_LABELS[nextMode.value]
+  const extra = nextMode.value === 'real' && space.value?.joinPolicy === 'open' ? ' 실명 방이 되므로 가입 방식이 지금 방장 승인으로 바뀝니다.' : ''
+  if (!window.confirm(`7일 뒤 이름 표시 방식을 ${to}으로 바꿀까요? 멤버 모두에게 알림이 가고, 이미 쓴 글은 바뀌지 않습니다.${extra}`)) return
+  busy.value = 'name-mode'
+  notice.value = null
+  try {
+    nameModes.value = await $fetch<NameModeStateDto>(`/api/v1/community/spaces/${slug.value}/name-mode-changes`, { method: 'POST', body: { toMode: nextMode.value } })
+    nextMode.value = ''
+    notice.value = { kind: 'ok', text: `이름 표시 방식 변경을 예약했습니다(7일 뒤 ${to}). 멤버 모두에게 알렸습니다.` }
+    nowMs.value = Date.now()
+    await refresh()
+  } catch (e) {
+    fail(e)
+  } finally {
+    busy.value = null
+  }
+}
+async function cancelMode(id: string) {
+  if (!window.confirm('이름 표시 방식 변경 예약을 취소할까요? 멤버 모두에게 알림이 갑니다.')) return
+  busy.value = 'name-mode'
+  notice.value = null
+  try {
+    nameModes.value = await $fetch<NameModeStateDto>(`/api/v1/community/spaces/${slug.value}/name-mode-changes/${id}`, { method: 'DELETE' })
+    notice.value = { kind: 'ok', text: '예약을 취소했습니다. 지금 방식이 그대로 유지됩니다.' }
+    await refresh()
+  } catch (e) {
+    fail(e)
+  } finally {
+    busy.value = null
+  }
+}
+
 onMounted(() => {
+  nowMs.value = Date.now()
   void loadMembers()
   void loadInvitations()
+  void loadNameModes()
 })
 
 async function memberAction(m: SpaceMemberDto, action: 'approve' | 'reject' | 'remove') {
@@ -244,6 +304,7 @@ const isMe = (m: SpaceMemberDto) => m.userId === me.value?.id
         <template v-if="space.memberCount !== null"> · 멤버 {{ space.memberCount }}명</template>
       </p>
       <p class="notice">이 공간의 이름 표시 방식: <strong>{{ NAME_MODE_LABELS[space.nameMode] }}</strong></p>
+      <p v-if="banner" class="notice name-mode-banner" role="status">{{ banner }}</p>
       <p v-if="space.official" class="hint">‘공식’은 Peerchive가 열고 운영하는 페이지라는 뜻이며 학교가 인정했다는 뜻이 아닙니다. 이 학교 메일로 인증한 계정만 읽습니다.</p>
       <p v-if="space.description" class="pre">{{ space.description }}</p>
       <p v-if="space.status !== 'active'" class="notice error" role="status">{{ SPACE_STATUS_LABELS[space.status] }}</p>
@@ -309,9 +370,50 @@ const isMe = (m: SpaceMemberDto) => m.userId === me.value?.id
                 </select>
               </div>
             </template>
-            <p class="hint">이름 표시 방식 바꾸기는 다음 단계에서 열립니다(바꿔도 이후 글에만 적용).</p>
             <p class="actions"><button type="submit" :disabled="busy === 'settings'">설정 저장</button></p>
           </form>
+        </section>
+
+        <section v-if="!space.official && nameModes" aria-labelledby="name-mode">
+          <h2 id="name-mode">이름 표시 방식</h2>
+          <p>지금: <strong>{{ NAME_MODE_LABELS[nameModes.currentMode] }}</strong> — {{ NAME_MODE_HINTS[nameModes.currentMode] }}</p>
+          <template v-if="perms?.changeNameMode">
+            <template v-if="nameModes.pending">
+              <p>
+                {{ formatDateTime(nameModes.pending.effectiveAt) }}에 {{ NAME_MODE_LABELS[nameModes.pending.toMode] }}으로 바뀌도록 예약되어 있습니다.
+              </p>
+              <p class="actions">
+                <button type="button" class="secondary" :disabled="busy === 'name-mode'" @click="cancelMode(nameModes.pending.id)">변경 예약 취소</button>
+              </p>
+            </template>
+            <form v-else class="stack" novalidate @submit.prevent="scheduleMode">
+              <fieldset>
+                <legend>바꿀 방식</legend>
+                <div v-for="m in modeChoices" :key="m" class="field">
+                  <label><input v-model="nextMode" type="radio" name="next-mode" :value="m" /> {{ NAME_MODE_LABELS[m] }}으로 바꾸기</label>
+                  <p class="hint">{{ NAME_MODE_HINTS[m] }}</p>
+                </div>
+              </fieldset>
+              <p class="hint">
+                바꾸면 멤버 모두에게 바로 알림이 가고 <strong>7일 뒤</strong>부터 쓰는 글에만 적용됩니다. 이미 쓴 글·댓글은 쓸 때의 방식 그대로입니다(익명 글이 실명으로
+                드러나지 않고, 실명 글도 익명이 되지 않습니다). 실명으로 바꾸면 자유 가입은 방장 승인으로 바뀝니다. 적용 전까지 취소할 수 있습니다.
+              </p>
+              <p class="actions"><button type="submit" :disabled="busy === 'name-mode'">변경 예약</button></p>
+            </form>
+          </template>
+          <template v-if="nameModes.history.length">
+            <h3>변경 이력</h3>
+            <ul class="plain">
+              <li v-for="h in nameModes.history" :key="h.id" class="small">
+                {{ NAME_MODE_LABELS[h.fromMode] }} → {{ NAME_MODE_LABELS[h.toMode] }} · {{ NAME_MODE_CHANGE_STATUS_LABELS[h.status] }} · 예약
+                {{ formatDateTime(h.requestedAt) }}
+                <template v-if="h.status === 'applied' && h.appliedAt"> · 적용 {{ formatDateTime(h.appliedAt) }}</template>
+                <template v-else-if="h.status === 'cancelled' && h.cancelledAt"> · 취소 {{ formatDateTime(h.cancelledAt) }}</template>
+                <template v-else> · 적용 예정 {{ formatDateTime(h.effectiveAt) }}</template>
+              </li>
+            </ul>
+          </template>
+          <p v-else class="small muted">아직 바꾼 적이 없습니다.</p>
         </section>
 
         <section v-if="perms?.manageBoards && !space.official" aria-labelledby="add-board">

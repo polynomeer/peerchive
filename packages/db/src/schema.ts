@@ -39,6 +39,9 @@
  * C-02(0017 migration): 커뮤니티 공간(community_spaces: 공식 학교·학과 페이지·사용자 방·스터디 방)·멤버십(space_memberships)·게시판(boards)·
  * 초대(space_invitations, 해시·7일·일회성)·공식 페이지 개설 요청(official_page_requests), 신고 대상 community_space·조치 restrict_space,
  * 분석 이벤트 space_created·space_joined. 결정은 ADR 0019.
+ * C-03(0018 migration): 이름 표시 방식 변경 이력(name_mode_changes: 7일 예약·적용·취소, 공간마다 예약 하나), 커뮤니티 알림
+ * (community_notices: 받는 사람·공간·종류·허용 목록 payload·읽음), 선택 실명(users.real_name, real 방식 글에만), 분석 이벤트
+ * name_mode_scheduled·name_mode_applied. 결정은 ADR 0020.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -189,6 +192,8 @@ export const analyticsEventName = pgEnum('analytics_event_name', [
   'affiliation_verified',
   'space_created',
   'space_joined',
+  'name_mode_scheduled',
+  'name_mode_applied',
 ])
 /** 기관 종류(C-01). 지금은 대학만. P2에서 bootcamp 등을 더합니다(SYSTEM_DESIGN §6.7.2 이관 원칙, ADR 0018). */
 export const institutionKind = pgEnum('institution_kind', ['university'])
@@ -218,6 +223,10 @@ export const boardKind = pgEnum('board_kind', ['free', 'freshmen', 'alumni', 'qu
 export const boardWriteRole = pgEnum('board_write_role', ['member', 'moderator'])
 /** 공식 페이지 개설 요청 출처: 학생 / 학생회(운영자가 확인해 표시). */
 export const officialRequestSource = pgEnum('official_request_source', ['student', 'student_council'])
+/** 이름 표시 방식 변경 상태(C-03): scheduled(7일 대기) → applied(worker 적용) / cancelled(방장이 기한 전 취소). */
+export const nameModeChangeStatus = pgEnum('name_mode_change_status', ['scheduled', 'applied', 'cancelled'])
+/** 커뮤니티 알림 종류(C-03, @peerchive/domain COMMUNITY_NOTICE_KINDS). */
+export const communityNoticeKind = pgEnum('community_notice_kind', ['name_mode_scheduled', 'name_mode_cancelled', 'name_mode_applied'])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -238,10 +247,18 @@ export const users = pgTable(
     purgedAt: timestamp('purged_at', { withTimezone: true }),
     /** pilot 분석 이벤트 수집 거부(T-16). true면 이 사용자를 주체로 하는 이벤트를 만들지 않습니다(설정 화면). */
     analyticsOptOut: boolean('analytics_opt_out').notNull().default(false),
+    /**
+     * 선택 실명(C-03, SYSTEM_DESIGN §6.7 "실명"). 신분 확인 없음. real 방식으로 쓴 커뮤니티 글·댓글의 작성자 표시에만 쓰고 공개 DTO·프로필·검색에는
+     * 싣지 않습니다(본인 /me에만). 탈퇴 정리 때 지웁니다.
+     */
+    realName: text('real_name'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [uniqueIndex('users_private_email_lower_key').on(sql`lower(${t.privateEmail})`)],
+  (t) => [
+    uniqueIndex('users_private_email_lower_key').on(sql`lower(${t.privateEmail})`),
+    check('users_real_name_check', sql`${t.realName} is null or char_length(${t.realName}) between 1 and 30`),
+  ],
 )
 
 /**
@@ -2370,5 +2387,72 @@ export const officialPageRequests = pgTable(
     index('official_page_requests_requester_idx').on(t.requesterId),
     check('official_page_requests_department_check', sql`(${t.departmentKey} = '') = (${t.departmentLabel} is null)`),
     check('official_page_requests_department_label_check', sql`${t.departmentLabel} is null or char_length(${t.departmentLabel}) between 1 and 40`),
+  ],
+)
+
+/**
+ * 이름 표시 방식 변경 이력(C-03, SYSTEM_DESIGN §6.7 NameModeChange, ADR 0020). 행을 지우지 않는 이력입니다(상태만 scheduled → applied/cancelled).
+ * - 사용자 방·스터디 방의 방장만 예약합니다. effective_at = requested_at + 7일(check), 공간마다 scheduled 하나(부분 unique).
+ * - worker(`name-mode-changes`, 1분마다)가 effective_at이 지난 예약을 적용합니다(조건부 update라 여러 번·동시에 돌아도 한 번만).
+ * - 이미 쓴 글·댓글은 작성 시점의 name_mode를 가지므로 이 행이 바꾸지 않습니다(C-04).
+ * - requested_by·cancelled_by는 탈퇴 정리 때 null(이력 행은 남음).
+ * - join_policy_adjusted: 실명으로 바꾸며 자유 가입을 방장 승인으로 바꿨는지(예약 때 한 번, 취소해도 되돌리지 않음).
+ */
+export const nameModeChanges = pgTable(
+  'name_mode_changes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    spaceId: uuid('space_id')
+      .notNull()
+      .references(() => communitySpaces.id),
+    fromMode: communityNameMode('from_mode').notNull(),
+    toMode: communityNameMode('to_mode').notNull(),
+    requestedBy: uuid('requested_by').references(() => users.id),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull(),
+    effectiveAt: timestamp('effective_at', { withTimezone: true }).notNull(),
+    status: nameModeChangeStatus('status').notNull().default('scheduled'),
+    appliedAt: timestamp('applied_at', { withTimezone: true }),
+    cancelledBy: uuid('cancelled_by').references(() => users.id),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    joinPolicyAdjusted: boolean('join_policy_adjusted').notNull().default(false),
+  },
+  (t) => [
+    uniqueIndex('name_mode_changes_one_scheduled_key').on(t.spaceId).where(sql`${t.status} = 'scheduled'`),
+    index('name_mode_changes_space_requested_idx').on(t.spaceId, t.requestedAt),
+    index('name_mode_changes_due_idx').on(t.effectiveAt).where(sql`${t.status} = 'scheduled'`),
+    check('name_mode_changes_modes_check', sql`${t.fromMode} <> ${t.toMode}`),
+    check('name_mode_changes_delay_check', sql`${t.effectiveAt} = ${t.requestedAt} + interval '7 days'`),
+    check('name_mode_changes_applied_check', sql`(${t.status} = 'applied') = (${t.appliedAt} is not null)`),
+    check('name_mode_changes_cancelled_check', sql`(${t.status} = 'cancelled') = (${t.cancelledAt} is not null)`),
+    check('name_mode_changes_cancelled_by_check', sql`${t.cancelledBy} is null or ${t.status} = 'cancelled'`),
+  ],
+)
+
+/**
+ * 커뮤니티 알림(C-03, ADR 0020). 화면 안(`/community/notices`)에서만 보이고 메일·푸시는 없습니다. 받는 사람은 알림을 만든 순간의 그 공간
+ * active 멤버뿐입니다(나감·내보냄·승인 대기 제외). payload는 허용 목록(@peerchive/domain sanitizeNoticePayload: 방식 둘·적용 시각·가입 방식
+ * 조정 여부)만이며 공간 이름은 읽을 때 지금 멤버십을 확인하고 붙입니다. 같은 변경·종류·사람에는 한 행(worker 재시도에도 중복 없음).
+ * 탈퇴 정리 때 받는 사람의 행을 지웁니다.
+ */
+export const communityNotices = pgTable(
+  'community_notices',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    spaceId: uuid('space_id')
+      .notNull()
+      .references(() => communitySpaces.id),
+    kind: communityNoticeKind('kind').notNull(),
+    nameModeChangeId: uuid('name_mode_change_id').references(() => nameModeChanges.id),
+    payload: jsonb('payload').$type<Record<string, string | boolean>>().notNull().default({}),
+    createdAt: createdAt(),
+    readAt: timestamp('read_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('community_notices_change_kind_user_key').on(t.nameModeChangeId, t.kind, t.userId).where(sql`${t.nameModeChangeId} is not null`),
+    index('community_notices_user_created_idx').on(t.userId, t.createdAt),
+    check('community_notices_payload_object_check', sql`jsonb_typeof(${t.payload}) = 'object'`),
   ],
 )

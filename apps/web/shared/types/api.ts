@@ -32,6 +32,8 @@ export interface MeDto {
   profileHidden: boolean
   /** pilot 분석 수집을 거부했는지(T-16, 설정 화면). */
   analyticsOptOut: boolean
+  /** 선택 실명(C-03). 실명 방식 커뮤니티 글에서만 보이며 공개 프로필·검색에는 나오지 않습니다. 본인에게만. */
+  realName: string | null
 }
 
 /** 누구에게나 주는 공개 프로필 DTO. 이메일·내부 ID·계정 상태 없음. */
@@ -1708,6 +1710,8 @@ export interface MySpacesDto {
   canCreateRoom: boolean
   /** 내 active 학교 인증(방 학교 연결·개설 요청 선택지). 학과는 본인 것이라 함께 보냄. */
   schools: Array<{ id: string; name: string; departmentLabel: string | null }>
+  /** 읽지 않은 커뮤니티 알림 수(C-03). */
+  unreadNotices: number
 }
 
 export interface BoardDto {
@@ -1729,13 +1733,17 @@ export interface SpacePermissionsDto {
   changeRoles: boolean
   archive: boolean
   moderate: boolean
+  /** 이름 표시 방식 변경 예약·취소(C-03): 사용자 방·스터디 방의 방장만. */
+  changeNameMode: boolean
 }
 
 /**
  * GET /community/spaces/:slug. access 'member'이면 게시판·권한까지, 'preview'이면 소개만(멤버가 아닌 사람에게 가입 버튼용).
- * 이름 표시 방식(nameMode)은 글쓰기 화면이 항상 보여 줄 값입니다(변경 예약은 C-03).
+ * 이름 표시 방식(nameMode)은 지금 효력이 있는 값(글쓰기 화면이 항상 보여 줄 값, effective_at이 지난 예약 포함)이고,
+ * pendingNameModeChange는 아직 효력이 없는 예약입니다(멤버·소개 모두에 보여 배너로 안내, C-03).
  */
 export interface SpaceDetailDto extends SpaceSummaryDto {
+  pendingNameModeChange: PendingNameModeChangeDto | null
   access: 'member' | 'preview'
   boards: BoardDto[]
   permissions: SpacePermissionsDto
@@ -1826,4 +1834,57 @@ export interface OperatorSpaceDto {
   capacity: number
   capacityRequested: number | null
   createdAt: string
+}
+
+// ── 이름 표시 방식 변경·커뮤니티 알림 (C-03, ADR 0020) ──────────────────
+
+export type NameModeChangeStatus = 'scheduled' | 'applied' | 'cancelled'
+
+/** 아직 효력이 없는 예약(배너용). 요청한 사람은 싣지 않습니다(방장만 예약할 수 있음). */
+export interface PendingNameModeChangeDto {
+  id: string
+  fromMode: NameMode
+  toMode: NameMode
+  requestedAt: string
+  effectiveAt: string
+}
+
+export interface NameModeChangeDto extends PendingNameModeChangeDto {
+  status: NameModeChangeStatus
+  appliedAt: string | null
+  cancelledAt: string | null
+  /** 실명으로 바꾸며 자유 가입을 방장 승인으로 바꿨는지. */
+  joinPolicyAdjusted: boolean
+}
+
+/** GET /community/spaces/:slug/name-mode-changes — 읽을 수 있는 사람(멤버·공식 페이지는 학교 인증)에게. */
+export interface NameModeStateDto {
+  /** 지금 효력이 있는 방식. */
+  currentMode: NameMode
+  /** 공식 페이지: 바꿀 수 없음(anonymous 고정). */
+  fixed: boolean
+  canChange: boolean
+  pending: PendingNameModeChangeDto | null
+  /** 최근 것부터 최대 50개. */
+  history: NameModeChangeDto[]
+}
+
+export type CommunityNoticeKind = 'name_mode_scheduled' | 'name_mode_cancelled' | 'name_mode_applied'
+
+export interface CommunityNoticeDto {
+  id: string
+  kind: CommunityNoticeKind
+  /** 지금도 읽을 수 있는 공간이면 이름·주소, 나갔거나 내보내졌으면 null. */
+  space: { slug: string; name: string } | null
+  fromMode: NameMode
+  toMode: NameMode
+  effectiveAt: string
+  joinPolicyAdjusted: boolean
+  createdAt: string
+  readAt: string | null
+}
+
+export interface CommunityNoticesDto {
+  items: CommunityNoticeDto[]
+  unread: number
 }

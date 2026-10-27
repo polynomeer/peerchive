@@ -16,6 +16,7 @@ import {
   authAccounts,
   caseStudies,
   claimRevisions,
+  communityNotices,
   communitySpaces,
   consents,
   createDb,
@@ -28,6 +29,7 @@ import {
   logEntries,
   logRevisions,
   magicLinkTokens,
+  nameModeChanges,
   officialPageRequests,
   outboxEvents,
   planForks,
@@ -392,6 +394,48 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect(ledger.map((l) => l.entityKind)).toEqual(expect.arrayContaining(['space_memberships', 'space_invitations', 'official_page_requests', 'spaces_archived']))
       // 공간 행은 가명 처리된 사용자를 가리킨 채 남음
       expect(await count(tx, communitySpaces, eq(communitySpaces.createdBy, U.id))).toBe(2)
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('purges received community notices and the real name; name-mode history stays with requester/canceller nulled (C-03)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴방장', 'deleted')
+      const M = await user(tx, '남는멤버')
+      await tx.update(users).set({ realName: '김탈퇴' }).where(eq(users.id, U.id))
+      const [room] = await tx
+        .insert(communitySpaces)
+        .values({ kind: 'user_room', name: '이력 방', slug: id().replace(/-/g, '').slice(0, 10), currentNameMode: 'real', createdBy: U.id })
+        .returning()
+      await tx.insert(spaceMemberships).values([
+        { spaceId: room!.id, userId: U.id, role: 'owner', status: 'active', joinedAt: new Date(NOW.getTime() - 30 * DAY) },
+        { spaceId: room!.id, userId: M.id, role: 'member', status: 'active', joinedAt: new Date(NOW.getTime() - 20 * DAY) },
+      ])
+      const requestedAt = new Date(NOW.getTime() - 20 * DAY)
+      const [applied] = await tx
+        .insert(nameModeChanges)
+        .values({ spaceId: room!.id, fromMode: 'anonymous', toMode: 'real', requestedBy: U.id, requestedAt, effectiveAt: new Date(requestedAt.getTime() + 7 * DAY), status: 'applied', appliedAt: NOW })
+        .returning()
+      const [cancelled] = await tx
+        .insert(nameModeChanges)
+        .values({ spaceId: room!.id, fromMode: 'real', toMode: 'display', requestedBy: M.id, requestedAt, effectiveAt: new Date(requestedAt.getTime() + 7 * DAY), status: 'cancelled', cancelledAt: NOW, cancelledBy: U.id })
+        .returning()
+      const payload = { fromMode: 'anonymous', toMode: 'real', effectiveAt: applied!.effectiveAt.toISOString() }
+      await tx.insert(communityNotices).values([
+        { userId: U.id, spaceId: room!.id, kind: 'name_mode_applied', nameModeChangeId: applied!.id, payload },
+        { userId: M.id, spaceId: room!.id, kind: 'name_mode_applied', nameModeChangeId: applied!.id, payload },
+      ])
+
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ community_notices: 1, name_mode_change_actors: 2, account: 1 })
+      expect(await count(tx, communityNotices, eq(communityNotices.userId, U.id))).toBe(0)
+      expect(await count(tx, communityNotices, eq(communityNotices.userId, M.id))).toBe(1)
+      const history = await tx.select().from(nameModeChanges).where(eq(nameModeChanges.spaceId, room!.id))
+      expect(history).toHaveLength(2)
+      expect(history.find((h) => h.id === applied!.id)).toMatchObject({ requestedBy: null, status: 'applied' })
+      expect(history.find((h) => h.id === cancelled!.id)).toMatchObject({ requestedBy: M.id, cancelledBy: null, status: 'cancelled' })
+      const [row] = await tx.select().from(users).where(eq(users.id, U.id))
+      expect(row).toMatchObject({ realName: null, displayName: DELETED_DISPLAY_NAME })
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })

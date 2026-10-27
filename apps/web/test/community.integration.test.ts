@@ -589,7 +589,9 @@ describe('community module boundary (source)', () => {
 
   it('the worker search indexer never reads community tables', () => {
     const worker = resolve(__dirname, '../../worker/src')
-    for (const file of listTs(worker).filter((f) => !f.endsWith('ops/purge.ts'))) {
+    // 예외: 탈퇴 정리(purge)와 이름 표시 방식 변경 적용(C-03, ops/name-modes.ts·그 명령). 둘 다 검색 색인과 무관합니다.
+    const exempt = ['ops/purge.ts', 'ops/name-modes.ts', 'apply-name-modes.ts']
+    for (const file of listTs(worker).filter((f) => !exempt.some((e) => f.endsWith(e)))) {
       expect(readFileSync(file, 'utf8'), relative(worker, file)).not.toMatch(COMMUNITY_TABLES)
     }
   })

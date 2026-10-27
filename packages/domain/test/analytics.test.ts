@@ -17,7 +17,7 @@ const hex = (n: number) => n.toString(16).padStart(64, '0')
 
 describe('analytics allowlist', () => {
   it('covers the DELIVERY_PLAN §6 events plus login_succeeded, affiliation_verified and the C-02 space events', () => {
-    expect(ANALYTICS_EVENT_NAMES).toHaveLength(19)
+    expect(ANALYTICS_EVENT_NAMES).toHaveLength(21)
     expect(Object.keys(ANALYTICS_PROP_SPECS).sort()).toEqual([...ANALYTICS_EVENT_NAMES].sort())
     expect(isAnalyticsEventName('log_saved')).toBe(true)
     expect(isAnalyticsEventName('page_view')).toBe(false)
@@ -53,6 +53,9 @@ describe('analytics allowlist', () => {
     expect(sanitizeAnalyticsProps('space_joined', { kind: 'user_room', policy: 'invite' }).ok).toBe(true)
     expect(sanitizeAnalyticsProps('space_joined', { kind: 'official_school', policy: 'open' })).toEqual({ ok: false, violations: ['kind'] })
     expect(sanitizeAnalyticsProps('space_created', { kind: 'user_room', spaceId: 'x', name: '방' })).toEqual({ ok: false, violations: ['name', 'spaceId'] })
+    expect(sanitizeAnalyticsProps('name_mode_scheduled', { from: 'anonymous', to: 'real' })).toEqual({ ok: true, props: { from: 'anonymous', to: 'real' } })
+    expect(sanitizeAnalyticsProps('name_mode_applied', { from: 'real', to: 'secret' })).toEqual({ ok: false, violations: ['to'] })
+    expect(sanitizeAnalyticsProps('name_mode_applied', { from: 'real', to: 'display', spaceId: 'x' })).toEqual({ ok: false, violations: ['spaceId'] })
     expect(sanitizeAnalyticsProps('project_created', { title: SENTINEL, url: 'https://x.test', email: 'a@b.c' })).toEqual({
       ok: false,
       violations: ['email', 'title', 'url'],

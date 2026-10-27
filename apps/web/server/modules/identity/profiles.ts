@@ -6,6 +6,8 @@
  */
 import { z } from 'zod'
 import { and, eq, isNull, profiles, users, type DbExecutor } from '@peerchive/db'
+import { checkRealName } from '@peerchive/domain'
+import { recordAudit } from '../audit/audit'
 import { isOperator } from '../catalog/operators'
 import { type Actor, invalid, notFound, sqlState } from '../errors'
 import { parseInput } from '../validation'
@@ -115,7 +117,29 @@ export async function getMe(db: DbExecutor, actor: Actor): Promise<MeDto> {
     operator: await isOperator(db, row.user.id),
     profileHidden: row.profile?.hiddenAt != null,
     analyticsOptOut: row.user.analyticsOptOut,
+    realName: row.user.realName,
   }
+}
+
+/**
+ * PUT /me/real-name {realName: string | null} — 선택 실명(C-03, SYSTEM_DESIGN §6.7 "실명"). 신분 확인 없음. 실명 방식 커뮤니티 글·댓글의
+ * 작성자 표시에만 쓰며 공개 프로필·검색·포트폴리오에는 나오지 않습니다. 빈 값·null은 지우기. 422 `realName: too_long|invalid`.
+ * 감사에는 바뀌었는지(set/cleared)만 남기고 이름 글은 넣지 않습니다.
+ */
+export async function updateRealName(db: DbExecutor, actor: Actor, rawInput: unknown): Promise<MeDto> {
+  const input = parseInput(z.object({ realName: z.unknown() }), rawInput)
+  const checked = checkRealName(input.realName)
+  if (!checked.ok) throw invalid({ realName: checked.reason })
+  await db.transaction(async (tx) => {
+    const updated = await tx
+      .update(users)
+      .set({ realName: checked.value, updatedAt: new Date() })
+      .where(and(eq(users.id, actor.userId), eq(users.status, 'active')))
+      .returning({ id: users.id })
+    if (updated.length === 0) throw notFound()
+    await recordAudit(tx, { actorId: actor.userId, action: 'account.real_name_update', targetType: 'user', targetId: actor.userId, metadata: { set: checked.value !== null } })
+  })
+  return getMe(db, actor)
 }
 
 /** 프로필이 없으면 만들고(handle·displayName 필수), 있으면 보낸 필드만 바꿉니다. */

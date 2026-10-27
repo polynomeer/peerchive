@@ -4,7 +4,8 @@
  * 탈퇴 요청(T-02)은 계정을 deleted로 바꾸고 세션을 끊기만 합니다. 유예 기간(기본 7일)이 지나면 이 작업이 한 트랜잭션에서 정리합니다.
  *
  * 지우는 것(그 사람만의 자료): 프로필, 세션, 로그인 수단, 그 주소의 매직링크 토큰, 외부 연동(디스코드 id), 학교 메일 인증·인증 코드(C-01),
- * 커뮤니티 멤버십·그 사람이 만들거나 쓴 공간 초대·공식 페이지 개설 요청(C-02, 방장이었으면 먼저 승계: 가장 오래된 admin → 멤버, 없으면 방 보관), 디스코드 코드·📌 요청,
+ * 커뮤니티 멤버십·그 사람이 만들거나 쓴 공간 초대·공식 페이지 개설 요청(C-02, 방장이었으면 먼저 승계: 가장 오래된 admin → 멤버, 없으면 방 보관),
+ * 받은 커뮤니티 알림과 선택 실명(C-03; 이름 표시 방식 변경 이력 행은 공간의 기록이라 남기고 예약·취소한 사람만 null), 디스코드 코드·📌 요청,
  * 주간 체크인(모든 과제), 유용성 신호, 선배 노트(철회 + 삭제), 케이스 스터디·포트폴리오 판, 분석 이벤트, 업로드 의도,
  * **혼자만 쓴 과제 전체**(다른 사람이 멤버였던 적 없는 과제: 로그·할 일·마일스톤·선언·체크인·디스코드 연결·파일과 저장소 파일·공개·후보).
  *
@@ -32,6 +33,7 @@ import {
   caseSentences,
   caseStudies,
   claimEvidence,
+  communityNotices,
   communitySpaces,
   claimRevisions,
   competencyEvidence,
@@ -59,6 +61,7 @@ import {
   milestoneSnapshots,
   milestones,
   moderationActions,
+  nameModeChanges,
   ne,
   officialPageRequests,
   operators,
@@ -270,7 +273,8 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
 
     // 7) 운영자 권한 회수, 사용자 행 가명 처리.
     await tx.update(operators).set({ revokedAt: now }).where(and(eq(operators.userId, userId), isNull(operators.revokedAt)))
-    const pseudonymized = user.purgedAt === null || user.displayName !== DELETED_DISPLAY_NAME || user.privateEmail !== purgedEmailFor(userId) || user.status !== 'deleted'
+    const pseudonymized =
+      user.purgedAt === null || user.displayName !== DELETED_DISPLAY_NAME || user.privateEmail !== purgedEmailFor(userId) || user.status !== 'deleted' || user.realName !== null
     if (pseudonymized) {
       await tx
         .update(users)
@@ -281,6 +285,7 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
           deletionRequestedAt: user.deletionRequestedAt ?? now,
           purgedAt: user.purgedAt ?? now,
           analyticsOptOut: true,
+          realName: null,
           updatedAt: now,
         })
         .where(eq(users.id, userId))
@@ -358,6 +363,11 @@ async function purgeCommunity(tx: DbExecutor, userId: string, c: Counter, now: D
   c.add('official_page_requests', (await tx.delete(officialPageRequests).where(eq(officialPageRequests.requesterId, userId)).returning({ id: officialPageRequests.id })).length)
   // 운영자가 학생회 요청으로 표시한 기록의 표시자만 지웁니다(요청은 남의 것).
   await tx.update(officialPageRequests).set({ sourceMarkedBy: null }).where(eq(officialPageRequests.sourceMarkedBy, userId))
+  // 이름 표시 방식(C-03): 받은 알림은 지우고, 변경 이력(공간의 기록, 멤버가 봄)은 남기되 예약·취소한 사람만 비웁니다.
+  c.add('community_notices', (await tx.delete(communityNotices).where(eq(communityNotices.userId, userId)).returning({ id: communityNotices.id })).length)
+  const requested = await tx.update(nameModeChanges).set({ requestedBy: null }).where(eq(nameModeChanges.requestedBy, userId)).returning({ id: nameModeChanges.id })
+  const cancelled = await tx.update(nameModeChanges).set({ cancelledBy: null }).where(eq(nameModeChanges.cancelledBy, userId)).returning({ id: nameModeChanges.id })
+  c.add('name_mode_change_actors', requested.length + cancelled.length)
 }
 
 const truncateToMinute = (date: Date) => new Date(Math.floor(date.getTime() / 60_000) * 60_000)

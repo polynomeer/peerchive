@@ -23,6 +23,7 @@ export const OPS_TASK_NAMES = [
   'outbox',
   'affiliation-codes',
   'account-purge',
+  'name-mode-changes',
 ] as const
 export type OpsTaskName = (typeof OPS_TASK_NAMES)[number]
 
@@ -39,6 +40,8 @@ export const DEFAULT_CRONS: Record<OpsTaskName, string> = {
   outbox: '41 4 * * *',
   'affiliation-codes': '27 * * * *',
   'account-purge': '*/30 * * * *',
+  // 이름 표시 방식 변경 적용(C-03): effective_at이 지난 예약을 1분 안에 적용합니다(웹은 그 사이에도 새 방식으로 씀).
+  'name-mode-changes': '* * * * *',
 }
 
 export const OPS_TIMEZONE = 'Asia/Seoul'

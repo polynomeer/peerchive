@@ -11,7 +11,7 @@
  * - 가입: open → active, approval → pending(방장·admin 승인), invite → 초대 링크로만. 정원(기본 300)을 넘으면 409. 방장이 떠나면 가장 오래된
  *   admin → 가장 오래된 다른 active 멤버 순으로 넘기고, 없으면 보관(archived).
  * - 상태: archived(보관: 읽기만, 가입·쓰기·관리 없음), restricted(운영 조치: 읽기만, 목록·가입·쓰기·관리 없음, 운영자만 해제).
- * - 글쓰기 권한(canWriteBoard)만 여기서 정합니다. 실제 글·댓글은 C-04, 이름 표시 방식 변경은 C-03, 이용 제한(제재)은 C-06이며
+ * - 글쓰기 권한(canWriteBoard)만 여기서 정합니다. 실제 글·댓글은 C-04, 이름 표시 방식 변경은 C-03(name-modes.ts), 이용 제한(제재)은 C-06이며
  *   `communityWriteSuspended` 자리를 남겨 둡니다.
  *
  * 런타임 의존성 없음.
@@ -352,13 +352,15 @@ export const SPACE_MANAGE_ACTIONS = [
   'invite',
   'change_roles',
   'archive',
+  'change_name_mode',
 ] as const
 export type SpaceManageAction = (typeof SPACE_MANAGE_ACTIONS)[number]
 
 /**
  * 공간 관리 권한. active 공간만(보관·제한되면 아무도 관리하지 못하고, 제한은 운영자만 풂).
  * - 공식 페이지: 설정·게시판·보관은 운영자만. 가입·초대·역할이 없습니다(모더레이터 지정은 운영자 API).
- * - 사용자 방: 설정·게시판·승인·내보내기·초대는 owner·admin, 역할 변경·보관은 owner.
+ * - 사용자 방: 설정·게시판·승인·내보내기·초대는 owner·admin, 역할 변경·보관·이름 표시 방식 변경 예약(C-03)은 owner.
+ *   공식 페이지의 이름 표시 방식은 운영자도 바꿀 수 없습니다(anonymous 고정).
  */
 export function canManageSpace(
   viewer: CommunityViewer | null | undefined,
@@ -374,6 +376,7 @@ export function canManageSpace(
   switch (action) {
     case 'change_roles':
     case 'archive':
+    case 'change_name_mode':
       return membership.role === 'owner'
     default:
       return membership.role === 'owner' || membership.role === 'admin'

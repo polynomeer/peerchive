@@ -12,6 +12,9 @@ import {
   SPACE_NAME_MAX,
   SPACE_ROLE_LABELS,
   USER_ROOM_DEFAULT_CAPACITY,
+  REAL_NAME_MAX,
+  nameModeBannerText,
+  noticeText,
 } from '@peerchive/domain'
 import type { SpaceStatus } from '~~/shared/types/api'
 
@@ -26,6 +29,9 @@ export {
   SPACE_NAME_MAX,
   SPACE_ROLE_LABELS,
   USER_ROOM_DEFAULT_CAPACITY,
+  REAL_NAME_MAX,
+  nameModeBannerText,
+  noticeText,
 }
 
 export const SPACE_STATUS_LABELS: Record<SpaceStatus, string> = {
@@ -34,9 +40,9 @@ export const SPACE_STATUS_LABELS: Record<SpaceStatus, string> = {
   restricted: '운영 조치로 제한됨(읽기만)',
 }
 
-/** 이름 표시 방식 설명(방 만들기 화면). 바꾸기는 다음 단계(C-03)에서 열리며, 바꿔도 이후 글에만 적용됩니다. */
+/** 이름 표시 방식 설명(방 만들기·방식 바꾸기 화면). 바꾸면 7일 뒤부터 쓰는 글에만 적용됩니다(C-03). */
 export const NAME_MODE_HINTS: Record<keyof typeof NAME_MODE_LABELS, string> = {
-  real: '계정에 입력한 이름으로 글을 씁니다(Peerchive가 신분을 확인하지 않음). 가입은 승인제가 기본입니다.',
+  real: '계정에 입력한 실명(커뮤니티 화면에서 선택 입력)으로 글을 씁니다(Peerchive가 신분을 확인하지 않음). 가입은 승인제가 기본입니다.',
   display: '공개 프로필의 표시명으로 씁니다. 실명은 보이지 않습니다.',
   anonymous: '글마다 익명으로 씁니다. 방장도 작성자를 볼 수 없습니다. 소규모 익명 방은 말투·시간으로 작성자가 추정될 수 있습니다.',
 }
@@ -60,6 +66,10 @@ export const COMMUNITY_ERROR_MESSAGES: Record<string, string> = {
   official_exists: '이미 열린 공식 페이지가 있습니다.',
   link_unavailable: '쓸 수 없는 초대 링크입니다(만료·사용·취소됨).',
   rate_limited: '요청이 너무 많습니다. 잠시 뒤 다시 시도하세요.',
+  name_mode_fixed: '공식 페이지의 이름 표시 방식은 익명으로 고정되어 바꿀 수 없습니다.',
+  change_already_scheduled: '이미 예약된 변경이 있습니다. 먼저 취소하세요.',
+  already_effective: '이미 적용 시각이 지나 취소할 수 없습니다.',
+  not_scheduled: '이미 적용되었거나 취소된 예약입니다.',
   not_found: '찾을 수 없습니다.',
   forbidden: '이 작업을 할 권한이 없습니다.',
 }
@@ -73,4 +83,10 @@ export const SPACE_NAME_ERRORS: Record<string, string> = {
   too_long: `이름은 ${SPACE_NAME_MAX}자까지입니다.`,
   reserved: '`공식`·`학생회`·`운영자`·`관리자`·`Peerchive` 같은 말은 사용자 방 이름에 쓸 수 없습니다.',
   invalid: '쓸 수 없는 글자가 있습니다.',
+}
+
+export const NAME_MODE_CHANGE_STATUS_LABELS: Record<'scheduled' | 'applied' | 'cancelled', string> = {
+  scheduled: '예약됨',
+  applied: '적용됨',
+  cancelled: '취소됨',
 }

@@ -5,7 +5,8 @@
  * - 상세는 canReadSpace면 게시판·권한까지, 아니면 canPreviewSpace일 때 소개(이름·소개·멤버 수·가입 방식)만, 둘 다 아니면 404.
  * - 사용자 방은 active 학교 인증이 하나라도 있어야 만들고, 학교를 연결하면 그 학교 인증이 있어야 합니다. 이름의 예약어(`공식`·`학생회` 등)는 422,
  *   정원은 2~300(그 이상은 300으로 만들고 요청값을 운영자 검토로 남김).
- * - 이름 표시 방식은 만들 때만 정합니다(바꾸기는 C-03의 7일 예약). 공식 페이지는 anonymous 고정.
+ * - 이름 표시 방식은 만들 때 정하고, 바꾸기는 C-03의 7일 예약(name-modes.ts)으로만 합니다(PATCH는 422 not_editable). 공식 페이지는 anonymous 고정.
+ *   상세의 nameMode는 지금 효력이 있는 방식(effective_at이 지난 예약 포함), pendingNameModeChange는 아직 효력이 없는 예약입니다.
  */
 import { randomInt } from 'node:crypto'
 import { z } from 'zod'
@@ -58,6 +59,8 @@ import { emitAnalytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
 import { type Actor, ServiceError, conflict, forbidden, invalid, notFound, rateLimited, sqlState } from '../errors'
 import { hitRateLimit } from '../security/rate-limit'
+import { loadScheduledChange, nameModeNow } from './name-modes'
+import { unreadNoticeCount } from './notices'
 import { isUuid } from '../projects/access'
 import { parseInput } from '../validation'
 import {
@@ -141,6 +144,7 @@ export function permissionsFor(ctx: SpaceContext): SpacePermissionsDto {
     changeRoles: can('change_roles'),
     archive: can('archive'),
     moderate: canModerate(ctx.viewer, ctx.facts, m),
+    changeNameMode: can('change_name_mode'),
   }
 }
 
@@ -153,6 +157,7 @@ const NO_PERMISSIONS: SpacePermissionsDto = {
   changeRoles: false,
   archive: false,
   moderate: false,
+  changeNameMode: false,
 }
 
 export async function loadBoards(db: DbExecutor, spaceId: string): Promise<BoardRow[]> {
@@ -165,11 +170,14 @@ function joinActionFor(ctx: SpaceContext): SpaceDetailDto['joinAction'] {
   return decision.reason === 'already_pending' ? 'pending' : 'none'
 }
 
-async function detailFor(db: DbExecutor, ctx: SpaceContext, access: 'member' | 'preview'): Promise<SpaceDetailDto> {
+async function detailFor(db: DbExecutor, ctx: SpaceContext, access: 'member' | 'preview', now: Date): Promise<SpaceDetailDto> {
   const official = isOfficialKind(ctx.space.row.kind)
   const boardRows = access === 'member' ? await loadBoards(db, ctx.space.row.id) : []
+  const { mode, pending } = nameModeNow(ctx.space.row.currentNameMode, official ? null : await loadScheduledChange(db, ctx.space.row.id), now)
   return {
     ...toSpaceSummary(ctx.space, ctx.facts.activeMembers, ctx.membership),
+    nameMode: mode,
+    pendingNameModeChange: pending,
     access,
     boards: boardRows.map((b) => toBoardDto(b, ctx)),
     permissions: access === 'member' ? permissionsFor(ctx) : NO_PERMISSIONS,
@@ -218,7 +226,7 @@ export async function listMySpaces(db: DbExecutor, actor: Actor): Promise<MySpac
     if (!isOfficialKind(s.row.kind) && m?.status === 'pending') pending.push(dto)
     else items.push(dto)
   }
-  return { items, pending, canCreateRoom: canCreateRoom(viewer, null), schools: viewer.schools }
+  return { items, pending, canCreateRoom: canCreateRoom(viewer, null), schools: viewer.schools, unreadNotices: await unreadNoticeCount(db, actor.userId) }
 }
 
 /** 공식 페이지 먼저, 그 안에서 학교 페이지 → 학과 페이지, 나머지는 최근 것부터. */
@@ -271,11 +279,11 @@ export async function discoverSpaces(db: DbExecutor, actor: Actor, query: unknow
 }
 
 /** GET /community/spaces/:slug — 읽을 수 있으면 게시판까지, 소개만 볼 수 있으면 preview, 아니면 404. */
-export async function getSpaceDetail(db: DbExecutor, actor: Actor, ref: unknown): Promise<SpaceDetailDto> {
+export async function getSpaceDetail(db: DbExecutor, actor: Actor, ref: unknown, now = new Date()): Promise<SpaceDetailDto> {
   const ctx = await loadSpaceContext(db, actor, ref)
   const m = membershipFacts(ctx.membership)
-  if (canReadSpace(ctx.viewer, ctx.facts, m)) return detailFor(db, ctx, 'member')
-  if (canPreviewSpace(ctx.viewer, ctx.facts, m)) return detailFor(db, ctx, 'preview')
+  if (canReadSpace(ctx.viewer, ctx.facts, m)) return detailFor(db, ctx, 'member', now)
+  if (canPreviewSpace(ctx.viewer, ctx.facts, m)) return detailFor(db, ctx, 'preview', now)
   throw notFound()
 }
 
@@ -507,7 +515,7 @@ export function assertCanManage(ctx: SpaceContext, action: Parameters<typeof can
 
 /**
  * PATCH /community/spaces/:slug {name?, description?, discovery?, joinPolicy?} — 사용자 방은 owner·admin, 공식 페이지는 운영자.
- * 이름 표시 방식은 여기서 바꿀 수 없습니다(422 `nameMode: not_editable`, C-03). 공식 페이지는 가입 방식·찾기가 없습니다(422).
+ * 이름 표시 방식은 여기서 바꿀 수 없습니다(422 `nameMode: not_editable`; 바꾸기는 POST …/name-mode-changes의 7일 예약, C-03). 공식 페이지는 가입 방식·찾기가 없습니다(422).
  */
 export async function updateSpace(db: DbExecutor, actor: Actor, ref: unknown, rawInput: unknown, now = new Date()): Promise<SpaceDetailDto> {
   const input = parseInput(updateSpaceSchema, rawInput)

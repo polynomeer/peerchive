@@ -50,6 +50,8 @@ const user = (id: string, name: string): typeof users.$inferSelect => ({
   deletionRequestedAt: null,
   purgedAt: null,
   analyticsOptOut: false,
+  // 선택 실명(C-03)은 공개 스냅샷 어디에도 들어가지 않습니다(SENTINEL 검사가 확인).
+  realName: S('REALNAME'),
   createdAt: T,
   updatedAt: T,
 })
