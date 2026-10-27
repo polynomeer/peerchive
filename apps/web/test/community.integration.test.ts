@@ -598,10 +598,11 @@ describe('community module boundary (source)', () => {
     }
   })
 
-  it('community routes live only under /api/v1/community and /api/v1/operator/community', () => {
+  it('community routes live only under /api/v1/community, /api/v1/operator/community and the operator community metrics (C-10)', () => {
     const routes = listTs(join(SERVER, 'api')).filter((f) => readFileSync(f, 'utf8').includes('modules/community/'))
     expect(routes.length).toBeGreaterThan(20)
-    for (const f of routes) expect(relative(SERVER, f)).toMatch(/^api\/v1\/(community|operator\/community)\//)
+    // C-10(ADR 0027): /api/v1/operator/metrics/community/*는 집계 모듈(ops-metrics)만 import합니다(C-05 경계 검사의 문서화된 예외).
+    for (const f of routes) expect(relative(SERVER, f)).toMatch(/^api\/v1\/(community|operator\/community|operator\/metrics\/community)\//)
   })
 
   it('the worker search indexer never reads community tables', () => {

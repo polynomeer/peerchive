@@ -4,6 +4,7 @@
  * 대상별로 묶은 신고(개수·사유·처음/마지막 신고·담당자·보류)와 열린 이의제기. 목표 대응 시간은 apps/README.md "운영"을 보세요.
  * 신고 누적으로 임시 숨김된 커뮤니티 글·댓글(C-06)은 맨 앞에 "임시 숨김 · 우선 검토"로 보입니다. 신고와 이어지지 않은 이의제기(방 운영진 가리기·
  * 이용 제한)는 여기서 바로 결정합니다.
+ * 처리 기한(C-10, ADR 0027): 묶음마다 우선순위·나이·기한 배지(여유·곧 기한·기한 넘김), "기한 넘김만" 필터(`?overdue=1`, 처리 전 상태에서만).
  */
 import type { OperatorAppealDto, OperatorReportGroupDto, ReportStatus } from '~~/shared/types/api'
 
@@ -34,7 +35,11 @@ const STATUSES: Array<{ value: ReportStatus; label: string }> = [
 const route = useRoute()
 const status = computed<ReportStatus>(() => (STATUSES.some((s) => s.value === route.query.status) ? (route.query.status as ReportStatus) : 'open'))
 
-const { data: groups, error } = await useFetch<OperatorReportGroupDto[]>('/api/v1/operator/reports', { query: { status } })
+const overdueOnly = computed(() => route.query.overdue === '1' && (status.value === 'open' || status.value === 'in_review'))
+const openStatus = computed(() => status.value === 'open' || status.value === 'in_review')
+const { data: groups, error } = await useFetch<OperatorReportGroupDto[]>('/api/v1/operator/reports', {
+  query: computed(() => ({ status: status.value, ...(overdueOnly.value && { overdue: '1' }) })),
+})
 const { data: appeals, refresh: refreshAppeals } = await useFetch<OperatorAppealDto[]>('/api/v1/operator/appeals', { query: { status: 'open' } })
 
 const denied = computed(() => !!error.value)
@@ -47,6 +52,15 @@ const reasonsText = (g: OperatorReportGroupDto) =>
   Object.entries(g.reasons)
     .map(([r, n]) => `${REPORT_REASON_LABELS[r as keyof typeof REPORT_REASON_LABELS]} ${n}`)
     .join(' · ')
+const SLA_LABELS: Record<string, string> = { ok: '기한 여유', due_soon: '곧 기한', overdue: '기한 넘김' }
+const hoursText = (seconds: number) => {
+  const hours = Math.floor(seconds / 3600)
+  return hours < 1 ? '1시간 미만' : hours < 48 ? `${hours}시간` : `${Math.floor(hours / 24)}일 ${hours % 24}시간`
+}
+const slaText = (g: OperatorReportGroupDto) =>
+  openStatus.value
+    ? `${SLA_LABELS[g.sla.state]} · ${g.sla.priority === 'auto_hidden' ? '숨김 뒤' : '첫 신고 뒤'} ${hoursText(g.sla.ageSeconds)} 지남 / 목표 ${g.sla.targetHours}시간`
+    : `처리까지 ${hoursText(g.sla.resolutionSeconds ?? g.sla.ageSeconds)}${g.sla.state === 'overdue' ? ' · 기한 넘김' : ' · 기한 안'}`
 const age = (iso: string) => {
   const hours = Math.floor((Date.now() - new Date(iso).getTime()) / 3_600_000)
   return hours < 1 ? '1시간 이내' : hours < 48 ? `${hours}시간 전` : `${Math.floor(hours / 24)}일 전`
@@ -65,19 +79,27 @@ const age = (iso: string) => {
       <p class="hint">
         운영자는 공개됐던 내용만 봅니다(비공개 과제 공간은 볼 수 없음). 모든 처리·배정·이의 결정은 감사 기록에 남습니다. 삭제는 이 화면에서 하지 않습니다.
       </p>
+      <p><NuxtLink to="/operator/ops-time">주간 운영 시간 기록</NuxtLink> · <NuxtLink to="/operator/community-metrics">커뮤니티 지표·내보내기</NuxtLink></p>
       <nav aria-label="신고 상태">
         <ul class="nav-list">
           <li v-for="s in STATUSES" :key="s.value">
-            <NuxtLink :to="{ query: { status: s.value } }" :aria-current="status === s.value ? 'page' : undefined">{{ s.label }}</NuxtLink>
+            <NuxtLink :to="{ query: { status: s.value } }" :aria-current="status === s.value && !overdueOnly ? 'page' : undefined">{{ s.label }}</NuxtLink>
+          </li>
+          <li v-if="openStatus">
+            <NuxtLink :to="{ query: { status, overdue: '1' } }" :aria-current="overdueOnly ? 'page' : undefined" data-testid="overdue-filter">기한 넘김만</NuxtLink>
           </li>
         </ul>
       </nav>
+      <p class="small muted">처리 기한(기본): 임시 숨김은 숨김 뒤 24시간, 그 밖의 신고는 첫 신고 뒤 72시간. 배지의 "목표"가 지금 설정이며, 75%가 지나면 "곧 기한"입니다.</p>
       <ul v-if="groups?.length" class="plain operator-list">
         <li v-for="g in groups" :key="g.reportId">
           <p>
             <NuxtLink :to="`/operator/reports/${g.reportId}`"><strong>{{ g.targetLabel || REPORT_TARGET_LABELS[g.targetType] }}</strong></NuxtLink>
             <span v-if="g.hold" class="badge embargo">게시 보류 중</span>
             <span v-if="g.autoHidden" class="badge embargo" data-testid="auto-hidden-badge">임시 숨김 · 우선 검토</span>
+          </p>
+          <p class="small">
+            <span :class="['badge', 'sla', `sla-${g.sla.state}`]" data-testid="sla-badge" :data-sla="g.sla.state">{{ slaText(g) }}</span>
           </p>
           <p class="small">신고 {{ g.count }}건 · {{ reasonsText(g) }}</p>
           <p class="small muted">
@@ -86,7 +108,7 @@ const age = (iso: string) => {
           </p>
         </li>
       </ul>
-      <p v-else class="muted">이 상태의 신고가 없습니다.</p>
+      <p v-else class="muted">{{ overdueOnly ? '기한을 넘긴 신고가 없습니다.' : '이 상태의 신고가 없습니다.' }}</p>
 
       <h2>열린 이의제기</h2>
       <p v-if="appealMessage" :class="['notice', appealMessage.kind]" :role="appealMessage.kind === 'error' ? 'alert' : 'status'">{{ appealMessage.text }}</p>

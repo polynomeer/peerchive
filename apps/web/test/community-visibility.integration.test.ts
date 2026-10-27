@@ -144,6 +144,8 @@ const IMPORT_ALLOWED: Array<{ file: RegExp; targets: RegExp }> = [
   { file: /^web\/server\/modules\/moderation\/(operator|targets|actions)\.ts$/, targets: /^(reporting|official)$/ },
   // 서버 미들웨어: 경로 판정·헤더(테이블 없음).
   { file: /^web\/server\/middleware\/0[23]\.[a-z]+\.ts$/, targets: /^http$/ },
+  // C-10(ADR 0027): 운영자 커뮤니티 지표 라우트(`/api/v1/operator/metrics/community`)는 집계 모듈 하나만(개수만, 5 미만 가림).
+  { file: /^web\/server\/api\/v1\/operator\/metrics\/community\//, targets: /^ops-metrics$/ },
 ]
 
 /** 공개 읽기·파생 경로: 커뮤니티 모듈을 어떤 형태로도 import하지 않고 커뮤니티 테이블 이름도 쓰지 않습니다. */

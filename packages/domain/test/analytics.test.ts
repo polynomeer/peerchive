@@ -16,8 +16,9 @@ const at = (days: number) => new Date(T0.getTime() + days * DAY)
 const hex = (n: number) => n.toString(16).padStart(64, '0')
 
 describe('analytics allowlist', () => {
-  it('covers the DELIVERY_PLAN §6 events plus login_succeeded, affiliation_verified the C-02·C-03 space events, the C-04 post events, the C-06 moderation events, the C-07 recruitment events, the C-09 transfer events and the C-08 study_record_enabled event', () => {
-    expect(ANALYTICS_EVENT_NAMES).toHaveLength(34)
+  it('covers the DELIVERY_PLAN §6 events plus login_succeeded, affiliation_verified the C-02·C-03 space events, the C-04 post events, the C-06 moderation events, the C-07 recruitment events, the C-09 transfer events, the C-08 study_record_enabled event and the C-10 community_author_lookup event', () => {
+    expect(ANALYTICS_EVENT_NAMES).toHaveLength(35)
+    expect(ANALYTICS_EVENT_NAMES).toContain('community_author_lookup')
     expect(Object.keys(ANALYTICS_PROP_SPECS).sort()).toEqual([...ANALYTICS_EVENT_NAMES].sort())
     expect(isAnalyticsEventName('log_saved')).toBe(true)
     expect(isAnalyticsEventName('page_view')).toBe(false)

@@ -21,8 +21,8 @@ const seoulMidnight = (day: string) => new Date(Date.parse(`${day}T00:00:00Z`) -
 const seoulToday = (now: Date) => new Date(now.getTime() + SEOUL_MS).toISOString().slice(0, 10)
 
 
-export async function getOperatorMetrics(db: DbExecutor, actor: Actor, rawQuery: unknown, now = new Date()): Promise<OperatorMetricsDto> {
-  await requireOperator(db, actor)
+/** `from`·`to`(서울 날짜, 양 끝 포함) → [from, to) UTC 시각. 기본 오늘까지 28일, 최대 366일. 커뮤니티 지표(C-10)도 같은 규칙을 씁니다. */
+export function parseMetricsRange(rawQuery: unknown, now: Date): { from: Date; to: Date } {
   const query = parseInput(querySchema, rawQuery)
   const toDay = query.to ?? seoulToday(now)
   const to = new Date(seoulMidnight(toDay).getTime() + DAY_MS)
@@ -30,6 +30,12 @@ export async function getOperatorMetrics(db: DbExecutor, actor: Actor, rawQuery:
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) throw invalid({ from: 'invalid' })
   if (from >= to) throw invalid({ to: 'before_from' })
   if (to.getTime() - from.getTime() > 366 * DAY_MS) throw invalid({ to: 'too_long' })
+  return { from, to }
+}
+
+export async function getOperatorMetrics(db: DbExecutor, actor: Actor, rawQuery: unknown, now = new Date()): Promise<OperatorMetricsDto> {
+  await requireOperator(db, actor)
+  const { from, to } = parseMetricsRange(rawQuery, now)
   const rows = await db
     .select({
       name: analyticsEvents.name,

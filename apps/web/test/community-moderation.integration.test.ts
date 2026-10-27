@@ -529,11 +529,12 @@ describe.skipIf(!databaseUrl)('C-06 community moderation (PostgreSQL)', () => {
         .where(sql`${auditEvents.action} in ('community.author_lookup', 'community.sanction_issue', 'community.sanction_request', 'community.space_hide') and ${auditEvents.at} >= now()`)
       expect(c06.length).toBeGreaterThanOrEqual(3)
       expectNoIdentity(c06, [A], 'c06 audit')
-      // 분석: C-06 이벤트는 사용자 키 없이(매번 새 무작위 키)
-      const ev = (await tx.select().from(analyticsEvents).where(inArray(analyticsEvents.name, ['community_report_filed', 'community_auto_hidden', 'community_sanction_issued']))).filter(
-        (e) => e.occurredAt >= T0,
-      )
-      expect(new Set(ev.map((e) => e.actorHash)).size).toBe(ev.length)
+      // 분석: C-06 이벤트와 작성자 확인(C-10)은 사용자 키 없이(actor_hash null, ADR 0027)
+      const ev = (
+        await tx.select().from(analyticsEvents).where(inArray(analyticsEvents.name, ['community_report_filed', 'community_auto_hidden', 'community_sanction_issued', 'community_author_lookup']))
+      ).filter((e) => e.occurredAt >= T0)
+      expect(ev.length).toBeGreaterThan(0)
+      expect(ev.every((e) => e.actorHash === null && e.projectHash === null)).toBe(true)
       // 알림 행: 작성자에게만(신고자에게 auto-hide 알림 없음)
       const rows = await tx.select().from(communityNotices).where(eq(communityNotices.postId, post.id))
       expect(rows.every((n) => n.userId === A.userId)).toBe(true)

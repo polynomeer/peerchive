@@ -217,6 +217,11 @@ export async function applyReportThresholdInTx(tx: DbExecutor, ref: ItemRef, tri
   if (!shouldAutoHide({ status: loaded.item.status, qualifying, threshold: autoHideThreshold(space.row.kind, autoHideThresholds()) })) return false
   const table = tableOf(kind)
   await tx.update(table).set({ status: 'auto_hidden', updatedAt: now }).where(and(eq(table.id, loaded.item.id), eq(table.status, 'published')))
+  // 우선 검토 기한(SLA)의 시작점(C-10, ADR 0027): 그때 처리 전인 같은 대상의 신고에 숨김 시각을 남깁니다(운영 지표·상태 확인이 커뮤니티 테이블 없이 씀).
+  await tx
+    .update(reports)
+    .set({ autoHiddenAt: now })
+    .where(and(eq(reports.targetKey, loaded.targetKey), inArray(reports.status, ['open', 'in_review']), isNull(reports.autoHiddenAt)))
   // 가려진 글·답변은 아카이브로 옮길 수 없습니다(C-09): 진행 중 옮기기를 취소합니다.
   await cancelTransfersForSourceInTx(tx, kind === 'post' ? { postId: loaded.item.id } : { commentId: loaded.item.id }, 'source_unavailable', now)
   await notifyItemReview(tx, loaded, 'item_auto_hidden', now)
@@ -671,6 +676,9 @@ export async function lookupAuthor(db: DbExecutor, actor: Actor, rawInput: unkno
       targetId: loaded.item.id,
       metadata: { lookupId: lookup!.id, reportId: input.reportId ?? null, requestId: input.requestId ?? null },
     })
+    // §6.1 operator_identity_lookup(C-10): 근거 종류만, 사용자 키 없이(운영자 행동을 사람과 잇지 않음).
+    const basis = input.reportId ? 'report' : input.requestId ? 'sanction_request' : 'none'
+    await emitAnalytics(tx, { name: 'community_author_lookup', actorId: actor.userId, unlinked: true, props: { basis }, now })
     const [author] = await tx
       .select({ id: users.id, status: users.status, purgedAt: users.purgedAt, handle: profiles.handle })
       .from(users)

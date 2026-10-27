@@ -217,7 +217,9 @@ describe.skipIf(!databaseUrl)('C-09 archive transfers (PostgreSQL)', () => {
       expect(events.map((e) => e.name).sort()).toEqual(['archive_transfer_completed', 'archive_transfer_requested', 'course_qa_published'])
       const linked = new Set([w.asker.userId, w.answerer.userId].map((id) => hashSubject(PEPPER.PEERCHIVE_ANALYTICS_PEPPER, id)))
       for (const e of events) {
-        expect(linked.has(e.actorHash)).toBe(false)
+        // C-10(ADR 0027): 사용자 키 없음 = actor_hash null
+        expect(e.actorHash).toBeNull()
+        expect(linked.has(e.actorHash ?? '')).toBe(false)
         expect(e.projectHash).toBeNull()
       }
     })

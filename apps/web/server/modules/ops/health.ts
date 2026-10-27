@@ -2,7 +2,9 @@
  * 운영자용 상세 상태 확인(T-16, SYSTEM_DESIGN §14 관측, ADR 0016). `GET /api/v1/health?deep=1`(운영자만)이 씁니다.
  *
  * DB 왕복, 저장소 쓰기·읽기·지우기 시험(격리 접두어의 일회용 키), worker 상태 기록(1분마다)의 나이, 주기 작업의 마지막 결과,
- * outbox 미전달 수·가장 오래된 나이, pg-boss 실패·dead-letter 작업 수, 유예가 지났는데 정리되지 않은 탈퇴 계정 수를 돌려줍니다.
+ * outbox 미전달 수·가장 오래된 나이, pg-boss 실패·dead-letter 작업 수, 유예가 지났는데 정리되지 않은 탈퇴 계정 수,
+ * 신고 처리 기한(C-10, ADR 0027: 처리 전 묶음·기한 넘김·그중 임시 숨김·가장 오래된 나이)을 돌려줍니다. 기한 넘김은 판정(`status`)에 넣지 않습니다
+ * (운영 대응 신호이지 시스템 장애가 아님, RUNBOOK 에스컬레이션).
  * 개수·시각·상태 코드만 싣고 내용·id·접속 정보는 싣지 않습니다.
  */
 import { Readable } from 'node:stream'
@@ -13,8 +15,10 @@ import {
   isNotNull,
   isNull,
   lte,
+  inArray,
   outboxEvents,
   pingDb,
+  reports,
   sql,
   users,
   workerHeartbeats,
@@ -22,8 +26,10 @@ import {
   type DbExecutor,
 } from '@peerchive/db'
 import { newQuarantineKey, readAll, type ObjectStorage } from '@peerchive/files'
+import { reportGroupSla, type ReportSlaTargets } from '@peerchive/domain'
 import type { DeepHealthDto, HealthCheckStatus } from '../../../shared/types/api'
 import { isOperator } from '../catalog/operators'
+import { currentReportSlaTargets } from '../moderation/sla'
 
 /** worker가 이 시간(초) 넘게 기록하지 않으면 stale입니다(기록 주기 60초의 세 배). */
 export const WORKER_STALE_SECONDS = 180
@@ -37,6 +43,8 @@ export interface DeepHealthDeps {
   now: Date
   graceDays: number
   flags: DeepHealthDto['flags']
+  /** 신고 처리 기한(없으면 환경 변수, 기본 24·72시간). */
+  slaTargets?: ReportSlaTargets
 }
 
 const PROBE = Buffer.from('peerchive-health-probe')
@@ -79,6 +87,8 @@ export async function deepHealth(deps: DeepHealthDeps): Promise<DeepHealthDto> {
   let outbox: DeepHealthDto['outbox'] = { backlog: 0, oldestAgeSeconds: null }
   let jobs: DeepHealthDto['jobs'] = { failed: {}, deadLetter: {}, available: false }
   let overdue = 0
+  const targets = deps.slaTargets ?? currentReportSlaTargets()
+  const reportHealth: DeepHealthDto['reports'] = { open: 0, overdue: 0, overdueAutoHidden: 0, oldestOpenAgeSeconds: null, targets }
   if (ping.ok) {
     const [row] = await db
       .select({ n: sql<number>`count(*)::int`, oldest: sql<string | null>`min(${outboxEvents.createdAt})::text` })
@@ -113,6 +123,25 @@ export async function deepHealth(deps: DeepHealthDeps): Promise<DeepHealthDto> {
       .from(users)
       .where(and(eq(users.status, 'deleted'), isNull(users.purgedAt), isNotNull(users.deletionRequestedAt), lte(users.deletionRequestedAt, cutoff)))
     overdue = due?.n ?? 0
+    // 신고 처리 기한: 처리 전 신고를 대상별로 묶어(첫 신고·임시 숨김 시각) 판정합니다. reports 표만 읽습니다(커뮤니티 테이블 없음).
+    const groups = await db
+      .select({
+        first: sql<string>`min(${reports.createdAt})::text`,
+        hidden: sql<string | null>`min(${reports.autoHiddenAt})::text`,
+      })
+      .from(reports)
+      .where(inArray(reports.status, ['open', 'in_review']))
+      .groupBy(reports.targetKey)
+    for (const g of groups) {
+      const sla = reportGroupSla({ firstReportedAt: new Date(g.first), autoHiddenAt: g.hidden ? new Date(g.hidden) : null }, targets, now)
+      reportHealth.open++
+      if (sla.state === 'overdue') {
+        reportHealth.overdue++
+        if (sla.priority === 'auto_hidden') reportHealth.overdueAutoHidden++
+      }
+      const age = Math.max(0, Math.floor((now.getTime() - new Date(g.first).getTime()) / 1000))
+      reportHealth.oldestOpenAgeSeconds = Math.max(reportHealth.oldestOpenAgeSeconds ?? 0, age)
+    }
   }
 
   const tasks = beats.tasks
@@ -136,6 +165,7 @@ export async function deepHealth(deps: DeepHealthDeps): Promise<DeepHealthDto> {
     outbox,
     jobs,
     deletion: { overdue, graceDays: deps.graceDays },
+    reports: reportHealth,
   }
 }
 

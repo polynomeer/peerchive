@@ -1641,6 +1641,24 @@ export interface OperatorReportGroupDto {
   hold: boolean
   /** 신고 누적으로 임시 숨김된 커뮤니티 글·댓글(C-06, 우선 검토로 맨 앞). */
   autoHidden: boolean
+  /** 처리 기한(C-10, ADR 0027). 처리 전 묶음은 지금까지, 끝난 묶음은 처리 시각까지. */
+  sla: ReportSlaDto
+}
+
+export type ReportSlaState = 'ok' | 'due_soon' | 'overdue'
+
+export interface ReportSlaDto {
+  /** auto_hidden: 임시 숨김 시각부터 우선 검토 기한, normal: 첫 신고부터. */
+  priority: 'auto_hidden' | 'normal'
+  startedAt: string
+  dueAt: string
+  targetHours: number
+  ageSeconds: number
+  state: ReportSlaState
+  /** 첫 신고 → 첫 처리(배정·처리)까지 초. 아직 없으면 null. */
+  firstActionSeconds: number | null
+  /** 첫 신고 → 처리 완료까지 초(처리 전 null). */
+  resolutionSeconds: number | null
 }
 
 export interface OperatorReportDto {
@@ -1766,6 +1784,109 @@ export interface DeepHealthDto {
   outbox: { backlog: number; oldestAgeSeconds: number | null }
   jobs: { failed: Record<string, number>; deadLetter: Record<string, number>; available: boolean }
   deletion: { overdue: number; graceDays: number }
+  /** 신고 처리 기한(C-10): 처리 전 묶음 수·기한 넘김 수(임시 숨김 따로)·가장 오래된 처리 전 묶음의 나이. 개수만(내용·id 없음). */
+  reports: { open: number; overdue: number; overdueAutoHidden: number; oldestOpenAgeSeconds: number | null; targets: { autoHiddenHours: number; normalHours: number } }
+}
+
+// ── 커뮤니티 운영 지표·주간 운영 시간 (C-10, ADR 0027) ─────────────────────
+
+export type OpsTimeCategory = 'reports' | 'official_pages' | 'affiliation_support' | 'curation' | 'other'
+
+/** 내 주간 운영 시간 한 주(본인에게만). */
+export interface OpsTimeEntryDto {
+  week: string
+  /** 그 주의 서울 날짜(월~일). */
+  from: string
+  to: string
+  minutes: Record<OpsTimeCategory, number>
+  total: number
+  note: string | null
+  updatedAt: string
+}
+
+/** GET /api/v1/operator/ops-time — 이번 주와 기록 목록(최근 12주, 본인 것만). */
+export interface MyOpsTimeDto {
+  currentWeek: string
+  entries: OpsTimeEntryDto[]
+}
+
+export interface NotAvailableMetricDto {
+  value: null
+  reason: string
+}
+
+type Counts<K extends string> = Record<K, number | null>
+
+/** GET /api/v1/operator/metrics/community. 모든 칸 5 미만 null(가림). id·이름·글 없음. */
+export interface CommunityMetricsDto {
+  from: string
+  to: string
+  minGroup: number
+  activity: { weeklyActive: Array<{ week: string; users: number | null }>; keyedEvents: number | null; unkeyedEvents: number | null }
+  writing: {
+    posts: number | null
+    comments: number | null
+    postsByBoard: Counts<BoardKind>
+    postsByMode: Counts<NameMode>
+    commentsByMode: Counts<NameMode>
+    anonymousShare: RateMetricDto
+    namedShare: RateMetricDto
+  }
+  moderation: {
+    reportsFiled: number | null
+    communityReportsFiled: number | null
+    reportsPer100Posts: number | null
+    reportsPer1000Posts: number | null
+    casesClosed: number | null
+    medianFirstActionHours: number | null
+    medianResolutionHours: number | null
+    medianAutoHiddenResolutionHours: number | null
+    slaMet: RateMetricDto
+    autoHideRate: RateMetricDto
+    restoreRate: RateMetricDto
+    sanctionsByLevel: Counts<'warning' | 'write_suspended' | 'permanent'>
+    authorLookups: number | null
+    authorLookupsLinked: RateMetricDto
+    openCases: number | null
+    overdueCases: number | null
+    overdueAutoHidden: number | null
+  }
+  conversion: {
+    transfers: Record<'course_qa' | 'stuck_log' | 'senior_note', { requested: number | null; completed: number | null; rate: number | null }>
+    questionToStuck: RateMetricDto
+    studyRecordsEnabled: number | null
+    studyRecordConversion: RateMetricDto
+    studyPublished: RateMetricDto
+    recruitmentsCreated: Counts<'team' | 'study'>
+    recruitmentsClosed: Counts<'project' | 'study_room' | 'cancelled'>
+    recruitmentFillRate: RateMetricDto
+  }
+  opsTime: { weeks: Array<{ week: string; minutes: Counts<OpsTimeCategory>; total: number | null; operators: number | null }>; totalMinutes: number | null }
+  notAvailable: Record<'archiveInflow' | 'revisit' | 'writeTime' | 'studyToSeniorNote', NotAvailableMetricDto>
+  slaTargets: { autoHiddenHours: number; normalHours: number }
+  /** 운영자가 고른 공간 하나(active 멤버 N 이상일 때만). 공간 이름·id는 싣지 않습니다(종류만). */
+  space: CommunitySpaceBreakdownDto | null
+  generatedAt: string
+  notes: string[]
+}
+
+export interface CommunitySpaceBreakdownDto {
+  kind: SpaceKind
+  minMembers: number
+  postsByBoard: Counts<BoardKind>
+  postsByMode: Counts<NameMode>
+  commentsByMode: Counts<NameMode>
+  anonymousShare: RateMetricDto
+  namedWriters: number | null
+  reportCases: number | null
+  autoHidden: number | null
+}
+
+/** GET /api/v1/operator/metrics/community/spaces — 공간별 보기를 고를 수 있는 공간(active 멤버 N 이상). 운영자 화면의 선택 목록용. */
+export interface CommunityMetricsSpaceOptionDto {
+  id: string
+  name: string
+  kind: SpaceKind
 }
 
 // ── 캠퍼스 커뮤니티: 공간·게시판·멤버십 (C-02, ADR 0019) ──────────────────

@@ -135,6 +135,9 @@ export type AuditAction =
   | 'community.study_record_enable'
   | 'course_qa.publish'
   | 'course_qa.withdraw'
+  | 'ops_time.save'
+  | 'ops_time.delete'
+  | 'metrics.export'
 
 export async function recordAudit(
   db: DbExecutor,
@@ -180,6 +183,8 @@ export async function recordAudit(
       | 'community_sanction'
       | 'community_sanction_request'
       | 'course_qa'
+      | 'ops_time_entry'
+      | 'metrics'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

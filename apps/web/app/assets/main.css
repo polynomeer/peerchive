@@ -1390,3 +1390,30 @@ a.chip {
   outline: 2px solid var(--danger);
   outline-offset: 2px;
 }
+
+/* C-10: 신고 처리 기한 배지(색만으로 구분하지 않고 문구를 함께 씀). */
+.badge.sla {
+  white-space: normal;
+}
+.badge.sla-ok {
+  color: var(--ok);
+  background: #eaf6ee;
+}
+.badge.sla-due_soon {
+  color: #6b4e00;
+  background: #fff6db;
+}
+.badge.sla-overdue {
+  color: var(--danger);
+  background: #fdecea;
+  font-weight: 600;
+}
+.ops-time-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  gap: 0.5rem 1rem;
+}
+.ops-time-grid input {
+  width: 100%;
+  max-width: 10rem;
+}

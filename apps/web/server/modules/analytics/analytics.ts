@@ -4,10 +4,9 @@
  * - 서비스가 업무 변경과 **같은 트랜잭션**에서 `emitAnalytics(tx, …)`를 부릅니다(행 하나 insert라 싸고, 업무가 되돌려지면 이벤트도 사라짐).
  * - 주체·프로젝트는 원문 id 대신 HMAC-SHA256(분석 pepper, id)만 저장합니다. pepper가 없으면(production에서 미설정·약한 값) 기록하지 않습니다.
  * - props는 @peerchive/domain의 허용 목록(sanitizeAnalyticsProps)만 통과합니다. 목록 밖이면 이벤트 전체를 버리고 키 이름만 경고합니다.
- * - 익명 커뮤니티 글·댓글(C-04)은 `unlinked`로 사용자 키 없이 기록합니다.
+ * - 익명 커뮤니티 글·댓글(C-04)은 `unlinked`로 사용자 키 없이(actor_hash null, C-10·ADR 0027) 기록합니다.
  * - 수집 거부(users.analytics_opt_out)한 사람은 기록하지 않습니다. 거부하면 그 사람의 지난 이벤트도 지웁니다(setAnalyticsOptOut).
  */
-import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { type AnalyticsEventName, sanitizeAnalyticsProps } from '@peerchive/domain'
 import {
@@ -47,8 +46,9 @@ export interface AnalyticsInput {
   name: AnalyticsEventName
   actorId: string
   /**
-   * 사용자 키 없이 기록(C-04 익명 글·댓글, SYSTEM_DESIGN §6.7 "익명 글과 프로필의 분리"). 수집 거부·계정 상태는 그대로 확인하고, actor_hash에는
-   * 이벤트마다 새 무작위 값의 HMAC을 넣어 같은 사람의 다른 이벤트와 이어지지 않게 합니다(탈퇴 정리로 지울 수 없지만 사람과 이어지지 않음).
+   * 사용자 키 없이 기록(C-04 익명 글·댓글, SYSTEM_DESIGN §6.7 "익명 글과 프로필의 분리", DELIVERY_PLAN §6.1). 수집 거부·계정 상태는 그대로 확인하고,
+   * actor_hash·project_hash는 null입니다(C-10, ADR 0027: 이전의 이벤트마다 무작위 HMAC 대신 — 사람 단위 지표가 키 없는 이벤트를 사람으로 세지 않게).
+   * 탈퇴 정리로 지울 수 없지만 사람과 이어지지 않습니다.
    */
   unlinked?: boolean
   projectId?: string | null
@@ -69,7 +69,7 @@ export async function emitAnalytics(db: DbExecutor, input: AnalyticsInput): Prom
   if (!user || user.optOut || user.status !== 'active') return false
   await db.insert(analyticsEvents).values({
     name: input.name,
-    actorHash: hashSubject(pepper, input.unlinked ? `unlinked:${randomUUID()}` : input.actorId),
+    actorHash: input.unlinked ? null : hashSubject(pepper, input.actorId),
     projectHash: input.projectId && !input.unlinked ? hashSubject(pepper, input.projectId) : null,
     hashKeyId: pepperKeyId(pepper),
     props: checked.props,

@@ -27,6 +27,7 @@ import {
   communitySpaces,
   moderationActions,
   operators,
+  opsTimeEntries,
   recruitmentApplications,
   recruitments,
   reports,
@@ -597,6 +598,30 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       // 남이 쓴 요청은 그대로, 탈퇴자가 쓴 요청은 설명만 지움
       expect((await tx.select().from(communitySanctionRequests).where(eq(communitySanctionRequests.id, request!.id)))[0]).toMatchObject({ details: '반복 비방' })
       expect((await tx.select().from(communitySanctionRequests).where(eq(communitySanctionRequests.id, uRequest!.id)))[0]).toMatchObject({ details: null, requestedBy: U.id })
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('pseudonymizes a purged operator\'s weekly ops time: notes cleared, minutes kept for weekly totals (C-10)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴운영자', 'deleted')
+      const O = await user(tx, '남은운영자')
+      await tx.insert(operators).values([{ userId: U.id }, { userId: O.id }])
+      await tx.insert(opsTimeEntries).values([
+        { operatorId: U.id, week: '2027-W09', reportsMinutes: 90, curationMinutes: 15, note: '탈퇴자 메모 SENTINEL' },
+        { operatorId: U.id, week: '2027-W10', otherMinutes: 30 },
+        { operatorId: O.id, week: '2027-W09', reportsMinutes: 60, note: '남은 사람 메모' },
+      ])
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ notes_scrubbed: 1 })
+      const rows = await tx.select().from(opsTimeEntries).where(eq(opsTimeEntries.operatorId, U.id))
+      expect(rows.map((r) => [r.week, r.reportsMinutes, r.curationMinutes, r.otherMinutes, r.note]).sort()).toEqual([
+        ['2027-W09', 90, 15, 0, null],
+        ['2027-W10', 0, 0, 30, null],
+      ])
+      expect(JSON.stringify(rows)).not.toContain('SENTINEL')
+      expect((await tx.select().from(opsTimeEntries).where(eq(opsTimeEntries.operatorId, O.id)))[0]!.note).toBe('남은 사람 메모')
+      // 다시 정리해도 바뀌는 것이 없음
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })

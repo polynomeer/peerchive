@@ -35,7 +35,7 @@ const STATUS_LABELS: Record<string, string> = { ok: '정상', error: '오류', s
       <p>주소를 확인하세요.</p>
     </template>
     <template v-else>
-      <p><NuxtLink to="/operator">← 신고 대기열</NuxtLink></p>
+      <p><NuxtLink to="/operator">← 신고 대기열</NuxtLink> · <NuxtLink to="/operator/community-metrics">커뮤니티 지표</NuxtLink></p>
       <h1>pilot 지표</h1>
       <form class="actions" @submit.prevent="applyRange">
         <label>시작 <input v-model="range.from" type="date" /></label>
@@ -94,6 +94,10 @@ const STATUS_LABELS: Record<string, string> = { ok: '정상', error: '오류', s
             · dead-letter: {{ Object.entries(health.jobs.deadLetter).map(([k, v]) => `${k} ${v}`).join(', ') || '없음' }}
           </li>
           <li>정리가 늦은 탈퇴 계정(유예 {{ health.deletion.graceDays }}일 + 1일 지남): {{ health.deletion.overdue }}</li>
+          <li data-testid="health-reports">
+            처리 전 신고 묶음: {{ health.reports.open }} · 기한 넘김 {{ health.reports.overdue }}(임시 숨김 {{ health.reports.overdueAutoHidden }})
+            <NuxtLink v-if="health.reports.overdue > 0" :to="{ path: '/operator', query: { status: 'open', overdue: '1' } }">기한 넘김 보기</NuxtLink>
+          </li>
         </ul>
         <table v-if="health.tasks.length" class="ledger-table small">
           <thead><tr><th scope="col">주기 작업</th><th scope="col">마지막 실행</th><th scope="col">결과</th><th scope="col">처리 수</th></tr></thead>

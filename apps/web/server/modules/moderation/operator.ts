@@ -2,8 +2,10 @@
  * 운영자 신고 처리 (T-15, SYSTEM_DESIGN §6.6·§8·§14, DELIVERY_PLAN T-15·§7 G2, ADR 0015).
  *
  * 모든 함수는 운영자만(아니면 403 `operator_only`, 대상 존재 여부보다 먼저 확인). 화면 `/operator`는 운영자가 아니면 404로 보입니다.
- * - 대기열 `GET /operator/reports?status=`: 대상별로 묶은 신고(개수·사유별 개수·처음/마지막 신고 시각·담당자·보류 여부). 신고자 신원은 싣지 않습니다.
+ * - 대기열 `GET /operator/reports?status=&overdue=1`: 대상별로 묶은 신고(개수·사유별 개수·처음/마지막 신고 시각·담당자·보류 여부). 신고자 신원은 싣지 않습니다.
  *   신고 누적으로 임시 숨김된 커뮤니티 글·댓글(C-06)은 `autoHidden: true`로 맨 앞에 옵니다(우선 검토). 처리하면서 가리기를 고르면 확정, 기각·조치 없음이면 복원.
+ *   처리 기한(C-10, ADR 0027): 묶음마다 `sla`(우선순위·시작·기한·나이·ok/due_soon/overdue). 처리 전 묶음은 지금까지, 끝난 묶음은 처리 시각까지로 잽니다.
+ *   `overdue=1`이면 기한을 넘긴 묶음만(처리 전 상태에서만 뜻이 있음). 기한은 환경 변수(@peerchive/domain reportSlaTargets, 기본 24·72시간).
  * - 상세 `GET /operator/reports/:id`: 같은 대상의 신고들(사유·설명), **공개됐던 내용만**(신고 때의 release 스냅샷, 신고 때 버전이 그대로인
  *   게시된·숨긴 노트·케이스 글, 공개 프로필 필드), 보류, 조치·이의제기 이력. 비공개 과제 공간은 운영자에게도 404입니다(§8).
  * - 담당 `POST .../assign`: 자기에게 배정, 그 대상의 처리 전 신고를 in_review로.
@@ -28,6 +30,7 @@ import {
   citationLabel,
   isActionApplicable,
   isReportOpen,
+  reportGroupSla,
 } from '@peerchive/domain'
 import {
   and,
@@ -68,6 +71,7 @@ import { lockPublication } from '../publication/candidates'
 import { loadServedRelease } from '../publication/public-read'
 import { parseInput } from '../validation'
 import { applyModeration, undoModeration } from './actions'
+import { currentReportSlaTargets } from './sla'
 import { pointerOf, targetLabels, type TargetPointer } from './targets'
 import type {
   OperatorActionDto,
@@ -109,6 +113,9 @@ export const resolveSchema = z
 export const noteOnlySchema = z.object({ note })
 export const decideAppealSchema = z.object({ decision: z.enum(APPEAL_DECISIONS, { error: requiredOr('invalid') }), note })
 
+/** 첫 처리 시각은 한 번만 남깁니다(다시 배정해도 그대로). 신고 시각보다 앞설 수 없습니다(시계가 다른 요청·테스트 시각). */
+const firstActionSql = (now: Date) => sql`coalesce(${reports.firstActionAt}, greatest(${reports.createdAt}, ${now.toISOString()}::timestamptz))`
+
 const statusOf = (raw: unknown, fallback: string) => {
   const value = typeof raw === 'string' && raw ? raw : fallback
   return value
@@ -116,11 +123,19 @@ const statusOf = (raw: unknown, fallback: string) => {
 
 // ── 대기열 ───────────────────────────────────────────────────────────────
 
-/** GET /operator/reports?status=open|in_review|resolved|dismissed(기본 open) — 대상별 묶음(처리 전은 오래된 것부터). */
-export async function listReportGroups(db: DbExecutor, actor: Actor, rawQuery: Record<string, unknown>): Promise<OperatorReportGroupDto[]> {
+/**
+ * GET /operator/reports?status=open|in_review|resolved|dismissed(기본 open)&overdue=1 — 대상별 묶음(처리 전은 임시 숨김 먼저, 그 안에서 오래된 것부터).
+ * overdue는 `1`·`true`만(그 밖의 값 422). 처리된 상태와 함께 쓰면 422 `overdue: open_only`.
+ */
+export async function listReportGroups(db: DbExecutor, actor: Actor, rawQuery: Record<string, unknown>, now = new Date()): Promise<OperatorReportGroupDto[]> {
   await requireOperator(db, actor)
   const status = statusOf(rawQuery.status, 'open')
   if (!(REPORT_STATUSES as readonly string[]).includes(status)) throw invalid({ status: 'invalid' })
+  const overdueRaw = rawQuery.overdue
+  if (overdueRaw !== undefined && overdueRaw !== '' && !['1', 'true', '0', 'false'].includes(String(overdueRaw))) throw invalid({ overdue: 'invalid' })
+  const overdueOnly = overdueRaw === '1' || overdueRaw === 'true'
+  if (overdueOnly && !isReportOpen(status as ReportStatus)) throw invalid({ overdue: 'open_only' })
+  const targets = currentReportSlaTargets()
   const rows = await db
     .select({ report: reports, assigneeName: users.displayName })
     .from(reports)
@@ -152,6 +167,16 @@ export async function listReportGroups(db: DbExecutor, actor: Actor, rawQuery: R
     const reasons: OperatorReportGroupDto['reasons'] = {}
     for (const m of members) reasons[m.report.reason] = (reasons[m.report.reason] ?? 0) + 1
     const assigned = members.find((m) => m.report.assignedTo)
+    const autoHiddenAts = members.map((m) => m.report.autoHiddenAt).filter((d): d is Date => !!d)
+    const firstActions = members.map((m) => m.report.firstActionAt).filter((d): d is Date => !!d)
+    const closedAt = isReportOpen(first.status) ? null : (members.map((m) => m.report.closedAt).find((d) => !!d) ?? null)
+    const sla = reportGroupSla(
+      { firstReportedAt: members[0]!.report.createdAt, autoHiddenAt: autoHiddenAts.length ? new Date(Math.min(...autoHiddenAts.map((d) => d.getTime()))) : null },
+      targets,
+      now,
+      closedAt,
+    )
+    const firstActionAt = firstActions.length ? new Date(Math.min(...firstActions.map((d) => d.getTime()))) : null
     return {
       reportId: first.id,
       targetType: first.targetType,
@@ -164,12 +189,23 @@ export async function listReportGroups(db: DbExecutor, actor: Actor, rawQuery: R
       assignee: assigned ? { userId: assigned.report.assignedTo!, displayName: assigned.assigneeName ?? '' } : null,
       hold: members.some((m) => held.has(m.report.id)),
       autoHidden: itemStatus.get(first.communityCommentId ?? first.communityPostId ?? '') === 'auto_hidden',
+      sla: {
+        priority: sla.priority,
+        startedAt: sla.startedAt.toISOString(),
+        dueAt: sla.dueAt.toISOString(),
+        targetHours: sla.targetHours,
+        ageSeconds: sla.ageSeconds,
+        state: sla.state,
+        firstActionSeconds: firstActionAt ? Math.max(0, Math.floor((firstActionAt.getTime() - members[0]!.report.createdAt.getTime()) / 1000)) : null,
+        resolutionSeconds: closedAt ? Math.max(0, Math.floor((closedAt.getTime() - members[0]!.report.createdAt.getTime()) / 1000)) : null,
+      },
     }
   })
   if (!isReportOpen(status as ReportStatus)) out.reverse()
-  // 임시 숨김(C-06)은 우선 검토: 맨 앞(그 안에서는 오래된 것부터). 정렬은 안정적이라 나머지 순서는 그대로입니다.
-  else out.sort((a, b) => Number(b.autoHidden) - Number(a.autoHidden))
-  return out.slice(0, 100)
+  // 임시 숨김(C-06)은 우선 검토: 맨 앞(그 안에서는 오래된 것부터). 숨김 시각은 있는데 지금 상태를 못 읽은 묶음(글이 지워짐 등)도 우선순위로 봅니다.
+  // 정렬은 안정적이라 나머지 순서는 그대로입니다.
+  else out.sort((a, b) => Number(b.autoHidden || b.sla.priority === 'auto_hidden') - Number(a.autoHidden || a.sla.priority === 'auto_hidden'))
+  return (overdueOnly ? out.filter((g) => g.sla.state === 'overdue') : out).slice(0, 100)
 }
 
 // ── 상세 ─────────────────────────────────────────────────────────────────
@@ -403,7 +439,7 @@ export async function assignReport(db: DbExecutor, actor: Actor, reportId: unkno
     const group = await lockOpenGroup(tx, report)
     await tx
       .update(reports)
-      .set({ status: 'in_review', assignedTo: actor.userId, assignedAt: now })
+      .set({ status: 'in_review', assignedTo: actor.userId, assignedAt: now, firstActionAt: firstActionSql(now) })
       .where(inArray(reports.id, group.map((r) => r.id)))
     await recordAudit(tx, {
       actorId: actor.userId,
@@ -435,7 +471,10 @@ async function closeGroup(
     now,
   )
   const ids = group.map((r) => r.id)
-  await tx.update(reports).set({ status: input.outcome, actionId: action.id, closedAt: now }).where(inArray(reports.id, ids))
+  await tx
+    .update(reports)
+    .set({ status: input.outcome, actionId: action.id, closedAt: now, firstActionAt: firstActionSql(now) })
+    .where(inArray(reports.id, ids))
   const released = await tx
     .update(holds)
     .set({ releasedAt: now, releasedBy: actor.userId })

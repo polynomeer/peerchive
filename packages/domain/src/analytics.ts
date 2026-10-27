@@ -1,7 +1,8 @@
 /**
  * pilot 분석 이벤트 규칙 (DELIVERY_PLAN §6 측정 계획, SYSTEM_DESIGN §14 관측, T-16, ADR 0016).
  *
- * - 이벤트 이름은 DELIVERY_PLAN §6의 최소 분석 이벤트 15개 + `login_succeeded`(활성화 지표의 가입 시점) + `affiliation_verified`(C-01, props는 standing만) + `space_created`·`space_joined`(C-02, 종류·가입 방식만) + `name_mode_scheduled`·`name_mode_applied`(C-03, 바꾸기 전·후 방식만) + `post_created`·`comment_created`·`reaction_added`(C-04, 게시판 종류·방식·답글 여부·대상 종류만) + `community_report_filed`·`community_auto_hidden`·`community_sanction_issued`(C-06, 대상 종류·제재 수준·범위만) + `recruitment_created`·`application_submitted`·`recruitment_closed`(C-07, 모집 종류·마감 결과만) + `archive_transfer_requested`·`archive_transfer_completed`·`course_qa_published`(C-09, 옮길 곳 종류만) + `study_record_enabled`(C-08, 방 이름 표시 방식·과목 연결 여부만)입니다.
+ * - 이벤트 이름은 DELIVERY_PLAN §6의 최소 분석 이벤트 15개 + `login_succeeded`(활성화 지표의 가입 시점) + `affiliation_verified`(C-01, props는 standing만) + `space_created`·`space_joined`(C-02, 종류·가입 방식만) + `name_mode_scheduled`·`name_mode_applied`(C-03, 바꾸기 전·후 방식만) + `post_created`·`comment_created`·`reaction_added`(C-04, 게시판 종류·방식·답글 여부·대상 종류만) + `community_report_filed`·`community_auto_hidden`·`community_sanction_issued`(C-06, 대상 종류·제재 수준·범위만) + `recruitment_created`·`application_submitted`·`recruitment_closed`(C-07, 모집 종류·마감 결과만) + `archive_transfer_requested`·`archive_transfer_completed`·`course_qa_published`(C-09, 옮길 곳 종류만) + `study_record_enabled`(C-08, 방 이름 표시 방식·과목 연결 여부만) + `community_author_lookup`(C-10, 근거 종류만)입니다.
+ * - 사용자 키 없는 이벤트(C-10, ADR 0027)는 actorHash가 null입니다. 사람 단위 지표(활성화·기록 유지·공유한 사람 수·주간 활성)는 키 있는 이벤트만 셉니다.
  * - props는 이벤트마다 허용 목록(ANALYTICS_PROP_SPECS)의 키만, 값은 정해진 enum 문자열·참거짓·범위 안의 정수만 받습니다.
  *   자유 문자열 필드는 없으므로 과제 본문·제목·파일 이름·URL·이메일·검색어가 들어갈 자리가 없습니다(§6 "본문·파일 내용·검색 원문·연락처 없음").
  *   목록 밖의 키·값이 하나라도 있으면 sanitizeAnalyticsProps가 거부하고, 웹 emitter는 그 이벤트를 버립니다(일부만 저장하지 않음).
@@ -44,6 +45,7 @@ export const ANALYTICS_EVENT_NAMES = [
   'archive_transfer_completed',
   'course_qa_published',
   'study_record_enabled',
+  'community_author_lookup',
 ] as const
 export type AnalyticsEventName = (typeof ANALYTICS_EVENT_NAMES)[number]
 
@@ -111,7 +113,12 @@ export const ANALYTICS_PROP_SPECS: Readonly<Record<AnalyticsEventName, Readonly<
   name_mode_applied: { from: enumOf(NAME_MODE_VALUES), to: enumOf(NAME_MODE_VALUES) },
   // 커뮤니티 글·댓글·공감(C-04). 글·공간·게시판 id·제목·본문은 넣지 않습니다. 게시판 종류·고정된 이름 표시 방식·답글 여부·공감 대상 종류만.
   // 익명 글·댓글은 사용자 키 없이 기록합니다(웹 emitter의 unlinked, SYSTEM_DESIGN §6.7 "익명 글과 프로필의 분리").
-  post_created: { kind: enumOf(['free', 'freshmen', 'alumni', 'question', 'info', 'recruiting', 'notice', 'general']), mode: enumOf(NAME_MODE_VALUES) },
+  // area(C-10, §6.1 space_kind): 공간 종류를 묶은 코드(official = 공식 학교·학과 페이지, room = 사용자 방, study = 스터디 방). 키 이름에 space를 쓰지 않습니다(C-05 금지 키).
+  post_created: {
+    kind: enumOf(['free', 'freshmen', 'alumni', 'question', 'info', 'recruiting', 'notice', 'general']),
+    mode: enumOf(NAME_MODE_VALUES),
+    area: enumOf(['official', 'room', 'study']),
+  },
   comment_created: { mode: enumOf(NAME_MODE_VALUES), reply: bool },
   reaction_added: { target: enumOf(['post', 'comment']) },
   // C-06(ADR 0023): 대상 종류·제재 수준·범위만. 신고·글·공간·사람 id, 사유, 신고 수는 없습니다.
@@ -128,6 +135,8 @@ export const ANALYTICS_PROP_SPECS: Readonly<Record<AnalyticsEventName, Readonly<
   course_qa_published: {},
   // C-08(ADR 0026): 스터디 기록 켜기. 방·과제·과목 id 없이 그때의 방 이름 표시 방식과 과목 연결 여부만.
   study_record_enabled: { mode: enumOf(NAME_MODE_VALUES), withCourse: bool },
+  // C-10(ADR 0027, §6.1 operator_identity_lookup): 운영자 작성자 확인. 근거 종류만(신고·제재 요청·없음). 사용자 키 없이 기록합니다.
+  community_author_lookup: { basis: enumOf(['report', 'sanction_request', 'none']) },
 }
 
 export function isAnalyticsEventName(value: unknown): value is AnalyticsEventName {
@@ -183,7 +192,8 @@ export const RETENTION_MIN_WEEKS = 3
 export interface AnalyticsEventRow {
   name: AnalyticsEventName
   occurredAt: Date
-  actorHash: string
+  /** null = 사용자 키 없는 이벤트(사람 단위 지표에서 빠짐). */
+  actorHash: string | null
   projectHash: string | null
   props: Readonly<Record<string, unknown>>
 }
@@ -247,7 +257,7 @@ export function computePilotMetrics(
   // 활성화
   const signups = new Map<string, Date>()
   for (const e of events) {
-    if (e.name !== 'login_succeeded' || e.props.newUser !== true) continue
+    if (e.name !== 'login_succeeded' || e.props.newUser !== true || e.actorHash === null) continue
     const prev = signups.get(e.actorHash)
     if (!prev || e.occurredAt < prev) signups.set(e.actorHash, e.occurredAt)
   }
@@ -269,7 +279,7 @@ export function computePilotMetrics(
   const windowStart = to.getTime() - RETENTION_WEEKS * 7 * DAY_MS
   const weeksByActor = new Map<string, Set<number>>()
   for (const e of events) {
-    if (e.name !== 'log_saved') continue
+    if (e.name !== 'log_saved' || e.actorHash === null) continue
     const t = e.occurredAt.getTime()
     if (t < windowStart || t >= to.getTime()) continue
     const week = Math.floor((t - windowStart) / (7 * DAY_MS))
@@ -309,7 +319,7 @@ export function computePilotMetrics(
       exports: suppressSmall(exportsRows.length, minGroup),
       projects: suppressSmall(new Set(exportsRows.map((e) => e.projectHash).filter(Boolean)).size, minGroup),
     },
-    portfolioSharers: suppressSmall(new Set(ranged.filter((e) => e.name === 'portfolio_shared').map((e) => e.actorHash)).size, minGroup),
+    portfolioSharers: suppressSmall(new Set(ranged.filter((e) => e.name === 'portfolio_shared' && e.actorHash !== null).map((e) => e.actorHash)).size, minGroup),
     seniorNotesPublished: suppressSmall(countOf((e) => e.name === 'senior_note_published'), minGroup),
     writeTimeMedianMinutes: null,
     eventCounts,

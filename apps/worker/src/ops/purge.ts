@@ -13,7 +13,7 @@
  *
  * 남기는 것(팀 기록): 다른 사람이 멤버였던 과제의 로그·역할 선언·파일·할 일은 지우지 않습니다(조용히 지우면 팀 이력과 동료의 확인·근거가
  * 깨짐). 작성자 표시는 users 행의 이름을 "탈퇴한 사용자"로 바꿔 가명 처리하고, 그 사람이 남의 기록에 쓴 메모 글(확인 메모·동의 메모·
- * 신고 설명·이의제기 글)은 지웁니다. 멤버십은 removed, owner였으면 남은 active 멤버(editor → reviewer → viewer, 먼저 들어온 순)에게 넘깁니다.
+ * 신고 설명·이의제기 글·운영 시간 메모(C-10))은 지웁니다. 운영자였으면 주간 운영 시간의 분은 남깁니다(합계 지표). 멤버십은 removed, owner였으면 남은 active 멤버(editor → reviewer → viewer, 먼저 들어온 순)에게 넘깁니다.
  *
  * 공개: 그 사람이 당사자인 지금 게시 중인 release는 동의 철회와 같은 방식으로 철회합니다(consent revoked, 공개 withdrawn, access_epoch +1,
  * outbox `publication.withdrawn`). 팀은 기존 규칙대로 철회한 사람을 뺀 새 후보(exclude-declined)를 만들 수 있고, 게시 판정은 탈퇴 계정의
@@ -76,6 +76,7 @@ import {
   ne,
   officialPageRequests,
   operators,
+  opsTimeEntries,
   recruitmentApplications,
   recruitments,
   or,
@@ -269,6 +270,8 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
     notes += (await tx.update(consents).set({ note: null }).where(and(eq(consents.subjectUserId, userId), isNotNull(consents.note))).returning({ id: consents.id })).length
     notes += (await tx.update(reports).set({ details: null }).where(and(eq(reports.reporterId, userId), isNotNull(reports.details))).returning({ id: reports.id })).length
     notes += (await tx.update(appeals).set({ message: SCRUBBED_TEXT }).where(and(eq(appeals.appellantId, userId), ne(appeals.message, SCRUBBED_TEXT))).returning({ id: appeals.id })).length
+    // 운영자 주간 운영 시간(C-10, ADR 0027): 메모만 지우고 분은 남깁니다(주·분야별 합계가 바뀌지 않게, 행은 가명 처리된 users를 가리킴).
+    notes += (await tx.update(opsTimeEntries).set({ note: null, updatedAt: now }).where(and(eq(opsTimeEntries.operatorId, userId), isNotNull(opsTimeEntries.note))).returning({ id: opsTimeEntries.id })).length
     c.add('notes_scrubbed', notes)
 
     // 6) 과제: 혼자만 쓴 과제는 전체 삭제, 팀 과제는 멤버십만 정리.

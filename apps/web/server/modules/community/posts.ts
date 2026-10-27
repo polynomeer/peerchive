@@ -511,7 +511,8 @@ export async function createPost(db: DbExecutor, actor: Actor, boardId: unknown,
       .values({ boardId: board.id, spaceId: board.spaceId, authorId: actor.userId, nameMode: mode, title, body, createdAt: now, updatedAt: now })
       .returning()
     await ensureAlias(tx, post!, actor.userId, mode, now)
-    await emitAnalytics(tx, { name: 'post_created', actorId: actor.userId, unlinked: mode === 'anonymous', props: { kind: board.kind, mode }, now })
+    const area = ctx.space.row.kind === 'user_room' ? 'room' : ctx.space.row.kind === 'study_room' ? 'study' : 'official'
+    await emitAnalytics(tx, { name: 'post_created', actorId: actor.userId, unlinked: mode === 'anonymous', props: { kind: board.kind, mode, area }, now })
     return post!.id
   })
   return getPost(db, actor, postId, now)

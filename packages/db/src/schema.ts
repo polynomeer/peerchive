@@ -241,6 +241,7 @@ export const analyticsEventName = pgEnum('analytics_event_name', [
   'archive_transfer_completed',
   'course_qa_published',
   'study_record_enabled',
+  'community_author_lookup',
 ])
 /** 기관 종류(C-01). 지금은 대학만. P2에서 bootcamp 등을 더합니다(SYSTEM_DESIGN §6.7.2 이관 원칙, ADR 0018). */
 export const institutionKind = pgEnum('institution_kind', ['university'])
@@ -2101,6 +2102,16 @@ export const reports = pgTable(
     assignedAt: timestamp('assigned_at', { withTimezone: true }),
     actionId: uuid('action_id').references(() => moderationActions.id),
     closedAt: timestamp('closed_at', { withTimezone: true }),
+    /**
+     * 운영자의 첫 처리(담당 배정 또는 처리·기각) 시각(C-10, ADR 0027). 다시 배정해도 바꾸지 않습니다(assigned_at은 마지막 배정).
+     * 처리 시간 지표·SLA의 "첫 조치까지 시간"이 씁니다.
+     */
+    firstActionAt: timestamp('first_action_at', { withTimezone: true }),
+    /**
+     * 신고 누적으로 대상 글·댓글이 임시 숨김된 시각(C-06 → C-10, ADR 0027). 숨김을 일으킨 트랜잭션이 그때 처리 전이던 같은 대상의 신고에 채웁니다.
+     * 우선 검토 SLA(기본 24시간)의 시작점이자 "자동 숨김 후 검토 완료까지 시간"의 시작점입니다. 커뮤니티 테이블을 읽지 않고도 운영 지표·상태 확인이 씁니다.
+     */
+    autoHiddenAt: timestamp('auto_hidden_at', { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -2109,8 +2120,10 @@ export const reports = pgTable(
       .where(sql`${t.status} in ('open', 'in_review')`),
     index('reports_target_key_idx').on(t.targetKey, t.status),
     index('reports_status_created_idx').on(t.status, t.createdAt),
+    index('reports_closed_at_idx').on(t.closedAt),
     index('reports_reporter_idx').on(t.reporterId, t.createdAt),
     check('reports_details_check', sql`${t.details} is null or char_length(${t.details}) between 1 and 1000`),
+    check('reports_first_action_check', sql`${t.firstActionAt} is null or ${t.firstActionAt} >= ${t.createdAt}`),
     check('reports_closed_check', sql`(${t.status} in ('resolved', 'dismissed')) = (${t.closedAt} is not null and ${t.actionId} is not null)`),
     check('reports_item_key_check', sql`${t.itemKey} is null or char_length(${t.itemKey}) between 1 and 64`),
     check(
@@ -2260,7 +2273,11 @@ export const analyticsEvents = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     name: analyticsEventName('name').notNull(),
     occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
-    actorHash: text('actor_hash').notNull(),
+    /**
+     * HMAC(분석 pepper, 사용자 id). **null = 사용자 키 없음**(C-10, ADR 0027): 익명 글·댓글·익명 대상 공감, 신고·임시 숨김·제재·작성자 확인,
+     * 아카이브로 옮기기 이벤트(DELIVERY_PLAN §6.1 "익명 글·댓글 이벤트에는 사용자 키를 붙이지 않음"). 사람 단위 지표(주간 활성 등)는 키 있는 이벤트만 셉니다.
+     */
+    actorHash: text('actor_hash'),
     projectHash: text('project_hash'),
     hashKeyId: text('hash_key_id').notNull(),
     props: jsonb('props').$type<Record<string, string | number | boolean>>().notNull().default({}),
@@ -2268,7 +2285,7 @@ export const analyticsEvents = pgTable(
   (t) => [
     index('analytics_events_name_occurred_idx').on(t.name, t.occurredAt),
     index('analytics_events_actor_occurred_idx').on(t.actorHash, t.occurredAt),
-    check('analytics_events_actor_hash_check', sql`${t.actorHash} ~ '^[0-9a-f]{64}$'`),
+    check('analytics_events_actor_hash_check', sql`${t.actorHash} is null or ${t.actorHash} ~ '^[0-9a-f]{64}$'`),
     check('analytics_events_project_hash_check', sql`${t.projectHash} is null or ${t.projectHash} ~ '^[0-9a-f]{64}$'`),
     check('analytics_events_hash_key_id_check', sql`${t.hashKeyId} ~ '^[0-9a-f]{8}$'`),
     check('analytics_events_props_object_check', sql`jsonb_typeof(${t.props}) = 'object'`),
@@ -2290,6 +2307,41 @@ export const workerHeartbeats = pgTable(
   (t) => [
     check('worker_heartbeats_name_check', sql`${t.name} ~ '^[a-z0-9:_.-]{1,60}$'`),
     check('worker_heartbeats_details_object_check', sql`jsonb_typeof(${t.details}) = 'object'`),
+  ],
+)
+
+/**
+ * 운영자 주간 운영 시간 기록(C-10, DELIVERY_PLAN §4.1 C-10·§6.1 "운영 부담"·§7 GC "주간 시간", ADR 0027).
+ * 운영자마다 서울 ISO 주(`YYYY-Www`) 하나에 한 행. 분야별 분(신고 검토·공식 페이지·학교 인증 지원·큐레이션·기타)과 선택 메모(200자, 본인만 봄).
+ * 지표에는 주·분야별 합계만 나가고(사람별 순위 없음), 사람별 행은 본인에게만 보입니다. 탈퇴 정리는 메모만 지우고 분은 남깁니다(가명 사용자 행을 가리킴).
+ */
+export const opsTimeEntries = pgTable(
+  'ops_time_entries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    operatorId: uuid('operator_id')
+      .notNull()
+      .references(() => users.id),
+    week: text('week').notNull(),
+    reportsMinutes: integer('reports_minutes').notNull().default(0),
+    officialPagesMinutes: integer('official_pages_minutes').notNull().default(0),
+    affiliationSupportMinutes: integer('affiliation_support_minutes').notNull().default(0),
+    curationMinutes: integer('curation_minutes').notNull().default(0),
+    otherMinutes: integer('other_minutes').notNull().default(0),
+    note: text('note'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('ops_time_entries_operator_week_key').on(t.operatorId, t.week),
+    index('ops_time_entries_week_idx').on(t.week),
+    check('ops_time_entries_week_check', sql`${t.week} ~ '^[0-9]{4}-W[0-9]{2}$'`),
+    check(
+      'ops_time_entries_minutes_check',
+      sql`${t.reportsMinutes} >= 0 and ${t.officialPagesMinutes} >= 0 and ${t.affiliationSupportMinutes} >= 0 and ${t.curationMinutes} >= 0 and ${t.otherMinutes} >= 0
+        and ${t.reportsMinutes} + ${t.officialPagesMinutes} + ${t.affiliationSupportMinutes} + ${t.curationMinutes} + ${t.otherMinutes} <= 10080`,
+    ),
+    check('ops_time_entries_note_check', sql`${t.note} is null or char_length(${t.note}) between 1 and 200`),
   ],
 )
 
