@@ -54,7 +54,7 @@ await registerModerationQueue(boss, db)
 await registerPersonaActivityQueue(boss, db)
 // 소셜 링크 되돌림 확인(S-06): 링크 수집기(net/safe-fetch.ts)만 사용자가 붙인 URL에 접속합니다.
 if (!opsConfig.siteOrigin) console.warn('[worker] NUXT_SITE_ORIGIN is not set: social link verification is skipped.')
-await registerSocialLinkQueue(boss, db, { siteOrigin: opsConfig.siteOrigin })
+await registerSocialLinkQueue(boss, db, { siteOrigin: opsConfig.siteOrigin, analyticsPepper: opsConfig.analyticsPepper })
 // 운영 주기 작업(T-16): 만료 행·주인 없는 격리 파일 정리, 유예 기간이 지난 탈퇴 계정 정리.
 await registerOpsSchedules(boss, db, config.storage, opsConfig)
 const stopHeartbeat = startHeartbeat(db, { production: config.production, storage: config.storage.driver, scanner: config.scanner.engine })

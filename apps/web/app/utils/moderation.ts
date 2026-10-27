@@ -19,11 +19,19 @@ export const REPORT_REASON_LABELS: Record<ReportReason, string> = {
   false_claim: '거짓 기여 주장',
   spam: '스팸·홍보',
   other: '기타',
+  impersonation: '표시명 사칭(다른 사람·단체로 오인하게 함)',
 }
 
 export const REPORT_REASON_HINTS: Partial<Record<ReportReason, string>> = {
   personal_info: '전화번호·주소·학번 등. 처리될 때까지 이 사례의 새 게시가 보류됩니다.',
   copyright: '타인의 저작물·과제 원문 등. 처리될 때까지 이 사례의 새 게시가 보류됩니다.',
+  impersonation:
+    '다른 실존 인물(교수·학생·졸업생 등)이나 학교·기업·단체로 오인하게 하는 이름·handle·소개. 비슷한 이름만으로는 사칭이 아니며, 확인되면 그 프로필만 숨기고 본인이 고친 뒤 이의제기로 다시 열 수 있습니다.',
+}
+
+/** 대상 종류별로 고를 수 있는 사유(서버 reasonApplicable과 같음): 표시명 사칭은 프로필 신고에만. */
+export function reportReasonsFor(targetType: ReportTargetType): ReportReason[] {
+  return (Object.keys(REPORT_REASON_LABELS) as ReportReason[]).filter((r) => r !== 'impersonation' || targetType === 'persona' || targetType === 'profile')
 }
 
 export const REPORT_TARGET_LABELS: Record<ReportTargetType, string> = {
@@ -38,6 +46,9 @@ export const REPORT_TARGET_LABELS: Record<ReportTargetType, string> = {
   community_recruitment: '모집 글',
   community_application: '지원 메시지',
   course_qa: '막힘 Q&A',
+  persona: '공개 프로필',
+  profile_post: '프로필 글',
+  social_link: '소셜 링크',
 }
 
 export const REPORTER_STATUS_LABELS: Record<MyReportDto['status'], string> = {
@@ -63,6 +74,9 @@ export const ACTION_LABELS: Record<ModerationActionKind, string> = {
   hide_recruitment: '모집 글 가리기',
   hide_application: '지원 메시지 가리기',
   hide_qa: '막힘 Q&A 숨기기',
+  hide_persona: '이 프로필만 숨기기(같은 사람의 다른 프로필은 그대로)',
+  hide_profile_post: '프로필 글 숨기기',
+  hide_social_link: '소셜 링크 숨기기',
 }
 
 /** 당사자에게 보이는 조치 설명. */
@@ -81,6 +95,9 @@ export const NOTICE_TITLES: Record<Exclude<ModerationActionKind, 'none'>, string
   hide_recruitment: '운영 조치로 가려진 모집 글',
   hide_application: '운영 조치로 가려진 지원 메시지',
   hide_qa: '운영 조치로 숨겨진 막힘 Q&A',
+  hide_persona: '운영 조치로 숨겨진 공개 프로필',
+  hide_profile_post: '운영 조치로 숨겨진 프로필 글',
+  hide_social_link: '운영 조치로 숨겨진 소셜 링크',
 }
 
 export const APPEAL_STATUS_LABELS: Record<AppealStatus, string> = {
@@ -105,6 +122,8 @@ export const MODERATION_ERROR_MESSAGES: Record<string, string> = {
   lookup_expired: '작성자 확인이 24시간이 지나 만료되었습니다. 사유를 적고 다시 확인하세요.',
   author_unavailable: '탈퇴 정리된 작성자에게는 제재를 발급할 수 없습니다.',
   already_revoked: '이미 해제된 제재입니다.',
+  target_unavailable: '대상이 탈퇴 정리로 지워져 확인할 수 없습니다.',
+  hidden: '운영 조치로 숨겨진 항목이라 지울 수 없습니다. 이의제기는 내 알림에서 할 수 있어요.',
 }
 
 /** 이용 제한 문구(C-06). */

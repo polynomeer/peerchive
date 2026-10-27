@@ -50,6 +50,7 @@ describe.skipIf(!databaseUrl)('S-06 social links (PostgreSQL)', () => {
         lastCheckedAt: null,
         lastCheckResult: null,
         verifyPending: false,
+        hidden: false,
         createdAt: T0.toISOString(),
       })
       expect(await listMySocialLinks(tx, A.actor, A.realId, ORIGIN)).toEqual({ links: [link], limit: SOCIAL_LINK_LIMIT, backLinkUrl: `${ORIGIN}/u/${A.realHandle}` })

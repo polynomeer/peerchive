@@ -5,13 +5,13 @@
  *   (공개 페이지 SSR은 로그인 상태를 읽지 않음).
  * - 대상이 여럿이면(사례 전체 / 그 안의 기록·선언·파일, 프로필 / 대표 케이스) 고를 수 있습니다.
  * - 신고 설명은 운영자만 보고, 신고한 사람은 게시자에게 알려지지 않습니다. 처리 상태는 `/me/reports`에서 봅니다.
+ * - 사유는 대상마다 고를 수 있는 것만(S-07: 표시명 사칭은 프로필 신고에만, 처리 기준 안내와 함께).
  */
 import type { ReportReason, ReportReceiptDto } from '~~/shared/types/api'
 import type { ReportChoice } from '~/utils/moderation'
 
 const props = withDefaults(defineProps<{ targets: ReportChoice[]; label?: string; idPrefix: string }>(), { label: '신고하기' })
 
-const REASONS = Object.keys(REPORT_REASON_LABELS) as ReportReason[]
 const dialog = ref<HTMLDialogElement | null>(null)
 const loggedIn = ref<boolean | null>(null)
 const choice = ref(props.targets[0]?.id ?? '')
@@ -23,6 +23,14 @@ const done = ref<ReportReceiptDto | null>(null)
 const hint = computed(() => {
   const target = props.targets.find((t) => t.id === choice.value)
   return target ? communityReportHint(target.targetType) : null
+})
+const reasons = computed(() => {
+  const target = props.targets.find((t) => t.id === choice.value)
+  return target ? reportReasonsFor(target.targetType) : []
+})
+// 대상을 바꿔 지금 사유를 고를 수 없게 되면 비웁니다.
+watch(reasons, (list) => {
+  if (reason.value && !list.includes(reason.value)) reason.value = ''
 })
 
 async function open() {
@@ -91,7 +99,7 @@ async function submit() {
           <p v-if="hint" class="hint" data-testid="community-report-hint">{{ hint }}</p>
           <fieldset>
             <legend>사유</legend>
-            <div v-for="r in REASONS" :key="r" class="radio-row">
+            <div v-for="r in reasons" :key="r" class="radio-row">
               <input :id="`${idPrefix}-reason-${r}`" v-model="reason" type="radio" :value="r" :name="`${idPrefix}-reason`" />
               <label :for="`${idPrefix}-reason-${r}`">{{ REPORT_REASON_LABELS[r] }}</label>
               <p v-if="REPORT_REASON_HINTS[r]" class="hint">{{ REPORT_REASON_HINTS[r] }}</p>

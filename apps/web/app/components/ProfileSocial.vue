@@ -70,7 +70,9 @@ async function run(task: () => Promise<string>) {
 
 const follow = () =>
   run(async () => {
-    const res = await $fetch<FollowResultDto>(`${path.value}/follow`, { method: 'POST', body: { as: actingId.value } })
+    // 추천 목록에서 온 팔로우면 출처만 알립니다(S-07 분석 follow_requested.origin, 상대·추천 내용은 없음).
+    const origin = useRoute().query.from === 'suggestion' ? 'suggestion' : undefined
+    const res = await $fetch<FollowResultDto>(`${path.value}/follow`, { method: 'POST', body: { as: actingId.value, origin } })
     return res.status === 'pending' ? '팔로우를 요청했습니다. 상대가 승인하면 팔로워가 됩니다.' : '팔로우했습니다.'
   })
 const unfollow = () =>

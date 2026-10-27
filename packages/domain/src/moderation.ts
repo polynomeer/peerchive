@@ -7,6 +7,8 @@
  *   커뮤니티 글·댓글(`community_post`·`community_comment`, C-04)도 신고자가 읽을 수 있는 게시 중인 것이 대상이고, 조치는 가리기(hide_post·hide_comment)입니다.
  * - 운영 조치는 "공개 차단"만 합니다(공개 제한·항목 가리기·노트/케이스/프로필 숨김). 삭제는 별도의 명시적 조치이며 여기에 없습니다(차단 ≠ 삭제, §8).
  * - 개인정보·저작권 신고는 그 공개에 **보류(hold)**를 걸어 신고가 처리될 때까지 게시·새 버전 게시를 막습니다(도메인 `hasOpenHold`).
+ * - S-07(ADR 0036): 페르소나(실명·표시명)·프로필 글·소셜 링크도 대상입니다. 조치는 그 페르소나·글·링크 하나에만 걸리고, 같은 사람의 다른 페르소나에는
+ *   영향이 없습니다(함께 사라지면 두 페르소나가 같은 사람임이 드러남, ADR 0028).
  * - 이의제기는 조치마다 한 번, 조치의 당사자(공개 owner·노트/케이스 작성자·프로필 주인)만 합니다. 되돌리면 조치를 풉니다
  *   (공개 제한은 restricted → draft: owner가 후보·동의·게시를 다시 합니다).
  * 런타임 의존성이 없고, 스냅샷 타입은 필요한 부분만 구조적으로 선언합니다.
@@ -26,11 +28,26 @@ export const REPORT_TARGET_TYPES = [
   'community_application',
   // C-09(ADR 0025): 과목 허브의 막힘 Q&A(공개 대상, 누구나 신고).
   'course_qa',
+  // S-07(ADR 0036): 페르소나 단위 공개 프로필(실명·표시명 어느 쪽이든)·프로필 글·소셜 링크. 신고·조치는 그 페르소나 행으로만 가리키고
+  // 주인 사용자로 풀지 않습니다(표시명 신고가 운영 화면에 실명 handle을 붙이거나 실명 프로필을 숨기지 않게). 기존 `profile`(사용자 단위, 실명만)은
+  // 이전 신고·API 호환으로 남깁니다(화면은 `persona`를 씀).
+  'persona',
+  'profile_post',
+  'social_link',
 ] as const
 export type ReportTargetType = (typeof REPORT_TARGET_TYPES)[number]
 
-export const REPORT_REASONS = ['personal_info', 'answer_sharing', 'copyright', 'harassment', 'false_claim', 'spam', 'other'] as const
+/**
+ * 신고 사유. `impersonation`(S-07, ADR 0036): 표시명 사칭 — 다른 실존 인물·단체로 오인하게 하는 표시명·handle·소개. 프로필(페르소나·실명 프로필)
+ * 신고에만 고를 수 있습니다(reasonApplicable). 처리 기준은 RUNBOOK §4.5.
+ */
+export const REPORT_REASONS = ['personal_info', 'answer_sharing', 'copyright', 'harassment', 'false_claim', 'spam', 'other', 'impersonation'] as const
 export type ReportReason = (typeof REPORT_REASONS)[number]
+
+/** 이 대상에 이 사유를 고를 수 있는지. 표시명 사칭은 프로필(페르소나·실명 프로필)에만. */
+export function reasonApplicable(target: ReportTargetType, reason: ReportReason): boolean {
+  return reason !== 'impersonation' || target === 'persona' || target === 'profile'
+}
 
 export const REPORT_STATUSES = ['open', 'in_review', 'resolved', 'dismissed'] as const
 export type ReportStatus = (typeof REPORT_STATUSES)[number]
@@ -56,6 +73,11 @@ export const MODERATION_ACTION_KINDS = [
   'hide_application',
   // C-09(ADR 0025): 막힘 Q&A 숨기기(published → hidden, 되돌리면 다시 published).
   'hide_qa',
+  // S-07(ADR 0036): 페르소나 하나의 공개 프로필 숨기기(그 페르소나의 profiles.hidden_at만 — 같은 사람의 다른 페르소나는 그대로)·프로필 글 숨기기
+  // (published → hidden, 활동은 DB 트리거가 거둠)·소셜 링크 숨기기(social_links.hidden_at, 공개 DTO에서 빠짐). 모두 되돌릴 수 있습니다.
+  'hide_persona',
+  'hide_profile_post',
+  'hide_social_link',
 ] as const
 export type ModerationActionKind = (typeof MODERATION_ACTION_KINDS)[number]
 
@@ -96,6 +118,9 @@ export const ACTIONS_BY_TARGET: Readonly<Record<ReportTargetType, readonly Moder
   community_recruitment: ['none', 'hide_recruitment'],
   community_application: ['none', 'hide_application'],
   course_qa: ['none', 'hide_qa'],
+  persona: ['none', 'hide_persona'],
+  profile_post: ['none', 'hide_profile_post'],
+  social_link: ['none', 'hide_social_link'],
 }
 
 export function isActionApplicable(target: ReportTargetType, action: ModerationActionKind): boolean {
@@ -147,6 +172,9 @@ export type ReportTargetIdentity =
   | { type: 'community_recruitment'; recruitmentId: string }
   | { type: 'community_application'; applicationId: string }
   | { type: 'course_qa'; courseQaId: string }
+  | { type: 'persona'; personaId: string }
+  | { type: 'profile_post'; profilePostId: string }
+  | { type: 'social_link'; socialLinkId: string }
 
 export function reportTargetKey(target: ReportTargetIdentity): string {
   switch (target.type) {
@@ -172,6 +200,12 @@ export function reportTargetKey(target: ReportTargetIdentity): string {
       return `community_application:${target.applicationId}`
     case 'course_qa':
       return `course_qa:${target.courseQaId}`
+    case 'persona':
+      return `persona:${target.personaId}`
+    case 'profile_post':
+      return `profile_post:${target.profilePostId}`
+    case 'social_link':
+      return `social_link:${target.socialLinkId}`
   }
 }
 

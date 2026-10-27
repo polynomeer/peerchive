@@ -9,7 +9,9 @@
  * - 신고(T-15): 프로필 또는 볼 수 있는 대표 케이스(앵커 case-N로 가리킴, 내부 id 없음). 로그인 후.
  * - 페르소나(S-01, ADR 0028): handle은 실명·표시명 프로필 어느 쪽이든 됩니다. 상대 프로필 링크는 본인이 연결을 켰을 때만 공개 API가
  *   `linkedPersona`로 주며, 이 화면은 그 필드 말고는 상대 프로필을 알 길이 없습니다(HTML·payload·OG에 0건). 표시명 프로필에는 대표 케이스·
- *   타임라인·후배 기여가 없고, 표시명 프로필 신고는 S-07에서 엽니다.
+ *   타임라인·후배 기여가 없습니다.
+ * - 신고(S-07, ADR 0036): 실명·표시명 프로필 모두 그 페르소나 자신(`persona`)과 그 소셜 링크(handle + 주소)를 신고할 수 있습니다. 신고는 이 페르소나만
+ *   가리키고 같은 사람의 다른 프로필과 잇지 않습니다. 표시명 사칭 사유는 프로필 대상에서만 고를 수 있습니다.
  * - 과제 수행 목록(S-03, ADR 0031): 공개 API는 늘 비로그인으로 판정하므로 SSR에는 전체 공개일 때만 들어갑니다. 그렇지 않으면 화면이 뜬 뒤
  *   브라우저에서만 `/api/v1/profiles/:handle`(세션을 읽음)을 불러 로그인·같은 기관·본인 범위의 목록을 붙입니다 — 보는 사람에 따라 달라지는
  *   내용이 SSR HTML·payload에 들어가지 않습니다. 과목·학기·제목만, 엠바고 중이면 제목 없이.
@@ -60,9 +62,15 @@ useSeoMeta({
 
 const reportTargets = computed<ReportChoice[]>(() => {
   const p = profile.value
-  if (!p || p.kind !== 'real') return []
+  if (!p) return []
   return [
-    { id: 'profile', label: `공개 프로필 @${p.handle}`, targetType: 'profile', targetRef: { handle: p.handle } },
+    { id: 'persona', label: `공개 프로필 @${p.handle}`, targetType: 'persona', targetRef: { handle: p.handle } },
+    ...p.socialLinks.map((l, i) => ({
+      id: `link-${i}`,
+      label: `소셜 링크: ${l.url.replace(/^https:\/\//, '')}`,
+      targetType: 'social_link' as const,
+      targetRef: { handle: p.handle, url: l.url },
+    })),
     ...p.featured
       .filter((f) => f.available)
       .map((f) => ({

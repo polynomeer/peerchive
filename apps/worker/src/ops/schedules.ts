@@ -33,7 +33,7 @@ export function opsTaskRunner(db: DbExecutor, storage: ObjectStorage, config: Op
   }
   if (task === 'name-mode-changes') return applyDueNameModeChanges(db, { now, analyticsPepper: config.analyticsPepper, limit: 100 })
   // 소셜 링크 재확인(S-06): 링크 수집기(SSRF 방어)로만 접속합니다.
-  if (task === 'social-link-recheck') return recheckSocialLinks(db, { siteOrigin: config.siteOrigin }, { now })
+  if (task === 'social-link-recheck') return recheckSocialLinks(db, { siteOrigin: config.siteOrigin, analyticsPepper: config.analyticsPepper }, { now })
   return CLEANUP_TASKS[task](db, { storage, batchSize: config.batchSize }, now)
 }
 

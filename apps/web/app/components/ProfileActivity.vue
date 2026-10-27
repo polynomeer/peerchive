@@ -119,6 +119,7 @@ async function remove(item: ActivityItemDto) {
       :key="item.id"
       :item="item"
       :deletable="!!myPersonaId && !!item.profilePostId"
+      :reportable="!myPersonaId"
       :busy="busy"
       @delete="remove(item)"
     />

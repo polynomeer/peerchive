@@ -10,6 +10,8 @@
  * - 확인은 지금 행 기준입니다(주소·handle을 payload에 싣지 않음). 링크가 지워졌거나 페르소나·계정이 비활성이면 접속하지 않습니다.
  * - 사이트 origin(NUXT_SITE_ORIGIN 첫 항목)이 없으면 무엇이 "우리 프로필 주소"인지 모르므로 접속하지 않고 그대로 둡니다(경고 로그).
  * - 로그에는 링크 id·결과 코드만 남기고 주소는 남기지 않습니다.
+ * - 계측(S-07, DELIVERY_PLAN §6.2 `social_link_verified`): verified가 아니던 링크가 verified가 된 순간 주인 사용자 키로 서비스 종류만 기록합니다
+ *   (주소·페르소나 id 없음, 수집 거부 존중). 재확인으로 verified가 유지되는 것은 세지 않습니다.
  */
 import type { PgBoss } from 'pg-boss'
 import {
@@ -35,6 +37,7 @@ import {
   pageLinksTo,
   personaProfileUrl,
 } from '@peerchive/domain'
+import { emitWorkerAnalytics } from './analytics'
 import type { TaskOutcome } from './ops/cleanup'
 import { type SafeFetchResult, safeFetchHtml } from './net/safe-fetch'
 
@@ -43,6 +46,8 @@ export interface SocialLinkCheckDeps {
   siteOrigin: string | null
   /** HTML 가져오기. 기본은 safeFetchHtml(테스트는 로컬 서버용 훅을 넣은 것). */
   fetchHtml?: (url: string) => Promise<SafeFetchResult>
+  /** 분석 pepper(S-07 social_link_verified). 없으면 이벤트를 남기지 않습니다. */
+  analyticsPepper?: string | null
 }
 
 export const SOCIAL_LINK_QUEUE_OPTIONS = { retryLimit: 2, retryDelay: 30, retryBackoff: true, expireInSeconds: 60 } as const
@@ -98,6 +103,9 @@ export async function checkSocialLink(db: DbExecutor, linkId: string, deps: Soci
     .where(and(eq(socialLinks.id, link.id), eq(socialLinks.url, link.url)))
     .returning({ id: socialLinks.id })
   if (updated.length === 0) return null
+  if (next.verification === 'verified' && link.verification !== 'verified') {
+    await emitWorkerAnalytics(db, deps.analyticsPepper, { name: 'social_link_verified', actorId: link.userId, props: { provider: link.provider }, now, social: true })
+  }
   return { id: link.id, verification: next.verification, result: code }
 }
 

@@ -139,7 +139,7 @@ curl -sI https://<도메인>/community/s/<slug> | grep -i 'x-robots-tag'   # noi
 
 ### GP: 공개 프로필·팔로우 개방
 
-공개 프로필·팔로우·피드는 이 표가 채워지기 전에는 열지 않습니다(DELIVERY_PLAN §7 GP). 지금은 S-01~S-06 행이 구현되었고 S-07 신고 대상은 아직입니다.
+공개 프로필·팔로우·피드는 이 표가 채워지기 전에는 열지 않습니다(DELIVERY_PLAN §7 GP). S-01~S-07의 코드 쪽 조건은 모두 구현되었습니다. 남은 것은 아래 "개방 직전 확인" 열의 운영 쪽 확인(G2 통과, 표시명 사칭 처리 기준 공지, 운영 DB SQL)입니다.
 
 | 조건 | 구현·근거 | 개방 직전 확인 |
 |---|---|---|
@@ -149,7 +149,7 @@ curl -sI https://<도메인>/community/s/<slug> | grep -i 'x-robots-tag'   # noi
 | S-03 공개 범위 | 계정 전체를 `전체 공개`로 바꿔도 동의 전 공개 후보·비공개 과제 공간·엠바고 중 제목 0건, 과제 수행 목록은 과목·학기·제목만(`visibility.integration.test.ts`·E2E `s-visibility`, [ADR 0031](../adr/0031-visibility-settings.md)) | — |
 | S-04 차단 404 | 차단당한 사용자는 숨긴 페르소나의 세션 경로·팔로우 목록에서 404, 차단·팔로워 삭제·뮤트에 알림 0건(`follows.integration.test.ts`·E2E `t-follows`, [ADR 0033](../adr/0033-follows-blocks.md)) | 로그아웃 공개 화면은 차단을 판별하지 못함(ADR 0033)을 공지 문구에 반영 |
 | S-05 프로필 글·피드·추천 | 활동 목록·피드·추천은 `persona_activities`만 원천으로 읽고(social DB 역할 트랜잭션), 항목마다 원본 상태·공개 범위·차단·뮤트를 다시 확인(`persona_activity_cards`). 거두기는 원본 상태가 바뀌는 같은 트랜잭션의 DB 트리거, 투영은 outbox → worker. 인기·팔로워 수 정렬 없음, 추천은 과목·학교(배지 공개 실명만)·관심 직무 교집합(`feed.integration.test.ts`·S-02 속성 테스트의 피드·활동·추천 확장·E2E `s05-feed`, [ADR 0035](../adr/0035-profile-feed.md)). 알림·프로필 글 사진은 후속 | 앱 계정이 `peerchive_social` 멤버인지(§1), 아래 SQL ④(거둔 원본인데 남은 활동 0행), worker의 `persona_activity.project` 큐가 밀리지 않는지(`GET /api/v1/health?deep=1`의 outbox 대기) |
-| S-07 신고 대상 | 아직 | — |
+| S-07 신고 대상·표시명 사칭·계측 | 신고 대상에 페르소나(실명·표시명)·프로필 글·소셜 링크. 신고·조치·운영 화면은 **그 페르소나 하나만** 가리키고(주인 사용자 id 없음), 숨김은 그 페르소나·글·링크만(같은 사람의 다른 프로필은 그대로), 이의제기로 복원. 표시명 사칭 사유는 프로필 신고에만, 처리 기준은 §4.5. 페르소나 주인 확인은 사유 기록 + 감사(id만)로만, 감사 조회는 주인의 자기 행동 행에서 행위자를 비움. §6.2 이벤트 11개(사용자 키·시 단위 시각, 페르소나 id·상대방 키 없음), 운영자 지표 "공개 프로필·팔로우" 칸(5 미만 가림)(`persona-reports.integration.test.ts`·E2E `s07-persona-reports`, [ADR 0036](../adr/0036-persona-reports-metrics.md)) | §4.5의 사칭 처리 기준을 이용 규칙·도움말에 공지. 아래 SQL ⑥(신고·조치 행에 주인 사용자 열 0행, 사칭 사유는 프로필 대상만)·⑦(주인 확인 사유·감사). 분석 접근권한이 `analytics_events`만인지(운영 테이블과 시각으로 잇지 않게, ADR 0036) |
 
 ```sql
 -- ① social 역할: 로그인 불가, 커뮤니티 구역 테이블 권한 0행이어야 함(목록은 schema.ts 커뮤니티 구역)
@@ -171,6 +171,13 @@ where a.withdrawn_at is null and not persona_activity_source_ok(a.persona_id, a.
 -- ⑤ S-05: 거두기 트리거가 있는지(6개)
 select tgname from pg_trigger where tgname in ('community_posts_persona_activity_sync','community_spaces_persona_activity_sync','senior_notes_persona_activity_sync',
   'profile_posts_persona_activity_sync','publication_candidates_persona_activity_sync','consents_persona_activity_sync');
+-- ⑥ S-07: 페르소나·글·링크 신고·조치가 주인 사용자를 함께 가리키지 않는지, 사칭 사유는 프로필 대상만(모두 0이어야 함)
+select (select count(*) from reports where target_type in ('persona','profile_post','social_link') and profile_user_id is not null)
+     + (select count(*) from moderation_actions where kind in ('hide_persona','hide_profile_post','hide_social_link') and profile_user_id is not null)
+     + (select count(*) from reports where reason = 'impersonation' and target_type not in ('persona','profile')) as must_be_zero;
+-- ⑦ S-07: 주인 확인은 모두 신고와 이어지고 사유가 있으며, 감사 metadata에는 id만(사유·주인 없음)
+select count(*) from persona_owner_lookups where char_length(reason) < 5;  -- 0이어야 함(너무 짧은 사유는 운영 회의에서 검토)
+select metadata from audit_events where action = 'persona.owner_lookup' order by at desc limit 20;
 ```
 
 ## 3. 사고 대응
@@ -333,6 +340,35 @@ select tgname from pg_trigger where tgname in ('community_posts_persona_activity
 | 운영 시간 기록이 2주 이상 비어 있음 | 측정 실패로 보고 운영 회의 안건(GC "주간 시간" 행을 충족하지 못함) |
 
 기한 넘김은 상태 확인의 `status`(ok/degraded)를 바꾸지 않습니다(시스템 장애가 아니라 운영 신호). 외부 감시를 붙이면 `reports.overdueAutoHidden > 0`을 별도 경보로 거세요.
+
+### 4.5 공개 프로필 신고·표시명 사칭·주인 확인(S-07, ADR 0036)
+
+**신고 대상.** 공개 프로필(실명·표시명 모두, 대기열 이름표 `공개 프로필 @handle`, 표시명이면 `(표시명)`), 프로필 글(`프로필 글 · @handle`), 소셜 링크(`소셜 링크 · @handle`). 상세에는 **그 프로필 하나**만 보입니다 — 같은 사람의 다른 프로필(실명 ↔ 표시명)은 보이지 않고, 같은 사람의 두 프로필 신고는 서로 다른 묶음입니다. 처리 기한은 §4.4의 일반 신고(첫 신고부터 72시간)입니다.
+
+**조치.**
+
+| 대상 | 조치 | 효과 | 되돌림 |
+|---|---|---|---|
+| 공개 프로필 | 이 프로필만 숨기기 | 그 프로필의 `/u/:handle`·README 카드·활동·피드·팔로우 목록에서 다음 요청부터 빠짐. 같은 사람의 다른 프로필은 그대로 | 이의제기 되돌림 |
+| 프로필 글 | 프로필 글 숨기기 | 활동 목록·피드에서 빠짐, 본인도 지울 수 없음(근거 보존) | 이의제기 되돌림(다시 활동·피드에) |
+| 소셜 링크 | 소셜 링크 숨기기 | 공개 프로필에서 빠짐, 본인 화면에 "운영 조치로 숨김", 지울 수 없음 | 이의제기 되돌림 |
+
+내부 메모(필수)와 당사자에게 보일 사유를 따로 적습니다. 당사자 안내는 `/me/moderation-notices`(알림을 켠 경우)와 프로필 관리 화면입니다.
+
+**표시명 사칭 처리 기준(공지 문구).** 아래를 이용 규칙·도움말에 그대로 공지합니다. 신고 대화상자의 "표시명 사칭" 사유 옆에도 짧게 보입니다.
+
+> 표시명 사칭은 다른 실존 인물(교수·조교·다른 학생·졸업생·공인)이나 학교·학과·기업·단체로 **오인하게 하는** 이름·handle·소개·링크입니다. 이름이 비슷한 것만으로는 사칭이 아니며, 패러디·팬 계정은 프로필에 그 사실이 분명하면 사칭이 아닙니다. 사칭으로 확인되면 그 프로필만 숨기고 사유를 알려 드립니다. 이름·소개를 고친 뒤 이의제기하면 확인해 다시 엽니다. Peerchive는 실명 프로필의 본명이 진짜인지 확인하지 않습니다.
+
+처리 순서:
+
+1. 프로필 하나만 봅니다(이름·handle·소개·소셜 링크). 신고 설명에 "누구를 사칭했는지"가 없으면 "기각"하거나 신고자에게 다시 신고하도록 안내(신고 상태만 보이므로 공지 채널로).
+2. 공식 단체·교직원 사칭이 명백하면 바로 숨김 + 사유("다른 사람·단체로 오인하게 하는 이름입니다. 고친 뒤 이의제기하세요"). 개인 학생 사이의 분쟁은 당사자 확인(사칭당한 사람의 학교 메일 등)이 될 때만.
+3. 이의제기: 당사자가 이름·handle·소개를 고쳤는지 공개 화면에서 확인하고 되돌립니다. 고치지 않았으면 유지.
+4. 같은 사람이 반복하면(새 표시명 프로필은 계정당 하나라 같은 프로필을 고쳐 다시 사칭) 아래 주인 확인 뒤 계정 단위 조치를 검토합니다. 확정 건이 반복되면 §6.2에 따라 표시명 프로필의 기관 인증 배지 필수화를 운영 회의 안건으로 올립니다(`/operator/metrics` "표시명 사칭 신고·숨김 확정").
+
+**주인 확인(계정 단위 조치가 필요할 때만).** 신고 상세의 "주인 확인"에서 **사유를 적어야** 그 프로필의 계정(내부 id·상태)과 그 사람의 다른 프로필이 보입니다. 확인할 때마다 `persona_owner_lookups`(사유)와 감사 `persona.owner_lookup`(신고·확인 id만)이 남고, 결과는 그 화면에만 있습니다(다시 보려면 다시 확인 = 새 기록). 시간당 20회. 신고자·당사자·다른 사용자에게 두 프로필의 연결을 알리지 마세요(본인이 연결을 공개하지 않았다면 그것 자체가 개인정보입니다). 감사 기록 화면은 프로필 주인이 자기 프로필에 한 일(만들기·수정·공개 범위·소셜 링크·차단)의 행위자를 비워 보여 줍니다 — 주인 확인 없이 감사 기록으로 계정을 찾지 마세요.
+
+**계정 단위 조치.** API가 없습니다. 주인 확인 뒤에도 필요하면 운영 회의에서 결정하고, 계정 정지(`users.status = 'suspended'`, 세션 거부 — 두 프로필 모두 404)는 운영 DB 권한자가 기록을 남기고 실행합니다. 다른 프로필만 숨기려면 그 프로필에 대한 신고로 처리합니다(운영자가 직접 신고할 수 있음).
 
 ## 5. 백업 일정과 보존
 

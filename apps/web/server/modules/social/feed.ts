@@ -18,6 +18,8 @@
  *   페르소나의 소속이나 공개하지 않은 소속을 추천 결과로 알려 주지 않음), 관심 직무 교집합. 나·이미 팔로우(요청 포함)·내가 차단한 페르소나·나에게
  *   숨겨진 페르소나·뮤트한 페르소나는 빼고, 한 사람의 페르소나는 하나만 추천합니다. 비공개 계정도 기본 정보는 공개라 추천에 나올 수 있습니다.
  * - 알림("팔로우한 사람의 새 글"·"팔로우 요청")은 만들지 않습니다(ADR 0035: 앱 안 알림 장치가 커뮤니티 전용뿐이라 미룸).
+ * - 계측(S-07, DELIVERY_PLAN §6.2 `feed_item_opened(source_type)`): 화면이 피드 항목을 열 때 `POST /feed/opened {activityId}`를 부르고, 서버가 활동 행의
+ *   원천 종류만 읽어 사용자 키로 기록합니다(페르소나·원천 id 없음). 피드에는 0~1단계 글이 투영 경로부터 없으므로 익명 글 이벤트는 생길 수 없습니다.
  */
 import { createHash } from 'node:crypto'
 import {
@@ -72,7 +74,9 @@ import {
   suggestionReasons,
 } from '@peerchive/domain'
 import { activeAffiliationSchoolIds } from '../affiliation/affiliations'
-import { type Actor, invalid, notFound } from '../errors'
+import { emitSocialAnalytics } from '../analytics/analytics'
+import { type Actor, invalid, notFound, rateLimited } from '../errors'
+import { hitRateLimit } from '../security/rate-limit'
 import { withSocialRole } from './db-role'
 import { personaDisplayName, resolvePublicPersona } from './personas'
 import { counterpartVisible, notHiddenFrom } from './relations'
@@ -503,5 +507,29 @@ export async function getFollowSuggestions(db: DbExecutor, actor: Actor): Promis
         }),
       ),
     }
+  })
+}
+
+// ── 계측 ─────────────────────────────────────────────────────────────────
+
+/** 피드 항목 열기 기록 한도(사용자당 시간당). 넘으면 429(화면은 무시). */
+export const FEED_OPENED_RATE_LIMIT = { limit: 300, windowMs: 60 * 60 * 1000 }
+
+/**
+ * POST /feed/opened {activityId} — 피드에서 항목을 열었다는 분석 이벤트(S-07, §6.2 `feed_item_opened`). 거두지 않은 활동이면 그 원천 종류만 기록하고,
+ * 없는·거둔 활동은 조용히 기록하지 않습니다(204 그대로 — 존재를 드러내지 않음). 수집 거부·pepper 없음도 같습니다.
+ */
+export async function recordFeedItemOpened(db: DbExecutor, actor: Actor, rawInput: unknown, now = new Date()): Promise<void> {
+  const id = (rawInput as { activityId?: unknown } | null)?.activityId
+  if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id)) throw invalid({ activityId: id === undefined ? 'required' : 'invalid' })
+  await db.transaction(async (tx) => {
+    if (!(await hitRateLimit(tx, 'feed_opened', actor.userId, FEED_OPENED_RATE_LIMIT, now))) throw rateLimited()
+    const [row] = await tx
+      .select({ sourceType: personaActivities.sourceType })
+      .from(personaActivities)
+      .where(and(eq(personaActivities.id, id.toLowerCase()), isNull(personaActivities.withdrawnAt)))
+      .limit(1)
+    if (!row) return
+    await emitSocialAnalytics(tx, { name: 'feed_item_opened', actorId: actor.userId, props: { sourceType: row.sourceType }, now })
   })
 }

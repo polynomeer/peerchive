@@ -148,6 +148,8 @@ export type AuditAction =
   | 'social_link.add'
   | 'social_link.remove'
   | 'social_link.verify_request'
+  /** S-07(ADR 0036): 운영자의 페르소나 주인 확인(metadata는 lookupId·reportId뿐, 사유·주인 없음). */
+  | 'persona.owner_lookup'
 
 export async function recordAudit(
   db: DbExecutor,
@@ -198,6 +200,7 @@ export async function recordAudit(
       | 'ops_time_entry'
       | 'metrics'
       | 'social_link'
+      | 'profile_post'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

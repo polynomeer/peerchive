@@ -5,6 +5,7 @@
  * - 처리: 조치(대상별로 고를 수 있는 것만) + 내부 메모(필수) + 당사자에게 보일 사유(별도) + 당사자 알림. 같은 대상의 처리 전 신고를 함께 닫고 보류를 풉니다.
  * - 기각, 제한 해제(restricted → draft), 이의 결정(유지·되돌림), 감사 기록 보기.
  * - 커뮤니티 글·댓글(C-06): 신고 누적 임시 숨김이면 "기각·조치 없음 = 복원, 가리기 = 확정" 안내, 사유를 기록하는 작성자 확인과 이용 제한 발급.
+ * - 페르소나·프로필 글·소셜 링크(S-07): 신고된 페르소나 자신만, 사유를 기록하는 주인 확인(OperatorPersonaLookup).
  */
 import type {
   ModerationActionKind,
@@ -224,6 +225,39 @@ async function loadAudit() {
             신고된 모집 글 또는 지원 메시지 하나만 보입니다. 모집자·지원자가 누구인지와 지원자 목록은 운영자에게도 보이지 않습니다. 가리면 모집 글은 모집자 외에는
             보이지 않고 지원을 받지 않으며, 지원 메시지는 모집자에게 "운영 조치로 가려진 메시지입니다"로 보입니다.
           </p>
+        </template>
+        <template v-else-if="data.content.kind === 'persona' || data.content.kind === 'profile_post' || data.content.kind === 'social_link'">
+          <p data-testid="op-persona">
+            <strong>{{ data.content.persona.displayName }}</strong> @{{ data.content.persona.handle }}
+            <span class="badge">{{ data.content.persona.kind === 'real' ? '실명 프로필' : '표시명 프로필' }}</span>
+            <span v-if="data.content.persona.hidden" class="badge">운영 조치로 숨김</span>
+          </p>
+          <template v-if="data.content.kind === 'persona'">
+            <p v-if="data.content.persona.headline" class="pre">{{ data.content.persona.headline }}</p>
+            <p class="small muted">
+              {{ data.content.persona.jobTargets.join(', ') }} {{ data.content.persona.schoolLabel }} {{ data.content.persona.gradTerm }}
+            </p>
+            <ul v-if="data.content.persona.socialLinks.length" class="plain small">
+              <li v-for="l in data.content.persona.socialLinks" :key="l.url">
+                {{ l.provider }} · {{ l.url }}<template v-if="l.verified"> (링크 확인됨)</template><template v-if="l.hidden"> (숨김)</template>
+              </li>
+            </ul>
+          </template>
+          <template v-else-if="data.content.kind === 'profile_post'">
+            <p class="pre">{{ data.content.post.body || '(본문 없음: 작성자가 지웠습니다)' }}</p>
+            <p class="small muted">{{ data.content.post.status }} · {{ formatDateTime(data.content.post.createdAt) }}</p>
+          </template>
+          <template v-else>
+            <p class="pre">{{ data.content.link.provider }} · {{ data.content.link.url }}</p>
+            <p class="small muted">{{ data.content.link.verification }}<template v-if="data.content.link.hidden"> · 숨김</template></p>
+          </template>
+          <p class="hint">
+            이 프로필 하나만 보입니다. 숨기면 이 프로필(또는 글·링크)만 사라지고 같은 사람의 다른 프로필은 그대로입니다. 표시명 사칭 처리 기준은 RUNBOOK §4.5입니다.
+          </p>
+          <details class="stack">
+            <summary>주인 확인(계정 단위 조치가 필요할 때만)</summary>
+            <OperatorPersonaLookup :report-id="data.report.id" id-prefix="op-owner" />
+          </details>
         </template>
         <p v-else-if="data.content.kind === 'unavailable'" class="muted">{{ data.content.message }}</p>
       </section>

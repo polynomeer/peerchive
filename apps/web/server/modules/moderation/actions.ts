@@ -15,6 +15,9 @@
  * | sanction(C-06, 운영자가 community 모듈에서 발급) | — | 제재 revoked(쓰기 제한 풀림) |
  * | hide_recruitment·hide_application(C-07) | 모집 글 hidden_at(모집자 외 404·지원 받지 않음) / 지원 메시지 message_hidden_at(모집자에게 자리 표시) | 가림을 풂 |
  * | hide_qa(C-09) | 막힘 Q&A published → hidden | hidden → published(당사자가 그사이 철회했으면 그대로 withdrawn) |
+ * | hide_persona(S-07) | 그 페르소나의 profiles.hidden_at(실명·표시명 하나만 — 같은 사람의 다른 페르소나는 그대로) | hidden_at = null |
+ * | hide_profile_post(S-07) | 프로필 글 published → hidden(활동은 같은 트랜잭션의 DB 트리거가 거둠) | hidden → published(트리거가 원천을 다시 확인해 되살림) |
+ * | hide_social_link(S-07) | social_links.hidden_at(공개 DTO에서 빠짐) | hidden_at = null |
  *
  * 공개 읽기는 이 상태를 요청마다 읽으므로 커밋 즉시 효력이 있습니다(worker 무관). outbox `moderation.action`은 worker가 검색 문서 같은 남은 사본을
  * 맞추는 데만 씁니다. 삭제 조치는 없습니다(차단 ≠ 삭제).
@@ -29,11 +32,13 @@ import {
   isNull,
   moderationActions,
   outboxEvents,
+  profilePosts,
   profiles,
   publicationCandidates,
   publications,
   releaseHiddenItems,
   seniorNotes,
+  socialLinks,
   type DbExecutor,
   type ModerationActionOutboxPayload,
 } from '@peerchive/db'
@@ -77,6 +82,9 @@ function auditTarget(
     | 'communityRecruitmentId'
     | 'communityApplicationId'
     | 'courseQaItemId'
+    | 'personaId'
+    | 'profilePostId'
+    | 'socialLinkId'
   >,
 ) {
   switch (action.targetType) {
@@ -101,6 +109,13 @@ function auditTarget(
       return { targetType: 'user' as const, targetId: action.profileUserId }
     case 'course_qa':
       return { targetType: 'course_qa' as const, targetId: action.courseQaItemId }
+    // S-07: 대상 하나(페르소나·글·링크). metadata에는 조치 id·종류만이고 handle·주인 사용자는 없습니다.
+    case 'persona':
+      return { targetType: 'persona' as const, targetId: action.personaId }
+    case 'profile_post':
+      return { targetType: 'profile_post' as const, targetId: action.profilePostId }
+    case 'social_link':
+      return { targetType: 'social_link' as const, targetId: action.socialLinkId }
   }
 }
 
@@ -177,6 +192,25 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
     if (!profile) throw notFound()
     if (profile.hiddenAt) throw conflict('target_not_public')
   }
+  // S-07: 그 페르소나·글·링크 하나만 잠그고 확인합니다.
+  if (input.kind === 'hide_persona') {
+    if (!target.personaId) throw notFound()
+    const [profile] = await tx.select().from(profiles).where(eq(profiles.personaId, target.personaId)).limit(1).for('update')
+    if (!profile) throw notFound()
+    if (profile.hiddenAt) throw conflict('target_not_public')
+  }
+  if (input.kind === 'hide_profile_post') {
+    if (!target.profilePostId) throw notFound()
+    const [post] = await tx.select({ status: profilePosts.status }).from(profilePosts).where(eq(profilePosts.id, target.profilePostId)).limit(1).for('update')
+    if (!post) throw notFound()
+    if (post.status !== 'published') throw conflict('target_not_public')
+  }
+  if (input.kind === 'hide_social_link') {
+    if (!target.socialLinkId) throw notFound()
+    const [link] = await tx.select({ hiddenAt: socialLinks.hiddenAt }).from(socialLinks).where(eq(socialLinks.id, target.socialLinkId)).limit(1).for('update')
+    if (!link) throw notFound()
+    if (link.hiddenAt) throw conflict('target_not_public')
+  }
 
   const [action] = await tx
     .insert(moderationActions)
@@ -198,6 +232,9 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
       communityRecruitmentId: target.communityRecruitmentId,
       communityApplicationId: target.communityApplicationId,
       courseQaItemId: target.courseQaItemId,
+      personaId: target.personaId,
+      profilePostId: target.profilePostId,
+      socialLinkId: target.socialLinkId,
       internalNote: input.internalNote,
       publicReason: input.publicReason,
       notifyOwner: input.notifyOwner,
@@ -239,6 +276,16 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
       break
     case 'hide_profile':
       await tx.update(profiles).set({ hiddenAt: now, updatedAt: now }).where(eq(profiles.userId, target.profileUserId!))
+      break
+    case 'hide_persona':
+      await tx.update(profiles).set({ hiddenAt: now, updatedAt: now }).where(eq(profiles.personaId, target.personaId!))
+      break
+    case 'hide_profile_post':
+      // 상태 변경과 같은 트랜잭션에서 DB 트리거(profile_posts_persona_activity_sync)가 활동을 거둡니다(활동 목록·피드에서 다음 요청부터 빠짐).
+      await tx.update(profilePosts).set({ status: 'hidden' }).where(eq(profilePosts.id, target.profilePostId!))
+      break
+    case 'hide_social_link':
+      await tx.update(socialLinks).set({ hiddenAt: now }).where(eq(socialLinks.id, target.socialLinkId!))
       break
     case 'restrict_space':
       await restrictSpaceInTx(tx, target.communitySpaceId!, now)
@@ -315,6 +362,20 @@ export async function undoModeration(
       break
     case 'hide_profile':
       await tx.update(profiles).set({ hiddenAt: null, updatedAt: now }).where(eq(profiles.userId, action.profileUserId!))
+      break
+    // S-07: 대상이 탈퇴 정리로 지워졌으면 바꿀 행이 없고 조치만 되돌림으로 남습니다.
+    case 'hide_persona':
+      await tx.update(profiles).set({ hiddenAt: null, updatedAt: now }).where(eq(profiles.personaId, action.personaId!))
+      break
+    case 'hide_profile_post':
+      // hidden → published: 트리거가 원천을 다시 확인해 거둔 활동을 되살립니다.
+      await tx
+        .update(profilePosts)
+        .set({ status: 'published' })
+        .where(and(eq(profilePosts.id, action.profilePostId!), eq(profilePosts.status, 'hidden')))
+      break
+    case 'hide_social_link':
+      await tx.update(socialLinks).set({ hiddenAt: null }).where(eq(socialLinks.id, action.socialLinkId!))
       break
     case 'restrict_space':
       await liftSpaceRestrictionInTx(tx, action.communitySpaceId!, now)

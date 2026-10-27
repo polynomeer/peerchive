@@ -18,6 +18,7 @@
 import { z } from 'zod'
 import { and, blocks, desc, eq, follows, identityLinks, inArray, mutes, or, personas, users, type DbExecutor } from '@peerchive/db'
 import { BLOCK_SCOPES, blockNeedsLinkConfirm } from '@peerchive/domain'
+import { emitSocialAnalytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, invalid, notFound } from '../errors'
 import { myActingPersona } from './follows'
@@ -108,6 +109,8 @@ export async function createBlock(db: DbExecutor, actor: Actor, rawInput: unknow
         linkConfirmed: input.confirmLinkInference === true,
       },
     })
+    // §6.2 block_created(scope): 상대방 키·페르소나 없음.
+    await emitSocialAnalytics(tx, { name: 'block_created', actorId: actor.userId, props: { scope: input.scope }, now })
     return {
       id: row!.id,
       target: { kind: target.kind, handle: target.handle, displayName },
@@ -176,10 +179,13 @@ export async function createMute(db: DbExecutor, actor: Actor, rawInput: unknown
   return db.transaction(async (tx) => {
     const { persona: target, displayName } = await targetOr404(tx, actor, handle)
     if (target.userId === actor.userId) throw conflict('own_persona')
-    await tx
+    const inserted = await tx
       .insert(mutes)
       .values({ muterUserId: actor.userId, mutedPersonaId: target.id, mutedUserId: target.userId, createdAt: now })
       .onConflictDoNothing({ target: [mutes.muterUserId, mutes.mutedPersonaId] })
+      .returning({ id: mutes.id })
+    // §6.2 mute_created: 새로 뮤트했을 때만, 상대방 키 없음.
+    if (inserted.length) await emitSocialAnalytics(tx, { name: 'mute_created', actorId: actor.userId, now })
     const [row] = await tx
       .select()
       .from(mutes)

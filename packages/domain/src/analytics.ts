@@ -1,7 +1,8 @@
 /**
  * pilot 분석 이벤트 규칙 (DELIVERY_PLAN §6 측정 계획, SYSTEM_DESIGN §14 관측, T-16, ADR 0016).
  *
- * - 이벤트 이름은 DELIVERY_PLAN §6의 최소 분석 이벤트 15개 + `login_succeeded`(활성화 지표의 가입 시점) + `affiliation_verified`(C-01, props는 standing만) + `space_created`·`space_joined`(C-02, 종류·가입 방식만) + `name_mode_scheduled`·`name_mode_applied`(C-03, 바꾸기 전·후 방식만) + `post_created`·`comment_created`·`reaction_added`(C-04, 게시판 종류·방식·답글 여부·대상 종류만) + `community_report_filed`·`community_auto_hidden`·`community_sanction_issued`(C-06, 대상 종류·제재 수준·범위만) + `recruitment_created`·`application_submitted`·`recruitment_closed`(C-07, 모집 종류·마감 결과만) + `archive_transfer_requested`·`archive_transfer_completed`·`course_qa_published`(C-09, 옮길 곳 종류만) + `study_record_enabled`(C-08, 방 이름 표시 방식·과목 연결 여부만) + `community_author_lookup`(C-10, 근거 종류만)입니다.
+ * - 이벤트 이름은 DELIVERY_PLAN §6의 최소 분석 이벤트 15개 + `login_succeeded`(활성화 지표의 가입 시점) + `affiliation_verified`(C-01, props는 standing만) + `space_created`·`space_joined`(C-02, 종류·가입 방식만) + `name_mode_scheduled`·`name_mode_applied`(C-03, 바꾸기 전·후 방식만) + `post_created`·`comment_created`·`reaction_added`(C-04, 게시판 종류·방식·답글 여부·대상 종류만) + `community_report_filed`·`community_auto_hidden`·`community_sanction_issued`(C-06, 대상 종류·제재 수준·범위만) + `recruitment_created`·`application_submitted`·`recruitment_closed`(C-07, 모집 종류·마감 결과만) + `archive_transfer_requested`·`archive_transfer_completed`·`course_qa_published`(C-09, 옮길 곳 종류만) + `study_record_enabled`(C-08, 방 이름 표시 방식·과목 연결 여부만) + `community_author_lookup`(C-10, 근거 종류만)
+ *   + §6.2 공개 프로필·팔로우 이벤트 11개(S-07, ADR 0036: 사용자 키만, 페르소나 id·상대방 키 없음, 시 단위 시각)입니다.
  * - 사용자 키 없는 이벤트(C-10, ADR 0027)는 actorHash가 null입니다. 사람 단위 지표(활성화·기록 유지·공유한 사람 수·주간 활성)는 키 있는 이벤트만 셉니다.
  * - props는 이벤트마다 허용 목록(ANALYTICS_PROP_SPECS)의 키만, 값은 정해진 enum 문자열·참거짓·범위 안의 정수만 받습니다.
  *   자유 문자열 필드는 없으므로 과제 본문·제목·파일 이름·URL·이메일·검색어가 들어갈 자리가 없습니다(§6 "본문·파일 내용·검색 원문·연락처 없음").
@@ -46,6 +47,18 @@ export const ANALYTICS_EVENT_NAMES = [
   'course_qa_published',
   'study_record_enabled',
   'community_author_lookup',
+  // S-07(DELIVERY_PLAN §6.2 P1, ADR 0036): 공개 프로필·팔로우. 사용자 키(actor_hash)는 붙이고 **페르소나 id·handle·상대방 키는 넣지 않습니다**.
+  'persona_created',
+  'identity_link_toggled',
+  'visibility_changed',
+  'project_listed',
+  'follow_requested',
+  'follow_approved',
+  'follower_removed',
+  'block_created',
+  'mute_created',
+  'feed_item_opened',
+  'social_link_verified',
 ] as const
 export type AnalyticsEventName = (typeof ANALYTICS_EVENT_NAMES)[number]
 
@@ -137,6 +150,34 @@ export const ANALYTICS_PROP_SPECS: Readonly<Record<AnalyticsEventName, Readonly<
   study_record_enabled: { mode: enumOf(NAME_MODE_VALUES), withCourse: bool },
   // C-10(ADR 0027, §6.1 operator_identity_lookup): 운영자 작성자 확인. 근거 종류만(신고·제재 요청·없음). 사용자 키 없이 기록합니다.
   community_author_lookup: { basis: enumOf(['report', 'sanction_request', 'none']) },
+  // S-07(ADR 0036, §6.2): 페르소나·팔로우 이벤트. 모두 사용자 키로 기록하고(사람 단위 지표: 피드 사용자 → 기록 활용, 표시명 사용 비율), 페르소나 id·handle·
+  // 상대 페르소나·상대 사용자 키는 넣지 않습니다(§6.2 "차단·뮤트·팔로워 삭제 이벤트에는 상대방 키를 담지 않음"). 그래서 이벤트만으로는 한 사람의
+  // 실명·표시명 페르소나를 서로 잇거나 특정 페르소나와 사용자 키를 이을 수 없습니다. 페르소나 종류는 만들 때(persona_created)·팔로우 대상(targetKind)만.
+  // 시각은 시 단위로 내림합니다(SOCIAL_EVENT_TIME_BUCKET_MS): 팔로우·차단 행의 정확한 시각과 맞춰 사람을 잇는 것을 어렵게 합니다.
+  persona_created: { kind: enumOf(['real', 'display']) },
+  identity_link_toggled: { visible: bool },
+  visibility_changed: {
+    itemKind: enumOf(['project_list', 'posts', 'notes_and_studies', 'follow_lists']),
+    audience: enumOf(['public', 'signed_in', 'same_institution', 'approved_followers', 'private']),
+  },
+  project_listed: { listed: bool },
+  follow_requested: { targetKind: enumOf(['real', 'display']), pending: bool, origin: enumOf(['profile', 'suggestion']) },
+  follow_approved: { bulk: bool },
+  follower_removed: {},
+  block_created: { scope: enumOf(['origin_persona', 'all_personas']) },
+  mute_created: {},
+  // 피드에서 항목을 연 것(§6.2 feed_item_opened(source_type)). 피드에는 0~1단계 글이 투영 경로부터 없으므로(S-02) 익명 글 이벤트는 생길 수 없습니다.
+  feed_item_opened: { sourceType: enumOf(['publication_release', 'senior_note', 'study_release', 'profile_post', 'community_post']) },
+  // worker가 되돌림 링크 확인으로 verified가 된 순간(unverified·lost → verified). 서비스 종류만(주소 없음).
+  social_link_verified: { provider: enumOf(['github', 'blog', 'linkedin', 'instagram', 'youtube', 'other']) },
+}
+
+/** 페르소나·팔로우 이벤트(S-07)의 시각 단위: 1시간으로 내림(ADR 0036). */
+export const SOCIAL_EVENT_TIME_BUCKET_MS = 60 * 60 * 1000
+
+/** 페르소나·팔로우 이벤트 시각(시 단위 내림). */
+export function socialEventTime(now: Date): Date {
+  return new Date(Math.floor(now.getTime() / SOCIAL_EVENT_TIME_BUCKET_MS) * SOCIAL_EVENT_TIME_BUCKET_MS)
 }
 
 export function isAnalyticsEventName(value: unknown): value is AnalyticsEventName {

@@ -196,7 +196,8 @@ describe.skipIf(!databaseUrl)('S-04 시나리오 T: 비공개 계정과 팔로�
     })
   })
 
-  it('팔로워 삭제·요청 거절·언팔로우·차단·뮤트는 follows·blocks·mutes·감사(차단만) 말고 어떤 표에도 행을 만들지 않음(알림·outbox·공지 0건)', async () => {
+  // S-07(ADR 0036): 팔로워 삭제·승인·차단·뮤트는 §6.2 분석 이벤트 한 줄(사용자 키만, 상대방 키 없음)을 더 남깁니다. 알림·outbox·공지는 여전히 0건.
+  it('팔로워 삭제·요청 거절·언팔로우·차단·뮤트는 follows·blocks·mutes·감사(차단만)·분석 이벤트 말고 어떤 표에도 행을 만들지 않음(알림·outbox·공지 0건)', async () => {
     await withRollback(async (tx) => {
       const B = await person(tx, '김주인')
       const A = await person(tx, '박팔로워')
@@ -206,7 +207,7 @@ describe.skipIf(!databaseUrl)('S-04 시나리오 T: 비공개 계정과 팔로�
 
       let snap = await tableCounts(tx)
       await removeFollower(tx, B.actor, followerId)
-      expect(changed(snap, await tableCounts(tx))).toEqual({ follows: -1 })
+      expect(changed(snap, await tableCounts(tx))).toEqual({ follows: -1, analytics_events: 1 })
 
       await updatePersona(tx, B.actor, B.realId, { accountPrivacy: 'private' }, T0)
       await follow(tx, C, B.realHandle)
@@ -219,15 +220,16 @@ describe.skipIf(!databaseUrl)('S-04 시나리오 T: 비공개 계정과 팔로�
       snap = await tableCounts(tx)
       await approveFollowRequest(tx, B.actor, (await getMyFollows(tx, B.actor, B.realId)).incoming[0]!.id, T0)
       await unfollowProfile(tx, C.actor, B.realHandle, C.realId)
-      expect(changed(snap, await tableCounts(tx))).toEqual({ follows: -1 })
+      // 승인(follow_approved) 한 줄. 언팔로우는 이벤트가 없습니다(§6.2 목록 밖).
+      expect(changed(snap, await tableCounts(tx))).toEqual({ follows: -1, analytics_events: 1 })
 
       await follow(tx, A, C.realHandle)
       snap = await tableCounts(tx)
       await createBlock(tx, C.actor, { handle: A.realHandle, as: C.realId }, T0)
-      expect(changed(snap, await tableCounts(tx))).toEqual({ blocks: 1, follows: -1, audit_events: 1 })
+      expect(changed(snap, await tableCounts(tx))).toEqual({ blocks: 1, follows: -1, audit_events: 1, analytics_events: 1 })
       snap = await tableCounts(tx)
       await createMute(tx, B.actor, { handle: A.realHandle }, T0)
-      expect(changed(snap, await tableCounts(tx))).toEqual({ mutes: 1 })
+      expect(changed(snap, await tableCounts(tx))).toEqual({ mutes: 1, analytics_events: 1 })
     })
   })
 
@@ -397,7 +399,7 @@ describe.skipIf(!databaseUrl)('S-04 시나리오 R·U: 표시명 팔로우와 �
         expect(JSON.stringify(myBlocks), secret.slice(0, 12)).not.toContain(secret)
       }
       // 팔로우: A 표시명 ↔ B 표시명만 삭제(2행). B 실명과의 팔로우는 남김(지우면 A가 B 실명 = B 표시명임을 알게 됨).
-      expect(changed(snap, await tableCounts(tx))).toEqual({ blocks: 1, follows: -2, audit_events: 1 })
+      expect(changed(snap, await tableCounts(tx))).toEqual({ blocks: 1, follows: -2, audit_events: 1, analytics_events: 1 })
       const remaining = await tx.select({ f: follows.followerPersonaId, e: follows.followeePersonaId }).from(follows).where(eq(follows.followerUserId, B.user.id))
       expect(remaining).toEqual(expect.arrayContaining([{ f: B.realId, e: A.realId }, { f: B.realId, e: A.display!.id }]))
       expect(remaining).toHaveLength(2)

@@ -51,6 +51,7 @@ import {
   planForks,
   personaActivities,
   profilePosts,
+  personaOwnerLookups,
   personas,
   follows,
   blocks,
@@ -647,9 +648,20 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       const [profilePost] = await tx.insert(profilePosts).values({ personaId: real!.id, userId: U.id, body: '프로필 글' }).returning()
       await tx.insert(profilePosts).values({ personaId: real!.id, userId: U.id, body: '', status: 'deleted', deletedAt: NOW })
       await tx.insert(personaActivities).values({ personaId: real!.id, sourceType: 'profile_post', sourceId: profilePost!.id, itemKind: 'posts' })
+      // S-07(ADR 0036): 그 페르소나·글 신고와 조치, 운영자의 주인 확인 기록은 남고(외래 키 없음) 확인된 주인 칸만 비웁니다.
+      const [report] = await tx
+        .insert(reports)
+        .values({ reporterId: M.id, targetType: 'profile_post', targetKey: `profile_post:${profilePost!.id}`, profilePostId: profilePost!.id, reason: 'spam' })
+        .returning()
+      const [lookup] = await tx
+        .insert(personaOwnerLookups)
+        .values({ operatorId: M.id, reportId: report!.id, personaId: real!.id, ownerUserId: U.id, reason: '확인' })
+        .returning()
 
       const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
-      expect(counts).toMatchObject({ personas: 1, persona_activities: 2, profile_posts: 2, community_persona_refs: 2, community_posts: 1, community_comments: 1 })
+      expect(counts).toMatchObject({ personas: 1, persona_activities: 2, profile_posts: 2, community_persona_refs: 2, community_posts: 1, community_comments: 1, persona_owner_lookup_subjects: 1 })
+      expect((await tx.select().from(personaOwnerLookups).where(eq(personaOwnerLookups.id, lookup!.id)))[0]).toMatchObject({ ownerUserId: null, personaId: real!.id, reason: '확인' })
+      expect((await tx.select().from(reports).where(eq(reports.id, report!.id)))[0]).toMatchObject({ profilePostId: profilePost!.id })
       expect(await count(tx, profilePosts, eq(profilePosts.userId, U.id))).toBe(0)
       expect(await count(tx, personas, eq(personas.userId, U.id))).toBe(0)
       expect(await count(tx, personaActivities, eq(personaActivities.sourceId, post!.id))).toBe(0)

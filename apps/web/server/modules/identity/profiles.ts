@@ -11,6 +11,7 @@ import { z } from 'zod'
 import { and, eq, personas, profiles, users, type DbExecutor } from '@peerchive/db'
 import { HANDLE_PATTERN, RESERVED_HANDLES, checkRealName } from '@peerchive/domain'
 import { profileFields, profileInputSchema, toPublicProfileDto } from './profile-input'
+import { emitSocialAnalytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
 import { isOperator } from '../catalog/operators'
 import { type Actor, invalid, notFound, sqlState } from '../errors'
@@ -126,6 +127,8 @@ export async function upsertProfile(db: DbExecutor, actor: Actor, rawInput: unkn
       }
       if (!current.hasProfile) {
         await tx.insert(profiles).values({ personaId, personaKind: 'real', userId: actor.userId, handle: input.handle!, ...fields })
+        // §6.2 persona_created(kind): 공개 프로필이 생긴 때(S-07). 페르소나 id·handle 없음.
+        await emitSocialAnalytics(tx, { name: 'persona_created', actorId: actor.userId, props: { kind: 'real' } })
       } else if (Object.keys(fields).length > 0) {
         await tx
           .update(profiles)

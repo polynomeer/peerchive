@@ -54,7 +54,7 @@ async function loadMore() {
       <p v-if="!feed.following" class="muted">아직 팔로우하는 프로필이 없습니다. 아래 추천이나 공개 프로필에서 팔로우해 보세요.</p>
       <p v-else-if="!items.length" class="muted">새 활동이 없습니다.</p>
       <section v-if="items.length" aria-label="팔로우 피드">
-        <ActivityItem v-for="item in items" :key="item.id" :item="item" show-author />
+        <ActivityItem v-for="item in items" :key="item.id" :item="item" show-author in-feed reportable />
         <p v-if="cursor"><button type="button" class="secondary" :disabled="loadingMore" @click="loadMore">더 보기</button></p>
       </section>
     </template>
@@ -67,7 +67,7 @@ async function loadMore() {
       </p>
       <ul v-else class="plain">
         <li v-for="s in suggestions.suggestions" :key="s.handle">
-          <NuxtLink :to="`/u/${s.handle}`">{{ s.displayName }} @{{ s.handle }}</NuxtLink>
+          <NuxtLink :to="{ path: `/u/${s.handle}`, query: { from: 'suggestion' } }">{{ s.displayName }} @{{ s.handle }}</NuxtLink>
           <span v-if="s.kind === 'display'" class="muted small"> · 표시명 프로필</span>
           <span v-if="s.accountPrivacy === 'private'" class="muted small"> · 비공개 계정</span>
           <span class="small"> · {{ reasonText(s.reasons) }}</span>

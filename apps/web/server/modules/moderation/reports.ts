@@ -13,14 +13,17 @@
  *   서로 다른 인증 신고자 수를 세어 기준(공식 5·방 3)에 이르면 임시 숨김합니다(afterReportCreated). 감사 metadata에 `autoHidden` 참거짓을 더하고,
  *   분석 `community_report_filed {targetKind}`(사용자 키 없음)를 남깁니다.
  *
+ * - S-07(ADR 0036): 페르소나·프로필 글·소셜 링크. 표시명 사칭(`impersonation`)은 프로필 신고에만(아니면 422 `reason: not_applicable`). 신고자 응답·
+ *   내 신고 목록의 이름표는 신고한 그 페르소나의 handle뿐이고 주인 사용자·다른 페르소나는 싣지 않습니다. 감사 metadata는 대상 종류·사유뿐입니다.
+ *
  * `GET /api/v1/me/reports` — 내가 한 신고의 상태만(접수·검토 중·처리됨·기각). 어떤 조치를 했는지는 알려 주지 않습니다.
  */
 import { z } from 'zod'
-import { REPORT_DETAILS_MAX, REPORT_REASONS, REPORT_TARGET_TYPES, reportCreatesHold, reporterVisibleStatus } from '@peerchive/domain'
+import { REPORT_DETAILS_MAX, REPORT_REASONS, REPORT_TARGET_TYPES, reasonApplicable, reportCreatesHold, reporterVisibleStatus } from '@peerchive/domain'
 import { and, desc, eq, holds, inArray, reports, type DbExecutor } from '@peerchive/db'
 import { emitAnalytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
-import { type Actor, rateLimited, sqlState } from '../errors'
+import { type Actor, invalid, rateLimited, sqlState } from '../errors'
 import { type RateLimitRule, hitRateLimit } from '../security/rate-limit'
 import { parseInput } from '../validation'
 import { afterReportCreated, pointerOf, resolvePublicTarget, targetLabels } from './targets'
@@ -48,6 +51,8 @@ export interface ReportResult extends ReportReceiptDto {}
 /** POST /reports — 201(새 신고) 또는 200(같은 대상의 처리 전 신고가 이미 있음, created: false). 404·422·429. */
 export async function createReport(db: DbExecutor, actor: Actor, rawInput: unknown, now = new Date()): Promise<ReportResult> {
   const input = parseInput(createReportSchema, rawInput)
+  // 표시명 사칭(S-07)은 프로필(페르소나·실명 프로필) 신고에만.
+  if (!reasonApplicable(input.targetType, input.reason)) throw invalid({ reason: 'not_applicable' })
   return db.transaction(async (tx) => {
     const target = await resolvePublicTarget(tx, input.targetType, input.targetRef, now, actor)
     // 커뮤니티 글·댓글은 신고자·대상마다 한 번(C-06): 닫힌 신고가 있어도 새로 받지 않습니다(같은 사람이 기각 뒤 다시 숨기지 못하게).

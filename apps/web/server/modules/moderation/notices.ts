@@ -22,11 +22,14 @@ import {
   isNull,
   moderationActions,
   ne,
+  personas,
+  profilePosts,
   projectMembers,
   publicationCandidates,
   publications,
   reports,
   seniorNotes,
+  socialLinks,
   sql,
   type DbExecutor,
   type SQL,
@@ -140,6 +143,8 @@ async function toNotices(db: DbExecutor, actions: readonly ActionRow[], viewerId
     else if (a.communityRecruitmentId) ownerPath = `/community/recruitments/${a.communityRecruitmentId}`
     else if (a.communityApplicationId) ownerPath = '/community/recruitments'
     else if (a.courseQaItemId) ownerPath = '/me/course-qa'
+    // S-07: 페르소나·프로필 글·소셜 링크는 페르소나 관리 화면(이름·소개를 고치고 이의제기).
+    else if (a.personaId || a.profilePostId || a.socialLinkId) ownerPath = '/settings/personas'
     const snapshot = a.releaseId ? snapshotBy.get(a.releaseId) : undefined
     out.push({
       actionId: a.id,
@@ -159,7 +164,7 @@ async function toNotices(db: DbExecutor, actions: readonly ActionRow[], viewerId
   return out
 }
 
-/** 이 사용자가 당사자인 조치 조건(공개 owner·노트 작성자·케이스 작성자·프로필 주인·커뮤니티 방장(공간 조치)·글/댓글 작성자(C-04)·모집자/지원자(C-07, 모집 글·지원 메시지)·막힘 Q&A의 질문한 사람/답한 사람(C-09)). */
+/** 이 사용자가 당사자인 조치 조건(공개 owner·노트 작성자·케이스 작성자·프로필 주인·커뮤니티 방장(공간 조치)·글/댓글 작성자(C-04)·모집자/지원자(C-07, 모집 글·지원 메시지)·막힘 Q&A의 질문한 사람/답한 사람(C-09)·페르소나/프로필 글/소셜 링크의 주인(S-07)). */
 function affectedSql(userId: string): SQL {
   return sql`(
     (${moderationActions.publicationId} is not null and exists (select 1 from ${publications} p join ${projectMembers} pm on pm.project_id = p.project_id
@@ -173,7 +178,10 @@ function affectedSql(userId: string): SQL {
     or (${moderationActions.communityCommentId} is not null and exists (select 1 from community_comments cc where cc.id = ${moderationActions.communityCommentId} and cc.author_id = ${userId}))
     or (${moderationActions.communityRecruitmentId} is not null and exists (select 1 from recruitments rc where rc.id = ${moderationActions.communityRecruitmentId} and rc.created_by = ${userId}))
     or (${moderationActions.communityApplicationId} is not null and exists (select 1 from recruitment_applications ra where ra.id = ${moderationActions.communityApplicationId} and ra.applicant_id = ${userId}))
-    or (${moderationActions.courseQaItemId} is not null and exists (select 1 from ${courseQaItems} q where q.id = ${moderationActions.courseQaItemId} and (q.asker_id = ${userId} or q.answerer_id = ${userId}))))`
+    or (${moderationActions.courseQaItemId} is not null and exists (select 1 from ${courseQaItems} q where q.id = ${moderationActions.courseQaItemId} and (q.asker_id = ${userId} or q.answerer_id = ${userId})))
+    or (${moderationActions.personaId} is not null and exists (select 1 from ${personas} pe where pe.id = ${moderationActions.personaId} and pe.user_id = ${userId}))
+    or (${moderationActions.profilePostId} is not null and exists (select 1 from ${profilePosts} pp where pp.id = ${moderationActions.profilePostId} and pp.user_id = ${userId}))
+    or (${moderationActions.socialLinkId} is not null and exists (select 1 from ${socialLinks} sl where sl.id = ${moderationActions.socialLinkId} and sl.user_id = ${userId})))`
 }
 
 /** GET /me/moderation-notices — 내가 당사자인 조치 중 운영자가 알림을 켠 것(되돌린 것 포함, 최근 50). */

@@ -12,13 +12,16 @@
  * - **지우기**는 status = deleted(본문 비움)이고, 상태가 바뀌는 같은 트랜잭션에서 DB 트리거가 활동의 withdrawn_at을 채웁니다(운영 숨김 hidden도 같음,
  *   S-07). 숨긴 글은 지울 수 없습니다(409 `hidden`, 운영 조치의 근거 보존).
  * - 감사 기록은 남기지 않습니다(일상 글쓰기, 팔로우와 같은 기준). 알림도 없습니다(ADR 0035: 알림 미룸).
+ * - 신고(S-07, ADR 0036): 공개 화면은 프로필 글을 활동 id로만 보여 주므로 신고도 활동 id로 가리킵니다(`reportableProfilePost`). 신고자가 지금 그 글을
+ *   볼 수 있을 때만(활동 목록과 같은 판정) 글 id를 돌려주고, 아니면 404입니다. 운영 숨김(hidden)은 moderation 모듈이 상태만 바꿉니다.
  */
 import { z } from 'zod'
-import { and, eq, personas, profilePosts, profiles, type DbExecutor } from '@peerchive/db'
-import { PROFILE_POST_RATE_LIMIT, normalizeProfilePostBody } from '@peerchive/domain'
+import { and, eq, isNull, personaActivities, personas, profilePosts, profiles, users, type DbExecutor } from '@peerchive/db'
+import { PROFILE_POST_RATE_LIMIT, canViewActivityKind, normalizeProfilePostBody } from '@peerchive/domain'
 import { type Actor, conflict, invalid, notFound, rateLimited } from '../errors'
 import { hitRateLimit } from '../security/rate-limit'
 import { projectPersonaActivity } from './activities'
+import { loadVisibility, personaViewerFor } from './visibility'
 import type { ProfilePostDto } from '../../../shared/types/api'
 
 async function myPersona(db: DbExecutor, actor: Actor, rawId: unknown, lock = false) {
@@ -82,4 +85,38 @@ export async function deleteProfilePost(db: DbExecutor, actor: Actor, rawPersona
     // 상태 변경과 같은 트랜잭션에서 DB 트리거(profile_posts_persona_activity_sync)가 활동을 거둡니다.
     await tx.update(profilePosts).set({ status: 'deleted', body: '', deletedAt: now }).where(eq(profilePosts.id, post.id))
   })
+}
+
+/**
+ * 신고할 수 있는 프로필 글(S-07): 활동 id → 게시 중인 프로필 글. 활동 목록 API와 같은 판정(거두지 않은 활동, 페르소나·계정 공개 상태, 운영 숨김 아님,
+ * 차단으로 숨겨지지 않음, `posts` 공개 범위)을 통과해야 하고, 아니면 404입니다. 돌려주는 것은 글 id뿐입니다(주인 사용자 id 없음).
+ */
+export async function reportableProfilePost(db: DbExecutor, actor: Actor, rawActivityId: unknown): Promise<{ profilePostId: string }> {
+  const id = z.uuid().safeParse(rawActivityId)
+  if (!id.success) throw notFound()
+  const [row] = await db
+    .select({ postId: profilePosts.id, persona: personas })
+    .from(personaActivities)
+    .innerJoin(profilePosts, eq(profilePosts.id, personaActivities.sourceId))
+    .innerJoin(personas, eq(personas.id, personaActivities.personaId))
+    .innerJoin(profiles, eq(profiles.personaId, personas.id))
+    .innerJoin(users, eq(users.id, personas.userId))
+    .where(
+      and(
+        eq(personaActivities.id, id.data.toLowerCase()),
+        eq(personaActivities.sourceType, 'profile_post'),
+        isNull(personaActivities.withdrawnAt),
+        eq(profilePosts.personaId, personas.id),
+        eq(profilePosts.status, 'published'),
+        eq(personas.status, 'active'),
+        eq(users.status, 'active'),
+        isNull(profiles.hiddenAt),
+      ),
+    )
+    .limit(1)
+  if (!row) throw notFound()
+  const viewer = await personaViewerFor(db, row.persona, actor)
+  const stored = (await loadVisibility(db, row.persona.id)).get('posts') ?? null
+  if (!canViewActivityKind(row.persona, 'posts', stored, viewer)) throw notFound()
+  return { profilePostId: row.postId }
 }

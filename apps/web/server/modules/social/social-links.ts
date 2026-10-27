@@ -12,9 +12,11 @@
  * - 소셜 링크는 프로필 기본 정보입니다(§8.3 표 첫 줄): 공개 범위 항목이 없고 공개 프로필에 늘 실립니다. 차단당한 사용자에게는 세션 경로가
  *   페르소나 자체를 404로 감춥니다(ADR 0033). 공개 DTO에는 서비스·주소·확인 여부만(확인 끊김·결과·시각은 본인에게만).
  * - 감사: `social_link.add`·`social_link.remove`·`social_link.verify_request`에 id·페르소나 종류·서비스·상태만 남기고 **주소는 남기지 않습니다**.
+ * - 운영 숨김(S-07, ADR 0036): `hidden_at`이 있는 링크는 공개 DTO에서 빠지고 본인 화면에는 `hidden: true`로 보입니다. 숨긴 링크는 지울 수 없습니다
+ *   (409 `hidden` — 지우고 같은 주소로 다시 붙여 조치를 피하지 못하게). 신고는 공개 화면에 보이는 값(handle + 주소)으로 가리킵니다(`reportableSocialLink`).
  */
 import { z } from 'zod'
-import { SOCIAL_LINK_VERIFY_TOPIC, and, asc, eq, outboxEvents, personas, profiles, socialLinks, sql, type DbExecutor } from '@peerchive/db'
+import { SOCIAL_LINK_VERIFY_TOPIC, and, asc, eq, isNull, outboxEvents, personas, profiles, socialLinks, sql, type DbExecutor } from '@peerchive/db'
 import {
   SOCIAL_LINK_CREATE_RATE_LIMIT,
   SOCIAL_LINK_LIMIT,
@@ -42,6 +44,7 @@ export function toMySocialLinkDto(row: SocialLinkRow): MySocialLinkDto {
     lastCheckedAt: row.lastCheckedAt?.toISOString() ?? null,
     lastCheckResult: row.lastCheckResult,
     verifyPending: requested !== null && (row.lastCheckedAt === null || row.lastCheckedAt < requested),
+    hidden: row.hiddenAt !== null,
     createdAt: row.createdAt.toISOString(),
   }
 }
@@ -140,6 +143,7 @@ async function myLinkOr404(db: DbExecutor, actor: Actor, rawId: unknown, lock = 
 export async function removeSocialLink(db: DbExecutor, actor: Actor, rawId: unknown): Promise<{ removed: true }> {
   return db.transaction(async (tx) => {
     const { link, persona } = await myLinkOr404(tx, actor, rawId, true)
+    if (link.hiddenAt) throw conflict('hidden')
     await tx.delete(socialLinks).where(eq(socialLinks.id, link.id))
     await recordAudit(tx, {
       actorId: actor.userId,
@@ -183,7 +187,23 @@ export async function publicSocialLinks(db: DbExecutor, personaId: string): Prom
   const rows = await db
     .select({ provider: socialLinks.provider, url: socialLinks.url, verification: socialLinks.verification })
     .from(socialLinks)
-    .where(eq(socialLinks.personaId, personaId))
+    .where(and(eq(socialLinks.personaId, personaId), isNull(socialLinks.hiddenAt)))
     .orderBy(asc(socialLinks.createdAt), asc(socialLinks.id))
   return rows.map((r) => ({ provider: r.provider, url: r.url, verified: r.verification === 'verified' }))
+}
+
+/**
+ * 신고할 수 있는 소셜 링크(S-07): 공개 프로필(이미 공개 상태·차단 판정을 통과한 페르소나)에 지금 보이는 링크 중 주소가 같은 것. 링크 id만 돌려줍니다.
+ * 주소 비교는 저장된 값 그대로(공개 DTO가 내보낸 값과 같음). 숨긴 링크·다른 페르소나의 링크는 404.
+ */
+export async function reportableSocialLink(db: DbExecutor, personaId: string, rawUrl: unknown): Promise<{ socialLinkId: string }> {
+  const url = typeof rawUrl === 'string' ? rawUrl.trim() : ''
+  if (!url || url.length > 300) throw notFound()
+  const [row] = await db
+    .select({ id: socialLinks.id })
+    .from(socialLinks)
+    .where(and(eq(socialLinks.personaId, personaId), eq(socialLinks.url, url), isNull(socialLinks.hiddenAt)))
+    .limit(1)
+  if (!row) throw notFound()
+  return { socialLinkId: row.id }
 }

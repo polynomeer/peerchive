@@ -7,8 +7,10 @@ import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   SOCIAL_LINK_VERIFY_TOPIC,
+  analyticsEvents,
   createDb,
   eq,
+  hashSubject,
   outboxEvents,
   personas,
   socialLinks,
@@ -145,6 +147,29 @@ describe.skipIf(!url)('social link verification (PostgreSQL)', () => {
       const later = new Date('2026-10-28T01:00:00Z')
       expect((await checkSocialLink(tx, l.id, { siteOrigin: ORIGIN, fetchHtml: page(`<a href="${ORIGIN}/u/${p.handle}/">`) }, later))!.verification).toBe('verified')
       expect(await get(tx, l.id)).toMatchObject({ verification: 'verified', verifiedAt: later, lastCheckedAt: later, lastCheckResult: 'found', checkFailures: 0 })
+    })
+  })
+
+  it('S-07 §6.2: becoming verified records social_link_verified once (owner key, provider only, hour bucket); rechecks and opt-out record nothing', async () => {
+    await rollback(async (tx) => {
+      const pepper = 'worker-s07-analytics-pepper-0123456789abcdef'
+      const p = await persona(tx, 'display')
+      const l = await link(tx, p)
+      const found = page(`<a href="${ORIGIN}/u/${p.handle}">`)
+      const events = () => tx.select().from(analyticsEvents).where(eq(analyticsEvents.actorHash, hashSubject(pepper, p.userId)))
+      await checkSocialLink(tx, l.id, { siteOrigin: ORIGIN, fetchHtml: found, analyticsPepper: pepper }, new Date('2026-10-28T05:42:10Z'))
+      await checkSocialLink(tx, l.id, { siteOrigin: ORIGIN, fetchHtml: found, analyticsPepper: pepper }, new Date('2026-10-29T05:42:10Z'))
+      const rows = await events()
+      expect(rows.map((r) => ({ name: r.name, props: r.props, at: r.occurredAt.toISOString() }))).toEqual([
+        { name: 'social_link_verified', props: { provider: 'github' }, at: '2026-10-28T05:00:00.000Z' },
+      ])
+      // 주소·페르소나 id는 이벤트에 없습니다.
+      expect(JSON.stringify(rows)).not.toContain(l.url)
+      expect(JSON.stringify(rows)).not.toContain(p.id)
+      const q = await link(tx, p, { url: `https://blog.example.com/${id().slice(0, 6)}`, provider: 'blog' })
+      await tx.update(users).set({ analyticsOptOut: true }).where(eq(users.id, p.userId))
+      await checkSocialLink(tx, q.id, { siteOrigin: ORIGIN, fetchHtml: found, analyticsPepper: pepper }, new Date('2026-10-30T00:00:00Z'))
+      expect(await events()).toHaveLength(1)
     })
   })
 

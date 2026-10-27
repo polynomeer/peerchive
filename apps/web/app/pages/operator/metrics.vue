@@ -60,6 +60,36 @@ const STATUS_LABELS: Record<string, string> = { ok: '정상', error: '오류', s
           <li>선배 노트 게시: {{ show(metrics.seniorNotesPublished) }}</li>
           <li>기록 1회 작성 시간: 이벤트로 측정하지 않음</li>
         </ul>
+        <h2>공개 프로필·팔로우(§6.2)</h2>
+        <table class="ledger-table" data-testid="profile-metrics">
+          <thead><tr><th scope="col">지표</th><th scope="col">분모</th><th scope="col">분자</th><th scope="col">비율</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">팔로우 → 기록 활용(피드 사용자 중 도움됐어요·포크)</th><td>{{ show(metrics.profile.followToRecord.denominator) }}</td><td>{{ show(metrics.profile.followToRecord.numerator) }}</td><td>{{ pct(metrics.profile.followToRecord.rate) }}</td></tr>
+            <tr><th scope="row">피드 구성(연 항목 중 기록)</th><td>{{ show(metrics.profile.feedComposition.denominator) }}</td><td>{{ show(metrics.profile.feedComposition.numerator) }}</td><td>{{ pct(metrics.profile.feedComposition.rate) }}</td></tr>
+            <tr><th scope="row">표시명 사용(실명 → 표시명 프로필)</th><td>{{ show(metrics.profile.displayAdoption.denominator) }}</td><td>{{ show(metrics.profile.displayAdoption.numerator) }}</td><td>{{ pct(metrics.profile.displayAdoption.rate) }}</td></tr>
+            <tr><th scope="row">팔로워 수 표시를 켠 공개 프로필(지금)</th><td>{{ show(metrics.profile.followerCountShown.denominator) }}</td><td>{{ show(metrics.profile.followerCountShown.numerator) }}</td><td>{{ pct(metrics.profile.followerCountShown.rate) }}</td></tr>
+          </tbody>
+        </table>
+        <ul class="plain">
+          <li>피드 사용자: {{ show(metrics.profile.feedUsers) }}</li>
+          <li>표시명 사칭 신고: {{ show(metrics.profile.impersonation.reports) }}건, 숨김 확정 {{ show(metrics.profile.impersonation.confirmed) }}건</li>
+          <li>
+            신고: 프로필 {{ show(metrics.profile.reportsByTarget.persona) }} · 프로필 글 {{ show(metrics.profile.reportsByTarget.profilePost) }} · 소셜 링크
+            {{ show(metrics.profile.reportsByTarget.socialLink) }} · 이전 실명 프로필 {{ show(metrics.profile.reportsByTarget.legacyProfile) }}
+          </li>
+          <li>주인 확인: {{ show(metrics.profile.ownerLookups) }}건(모두 신고와 이어짐)</li>
+          <li>확인된 소셜 링크: {{ show(metrics.profile.socialLinksVerified.events) }}건, {{ show(metrics.profile.socialLinksVerified.users) }}명</li>
+          <li>
+            팔로우 요청 {{ show(metrics.profile.follows.requested) }}(대기 {{ show(metrics.profile.follows.pending) }}, 추천에서 {{ show(metrics.profile.follows.fromSuggestions) }}) · 승인
+            {{ show(metrics.profile.follows.approved) }}
+          </li>
+          <li>
+            차단 {{ show(metrics.profile.relationRemovals.blocks) }} · 뮤트 {{ show(metrics.profile.relationRemovals.mutes) }} · 팔로워 삭제
+            {{ show(metrics.profile.relationRemovals.followerRemovals) }} · 활성 팔로우 1,000건당 {{ show(metrics.profile.relationRemovals.per1000Follows) }}
+          </li>
+          <li>연결 켜기 {{ show(metrics.profile.identityLink.turnedOn) }} · 끄기 {{ show(metrics.profile.identityLink.turnedOff) }} · 공개 범위 변경 {{ show(metrics.profile.settings.visibilityChanged) }} · 과제 수행 목록 {{ show(metrics.profile.settings.projectListed) }}</li>
+          <li>정체성 누출(필수): 이벤트로 재지 않음 — 신고·사고 기록과 S-02 회귀 테스트로 확인</li>
+        </ul>
         <details>
           <summary>이벤트별 개수</summary>
           <ul class="plain small">

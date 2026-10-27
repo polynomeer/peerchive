@@ -210,9 +210,13 @@ export const reportTargetType = pgEnum('report_target_type', [
   'community_recruitment',
   'community_application',
   'course_qa',
+  // S-07(ADR 0036): 페르소나 단위 공개 프로필·프로필 글·소셜 링크.
+  'persona',
+  'profile_post',
+  'social_link',
 ])
-/** 신고 사유(T-15, REPORT_REASONS). 개인정보·저작권은 공개 사례에 보류를 겁니다. */
-export const reportReason = pgEnum('report_reason', ['personal_info', 'answer_sharing', 'copyright', 'harassment', 'false_claim', 'spam', 'other'])
+/** 신고 사유(T-15, REPORT_REASONS). 개인정보·저작권은 공개 사례에 보류를 겁니다. impersonation(표시명 사칭, S-07)은 프로필 신고에만. */
+export const reportReason = pgEnum('report_reason', ['personal_info', 'answer_sharing', 'copyright', 'harassment', 'false_claim', 'spam', 'other', 'impersonation'])
 /** 신고 상태(T-15): 접수 → 검토 중 → 처리됨/기각. 닫힌 신고는 다시 열지 않습니다. */
 export const reportStatus = pgEnum('report_status', ['open', 'in_review', 'resolved', 'dismissed'])
 /** 운영 조치 종류(T-15, MODERATION_ACTION_KINDS). 모두 공개 차단이며 삭제는 없습니다. */
@@ -232,6 +236,10 @@ export const moderationActionKind = pgEnum('moderation_action_kind', [
   'hide_recruitment',
   'hide_application',
   'hide_qa',
+  // S-07(ADR 0036): 페르소나 하나의 공개 프로필·프로필 글·소셜 링크 숨기기.
+  'hide_persona',
+  'hide_profile_post',
+  'hide_social_link',
 ])
 /** 공개 사례 안에서 가릴 수 있는 항목(T-15, HIDDEN_ITEM_KINDS). */
 export const hiddenItemKind = pgEnum('hidden_item_kind', ['log', 'claim', 'artifact'])
@@ -274,6 +282,18 @@ export const analyticsEventName = pgEnum('analytics_event_name', [
   'course_qa_published',
   'study_record_enabled',
   'community_author_lookup',
+  // S-07(DELIVERY_PLAN §6.2 P1, ADR 0036): 사용자 키만, 페르소나 id·상대방 키 없음.
+  'persona_created',
+  'identity_link_toggled',
+  'visibility_changed',
+  'project_listed',
+  'follow_requested',
+  'follow_approved',
+  'follower_removed',
+  'block_created',
+  'mute_created',
+  'feed_item_opened',
+  'social_link_verified',
 ])
 /** 기관 종류(C-01). 지금은 대학만. P2에서 bootcamp 등을 더합니다(SYSTEM_DESIGN §6.7.2 이관 원칙, ADR 0018). */
 export const institutionKind = pgEnum('institution_kind', ['university'])
@@ -993,6 +1013,11 @@ export const socialLinks = pgTable(
     checkFailures: integer('check_failures').notNull().default(0),
     /** 마지막 확인 요청 시각. 이보다 늦은 last_checked_at이 없으면 화면은 "확인 중"으로 봅니다. */
     verifyRequestedAt: timestamp('verify_requested_at', { withTimezone: true }),
+    /**
+     * 운영 조치로 숨긴 시각(S-07 hide_social_link, ADR 0036). 숨긴 링크는 공개 DTO에서 빠지고, 본인 화면에는 "운영 조치로 숨김"으로 보입니다.
+     * 숨긴 동안 본인이 지울 수 없습니다(409 hidden — 지우고 같은 주소로 다시 붙여 조치를 피하지 못하게, 조치 근거 보존).
+     */
+    hiddenAt: timestamp('hidden_at', { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -2387,6 +2412,13 @@ export const moderationActions = pgTable(
     communityApplicationId: uuid('community_application_id').references((): AnyPgColumn => recruitmentApplications.id),
     /** 막힘 Q&A 숨기기(hide_qa, C-09). */
     courseQaItemId: uuid('course_qa_item_id').references((): AnyPgColumn => courseQaItems.id),
+    /**
+     * S-07(ADR 0036): 페르소나·프로필 글·소셜 링크 조치. **외래 키가 없습니다**: 탈퇴 정리가 그 사람만의 자료(페르소나·글·링크)를 지우고, 조치 기록은
+     * 남아 지워진 대상을 가리킵니다(운영 화면은 "찾을 수 없음"). 주인 사용자 id는 두지 않습니다(표시명 조치가 사용자로 이어지지 않게).
+     */
+    personaId: uuid('persona_id'),
+    profilePostId: uuid('profile_post_id'),
+    socialLinkId: uuid('social_link_id'),
     internalNote: text('internal_note').notNull(),
     publicReason: text('public_reason'),
     notifyOwner: boolean('notify_owner').notNull().default(false),
@@ -2412,6 +2444,9 @@ export const moderationActions = pgTable(
     index('moderation_actions_community_recruitment_idx').on(t.communityRecruitmentId),
     index('moderation_actions_community_application_idx').on(t.communityApplicationId),
     index('moderation_actions_course_qa_idx').on(t.courseQaItemId),
+    index('moderation_actions_persona_idx').on(t.personaId),
+    index('moderation_actions_profile_post_idx').on(t.profilePostId),
+    index('moderation_actions_social_link_idx').on(t.socialLinkId),
     check('moderation_actions_outcome_check', sql`${t.outcome} in ('resolved', 'dismissed') and (${t.outcome} = 'resolved' or ${t.kind} = 'none')`),
     check('moderation_actions_internal_note_check', sql`char_length(${t.internalNote}) between 1 and 1000`),
     check('moderation_actions_public_reason_check', sql`${t.publicReason} is null or char_length(${t.publicReason}) between 1 and 300`),
@@ -2427,6 +2462,9 @@ export const moderationActions = pgTable(
     check('moderation_actions_recruitment_check', sql`${t.kind}::text <> 'hide_recruitment' or ${t.communityRecruitmentId} is not null`),
     check('moderation_actions_application_check', sql`${t.kind}::text <> 'hide_application' or ${t.communityApplicationId} is not null`),
     check('moderation_actions_course_qa_check', sql`${t.kind}::text <> 'hide_qa' or ${t.courseQaItemId} is not null`),
+    check('moderation_actions_persona_check', sql`${t.kind}::text <> 'hide_persona' or ${t.personaId} is not null`),
+    check('moderation_actions_profile_post_check', sql`${t.kind}::text <> 'hide_profile_post' or ${t.profilePostId} is not null`),
+    check('moderation_actions_social_link_check', sql`${t.kind}::text <> 'hide_social_link' or ${t.socialLinkId} is not null`),
     // C-06: 방 운영진 가리기·제재는 글 또는 댓글 하나를 가리키고 공간 id는 비웁니다(방장이 당사자가 되지 않게, ADR 0023).
     check(
       'moderation_actions_community_item_check',
@@ -2472,6 +2510,13 @@ export const reports = pgTable(
     communityApplicationId: uuid('community_application_id').references((): AnyPgColumn => recruitmentApplications.id),
     /** 신고한 막힘 Q&A(C-09). 내용은 복사하지 않습니다. */
     courseQaItemId: uuid('course_qa_item_id').references((): AnyPgColumn => courseQaItems.id),
+    /**
+     * 신고한 페르소나·프로필 글·소셜 링크(S-07, ADR 0036). 포인터만(내용 복사 없음), 외래 키 없음(탈퇴 정리가 대상을 지워도 신고 기록은 남음).
+     * 프로필 글·링크 신고에도 그 페르소나 id를 함께 두지 않습니다(대상 하나만 가리킴).
+     */
+    personaId: uuid('persona_id'),
+    profilePostId: uuid('profile_post_id'),
+    socialLinkId: uuid('social_link_id'),
     reason: reportReason('reason').notNull(),
     details: text('details'),
     status: reportStatus('status').notNull().default('open'),
@@ -2515,8 +2560,13 @@ export const reports = pgTable(
         or (${t.targetType}::text = 'community_comment' and ${t.communityCommentId} is not null)
         or (${t.targetType}::text = 'community_recruitment' and ${t.communityRecruitmentId} is not null)
         or (${t.targetType}::text = 'community_application' and ${t.communityApplicationId} is not null)
-        or (${t.targetType}::text = 'course_qa' and ${t.courseQaItemId} is not null)`,
+        or (${t.targetType}::text = 'course_qa' and ${t.courseQaItemId} is not null)
+        or (${t.targetType}::text = 'persona' and ${t.personaId} is not null)
+        or (${t.targetType}::text = 'profile_post' and ${t.profilePostId} is not null)
+        or (${t.targetType}::text = 'social_link' and ${t.socialLinkId} is not null)`,
     ),
+    // 표시명 사칭은 프로필 신고에만(@peerchive/domain reasonApplicable).
+    check('reports_impersonation_check', sql`${t.reason}::text <> 'impersonation' or ${t.targetType}::text in ('persona', 'profile')`),
   ],
 )
 
@@ -2603,6 +2653,35 @@ export const appeals = pgTable(
     check('appeals_message_check', sql`char_length(${t.message}) between 1 and 1000`),
     check('appeals_decision_note_check', sql`${t.decisionNote} is null or char_length(${t.decisionNote}) between 1 and 1000`),
     check('appeals_decided_check', sql`(${t.status} = 'open') = (${t.decidedAt} is null)`),
+  ],
+)
+
+/**
+ * 운영자의 페르소나 주인 확인 기록(S-07, ADR 0036, SYSTEM_DESIGN §8.3 표 "표시명 ↔ 실명 연결 보기 — 운영자: 신고 처리 시 감사 기록과 함께").
+ * 운영자 화면은 신고된 페르소나 자신의 handle·이름·내용만 보여 주고, 그 페르소나가 누구의 것인지(같은 사람의 다른 페르소나·계정)는 이 확인으로만 엽니다.
+ * - 페르소나·프로필 글·소셜 링크 신고(report_id 필수, 그 신고의 대상 페르소나)에만, 사유(1~1000자) 필수. 사유는 **여기에만** 남고 감사에는 id만.
+ * - owner_user_id: 확인된 주인. 탈퇴 정리 때 비웁니다(확인했다는 접근 기록은 남김, community_author_lookups와 같은 규칙).
+ * - persona_id는 외래 키가 없습니다(탈퇴 정리가 페르소나를 지워도 접근 기록은 남음).
+ */
+export const personaOwnerLookups = pgTable(
+  'persona_owner_lookups',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    operatorId: uuid('operator_id')
+      .notNull()
+      .references(() => users.id),
+    reportId: uuid('report_id')
+      .notNull()
+      .references(() => reports.id),
+    personaId: uuid('persona_id').notNull(),
+    ownerUserId: uuid('owner_user_id').references(() => users.id),
+    reason: text('reason').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('persona_owner_lookups_report_idx').on(t.reportId),
+    index('persona_owner_lookups_created_idx').on(t.createdAt),
+    check('persona_owner_lookups_reason_check', sql`char_length(${t.reason}) between 1 and 1000`),
   ],
 )
 

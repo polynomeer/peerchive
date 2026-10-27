@@ -84,6 +84,7 @@ import {
   or,
   outboxEvents,
   personaActivities,
+  personaOwnerLookups,
   personas,
   profilePosts,
   planForks,
@@ -274,6 +275,12 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
         .where(inArray(communityComments.personaId, personaIds))
         .returning({ id: communityComments.id })
       c.add('community_persona_refs', postRefs.length + commentRefs.length)
+      // S-07(ADR 0036): 운영자의 페르소나 주인 확인 기록은 접근 기록이라 남기고, 확인된 주인 칸만 비웁니다(community_author_lookups와 같은 규칙).
+      // 신고·조치 행의 페르소나·글·링크 열은 외래 키가 없어 지워진 대상을 가리킨 채 남습니다(운영 화면은 "찾을 수 없음").
+      c.add(
+        'persona_owner_lookup_subjects',
+        (await tx.update(personaOwnerLookups).set({ ownerUserId: null }).where(eq(personaOwnerLookups.ownerUserId, userId)).returning({ id: personaOwnerLookups.id })).length,
+      )
       c.add('personas', (await tx.delete(personas).where(inArray(personas.id, personaIds)).returning({ id: personas.id })).length)
     }
     if (caseIds.length) {

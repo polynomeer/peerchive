@@ -18,6 +18,7 @@ import { z } from 'zod'
 import { and, asc, blocks, desc, eq, follows, inArray, mutes, personas, profiles, sql, users, type DbExecutor, type SQL } from '@peerchive/db'
 import { FOLLOW_RATE_LIMIT, type FollowStatus, canViewPersona, decideFollow, showsFollowCounts } from '@peerchive/domain'
 import { type Actor, conflict, invalid, notFound, rateLimited, sqlState } from '../errors'
+import { emitSocialAnalytics } from '../analytics/analytics'
 import { hitRateLimit } from '../security/rate-limit'
 import { personaDisplayName, resolvePublicPersona } from './personas'
 import { counterpartVisible, notHiddenFrom } from './relations'
@@ -181,7 +182,8 @@ export async function getProfileSocial(db: DbExecutor, actor: Actor | null, rawH
 
 // ── 팔로우·언팔로우 ──────────────────────────────────────────────────────
 
-const followInput = z.object({ as: z.unknown() })
+/** origin(S-07 분석용): 추천 목록에서 누른 팔로우면 `suggestion`(그 밖의 값·없음은 profile). */
+const followInput = z.object({ as: z.unknown(), origin: z.unknown().optional() })
 
 /** 내 페르소나(팔로우 주체·차단 주체). id 형식이 아니거나 내 것이 아니면 null. */
 export async function myActingPersona(db: DbExecutor, actor: Actor, rawId: unknown): Promise<(PersonaRow & { hasProfile: boolean }) | null> {
@@ -214,6 +216,7 @@ async function blockedByMe(db: DbExecutor, actor: Actor, targetPersonaId: string
 export async function followProfile(db: DbExecutor, actor: Actor, rawHandle: unknown, rawInput: unknown, now = new Date()): Promise<FollowResultDto> {
   const input = followInput.safeParse(rawInput ?? {})
   const asId = input.success ? input.data.as : undefined
+  const origin = input.success && input.data.origin === 'suggestion' ? 'suggestion' : 'profile'
   try {
     return await db.transaction(async (tx) => {
       const { persona: target } = await resolvePublicPersona(tx, rawHandle)
@@ -249,6 +252,13 @@ export async function followProfile(db: DbExecutor, actor: Actor, rawHandle: unk
         status: decision.status,
         createdAt: now,
         approvedAt: decision.status === 'active' ? now : null,
+      })
+      // §6.2 follow_requested: 대상 페르소나 종류·대기 여부·출처만(페르소나 id·상대방 키 없음, ADR 0036).
+      await emitSocialAnalytics(tx, {
+        name: 'follow_requested',
+        actorId: actor.userId,
+        props: { targetKind: target.kind, pending: decision.status === 'pending', origin },
+        now,
       })
       return { status: decision.status }
     })
@@ -319,6 +329,7 @@ export async function approveFollowRequest(db: DbExecutor, actor: Actor, rawId: 
   return db.transaction(async (tx) => {
     const row = await receivedFollowOr404(tx, actor, rawId, 'pending')
     await tx.update(follows).set({ status: 'active', approvedAt: now }).where(eq(follows.id, row.id))
+    await emitSocialAnalytics(tx, { name: 'follow_approved', actorId: actor.userId, props: { bulk: false }, now })
     return { status: 'active' as const }
   })
 }
@@ -336,10 +347,12 @@ export async function rejectFollowRequest(db: DbExecutor, actor: Actor, rawId: u
  * DELETE /followers/:id — 팔로워 삭제(팔로우 행 id, 행 삭제, 상대에게 알리지 않음). 남의 것·없는 id 404.
  * 설계 초안의 `:personaId` 대신 팔로우 행 id를 씁니다: 다른 사람의 페르소나 id를 어떤 응답에도 싣지 않기 위해서입니다(ADR 0033).
  */
-export async function removeFollower(db: DbExecutor, actor: Actor, rawId: unknown): Promise<FollowResultDto> {
+export async function removeFollower(db: DbExecutor, actor: Actor, rawId: unknown, now = new Date()): Promise<FollowResultDto> {
   return db.transaction(async (tx) => {
     const row = await receivedFollowOr404(tx, actor, rawId)
     await tx.delete(follows).where(eq(follows.id, row.id))
+    // 승인된 팔로워를 지운 것만(대기 요청 거절은 rejectFollowRequest). 상대방 키 없음(§6.2).
+    if (row.status === 'active') await emitSocialAnalytics(tx, { name: 'follower_removed', actorId: actor.userId, now })
     return { status: 'none' as const }
   })
 }
@@ -360,8 +373,10 @@ export async function resolvePendingRequests(db: DbExecutor, actor: Actor, rawId
     const ids = (await followEntries(tx, persona.id, 'followers', 'pending', actor.userId)).map((r) => r.id)
     if (ids.length === 0) return
     const where = and(inArray(follows.id, ids), eq(follows.status, 'pending'), eq(follows.followeePersonaId, persona.id))
-    if (parsed.data.action === 'approve_all') await tx.update(follows).set({ status: 'active', approvedAt: now }).where(where)
-    else await tx.delete(follows).where(where)
+    if (parsed.data.action === 'approve_all') {
+      const approved = await tx.update(follows).set({ status: 'active', approvedAt: now }).where(where).returning({ id: follows.id })
+      for (const _ of approved) await emitSocialAnalytics(tx, { name: 'follow_approved', actorId: actor.userId, props: { bulk: true }, now })
+    } else await tx.delete(follows).where(where)
   })
   return getMyFollows(db, actor, rawId)
 }

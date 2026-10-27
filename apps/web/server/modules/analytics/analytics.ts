@@ -6,9 +6,11 @@
  * - props는 @peerchive/domain의 허용 목록(sanitizeAnalyticsProps)만 통과합니다. 목록 밖이면 이벤트 전체를 버리고 키 이름만 경고합니다.
  * - 익명 커뮤니티 글·댓글(C-04)은 `unlinked`로 사용자 키 없이(actor_hash null, C-10·ADR 0027) 기록합니다.
  * - 수집 거부(users.analytics_opt_out)한 사람은 기록하지 않습니다. 거부하면 그 사람의 지난 이벤트도 지웁니다(setAnalyticsOptOut).
+ * - 공개 프로필·팔로우 이벤트(S-07, DELIVERY_PLAN §6.2, ADR 0036)는 `emitSocialAnalytics`로: 사용자 키는 붙이고, 페르소나 id·handle·상대방 키는
+ *   허용 목록에 자리가 없으며, 시각은 시 단위로 내립니다(팔로우·차단 행의 정확한 시각과 맞춰 페르소나와 사용자 키를 잇기 어렵게).
  */
 import { z } from 'zod'
-import { type AnalyticsEventName, sanitizeAnalyticsProps } from '@peerchive/domain'
+import { type AnalyticsEventName, sanitizeAnalyticsProps, socialEventTime } from '@peerchive/domain'
 import {
   ANALYTICS_PEPPER_ENV,
   analyticsEvents,
@@ -76,6 +78,11 @@ export async function emitAnalytics(db: DbExecutor, input: AnalyticsInput): Prom
     ...(input.now && { occurredAt: input.now }),
   })
   return true
+}
+
+/** 공개 프로필·팔로우 이벤트(S-07): 사용자 키 + 시 단위 시각(socialEventTime). 프로젝트 키·사용자 키 없는 기록은 쓰지 않습니다. */
+export function emitSocialAnalytics(db: DbExecutor, input: Omit<AnalyticsInput, 'unlinked' | 'projectId'>): Promise<boolean> {
+  return emitAnalytics(db, { ...input, now: socialEventTime(input.now ?? new Date()) })
 }
 
 const preferenceSchema = z.object({ analyticsOptOut: z.boolean({ error: 'invalid' }) })

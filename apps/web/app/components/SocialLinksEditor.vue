@@ -137,9 +137,13 @@ const short = (url: string) => url.replace(/^https:\/\//, '').replace(/\/$/, '')
             {{ SOCIAL_LINK_CHECK_RESULT_TEXT[link.lastCheckResult] }}<template v-if="link.lastCheckedAt"> ({{ formatDateTime(link.lastCheckedAt) }})</template>
           </p>
           <p v-if="link.verification === 'lost'" class="small">다시 확인할 때까지 공개 프로필에서 확인 표시가 빠집니다.</p>
+          <p v-if="link.hidden" class="small notice" data-testid="social-link-hidden">
+            운영 조치로 숨겨진 링크입니다. 공개 프로필에 보이지 않고, 숨긴 동안 지울 수 없습니다. 사유와 이의제기는
+            <NuxtLink to="/me/moderation-notices">내 알림</NuxtLink>에서 볼 수 있어요.
+          </p>
           <p class="actions small">
             <button type="button" class="secondary" :disabled="busy === link.id || link.verifyPending" @click="verify(link.id)">확인 요청</button>
-            <button type="button" class="secondary" :disabled="busy === link.id" @click="remove(link.id)">지우기</button>
+            <button type="button" class="secondary" :disabled="busy === link.id || link.hidden" @click="remove(link.id)">지우기</button>
           </p>
         </li>
       </ul>

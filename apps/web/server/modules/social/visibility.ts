@@ -52,6 +52,7 @@ import {
   listingBlock,
 } from '@peerchive/domain'
 import { activeAffiliationSchoolIds } from '../affiliation/affiliations'
+import { emitSocialAnalytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, invalid, notFound } from '../errors'
 import { resolvePublicPersona } from './personas'
@@ -199,6 +200,8 @@ export async function setVisibility(db: DbExecutor, actor: Actor, rawId: unknown
       targetId: persona.id,
       metadata: { kind: persona.kind, items: changed.map(([k]) => k).sort().join(',') },
     })
+    // §6.2 visibility_changed(item_kind·audience)(S-07): 항목마다 한 줄, 페르소나 id·종류 없음.
+    for (const [itemKind, audience] of changed) await emitSocialAnalytics(tx, { name: 'visibility_changed', actorId: actor.userId, props: { itemKind, audience }, now })
     return toVisibilityDto(persona, stored)
   })
 }
@@ -422,6 +425,8 @@ export async function setProjectListing(
       projectId: row.projectId,
       metadata: { shown },
     })
+    // §6.2 project_listed(S-07): 올림·내림만(과제 키 없음 — 과제 수행 목록 이벤트로 과제와 사람을 잇지 않음).
+    await emitSocialAnalytics(tx, { name: 'project_listed', actorId: actor.userId, props: { listed: shown }, now })
   })
   return listMyProjectListings(db, actor, rawPersonaId, now)
 }

@@ -5,6 +5,9 @@
  *   공개 조회와 같은 판정(loadServedRelease·published 노트·isPubliclyVisible 케이스·숨기지 않은 프로필)으로 확인합니다. 아니면 404.
  * - 저장은 대상 내용을 복사하지 않고 포인터만 남깁니다(공개 사례는 그때의 release, 노트·케이스는 그때의 version).
  * - 당사자(이의제기·안내): 공개 사례는 지금 active owner, 노트·케이스는 작성자, 프로필은 그 사용자.
+ * - S-07(ADR 0036): 페르소나(`{handle}`, 실명·표시명 어느 쪽이든)·프로필 글(`{activityId}`)·소셜 링크(`{handle, url}`). 판정은 social 모듈의 공개 경로와
+ *   같고(공개 상태 + 신고자에게 차단으로 숨겨지지 않음 + 글은 `posts` 공개 범위), 포인터는 **그 페르소나·글·링크 하나**뿐입니다 — 주인 사용자로 풀지
+ *   않으므로 표시명 신고가 실명 프로필·실명 handle과 이어지지 않습니다. 이름표는 그 페르소나 자신의 handle입니다.
  */
 import { z } from 'zod'
 import {
@@ -23,10 +26,13 @@ import {
   eq,
   inArray,
   isNull,
+  personas,
+  profilePosts,
   profiles,
   projectMembers,
   publications,
   seniorNotes,
+  socialLinks,
   users,
   type DbExecutor,
 } from '@peerchive/db'
@@ -51,6 +57,10 @@ import { loadCaseStudiesWithRelease } from '../portfolio/release-scope'
 import { isPubliclyVisible } from '../portfolio/view'
 import { isUuid } from '../projects/access'
 import { loadServedRelease } from '../publication/public-read'
+import { resolvePublicPersona } from '../social/personas'
+import { reportableProfilePost } from '../social/profile-posts'
+import { isHiddenFrom } from '../social/relations'
+import { reportableSocialLink } from '../social/social-links'
 import { issuesToFields } from '../validation'
 
 /** 신고·조치가 가리키는 대상(DB 열과 같은 모양). */
@@ -73,6 +83,10 @@ export interface TargetPointer {
   communityApplicationId: string | null
   /** 막힘 Q&A(C-09). */
   courseQaItemId: string | null
+  /** S-07: 페르소나·프로필 글·소셜 링크(대상 하나만, 주인 사용자 없음). */
+  personaId: string | null
+  profilePostId: string | null
+  socialLinkId: string | null
 }
 
 const empty = (targetType: ReportTargetType, identity: ReportTargetIdentity): TargetPointer => ({
@@ -93,6 +107,9 @@ const empty = (targetType: ReportTargetType, identity: ReportTargetIdentity): Ta
   communityRecruitmentId: null,
   communityApplicationId: null,
   courseQaItemId: null,
+  personaId: null,
+  profilePostId: null,
+  socialLinkId: null,
 })
 
 const slug = z.string({ error: 'invalid' }).trim().toLowerCase().min(3, { error: 'invalid' }).max(60, { error: 'invalid' })
@@ -108,6 +125,9 @@ const refSchemas = {
   senior_note: z.object({ noteId: z.uuid({ error: 'invalid' }).transform((id) => id.toLowerCase()) }),
   case_study: z.object({ handle, anchor: z.string({ error: 'invalid' }).regex(/^case-[1-5]$/, { error: 'invalid' }) }),
   profile: z.object({ handle }),
+  persona: z.object({ handle }),
+  profile_post: z.object({ activityId: z.uuid({ error: 'invalid' }).transform((id) => id.toLowerCase()) }),
+  social_link: z.object({ handle, url: z.string({ error: 'invalid' }).trim().min(1, { error: 'invalid' }).max(300, { error: 'invalid' }) }),
   course_qa: z.object({ qaId: z.uuid({ error: 'invalid' }).transform((id) => id.toLowerCase()) }),
 } as const
 
@@ -236,7 +256,32 @@ export async function resolvePublicTarget(db: DbExecutor, type: ReportTargetType
       if (!owner) throw notFound()
       return { ...empty(type, { type, userId: owner.userId }), profileUserId: owner.userId }
     }
+    // S-07: 공개 프로필과 같은 판정(resolvePublicPersona) + 신고자에게 차단으로 숨겨지지 않음. 포인터는 페르소나 id 하나.
+    case 'persona': {
+      const ref = parseRef('persona', rawRef)
+      const persona = await reportablePersona(db, ref.handle, actor)
+      return { ...empty(type, { type, personaId: persona.id }), personaId: persona.id }
+    }
+    case 'profile_post': {
+      if (!actor) throw notFound()
+      const ref = parseRef('profile_post', rawRef)
+      const { profilePostId } = await reportableProfilePost(db, actor, ref.activityId)
+      return { ...empty(type, { type, profilePostId }), profilePostId }
+    }
+    case 'social_link': {
+      const ref = parseRef('social_link', rawRef)
+      const persona = await reportablePersona(db, ref.handle, actor)
+      const { socialLinkId } = await reportableSocialLink(db, persona.id, ref.url)
+      return { ...empty(type, { type, socialLinkId }), socialLinkId }
+    }
   }
+}
+
+/** 신고할 수 있는 페르소나(공개 상태, 신고자에게 숨겨지지 않음). 아니면 404. */
+async function reportablePersona(db: DbExecutor, rawHandle: string, actor: Actor | undefined): Promise<{ id: string; userId: string }> {
+  const { persona } = await resolvePublicPersona(db, rawHandle)
+  if (actor && (await isHiddenFrom(db, persona, actor.userId))) throw notFound()
+  return persona
 }
 
 /**
@@ -266,6 +311,9 @@ export async function affectedUserIds(
     | 'communityRecruitmentId'
     | 'communityApplicationId'
     | 'courseQaItemId'
+    | 'personaId'
+    | 'profilePostId'
+    | 'socialLinkId'
   >,
 ): Promise<string[]> {
   switch (target.targetType) {
@@ -309,6 +357,22 @@ export async function affectedUserIds(
         .limit(1)
       return row ? [...new Set([row.askerId, row.answererId].filter((id): id is string => !!id))] : []
     }
+    // S-07: 그 페르소나·글·링크의 주인(탈퇴 정리로 지워졌으면 없음).
+    case 'persona': {
+      if (!target.personaId) return []
+      const [row] = await db.select({ userId: personas.userId }).from(personas).where(eq(personas.id, target.personaId)).limit(1)
+      return row ? [row.userId] : []
+    }
+    case 'profile_post': {
+      if (!target.profilePostId) return []
+      const [row] = await db.select({ userId: profilePosts.userId }).from(profilePosts).where(eq(profilePosts.id, target.profilePostId)).limit(1)
+      return row ? [row.userId] : []
+    }
+    case 'social_link': {
+      if (!target.socialLinkId) return []
+      const [row] = await db.select({ userId: socialLinks.userId }).from(socialLinks).where(eq(socialLinks.id, target.socialLinkId)).limit(1)
+      return row ? [row.userId] : []
+    }
   }
 }
 
@@ -336,6 +400,7 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
     ? await db.select({ id: courseQaItems.id, title: courses.title }).from(courseQaItems).innerJoin(courses, eq(courses.id, courseQaItems.courseId)).where(inArray(courseQaItems.id, qaIds))
     : []
   const qaCourseBy = new Map(qaRows.map((r) => [r.id, r.title]))
+  const personaHandleBy = await personaHandles(db, targets)
   const [pubRows, noteRows, caseRows] = await Promise.all([
     pubIds.length ? db.select({ id: publications.id, slug: publications.slug }).from(publications).where(inArray(publications.id, pubIds)) : [],
     noteIds.length
@@ -394,10 +459,50 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
       case 'course_qa':
         label = `막힘 Q&A · ${qaCourseBy.get(t.courseQaItemId ?? '') ?? '과목'}`
         break
+      case 'persona': {
+        const p = personaHandleBy.persona.get(t.personaId ?? '')
+        label = p ? `공개 프로필 @${p.handle}${p.kind === 'display' ? ' (표시명)' : ''}` : '공개 프로필'
+        break
+      }
+      case 'profile_post': {
+        const p = personaHandleBy.post.get(t.profilePostId ?? '')
+        label = `프로필 글${p ? ` · @${p.handle}` : ''}`
+        break
+      }
+      case 'social_link': {
+        const p = personaHandleBy.link.get(t.socialLinkId ?? '')
+        label = `소셜 링크${p ? ` · @${p.handle}` : ''}`
+        break
+      }
     }
     out.set(t.targetKey, label)
   }
   return out
+}
+
+type PersonaLabel = { handle: string; kind: 'real' | 'display' }
+
+/** S-07 이름표: 대상 페르소나(글·링크는 그 글·링크의 페르소나) **자신의** handle·종류. 같은 사람의 다른 페르소나는 읽지 않습니다. */
+async function personaHandles(
+  db: DbExecutor,
+  targets: readonly TargetPointer[],
+): Promise<{ persona: Map<string, PersonaLabel>; post: Map<string, PersonaLabel>; link: Map<string, PersonaLabel> }> {
+  const ids = (pick: (t: TargetPointer) => string | null) => [...new Set(targets.map(pick).filter((id): id is string => !!id))]
+  const personaIds = ids((t) => t.personaId)
+  const postIds = ids((t) => t.profilePostId)
+  const linkIds = ids((t) => t.socialLinkId)
+  const cols = { handle: personas.handle, kind: personas.kind }
+  const [pRows, postRows, linkRows] = await Promise.all([
+    personaIds.length ? db.select({ id: personas.id, ...cols }).from(personas).where(inArray(personas.id, personaIds)) : [],
+    postIds.length
+      ? db.select({ id: profilePosts.id, ...cols }).from(profilePosts).innerJoin(personas, eq(personas.id, profilePosts.personaId)).where(inArray(profilePosts.id, postIds))
+      : [],
+    linkIds.length
+      ? db.select({ id: socialLinks.id, ...cols }).from(socialLinks).innerJoin(personas, eq(personas.id, socialLinks.personaId)).where(inArray(socialLinks.id, linkIds))
+      : [],
+  ])
+  const toMap = (rows: Array<{ id: string } & PersonaLabel>) => new Map(rows.map((r) => [r.id, { handle: r.handle, kind: r.kind }]))
+  return { persona: toMap(pRows), post: toMap(postRows), link: toMap(linkRows) }
 }
 
 /** 행(신고·조치)에서 포인터 열만. 조치 행에는 version 열이 없습니다. */
@@ -412,6 +517,9 @@ export function pointerOf(
     | 'communityRecruitmentId'
     | 'communityApplicationId'
     | 'courseQaItemId'
+    | 'personaId'
+    | 'profilePostId'
+    | 'socialLinkId'
   > & {
     noteVersion?: number | null
     caseStudyVersion?: number | null
@@ -421,6 +529,9 @@ export function pointerOf(
     communityRecruitmentId?: string | null
     communityApplicationId?: string | null
     courseQaItemId?: string | null
+    personaId?: string | null
+    profilePostId?: string | null
+    socialLinkId?: string | null
   },
 ): TargetPointer {
   return {
@@ -441,6 +552,9 @@ export function pointerOf(
     communityRecruitmentId: row.communityRecruitmentId ?? null,
     communityApplicationId: row.communityApplicationId ?? null,
     courseQaItemId: row.courseQaItemId ?? null,
+    personaId: row.personaId ?? null,
+    profilePostId: row.profilePostId ?? null,
+    socialLinkId: row.socialLinkId ?? null,
   }
 }
 

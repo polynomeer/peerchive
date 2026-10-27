@@ -71,6 +71,7 @@ import { lockPublication } from '../publication/candidates'
 import { loadServedRelease } from '../publication/public-read'
 import { parseInput } from '../validation'
 import { applyModeration, undoModeration } from './actions'
+import { personaReportContent } from './personas'
 import { currentReportSlaTargets } from './sla'
 import { pointerOf, targetLabels, type TargetPointer } from './targets'
 import type {
@@ -340,6 +341,11 @@ async function contentFor(db: DbExecutor, report: ReportRow, now: Date): Promise
         servedNow: served,
       }
     }
+    // S-07: 신고된 페르소나 자신의 handle·이름·내용만(다른 페르소나·연결·계정 없음, 주인 확인은 personas.ts의 사유 기록 경로).
+    case 'persona':
+    case 'profile_post':
+    case 'social_link':
+      return personaReportContent(db, report)
   }
 }
 
@@ -611,7 +617,13 @@ export async function decideAppeal(db: DbExecutor, actor: Actor, appealId: unkno
 
 // ── 감사 ─────────────────────────────────────────────────────────────────
 
-/** GET /operator/audit?target=<uuid> — 그 대상 id(또는 metadata의 actionId·reportId·publicationId)의 감사 기록, 최근 것부터 200개. */
+/**
+ * 페르소나 주인이 자기 페르소나에 한 일의 감사 행(S-07, ADR 0036). 이 행들의 행위자는 페르소나 주인 사용자이므로, 운영자가 조치 id → 페르소나·링크 id →
+ * 이 행의 행위자로 따라가면 주인 확인(사유 기록) 없이 표시명 페르소나의 계정을 알 수 있습니다. 감사 조회에서는 행위자를 비웁니다(행 자체는 남음).
+ */
+const OWNER_SELF_ACTION = /^(persona\.(create|update|identity_link_update|visibility_update|project_listing_update)|social_link\.|social\.(block|unblock))/
+
+/** GET /operator/audit?target=<uuid> — 그 대상 id(또는 metadata의 actionId·reportId·publicationId)의 감사 기록, 최근 것부터 200개. 페르소나 주인의 자기 행동은 행위자를 비웁니다. */
 export async function listAudit(db: DbExecutor, actor: Actor, rawQuery: Record<string, unknown>): Promise<OperatorAuditEventDto[]> {
   await requireOperator(db, actor)
   if (!isUuid(rawQuery.target)) throw invalid({ target: rawQuery.target === undefined ? 'required' : 'invalid' })
@@ -630,7 +642,7 @@ export async function listAudit(db: DbExecutor, actor: Actor, rawQuery: Record<s
     .limit(200)
   return rows.map((r) => ({
     id: r.id,
-    actorId: r.actorId,
+    actorId: OWNER_SELF_ACTION.test(r.action) ? null : r.actorId,
     action: r.action,
     targetType: r.targetType,
     targetId: r.targetId,

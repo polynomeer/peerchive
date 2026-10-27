@@ -15,6 +15,7 @@
 import { z } from 'zod'
 import { and, asc, eq, identityLinks, isNull, personas, profiles, users, type DbExecutor } from '@peerchive/db'
 import { type IdentityLinkViewer, type PersonaKind, canSeeIdentityLink, isLookupHandle, otherPersonaKind } from '@peerchive/domain'
+import { emitSocialAnalytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, invalid, notFound, sqlState } from '../errors'
 import { parseInput } from '../validation'
@@ -187,6 +188,8 @@ export async function createDisplayPersona(db: DbExecutor, actor: Actor, rawInpu
       await tx.insert(profiles).values({ personaId, personaKind: 'display', userId: null, handle: input.handle, ...profileChanges(input), createdAt: now, updatedAt: now })
       await tx.insert(identityLinks).values({ userId: actor.userId, realPersonaId: real.id, displayPersonaId: personaId, visible: false, changedAt: now })
       await recordAudit(tx, { actorId: actor.userId, action: 'persona.create', targetType: 'persona', targetId: personaId, metadata: { kind: 'display' } })
+      // §6.2 persona_created(kind)(S-07): 사용자 키 + 종류만. 이벤트에 페르소나 id가 없어 이 표시명 페르소나와 사용자 키를 이을 수 없습니다.
+      await emitSocialAnalytics(tx, { name: 'persona_created', actorId: actor.userId, props: { kind: 'display' }, now })
     })
   } catch (error) {
     if (sqlState(error) === '23505') throw invalid({ handle: 'taken' })
@@ -262,6 +265,7 @@ export async function setIdentityLink(db: DbExecutor, actor: Actor, rawInput: un
       targetId: actor.userId,
       metadata: { visible: input.visible },
     })
+    await emitSocialAnalytics(tx, { name: 'identity_link_toggled', actorId: actor.userId, props: { visible: input.visible }, now })
   })
   return listMyPersonas(db, actor)
 }

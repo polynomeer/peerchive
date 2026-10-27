@@ -1816,7 +1816,12 @@ export type ReportTargetType =
   | 'community_recruitment'
   | 'community_application'
   | 'course_qa'
-export type ReportReason = 'personal_info' | 'answer_sharing' | 'copyright' | 'harassment' | 'false_claim' | 'spam' | 'other'
+  /** S-07: 페르소나(실명·표시명) 공개 프로필·프로필 글·소셜 링크. */
+  | 'persona'
+  | 'profile_post'
+  | 'social_link'
+/** impersonation(표시명 사칭, S-07)은 프로필 신고에만. */
+export type ReportReason = 'personal_info' | 'answer_sharing' | 'copyright' | 'harassment' | 'false_claim' | 'spam' | 'other' | 'impersonation'
 export type ReportStatus = 'open' | 'in_review' | 'resolved' | 'dismissed'
 export type ModerationActionKind =
   | 'none'
@@ -1838,6 +1843,10 @@ export type ModerationActionKind =
   | 'hide_application'
   /** C-09: 막힘 Q&A 숨기기. */
   | 'hide_qa'
+  /** S-07: 페르소나 하나의 공개 프로필·프로필 글·소셜 링크 숨기기. */
+  | 'hide_persona'
+  | 'hide_profile_post'
+  | 'hide_social_link'
 export type HiddenItemKind = 'log' | 'claim' | 'artifact'
 export type AppealStatus = 'open' | 'upheld' | 'reversed'
 
@@ -1858,6 +1867,10 @@ export type ReportTargetRef =
   | { applicationId: string }
   /** 막힘 Q&A(C-09): 게시 중인 것만. */
   | { qaId: string }
+  /** 프로필 글(S-07): 활동 목록·피드의 활동 id(글 id는 공개되지 않음). 신고자가 지금 볼 수 있는 글만. */
+  | { activityId: string }
+  /** 소셜 링크(S-07): 그 프로필의 handle과 공개 화면에 보이는 주소. */
+  | { handle: string; url: string }
 
 export interface HiddenItemPlaceholderDto {
   kind: HiddenItemKind
@@ -1987,7 +2000,51 @@ export type OperatorTargetContentDto =
   | { kind: 'community_recruitment' | 'community_application'; recruitmentItem: OperatorRecruitmentItemDto }
   /** 막힘 Q&A(C-09): 공개된 복사본 그대로(당사자 id 없음). */
   | { kind: 'course_qa'; qa: PublicCourseQaDto; status: CourseQaStatus }
+  /**
+   * 페르소나·프로필 글·소셜 링크(S-07): **신고된 페르소나 자신의** handle·이름·내용만. 같은 사람의 다른 페르소나·계정·연결은 싣지 않습니다
+   * (주인 확인은 사유를 남기는 별도 절차 `POST /operator/persona-owner-lookups`).
+   */
+  | { kind: 'persona'; persona: OperatorPersonaDto }
+  | { kind: 'profile_post'; persona: OperatorPersonaRefDto; post: { body: string; status: 'published' | 'deleted' | 'hidden'; createdAt: string } }
+  | { kind: 'social_link'; persona: OperatorPersonaRefDto; link: { provider: SocialLinkProvider; url: string; verification: SocialLinkVerification; hidden: boolean } }
   | { kind: 'unavailable'; message: string }
+
+/** 운영자 화면의 페르소나 이름표(S-07): 그 페르소나 자신의 값만. */
+export interface OperatorPersonaRefDto {
+  kind: PersonaKind
+  handle: string
+  displayName: string
+  /** 운영 조치로 숨김. */
+  hidden: boolean
+}
+
+/** 운영자 화면의 신고된 페르소나 프로필(공개 프로필 필드 + 숨긴 것 포함 소셜 링크). 연결·다른 페르소나·계정 id 없음. */
+export interface OperatorPersonaDto extends OperatorPersonaRefDto {
+  headline: string | null
+  jobTargets: string[]
+  schoolLabel: string | null
+  gradTerm: string | null
+  socialLinks: Array<{ provider: SocialLinkProvider; url: string; verified: boolean; hidden: boolean }>
+}
+
+/**
+ * POST /operator/persona-owner-lookups {reportId, reason} — 페르소나 주인 확인(S-07, ADR 0036). 사유를 남기고 감사(id만)한 뒤에만 이 응답에 주인을 싣습니다.
+ * 저장된 목록·신고 상세 어디에도 다시 나오지 않습니다.
+ */
+export interface PersonaOwnerLookupResultDto {
+  lookupId: string
+  owner: {
+    /** 계정 내부 id(계정 단위 조치 — 정지 등 — 를 운영 절차로 할 때 씀). */
+    userId: string
+    accountStatus: 'active' | 'suspended' | 'deleted'
+    /** 그 사람의 페르소나 전부(공개 상태와 무관, 숨김 표시). */
+    personas: OperatorPersonaRefDto[]
+    /** 본인이 두 페르소나 연결을 공개했는지. */
+    linkVisible: boolean
+    /** 그 사람의 모든 페르소나·글·링크·실명 프로필에 걸린 되돌리지 않은 숨김 조치 수. */
+    activeActions: number
+  }
+}
 
 export interface OperatorReportDetailDto {
   report: OperatorReportDto
@@ -2052,8 +2109,26 @@ export interface OperatorMetricsDto {
   seniorNotesPublished: number | null
   writeTimeMedianMinutes: null
   eventCounts: Record<string, number | null>
+  /** 공개 프로필·팔로우 지표(S-07, DELIVERY_PLAN §6.2). @peerchive/domain ProfileMetrics와 같은 모양, 5 미만 null. */
+  profile: OperatorProfileMetricsDto
   generatedAt: string
   notes: string[]
+}
+
+export interface OperatorProfileMetricsDto {
+  feedUsers: number | null
+  followToRecord: RateMetricDto
+  feedComposition: RateMetricDto
+  displayAdoption: RateMetricDto
+  identityLink: { turnedOn: number | null; turnedOff: number | null }
+  impersonation: { reports: number | null; confirmed: number | null }
+  reportsByTarget: { persona: number | null; profilePost: number | null; socialLink: number | null; legacyProfile: number | null }
+  socialLinksVerified: { events: number | null; users: number | null }
+  relationRemovals: { blocks: number | null; mutes: number | null; followerRemovals: number | null; activeFollows: number | null; per1000Follows: number | null }
+  follows: { requested: number | null; pending: number | null; approved: number | null; fromSuggestions: number | null }
+  followerCountShown: RateMetricDto
+  settings: { visibilityChanged: number | null; projectListed: number | null }
+  ownerLookups: number | null
 }
 
 export type HealthCheckStatus = 'ok' | 'error' | 'stale' | 'missing'
@@ -2975,6 +3050,8 @@ export interface MySocialLinkDto {
   lastCheckResult: SocialLinkCheckResult | null
   /** 확인을 요청했고 아직 수집기가 결과를 쓰지 않았음. */
   verifyPending: boolean
+  /** 운영 조치로 숨김(S-07): 공개 프로필에 보이지 않고, 숨긴 동안 지울 수 없음. */
+  hidden: boolean
   createdAt: string
 }
 
