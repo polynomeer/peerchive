@@ -17,7 +17,7 @@ import { and, asc, eq, sql, profiles, projectMembers, projects, users, type DbEx
 import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, forbidden, invalid, notFound } from '../errors'
 import { parseInput } from '../validation'
-import { findMembership, isUuid, loadReadableProject } from './access'
+import { assertNotStudyManaged, findMembership, isUuid, loadPersonMask, loadReadableProject } from './access'
 import type { MemberDto } from '../../../shared/types/api'
 
 export type { MemberDto }
@@ -48,7 +48,9 @@ export async function listMembers(db: DbExecutor, actor: Actor, projectId: unkno
     .leftJoin(profiles, eq(profiles.userId, projectMembers.userId))
     .where(and(eq(projectMembers.projectId, project.id), eq(projectMembers.status, 'active')))
     .orderBy(sql`case ${projectMembers.role} when 'owner' then 0 when 'editor' then 1 when 'reviewer' then 2 else 3 end`, asc(projectMembers.createdAt))
-  return rows.map((row) => ({ ...row, joinedAt: row.joinedAt.toISOString() }))
+  // 익명 스터디 기록(C-08)은 다른 멤버 이름을 가립니다.
+  const mask = await loadPersonMask(db, project, actor.userId)
+  return rows.map((row) => mask({ ...row, joinedAt: row.joinedAt.toISOString() }))
 }
 
 /** 역할 변경 대상(본인·owner가 아닌 active 멤버)을 찾습니다. 없으면 404, owner/본인이면 409. */
@@ -70,6 +72,7 @@ export async function changeMemberRole(
   const input = parseInput(changeRoleSchema, rawInput)
   const id = await db.transaction(async (tx) => {
     const { project, membership } = await loadReadableProject(tx, actor, projectId, { lock: true })
+    assertNotStudyManaged(project)
     if (!canManageMembers({ userId: actor.userId }, project, membership)) throw forbidden()
     const target = await loadTargetMember(tx, actor, project.id, targetUserId)
     if (!canChangeRole({ userId: actor.userId }, project, membership, target, input.role)) throw forbidden()
@@ -101,6 +104,7 @@ export async function removeMember(
 ): Promise<void> {
   await db.transaction(async (tx) => {
     const { project, membership } = await loadReadableProject(tx, actor, projectId, { lock: true })
+    assertNotStudyManaged(project)
     if (!canManageMembers({ userId: actor.userId }, project, membership)) throw forbidden()
     const target = await loadTargetMember(tx, actor, project.id, targetUserId)
     if (!canRemoveMember({ userId: actor.userId }, project, membership, target)) throw forbidden()
@@ -123,6 +127,7 @@ export async function removeMember(
 export async function leaveProject(db: DbExecutor, actor: Actor, projectId: unknown): Promise<void> {
   await db.transaction(async (tx) => {
     const { project, membership } = await loadReadableProject(tx, actor, projectId, { lock: true })
+    assertNotStudyManaged(project)
     if (membership.role === 'owner') throw conflict('owner_must_transfer')
     if (!canLeave({ userId: actor.userId }, project, membership)) throw forbidden()
     await tx
@@ -153,6 +158,7 @@ export async function transferOwnership(
   const input = parseInput(transferOwnershipSchema, rawInput)
   await db.transaction(async (tx) => {
     const { project, membership } = await loadReadableProject(tx, actor, projectId, { lock: true })
+    assertNotStudyManaged(project)
     if (!canManageMembers({ userId: actor.userId }, project, membership)) throw forbidden()
     if (input.userId === actor.userId) throw invalid({ userId: 'self' })
     const target = await findMembership(tx, project.id, input.userId)

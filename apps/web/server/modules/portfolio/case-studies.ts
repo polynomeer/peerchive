@@ -28,6 +28,7 @@ import {
   findUncitedSentences,
   generateCaseStudyDraft,
   normalizeCaseSections,
+  canLinkReleaseToPortfolio,
   runPublicationChecks,
 } from '@peerchive/domain'
 import { and, caseStudies, desc, eq, ne, projects, publicationCandidates, publications, sql, type DbExecutor } from '@peerchive/db'
@@ -88,6 +89,9 @@ export const publishCaseStudySchema = z.object({
 })
 
 // ── 자격 ─────────────────────────────────────────────────────────────────
+
+/** 422 `anonymous_study`: 익명 스터디 방의 기록으로는 케이스 스터디(포트폴리오)를 만들거나 게시할 수 없습니다(C-08). */
+export const anonymousStudy = () => new ServiceError('VALIDATION', 'anonymous_study', { releaseSlug: 'anonymous_study' })
 
 interface Eligibility {
   memberKey: string
@@ -195,7 +199,7 @@ async function loadOwn(db: DbExecutor, actor: Actor, caseStudyId: unknown, now: 
 
 /**
  * POST /case-studies {releaseSlug, jobTarget, revealSelf?} — 201 + 템플릿 초안.
- * 404(지금 게시 중인 공개가 아님), 422 `releaseSlug: not_member`(그 release의 팀원이 아님)·`revealSelf: confirm_required`(익명이던 사람),
+ * 404(지금 게시 중인 공개가 아님), 422 `releaseSlug: not_member`(그 release의 팀원이 아님)·`anonymous_study`(익명 스터디 방의 기록, C-08)·`revealSelf: confirm_required`(익명이던 사람),
  * 409 limit_reached, 429.
  */
 export async function createCaseStudy(db: DbExecutor, actor: Actor, rawInput: unknown, now = new Date()): Promise<CaseStudyDto> {
@@ -204,6 +208,8 @@ export async function createCaseStudy(db: DbExecutor, actor: Actor, rawInput: un
     const served = await loadServedRelease(tx, input.releaseSlug.toLowerCase(), now)
     if (!served) throw notFound()
     const { publication, release, snapshot } = served
+    // 익명 스터디 방의 기록(C-08, ADR 0026)은 포트폴리오에 연결하지 않습니다(스냅샷에 고정한 방식으로 판정, 팀원 여부와 무관하게 같은 응답).
+    if (!canLinkReleaseToPortfolio(snapshot)) throw anonymousStudy()
     const eligibility = eligibilityFor(release.refs as unknown as SnapshotRefs, snapshot, actor.userId)
     if (!eligibility) throw invalid({ releaseSlug: 'not_member' })
     if (eligibility.selfAnonymous && !input.revealSelf) throw invalid({ revealSelf: 'confirm_required' })
@@ -284,7 +290,7 @@ export async function listMyCaseStudies(db: DbExecutor, actor: Actor, now = new 
   return out
 }
 
-/** GET /me/case-study-sources — 내가 팀원 키로 들어 있는 지금 게시 중인 release(케이스 스터디를 만들 수 있는 것). */
+/** GET /me/case-study-sources — 내가 팀원 키로 들어 있는 지금 게시 중인 release(케이스 스터디를 만들 수 있는 것, 익명 스터디 기록 제외). */
 export async function listCaseStudySources(db: DbExecutor, actor: Actor, now = new Date()): Promise<CaseStudySourceDto[]> {
   const rows = await db
     .select({ publication: publications, release: publicationCandidates })
@@ -307,7 +313,8 @@ export async function listCaseStudySources(db: DbExecutor, actor: Actor, now = n
   for (const { publication, release } of rows) {
     const snapshot = release.snapshot as unknown as PublicSnapshot
     const eligibility = eligibilityFor(release.refs as unknown as SnapshotRefs, snapshot, actor.userId)
-    if (!eligibility) continue
+    // 익명 스터디 방의 기록(C-08)은 케이스 스터디 출처 목록에 나오지 않습니다.
+    if (!eligibility || !canLinkReleaseToPortfolio(snapshot)) continue
     out.push({
       slug: publication.slug,
       path: `/p/${publication.slug}`,
@@ -386,6 +393,7 @@ export async function publishCaseStudy(db: DbExecutor, actor: Actor, caseStudyId
     if (cs.status === 'published') return toDto(tx, row, actor.userId, now)
     // 자격 재확인: 익명이던 사람은 연결 확인이 저장되어 있어야 합니다(DB check로도 보장).
     if (cs.selfAnonymous && !cs.revealSelf) throw invalid({ revealSelf: 'confirm_required' })
+    if (!canLinkReleaseToPortfolio(row.snapshot)) throw anonymousStudy()
     const sections = (await loadSections(tx, [cs])).get(cs.id) ?? []
     if (sections.every((s) => s.sentences.length === 0)) throw conflict('empty')
     const uncited = findUncitedSentences(sections)

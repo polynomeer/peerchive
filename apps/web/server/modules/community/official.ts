@@ -52,6 +52,7 @@ import { type Actor, ServiceError, conflict, invalid, notFound, sqlState } from 
 import { isUuid } from '../projects/access'
 import { parseInput } from '../validation'
 import { type LoadedSpace, findMembership, loadSpace, loadSpacesWhere, loadViewer } from './access'
+import { syncStudyRecordInTx } from './study-records'
 import { archiveSpaceInTx, getSpaceDetail, insertSpace, memberCounts } from './spaces'
 import type {
   OfficialPageRequestDto,
@@ -403,6 +404,7 @@ export async function restrictSpaceInTx(tx: DbExecutor, spaceId: string, now: Da
   if (!row) throw notFound()
   if (row.status !== 'active') throw conflict('target_not_public')
   await tx.update(communitySpaces).set({ status: 'restricted', restrictedAt: now, updatedAt: now }).where(eq(communitySpaces.id, spaceId))
+  await syncStudyRecordInTx(tx, spaceId, now)
 }
 
 /** 제한 해제(트랜잭션 안). 제한 상태가 아니면 아무것도 하지 않고 false. */
@@ -410,6 +412,7 @@ export async function liftSpaceRestrictionInTx(tx: DbExecutor, spaceId: string, 
   const [row] = await tx.select().from(communitySpaces).where(eq(communitySpaces.id, spaceId)).limit(1).for('update')
   if (!row || row.status !== 'restricted') return false
   await tx.update(communitySpaces).set({ status: 'active', restrictedAt: null, updatedAt: now }).where(eq(communitySpaces.id, spaceId))
+  await syncStudyRecordInTx(tx, spaceId, now)
   return true
 }
 

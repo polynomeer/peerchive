@@ -18,7 +18,9 @@ import {
   hashSubject,
   inArray,
   nameModeChanges,
+  projects,
   spaceMemberships,
+  studyRecords,
   users,
   type Database,
   type DbExecutor,
@@ -115,6 +117,29 @@ describe.skipIf(!url)('name mode change apply (PostgreSQL)', () => {
       expect(audit[0]!.metadata).toEqual({ changeId: w.change.id, from: 'real', to: 'anonymous', notified: 2 })
       const events = await tx.select().from(analyticsEvents).where(and(eq(analyticsEvents.name, 'name_mode_applied'), eq(analyticsEvents.actorHash, hashSubject(PEPPER, w.O))))
       expect(events.map((e) => e.props)).toEqual([{ from: 'real', to: 'anonymous' }])
+    })
+  })
+
+  it('copies the applied mode onto the linked study record project in the same transaction; other projects untouched (C-08, ADR 0026)', async () => {
+    await rollback(async (tx) => {
+      const O = await user(tx, '스터디장')
+      const [room] = await tx
+        .insert(communitySpaces)
+        .values({ kind: 'study_room', name: '스터디', slug: id().replace(/-/g, '').slice(0, 10), currentNameMode: 'display', joinPolicy: 'invite', discovery: 'unlisted', createdBy: O })
+        .returning()
+      await tx.insert(spaceMemberships).values({ spaceId: room!.id, userId: O, role: 'owner', status: 'active', joinedAt: REQUESTED })
+      const [record] = await tx.insert(projects).values({ ownerId: O, title: '스터디 기록', kind: 'study', studyNameMode: 'display' }).returning()
+      const [other] = await tx.insert(projects).values({ ownerId: O, title: '다른 과제', kind: 'team' }).returning()
+      await tx.insert(studyRecords).values({ spaceId: room!.id, projectId: record!.id, enabledBy: O })
+      const [change] = await tx
+        .insert(nameModeChanges)
+        .values({ spaceId: room!.id, fromMode: 'display', toMode: 'anonymous', requestedBy: O, requestedAt: REQUESTED, effectiveAt: EFFECTIVE })
+        .returning()
+      expect(await applyNameModeChange(tx, change!.id, { now: EFFECTIVE })).toMatchObject({ changeId: change!.id })
+      const [p] = await tx.select().from(projects).where(eq(projects.id, record!.id))
+      expect(p!.studyNameMode).toBe('anonymous')
+      const [q] = await tx.select().from(projects).where(eq(projects.id, other!.id))
+      expect(q!.studyNameMode).toBeNull()
     })
   })
 

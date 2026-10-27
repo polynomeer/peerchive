@@ -96,6 +96,7 @@ import {
   spaceInvitations,
   spaceMemberships,
   sql,
+  studyRecords,
   tasks,
   uploadIntents,
   usefulnessSignals,
@@ -104,7 +105,7 @@ import {
   type DbExecutor,
   type PublicationOutboxPayload,
 } from '@peerchive/db'
-import { chooseOwnerSuccessor } from '@peerchive/domain'
+import { chooseOwnerSuccessor, planStudyRecordSync } from '@peerchive/domain'
 import { cleanKeyFor, isObjectKey, type ObjectKey, type ObjectStorage } from '@peerchive/files'
 import type { TaskOutcome } from './cleanup'
 
@@ -329,6 +330,42 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
   })
 }
 
+/** 스터디 기록 과제 멤버십을 방 멤버십에 맞춥니다(웹 syncStudyRecordInTx와 같은 계획 함수). 바뀐 것이 있으면 true. */
+async function syncStudyRecord(tx: DbExecutor, spaceId: string, projectId: string, now: Date): Promise<boolean> {
+  const [space] = await tx.select({ status: communitySpaces.status }).from(communitySpaces).where(eq(communitySpaces.id, spaceId)).limit(1)
+  const [project] = await tx.select({ ownerId: projects.ownerId }).from(projects).where(eq(projects.id, projectId)).limit(1).for('update')
+  if (!space || !project) return false
+  const roomMembers = await tx
+    .select({ userId: spaceMemberships.userId, role: spaceMemberships.role, status: spaceMemberships.status })
+    .from(spaceMemberships)
+    .where(eq(spaceMemberships.spaceId, spaceId))
+  const recordMembers = await tx
+    .select({ userId: projectMembers.userId, role: projectMembers.role, status: projectMembers.status })
+    .from(projectMembers)
+    .where(eq(projectMembers.projectId, projectId))
+  const plan = planStudyRecordSync(roomMembers, recordMembers, space.status)
+  for (const u of plan.updates) {
+    await tx.update(projectMembers).set({ role: u.role, status: u.status, updatedAt: now }).where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, u.userId)))
+  }
+  if (plan.inserts.length) {
+    await tx.insert(projectMembers).values(plan.inserts.map((i) => ({ projectId, userId: i.userId, role: i.role, status: 'active' as const, createdAt: now, updatedAt: now })))
+  }
+  const ownerChanged = plan.ownerId !== null && plan.ownerId !== project.ownerId
+  if (ownerChanged) await tx.update(projects).set({ ownerId: plan.ownerId!, version: sql`${projects.version} + 1`, updatedAt: now }).where(eq(projects.id, projectId))
+  const changed = plan.inserts.length + plan.updates.length > 0 || ownerChanged
+  if (changed) {
+    await tx.insert(auditEvents).values({
+      actorId: null,
+      action: 'project.study_sync',
+      targetType: 'project',
+      targetId: projectId,
+      projectId,
+      metadata: { inserted: plan.inserts.length, updated: plan.updates.length, ownerChanged, reason: 'account_deleted' },
+    })
+  }
+  return changed
+}
+
 /** 커뮤니티 멤버십·초대·개설 요청 정리. 그 사람이 active owner인 방은 승계(없으면 보관)합니다. */
 async function purgeCommunity(tx: DbExecutor, userId: string, c: Counter, now: Date): Promise<void> {
   // 모집·지원(C-07, ADR 0024)을 초대 삭제(아래·과제 정리)보다 먼저: 지원 행이 초대를 가리키므로.
@@ -371,7 +408,17 @@ async function purgeCommunity(tx: DbExecutor, userId: string, c: Counter, now: D
       c.add('spaces_archived', 1)
     }
   }
+  // 스터디 기록(C-08, ADR 0026): 멤버십을 지우기 전에 그 사람이 있던 방 중 기록이 켜진 방을 모아 두고, 지운 뒤 과제 멤버십을 웹과 같은 계획 함수로 맞춥니다
+  // (그 사람은 removed, 승계한 새 방장은 과제 owner). 그 뒤 과제 정리(6단계)는 이미 넘어간 owner를 그대로 둡니다.
+  const recordSpaces = await tx
+    .select({ spaceId: studyRecords.spaceId, projectId: studyRecords.projectId })
+    .from(studyRecords)
+    .innerJoin(spaceMemberships, eq(spaceMemberships.spaceId, studyRecords.spaceId))
+    .where(eq(spaceMemberships.userId, userId))
   c.add('space_memberships', (await tx.delete(spaceMemberships).where(eq(spaceMemberships.userId, userId)).returning({ id: spaceMemberships.id })).length)
+  for (const record of recordSpaces.sort((a, b) => (a.spaceId < b.spaceId ? -1 : 1))) {
+    if (await syncStudyRecord(tx, record.spaceId, record.projectId, now)) c.add('study_record_syncs', 1)
+  }
   c.add(
     'space_invitations',
     (await tx.delete(spaceInvitations).where(or(eq(spaceInvitations.createdBy, userId), eq(spaceInvitations.usedBy, userId))).returning({ id: spaceInvitations.id })).length,
@@ -804,6 +851,8 @@ async function purgeSoloProject(tx: DbExecutor, projectId: string, userId: strin
         await sp.delete(publications).where(eq(publications.id, publication.id))
       }
       await sp.delete(projectMembers).where(eq(projectMembers.projectId, projectId))
+      // 혼자 남았던 스터디 기록(C-08): 방(보관됨)과의 연결을 먼저 지웁니다.
+      await sp.delete(studyRecords).where(eq(studyRecords.projectId, projectId))
       await sp.delete(projects).where(eq(projects.id, projectId))
     })
     c.add('solo_projects', 1)

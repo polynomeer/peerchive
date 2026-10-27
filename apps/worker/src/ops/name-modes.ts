@@ -21,10 +21,13 @@ import {
   communitySpaces,
   eq,
   hashSubject,
+  inArray,
   lte,
   nameModeChanges,
   pepperKeyId,
+  projects,
   sql,
+  studyRecords,
   users,
   type DbExecutor,
 } from '@peerchive/db'
@@ -59,6 +62,11 @@ export async function applyNameModeChange(db: DbExecutor, changeId: string, opti
       .returning()
     if (!change) return null
     await tx.update(communitySpaces).set({ currentNameMode: change.toMode, updatedAt: now }).where(eq(communitySpaces.id, change.spaceId))
+    // 스터디 기록(C-08, ADR 0026): 과제 행에 옮겨 둔 방식도 같은 트랜잭션에서 바꿉니다. 이미 만든 공개 후보·release는 만들 때의 방식 그대로입니다.
+    await tx
+      .update(projects)
+      .set({ studyNameMode: change.toMode, updatedAt: now })
+      .where(inArray(projects.id, tx.select({ id: studyRecords.projectId }).from(studyRecords).where(eq(studyRecords.spaceId, change.spaceId))))
     const payload = sanitizeNoticePayload('name_mode_applied', { fromMode: change.fromMode, toMode: change.toMode, effectiveAt: change.effectiveAt.toISOString() })
     if (!payload) throw new Error('name_mode_applied payload not allowed')
     const inserted = await tx.execute<{ id: string }>(sql`

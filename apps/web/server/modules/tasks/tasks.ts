@@ -40,7 +40,7 @@ import { type Actor, conflict, forbidden, invalid, notFound } from '../errors'
 import { insertLog, parseLogInput } from '../logs/logs'
 import { claimedDateSchema } from '../logs/payloads'
 import { parseInput } from '../validation'
-import { type ProjectRow, isUuid, loadReadableProject } from '../projects/access'
+import { type PersonMask, type ProjectRow, isUuid, loadPersonMask, loadReadableProject } from '../projects/access'
 import type { LogTag, TaskCompleteDto, TaskConvertDto, TaskDto } from '../../../shared/types/api'
 
 export type { TaskDto }
@@ -132,7 +132,7 @@ interface SelectedTask {
   logTag: LogTag | null
 }
 
-function toTaskDto(row: SelectedTask): TaskDto {
+function toTaskDto(row: SelectedTask, mask: PersonMask): TaskDto {
   const { task } = row
   return {
     id: task.id,
@@ -142,7 +142,7 @@ function toTaskDto(row: SelectedTask): TaskDto {
     status: task.status,
     position: task.position,
     assignee: task.assigneeId
-      ? { userId: task.assigneeId, displayName: row.assigneeName ?? '', handle: row.assigneeHandle }
+      ? mask({ userId: task.assigneeId, displayName: row.assigneeName ?? '', handle: row.assigneeHandle })
       : null,
     dueAt: task.dueAt,
     completedAt: task.completedAt?.toISOString() ?? null,
@@ -156,20 +156,22 @@ function toTaskDto(row: SelectedTask): TaskDto {
 }
 
 /** 프로젝트의 할 일(상태 순서 todo → doing → done, 그 안에서 position 순). */
-async function projectTasks(db: DbExecutor, projectId: string, onlyStatus?: TaskStatus): Promise<TaskDto[]> {
+async function projectTasks(db: DbExecutor, actor: Actor, projectId: string, onlyStatus?: TaskStatus): Promise<TaskDto[]> {
   const conditions = [eq(tasks.projectId, projectId)]
   if (onlyStatus) conditions.push(eq(tasks.status, onlyStatus))
   // enum은 선언 순서(todo, doing, done)로 정렬됩니다.
   const rows = await selectTasks(db)
     .where(and(...conditions))
     .orderBy(asc(tasks.status), asc(tasks.position))
-  return rows.map(toTaskDto)
+  // 익명 스터디 기록(C-08)은 다른 멤버 이름을 가립니다.
+  const mask = await loadPersonMask(db, projectId, actor.userId)
+  return rows.map((row) => toTaskDto(row, mask))
 }
 
-async function getTaskDto(db: DbExecutor, taskId: string): Promise<TaskDto> {
+async function getTaskDto(db: DbExecutor, actor: Actor, taskId: string): Promise<TaskDto> {
   const [row] = await selectTasks(db).where(eq(tasks.id, taskId)).limit(1)
   if (!row) throw notFound()
-  return toTaskDto(row)
+  return toTaskDto(row, await loadPersonMask(db, row.task.projectId, actor.userId))
 }
 
 /**
@@ -277,7 +279,7 @@ async function statusColumns(db: DbExecutor, actor: Actor, task: TaskRow, to: Ta
 export async function listTasks(db: DbExecutor, actor: Actor, projectId: unknown, rawQuery: unknown): Promise<TaskDto[]> {
   const query = parseInput(listTasksQuerySchema, rawQuery)
   const { project } = await loadReadableProject(db, actor, projectId)
-  return projectTasks(db, project.id, query.status)
+  return projectTasks(db, actor, project.id, query.status)
 }
 
 // ── 만들기 ───────────────────────────────────────────────────────────────
@@ -318,7 +320,7 @@ export async function createTask(
       projectId: project.id,
       metadata: { status: row.status },
     })
-    return getTaskDto(tx, row.id)
+    return getTaskDto(tx, actor, row.id)
   })
 }
 
@@ -360,7 +362,7 @@ export async function updateTask(
       projectId: project.id,
       metadata: { version: updated.version, status: updated.status },
     })
-    return getTaskDto(tx, task.id)
+    return getTaskDto(tx, actor, task.id)
   })
 }
 
@@ -403,7 +405,7 @@ export async function reorderTasks(
         metadata: { status: input.status, count: current.length },
       })
     }
-    return projectTasks(tx, project.id)
+    return projectTasks(tx, actor, project.id)
   })
 }
 
@@ -425,7 +427,7 @@ export async function completeTask(
     const { project, membership, task } = await loadReadableTask(tx, actor, taskId, { lock: true })
     assertCanManage(actor, project, membership)
     const promptFor = (logEntryId: string | null) => (logEntryId ? null : COMPLETE_PROMPT)
-    if (task.status === 'done') return { task: await getTaskDto(tx, task.id), prompt: promptFor(task.logEntryId) }
+    if (task.status === 'done') return { task: await getTaskDto(tx, actor, task.id), prompt: promptFor(task.logEntryId) }
     if (task.version !== input.expectedVersion) throw conflict('version_conflict', { currentVersion: task.version })
 
     const moved = await statusColumns(tx, actor, task, 'done', now)
@@ -442,7 +444,7 @@ export async function completeTask(
       projectId: project.id,
       metadata: { from: task.status },
     })
-    return { task: await getTaskDto(tx, task.id), prompt: promptFor(task.logEntryId) }
+    return { task: await getTaskDto(tx, actor, task.id), prompt: promptFor(task.logEntryId) }
   })
 }
 
@@ -486,7 +488,7 @@ export async function convertTask(
       projectId: project.id,
       metadata: { tag: log.tag, logId: log.id },
     })
-    return { task: await getTaskDto(tx, task.id), log: { ...log, task: { id: task.id, title: task.title } } }
+    return { task: await getTaskDto(tx, actor, task.id), log: { ...log, task: { id: task.id, title: task.title } } }
   })
 }
 

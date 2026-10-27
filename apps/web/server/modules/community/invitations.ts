@@ -19,6 +19,7 @@ import { parseInput } from '../validation'
 import { activeMemberCount, findMembership, loadReadableSpace, loadSpace, loadViewer, membershipFacts, spaceFacts } from './access'
 import { joinError, upsertMembership } from './memberships'
 import { assertCanManage, toSpaceSummary } from './spaces'
+import { syncStudyRecordInTx } from './study-records'
 import type { JoinResultDto, SpaceInvitationDto, SpaceInvitationPreviewDto } from '../../../shared/types/api'
 
 type InvitationRow = typeof spaceInvitations.$inferSelect
@@ -148,6 +149,7 @@ export async function acceptSpaceInvitation(db: DbExecutor, actor: Actor, rawInp
     if (!decision.ok) throw joinError(decision.reason)
     await upsertMembership(tx, space.row.id, actor.userId, 'active', membership, now)
     await tx.update(spaceInvitations).set({ usedAt: now, usedBy: actor.userId }).where(eq(spaceInvitations.id, invitation.id))
+    await syncStudyRecordInTx(tx, space.row.id, now)
     await recordAudit(tx, { actorId: actor.userId, action: 'community.invitation_accept', targetType: 'community_space', targetId: space.row.id, metadata: { invitationId: invitation.id } })
     await emitAnalytics(tx, { name: 'space_joined', actorId: actor.userId, props: { kind: space.row.kind as 'user_room' | 'study_room', policy: 'invite' }, now })
     return { status: 'active', space: toSpaceSummary(space, count + 1, { role: 'member', status: 'active' }) }

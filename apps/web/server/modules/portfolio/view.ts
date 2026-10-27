@@ -14,6 +14,7 @@ import {
   type CaseCitation,
   type MatrixColumnInput,
   HIDDEN_ITEM_PLACEHOLDER,
+  canLinkReleaseToPortfolio,
   citationLabel,
   citationPath,
   citesHiddenItem,
@@ -41,8 +42,12 @@ export interface EditionModel {
 
 export const featuredAnchor = (index: number) => `case-${index + 1}`
 
-/** 이 사용자의 케이스 중 공개 경로에 실을 수 있는 것(게시 중 + 고정 release 제공 가능 + 운영 조치로 숨기지 않음, T-15). */
-export const isPubliclyVisible = (row: CaseStudyWithRelease) => row.caseStudy.status === 'published' && row.servable && row.caseStudy.hiddenAt === null
+/**
+ * 이 사용자의 케이스 중 공개 경로에 실을 수 있는 것(게시 중 + 고정 release 제공 가능 + 운영 조치로 숨기지 않음, T-15).
+ * 익명 스터디 방의 기록(C-08)은 만들기·게시가 막혀 있지만, 공개 프로필·포트폴리오에는 여기서 한 번 더 거릅니다.
+ */
+export const isPubliclyVisible = (row: CaseStudyWithRelease) =>
+  row.caseStudy.status === 'published' && row.servable && row.caseStudy.hiddenAt === null && canLinkReleaseToPortfolio(row.snapshot)
 
 export async function buildPortfolioView(db: DbExecutor, model: EditionModel, now: Date): Promise<PortfolioViewDto> {
   const rows = model.featured.length

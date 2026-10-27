@@ -75,6 +75,7 @@ import {
   membershipFacts,
   spaceFacts,
 } from './access'
+import { syncStudyRecordInTx } from './study-records'
 import type {
   BoardDto,
   MySpacesDto,
@@ -577,6 +578,8 @@ export async function archiveSpaceInTx(tx: DbExecutor, spaceId: string, now: Dat
     .update(spaceInvitations)
     .set({ revokedAt: now })
     .where(and(eq(spaceInvitations.spaceId, spaceId), isNull(spaceInvitations.revokedAt), isNull(spaceInvitations.usedAt)))
+  // 스터디 기록(C-08): 보관된 방의 기록은 방장 외 읽기만(viewer).
+  await syncStudyRecordInTx(tx, spaceId, now)
 }
 
 /** POST /community/spaces/:slug/archive — 사용자 방은 owner, 공식 페이지는 운영자. 보관된 방은 멤버가 읽기만 합니다. */

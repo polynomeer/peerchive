@@ -58,16 +58,22 @@ export interface RetrospectiveMarked {
   retrospective: boolean
 }
 
+/** 과제 종류. study는 스터디 방의 기록(C-08, ADR 0026). */
+export type ProjectKind = 'individual' | 'team' | 'study'
+
 export interface ProjectDto extends RetrospectiveMarked {
   id: string
   title: string
   summaryByStudent: string | null
   goal: string | null
   constraints: string | null
-  kind: 'individual' | 'team'
+  /** study: 스터디 방의 기록(C-08). 멤버는 스터디 방에서 파생되고 과제 쪽 초대·역할·나가기는 409 `study_managed`. */
+  kind: ProjectKind
   lifecycle: 'planning' | 'active' | 'completed' | 'archived'
   courseTermId: string | null
   retroMode: boolean
+  /** 스터디 기록이면 연결된 방의 지금 이름 표시 방식(anonymous면 다른 멤버 이름을 "스터디 멤버 N"으로 가림), 아니면 null. */
+  studyNameMode: 'real' | 'display' | 'anonymous' | null
   /** 과제 공간은 항상 비공개입니다. */
   visibility: 'private'
   version: number
@@ -800,7 +806,13 @@ export interface PublicSnapshot extends RetrospectiveMarked {
   slug: string
   title: string
   summary: string
-  kind: 'individual' | 'team'
+  /** study면 "스터디 기록"(C-08). */
+  kind: ProjectKind
+  /**
+   * 스터디 기록일 때만 있는 키: 후보를 만들 때의 스터디 방 이름 표시 방식(이후 방 방식이 바뀌어도 그대로). anonymous면 모든 멤버가 익명이고
+   * 이 release로 케이스 스터디·공개 프로필·모집 첨부를 만들 수 없습니다(ADR 0026). 다른 종류의 스냅샷에는 키가 없습니다(기존 manifest 해시 유지).
+   */
+  studyNameMode?: 'real' | 'display' | 'anonymous'
   course: { school: string; course: string; code: string | null; year: number; semester: Semester } | null
   members: PublicMember[]
   milestones: PublicMilestone[]
@@ -1071,8 +1083,9 @@ export interface CourseHubCaseDto {
   title: string
   termLabel: string | null
   level: PublicationLevel
-  kind: 'individual' | 'team'
-  /** 팀 과제면 스냅샷에 실린 참여자 수(익명 포함), 개인 과제면 null. */
+  /** study면 화면이 "스터디" 배지를 붙입니다(C-08). */
+  kind: ProjectKind
+  /** 팀 과제·스터디 기록이면 스냅샷에 실린 참여자 수(익명 포함), 개인 과제면 null. */
   teamSize: number | null
   milestoneCount: number
   stuckCount: number
@@ -1868,6 +1881,22 @@ export interface SpaceInvitationPreviewDto {
   /** 이 사람이 수락할 수 있는지(학교 자격·정원). */
   acceptable: boolean
   reason: 'ok' | 'already_member' | 'not_eligible' | 'full'
+}
+
+/**
+ * 스터디 기록 상태(C-08, ADR 0026). 방을 읽을 수 있는 사람에게. 과제 id는 그 기록(과제)의 active 멤버에게만 실립니다.
+ * portfolioLinkable: 지금 방 방식으로 공개하면 포트폴리오(케이스 스터디)에 연결할 수 있는지(익명 방이면 false). 판정은 공개 후보를 만들 때 고정됩니다.
+ */
+export interface StudyRecordStateDto {
+  /** 스터디 방인지(사용자 방·공식 페이지는 false). */
+  available: boolean
+  enabled: boolean
+  projectId: string | null
+  myRole: ProjectRole | null
+  /** 방장이고 기록이 아직 꺼져 있고 방이 active일 때. */
+  canEnable: boolean
+  nameMode: 'real' | 'display' | 'anonymous'
+  portfolioLinkable: boolean
 }
 
 export interface JoinResultDto {

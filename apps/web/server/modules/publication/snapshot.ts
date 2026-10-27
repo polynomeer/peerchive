@@ -13,6 +13,7 @@
  * - 요약 공개(summary)는 산출물·스냅샷을 싣지 않습니다.
  * - 제외한 사람(미동의자)의 로그·선언·올린 파일·마일스톤 스냅샷과 회의 참석 표시는 빠집니다.
  * - 사후 작성 표시(retrospective)와 로그 출처(source)를 그대로 옮깁니다(T-07).
+ * - 스터디 기록(kind study, C-08)은 그때의 방 이름 표시 방식(studyNameMode)을 함께 고정합니다. 익명 방이면 후보가 모두 익명이어야 합니다.
  *
  * `analyzeSelection`은 같은 포함 규칙으로 동의 당사자·범위·비공개 참조(refs)를 계산합니다(공개 데이터를 만들지 않음).
  */
@@ -117,7 +118,8 @@ interface Included {
   contributors: Map<string, Set<SubjectScope>>
 }
 
-export type SubjectScope = 'name' | 'anonymous_label' | 'logs' | 'meetings' | 'claims' | 'artifacts' | 'title_summary'
+/** study_member: 스터디 기록(C-08)은 내용이 없어도 지금 방 멤버 모두가 동의 당사자입니다. */
+export type SubjectScope = 'name' | 'anonymous_label' | 'logs' | 'meetings' | 'claims' | 'artifacts' | 'title_summary' | 'study_member'
 
 const byCreated = <T extends { createdAt: Date; id: string }>(a: T, b: T) =>
   a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
@@ -364,6 +366,8 @@ export function buildPublicSnapshot(source: SnapshotSource): PublicSnapshot {
     title: source.title,
     summary: source.summary,
     kind: source.project.kind,
+    // 스터디 기록(C-08, ADR 0026): 후보를 만들 때의 방 이름 표시 방식을 고정합니다(다른 종류에는 키 자체가 없음 — 기존 manifest 해시 유지).
+    ...(source.project.kind === 'study' && { studyNameMode: source.project.studyNameMode ?? 'display' }),
     retrospective: source.project.retroMode,
     course: course
       ? {
@@ -458,6 +462,7 @@ export function subjectProjection(snapshot: PublicSnapshot, refs: SnapshotRefs, 
       title: snapshot.title,
       summary: snapshot.summary,
       kind: snapshot.kind,
+      ...(snapshot.studyNameMode !== undefined && { studyNameMode: snapshot.studyNameMode }),
       course: snapshot.course,
       retrospective: snapshot.retrospective,
     },

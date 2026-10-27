@@ -9,6 +9,7 @@
  *   탈퇴 정리(worker purge)도 같은 규칙(chooseOwnerSuccessor)을 씁니다.
  * - 멤버 목록은 owner·admin만 봅니다(이름·핸들·역할·가입 시각). 공식 페이지에는 멤버 목록이 없습니다.
  * 공간 행 → 멤버십 순서로 잠급니다(정원·승계 경쟁 방지).
+ * 스터디 기록(C-08, ADR 0026)이 켜진 방이면 멤버십을 바꾼 같은 트랜잭션에서 과제 멤버십을 다시 계산합니다(syncStudyRecordInTx).
  */
 import { z } from 'zod'
 import {
@@ -29,6 +30,7 @@ import { isUuid } from '../projects/access'
 import { parseInput } from '../validation'
 import { type MembershipRow, type SpaceContext, findMembership, loadReadableSpace, loadSpaceContext, membershipFacts } from './access'
 import { archiveSpaceInTx, assertCanManage, toSpaceSummary } from './spaces'
+import { syncStudyRecordInTx } from './study-records'
 import type { JoinResultDto, SpaceMemberDto, SpaceMembersDto } from '../../../shared/types/api'
 
 /** 가입 판정 실패를 HTTP 오류로. 존재를 숨겨야 하는 경우는 404. */
@@ -78,6 +80,7 @@ export async function joinSpace(db: DbExecutor, actor: Actor, ref: unknown, now 
     const decision = canJoinSpace(ctx.viewer, ctx.facts, membershipFacts(ctx.membership), 'self')
     if (!decision.ok) throw joinError(decision.reason)
     await upsertMembership(tx, ctx.space.row.id, actor.userId, decision.status, ctx.membership, now)
+    await syncStudyRecordInTx(tx, ctx.space.row.id, now)
     await recordAudit(tx, {
       actorId: actor.userId,
       action: decision.status === 'active' ? 'community.member_join' : 'community.member_request',
@@ -150,6 +153,8 @@ export async function leaveSpace(
       const result = await succeedOwner(tx, ctx.space.row.id, actor.userId, now)
       succession = result.archived ? 'archived' : 'transferred'
     }
+    // 스터디 기록(C-08): 나간 사람은 left, 새 방장은 과제 owner.
+    await syncStudyRecordInTx(tx, ctx.space.row.id, now)
     await recordAudit(tx, {
       actorId: actor.userId,
       action: m.status === 'pending' ? 'community.member_request_cancel' : 'community.member_leave',
@@ -222,6 +227,7 @@ export async function approveMember(db: DbExecutor, actor: Actor, ref: unknown, 
       .update(spaceMemberships)
       .set({ status: 'active', role: 'member', joinedAt: now, updatedAt: now })
       .where(eq(spaceMemberships.id, target.id))
+    await syncStudyRecordInTx(tx, ctx.space.row.id, now)
     await recordAudit(tx, { actorId: actor.userId, action: 'community.member_approve', targetType: 'community_space', targetId: ctx.space.row.id, metadata: {} })
     await emitAnalytics(tx, {
       name: 'space_joined',
@@ -256,6 +262,7 @@ export async function removeMember(db: DbExecutor, actor: Actor, ref: unknown, u
     if (target.status !== 'active') throw conflict('not_active_member')
     if (!canRemoveSpaceMember(ctx.membership!.role, target.role)) throw forbidden()
     await tx.update(spaceMemberships).set({ status: 'removed', role: 'member', endedAt: now, updatedAt: now }).where(eq(spaceMemberships.id, target.id))
+    await syncStudyRecordInTx(tx, ctx.space.row.id, now)
     await recordAudit(tx, { actorId: actor.userId, action: 'community.member_remove', targetType: 'community_space', targetId: ctx.space.row.id, metadata: { role: target.role } })
   })
   return listMembers(db, actor, ref)
@@ -281,6 +288,7 @@ export async function changeMemberRole(db: DbExecutor, actor: Actor, ref: unknow
       await tx.update(spaceMemberships).set({ role: 'admin', updatedAt: now }).where(eq(spaceMemberships.id, ctx.membership!.id))
     }
     await tx.update(spaceMemberships).set({ role, updatedAt: now }).where(eq(spaceMemberships.id, target.id))
+    await syncStudyRecordInTx(tx, ctx.space.row.id, now)
     await recordAudit(tx, {
       actorId: actor.userId,
       action: role === 'owner' ? 'community.owner_transfer' : 'community.member_role_change',

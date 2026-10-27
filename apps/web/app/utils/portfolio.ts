@@ -71,6 +71,7 @@ export const PORTFOLIO_FIELD_MESSAGES: Record<string, string> = {
   not_featured: '대표 케이스로 고른 사례의 근거만 넣을 수 있습니다.',
   not_cited: '그 케이스가 인용한 항목만 근거로 고를 수 있습니다.',
   duplicate: '같은 이름이 두 번 들어 있습니다.',
+  anonymous_study: '익명 스터디 방의 기록은 포트폴리오(케이스 스터디)에 연결할 수 없습니다.',
 }
 
 export const fieldText = (code: string | undefined) => (code ? (PORTFOLIO_FIELD_MESSAGES[code] ?? fieldMessage(code)) : undefined)

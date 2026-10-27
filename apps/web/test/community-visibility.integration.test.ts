@@ -66,6 +66,7 @@ import { createLog } from '../server/modules/logs/logs'
 import { createCandidate } from '../server/modules/publication/candidates'
 import { getPublicPublication } from '../server/modules/publication/public-read'
 import { publishCandidate } from '../server/modules/publication/releases'
+import { enableStudyRecord, getStudyRecord } from '../server/modules/community/study-records'
 import { createRobotsHandler, robotsTxt } from '../server/modules/security/robots'
 import type { ServiceError } from '../server/modules/errors'
 import { closeTestDb, createUser, databaseUrl, expectServiceError, minutes, verifiedAffiliation, withRollback } from './helpers'
@@ -117,7 +118,7 @@ const COMMUNITY_SQL = new Set(COMMUNITY.map((t) => t.sqlName))
 const COMMUNITY_TABLE_PATTERN = new RegExp(`\\b(${COMMUNITY.flatMap((t) => [t.exportName, t.sqlName]).join('|')})\\b`)
 
 /** 커뮤니티 테이블처럼 보이는 이름(C-04~C-09 예정 이름 포함). 이런 테이블은 반드시 커뮤니티 구역에 있어야 합니다. */
-const COMMUNITY_LIKE_SQL = /^(community_|space_|spaces$|boards?$|posts?$|comments?$|thread_aliases$|reactions$|name_mode_|official_page_|recruitments$|archive_transfers$|community$)/
+const COMMUNITY_LIKE_SQL = /^(community_|space_|spaces$|boards?$|posts?$|comments?$|thread_aliases$|reactions$|name_mode_|official_page_|recruitments$|archive_transfers$|study_records$|community$)/
 
 // ── 소스 경계 예외(문서화: ADR 0019·0020·0021) ─────────────────────────────
 
@@ -187,6 +188,8 @@ describe('C-05 community tables come from the schema section (source)', () => {
         // C-09: 아카이브로 옮기기 요청·동의(커뮤니티 글·댓글을 가리키므로 같은 구역, 자동으로 덮임)
         'archive_transfers',
         'archive_transfer_consents',
+        // C-08: 스터디 방 ↔ 내부 과제 연결(커뮤니티 → 과제 방향만, 자동으로 덮임)
+        'study_records',
       ]),
     )
     // C-09(ADR 0025): 막힘 Q&A 복사본은 아카이브 쪽(과목 허브 구역) 테이블이고 커뮤니티 테이블을 가리키지 않습니다.
@@ -274,7 +277,7 @@ describe('C-05 module boundary: only the community module reads community tables
 
 // ── 분석 허용 목록 ─────────────────────────────────────────────────────────
 
-const COMMUNITY_EVENT = /^(space_|name_mode_|post_|comment_|community_|board_|reaction_|thread_|recruitment_|archive_)/
+const COMMUNITY_EVENT = /^(space_|name_mode_|post_|comment_|community_|board_|reaction_|thread_|recruitment_|archive_|study_)/
 const FORBIDDEN_PROP_KEY = /(id|name|slug|title|body|text|description|content|email|handle|school|board|space|post|comment|url|token)/i
 
 describe('C-05 analytics: community events carry codes only', () => {
@@ -627,6 +630,9 @@ const SPACE_OPS: Record<string, Op> = {
   'POST recruitments/:id/invitation': (tx, a, s) => issueRecruitmentInvitation(tx, a, recOf(s), at(10)),
   'POST reports (community_recruitment)': (tx, a, s) => resolveReportableRecruitment(tx, a, { recruitmentId: recOf(s) }, at(10)),
   'POST reports (community_application)': (tx, a, s) => resolveReportableApplication(tx, a, { applicationId: appOf(s) }, at(10)),
+  // C-08 스터디 기록: 공간을 읽을 수 없으면 기록 상태·켜기도 404(과제 쪽 경로의 매트릭스는 study-records.integration.test.ts)
+  'GET study-record': (tx, a, s) => getStudyRecord(tx, a, s),
+  'POST study-record': (tx, a, s) => enableStudyRecord(tx, a, s, {}, at(10)),
 }
 
 describe.skipIf(!databaseUrl)('C-05 visibility matrix and data boundary (PostgreSQL)', () => {

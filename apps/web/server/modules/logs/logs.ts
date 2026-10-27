@@ -49,7 +49,7 @@ import { checkEvidence, evidenceByRevision, evidenceIdsByRevision, insertEvidenc
 import { checkLogMilestone, milestoneRefsById } from '../milestones/milestones'
 import { type Actor, conflict, forbidden, invalid, notFound } from '../errors'
 import { parseInput } from '../validation'
-import { type ProjectRow, isUuid, loadReadableProject } from '../projects/access'
+import { type ProjectRow, isUuid, loadPersonMask, loadReadableProject } from '../projects/access'
 import {
   type LogContent,
   createLogSchema,
@@ -176,15 +176,21 @@ async function toLogDtos(
           .where(inArray(tasks.logEntryId, taskSourced))
       : Promise.resolve([]),
   ])
+  // 익명 스터디 기록(C-08)은 다른 멤버 이름을 "스터디 멤버 N"으로 가립니다.
+  const mask = await loadPersonMask(db, project, actor.userId)
+  const masked = (row: Parameters<typeof toLoaded>[0]): LoadedLog => {
+    const loaded = toLoaded(row)
+    return { ...loaded, author: mask(loaded.author) }
+  }
   const taskByLog = new Map<string, TaskRefDto>(
     sourceTasks.flatMap((row) => (row.logEntryId ? [[row.logEntryId, { id: row.id, title: row.title }] as const] : [])),
   )
-  const targetById = new Map(targets.map((row) => [row.entry.id, toRef(toLoaded(row))]))
+  const targetById = new Map(targets.map((row) => [row.entry.id, toRef(masked(row))]))
   const solutionsByStuck = new Map<string, LogRefDto[]>()
   for (const row of solutions) {
     const key = row.revision.resolvesEntryId
     if (!key) continue
-    solutionsByStuck.set(key, [...(solutionsByStuck.get(key) ?? []), toRef(toLoaded(row))])
+    solutionsByStuck.set(key, [...(solutionsByStuck.get(key) ?? []), toRef(masked(row))])
   }
 
   return logs.map((log) => ({
@@ -192,7 +198,7 @@ async function toLogDtos(
     projectId: log.entry.projectId,
     tag: log.entry.tag,
     source: log.entry.source,
-    author: log.author,
+    author: mask(log.author),
     revisionNo: log.revision.revisionNo,
     body: log.revision.body,
     payload: log.revision.payload as LogPayload,
@@ -398,7 +404,7 @@ export async function insertLog(
     projectId: project.id,
     metadata: { tag },
   })
-  await emitAnalytics(tx, { name: 'log_saved', actorId: actor.userId, projectId: project.id, props: { tag, source: entry.source, revision: false } })
+  await emitAnalytics(tx, { name: 'log_saved', actorId: actor.userId, projectId: project.id, props: { tag, source: entry.source, revision: false, ...(project.kind === 'study' && { origin: 'study' as const }) } })
   if (evidenceIds.length > 0 || content.links.length > 0) {
     await emitAnalytics(tx, {
       name: 'evidence_attached',
@@ -512,7 +518,7 @@ export async function reviseLog(
       projectId: project.id,
       metadata: { tag, revisionNo },
     })
-    await emitAnalytics(tx, { name: 'log_saved', actorId: actor.userId, projectId: project.id, props: { tag, source: log.entry.source, revision: true } })
+    await emitAnalytics(tx, { name: 'log_saved', actorId: actor.userId, projectId: project.id, props: { tag, source: log.entry.source, revision: true, ...(project.kind === 'study' && { origin: 'study' as const }) } })
     const addedFiles = evidenceIds.filter((id) => !previousEvidence.includes(id)).length
     const addedLinks = Math.max(0, content.links.length - previous.links.length)
     if (addedFiles > 0 || addedLinks > 0) {

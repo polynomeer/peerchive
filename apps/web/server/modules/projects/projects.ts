@@ -20,7 +20,7 @@ import { listCourseTags } from '../catalog/tags'
 import { getProjectEmbargo, nextEmbargoUntil, toEmbargoDto } from '../embargo/embargo'
 import { type Actor, conflict, forbidden, invalid } from '../errors'
 import { parseInput } from '../validation'
-import { type ProjectRow, loadReadableProject } from './access'
+import { type ProjectRow, hasStudyAffiliation, loadReadableProject } from './access'
 import type { CourseContextDto, ProjectDetailDto, ProjectDto } from '../../../shared/types/api'
 
 export type { ProjectDetailDto, ProjectDto }
@@ -77,6 +77,7 @@ export function toProjectDto(row: ProjectRow, myRole: ProjectRole): ProjectDto {
     courseTermId: row.courseTermId,
     retroMode: row.retroMode,
     retrospective: row.retroMode,
+    studyNameMode: row.studyNameMode,
     visibility: 'private',
     version: row.version,
     myRole,
@@ -142,14 +143,16 @@ export async function createProject(
 }
 
 /**
- * 과제 공간 행 + owner 멤버십 + 감사 + 분석을 호출자의 트랜잭션 안에서 만듭니다(웹 만들기·포크·C-07 팀원 모집 마감이 함께 씀).
+ * 과제 공간 행 + owner 멤버십 + 감사 + 분석을 호출자의 트랜잭션 안에서 만듭니다(웹 만들기·포크·C-07 팀원 모집 마감·C-08 스터디 기록 켜기가 함께 씀).
+ * `study`를 주면 스터디 기록(kind study, 방 이름 표시 방식을 옮겨 둠)이고, 나머지 멤버는 커뮤니티 모듈이 방 멤버십에서 채웁니다.
  * 항상 비공개이고, 학기를 주면 정본 학기로 연결해 엠바고를 겁니다(T-10). 학기가 없으면 422 `courseTermId: not_found`.
  */
 export async function insertProjectInTx(
   tx: DbExecutor,
   ownerId: string,
   input: z.output<typeof createProjectSchema>,
-  origin: 'web' | 'fork' | 'recruitment',
+  origin: 'web' | 'fork' | 'recruitment' | 'study',
+  study: { nameMode: 'real' | 'display' | 'anonymous'; schoolId: string | null } | null = null,
 ): Promise<ProjectRow> {
   const courseTermId = input.courseTermId ? await resolveTermId(tx, input.courseTermId.toLowerCase()) : null
   const embargoUntil = await nextEmbargoUntil(tx, null, null, courseTermId)
@@ -158,7 +161,9 @@ export async function insertProjectInTx(
     .values({
       ownerId,
       title: input.title,
-      kind: input.kind,
+      kind: study ? 'study' : input.kind,
+      studyNameMode: study?.nameMode ?? null,
+      studySchoolId: study?.schoolId ?? null,
       courseTermId,
       embargoUntil,
       summaryByStudent: input.summaryByStudent,
@@ -175,7 +180,7 @@ export async function insertProjectInTx(
     targetType: 'project',
     targetId: project.id,
     projectId: project.id,
-    metadata: { retroMode: project.retroMode, courseTermId, embargoUntil: embargoUntil?.toISOString() ?? null },
+    metadata: { retroMode: project.retroMode, courseTermId, embargoUntil: embargoUntil?.toISOString() ?? null, kind: project.kind },
   })
   await emitAnalytics(tx, {
     name: 'project_created',
@@ -186,7 +191,7 @@ export async function insertProjectInTx(
   return project
 }
 
-/** 요청자가 active 멤버인 프로젝트 목록(최근 수정순). */
+/** 요청자가 active 멤버인 프로젝트 목록(최근 수정순). 스터디 기록(kind study, C-08)도 들어 있고 화면이 "스터디 기록" 묶음으로 따로 보입니다. */
 export async function listMyProjects(db: DbExecutor, actor: Actor): Promise<ProjectDto[]> {
   const rows = await db
     .select({ project: projects, role: projectMembers.role })
@@ -195,7 +200,10 @@ export async function listMyProjects(db: DbExecutor, actor: Actor): Promise<Proj
     .where(and(eq(projectMembers.userId, actor.userId), eq(projectMembers.status, 'active')))
     .orderBy(desc(projects.updatedAt), desc(projects.id))
     .limit(200)
-  return rows.map((row) => toProjectDto(row.project, row.role))
+  // 스터디 기록(C-08)은 열 때와 같은 학교 인증 조건을 거칩니다(인증을 해제하면 목록에서도 빠짐).
+  const visible = []
+  for (const row of rows) if (row.project.kind !== 'study' || (await hasStudyAffiliation(db, actor.userId, row.project.studySchoolId))) visible.push(row)
+  return visible.map((row) => toProjectDto(row.project, row.role))
 }
 
 export async function getProject(db: DbExecutor, actor: Actor, projectId: unknown, now = new Date()): Promise<ProjectDetailDto> {
@@ -219,6 +227,8 @@ export async function updateProject(
   return db.transaction(async (tx) => {
     const { project, membership } = await loadReadableProject(tx, actor, projectId, { lock: true })
     if (!canEditProject({ userId: actor.userId }, project, membership)) throw forbidden()
+    // 스터디 기록(C-08)의 종류는 바꿀 수 없습니다(멤버십이 스터디 방에서 파생됨).
+    if (project.kind === 'study' && input.kind !== undefined) throw conflict('study_managed')
     const retroChange = input.retroMode !== undefined && input.retroMode !== project.retroMode
     if (retroChange && !canChangeRetroMode({ userId: actor.userId }, project, membership)) throw forbidden()
     if (project.version !== input.expectedVersion) throw conflict('version_conflict')

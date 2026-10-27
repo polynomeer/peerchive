@@ -108,7 +108,7 @@ export interface CaseSnapshotLog {
 export interface CaseSnapshot {
   title: string
   summary: string
-  kind: 'individual' | 'team'
+  kind: 'individual' | 'team' | 'study'
   members: ReadonlyArray<{ key: string; label: string; anonymous: boolean }>
   milestones: ReadonlyArray<{ key: string; position: number; title: string }>
   logs: ReadonlyArray<CaseSnapshotLog>

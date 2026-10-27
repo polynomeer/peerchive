@@ -87,7 +87,9 @@ const CLAIM_STATUS: Record<'unconfirmed' | 'confirmed' | 'disputed', string> = {
       <p class="actions">
         <span class="badge">{{ LEVEL_LABELS[snapshot.level] }}</span>
         <span v-if="snapshot.retrospective" class="badge retro">사후 작성</span>
-        <span class="muted small">{{ snapshot.kind === 'team' ? '팀 과제' : '개인 과제' }}</span>
+        <span v-if="snapshot.kind === 'study'" class="badge" data-testid="study-badge">스터디 기록</span>
+        <span v-else class="muted small">{{ PUBLIC_KIND_LABELS[snapshot.kind] }}</span>
+        <span v-if="snapshot.kind === 'study' && snapshot.studyNameMode === 'anonymous'" class="muted small">익명 스터디 방(모든 멤버 익명)</span>
       </p>
       <p v-if="courseText" class="small muted">{{ courseText }}</p>
       <p class="pre">{{ snapshot.summary }}</p>

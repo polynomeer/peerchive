@@ -13,6 +13,7 @@ export type AuditAction =
   | 'member.remove'
   | 'member.leave'
   | 'project.transfer_ownership'
+  | 'project.study_sync'
   | 'account.deletion_request'
   | 'account.real_name_update'
   | 'log.create'
@@ -131,6 +132,7 @@ export type AuditAction =
   | 'community.recruitment_close'
   | 'community.recruitment_cancel'
   | 'community.course_team_finding'
+  | 'community.study_record_enable'
   | 'course_qa.publish'
   | 'course_qa.withdraw'
 

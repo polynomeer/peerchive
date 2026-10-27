@@ -205,7 +205,7 @@ const difficultyText = computed(() => {
           <li v-for="c in data.cases" :key="c.slug" class="hub-card">
             <p class="hub-card-title"><NuxtLink :to="c.path">{{ c.title }}</NuxtLink></p>
             <p class="small muted">
-              <template v-if="c.termLabel">{{ c.termLabel }} · </template>{{ c.kind === 'team' ? `팀 과제${c.teamSize ? ` ${c.teamSize}명` : ''}` : '개인 과제' }}
+              <template v-if="c.termLabel">{{ c.termLabel }} · </template><template v-if="c.kind === 'study'"><span class="badge" data-testid="hub-study-badge">스터디</span>{{ c.teamSize ? ` ${c.teamSize}명` : '' }}</template><template v-else>{{ c.kind === 'team' ? `팀 과제${c.teamSize ? ` ${c.teamSize}명` : ''}` : '개인 과제' }}</template>
               · {{ LEVEL_LABELS[c.level] }} · 마일스톤 {{ c.milestoneCount }} · 막힘 {{ c.stuckCount }}
               <template v-if="c.forkCount"> · 계획 포크 {{ c.forkCount }}명</template>
               <span v-if="c.retrospective" class="badge retro">사후 작성</span>

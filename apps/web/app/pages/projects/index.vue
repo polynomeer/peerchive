@@ -44,7 +44,10 @@ async function create() {
   }
 }
 
-const KIND_LABELS = { individual: '개인', team: '팀' } as const
+const KIND_LABELS = { individual: '개인', team: '팀', study: '스터디 기록' } as const
+// 스터디 기록(C-08)은 스터디 방에서 켜고 멤버도 방에서 관리하므로 "내 과제"와 따로 묶어 보여 줍니다.
+const ownProjects = computed(() => projects.value.filter((p) => p.kind !== 'study'))
+const studyProjects = computed(() => projects.value.filter((p) => p.kind === 'study'))
 </script>
 
 <template>
@@ -52,9 +55,9 @@ const KIND_LABELS = { individual: '개인', team: '팀' } as const
     <h1>내 과제</h1>
 
     <p v-if="loadError" class="notice error" role="alert">목록을 불러오지 못했습니다.</p>
-    <p v-else-if="projects.length === 0" class="muted">아직 과제가 없습니다. 아래에서 첫 과제를 만들어 보세요.</p>
+    <p v-else-if="ownProjects.length === 0" class="muted">아직 과제가 없습니다. 아래에서 첫 과제를 만들어 보세요.</p>
     <ul v-else class="plain">
-      <li v-for="p in projects" :key="p.id" class="row">
+      <li v-for="p in ownProjects" :key="p.id" class="row">
         <span>
           <NuxtLink :to="`/projects/${p.id}`">{{ p.title }}</NuxtLink>
           <span class="muted"> · {{ KIND_LABELS[p.kind] }} · {{ ROLE_LABELS[p.myRole] }}</span>
@@ -65,6 +68,23 @@ const KIND_LABELS = { individual: '개인', team: '팀' } as const
         </span>
       </li>
     </ul>
+
+    <section v-if="studyProjects.length > 0" class="card" aria-labelledby="study-records-heading">
+      <h2 id="study-records-heading">스터디 기록</h2>
+      <p class="hint">스터디 방에서 켠 기록입니다. 멤버는 스터디 방 멤버를 따릅니다.</p>
+      <ul class="plain">
+        <li v-for="p in studyProjects" :key="p.id" class="row">
+          <span>
+            <NuxtLink :to="`/projects/${p.id}`">{{ p.title }}</NuxtLink>
+            <span class="muted"> · {{ ROLE_LABELS[p.myRole] }}</span>
+          </span>
+          <span class="actions">
+            <span class="badge">스터디 기록</span>
+            <span v-if="p.studyNameMode === 'anonymous'" class="badge">익명 방</span>
+          </span>
+        </li>
+      </ul>
+    </section>
 
     <section v-if="checkins && checkins.projects.length > 0" class="card" aria-labelledby="checkin-card-heading">
       <h2 id="checkin-card-heading">이번 주 체크인</h2>

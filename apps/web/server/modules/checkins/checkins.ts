@@ -40,7 +40,7 @@ import { recordAudit } from '../audit/audit'
 import { emitAnalytics } from '../analytics/analytics'
 import { type Actor, invalid } from '../errors'
 import { getLog, insertLog, parseLogInput } from '../logs/logs'
-import { loadReadableProject } from '../projects/access'
+import { loadPersonMask, loadReadableProject } from '../projects/access'
 import { parseInput } from '../validation'
 import { checkinClientId } from '../discord/client-id'
 import type {
@@ -238,7 +238,9 @@ export async function listCheckins(
       .where(and(eq(weeklyCheckins.projectId, project.id), eq(weeklyCheckins.isoWeek, week.week))),
   ])
   const byUser = new Map(rows.map((row) => [row.userId, row]))
-  const entries: TeamCheckinEntryDto[] = orderMembersByName(members).map((member) => {
+  // 익명 스터디 기록(C-08)은 다른 멤버 이름을 가립니다(이름순 정렬도 가린 이름 기준).
+  const mask = await loadPersonMask(db, project, actor.userId)
+  const entries: TeamCheckinEntryDto[] = orderMembersByName(members.map(mask)).map((member) => {
     const row = byUser.get(member.userId)
     return {
       member: { userId: member.userId, displayName: member.displayName, handle: member.handle },

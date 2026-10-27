@@ -83,7 +83,8 @@ const updatedAt = () => timestamp('updated_at', { withTimezone: true }).notNull(
 export const userStatus = pgEnum('user_status', ['active', 'suspended', 'deleted'])
 export const contactPolicy = pgEnum('contact_policy', ['closed', 'on_request', 'open'])
 export const semester = pgEnum('semester', ['spring', 'summer', 'fall', 'winter'])
-export const projectKind = pgEnum('project_kind', ['individual', 'team'])
+/** 과제 종류. study는 스터디 방의 기록(C-08, ADR 0026): 스터디 방이 기록을 켜면 만들어지는 내부 과제 공간이고 멤버십은 방에서 파생됩니다. */
+export const projectKind = pgEnum('project_kind', ['individual', 'team', 'study'])
 export const projectLifecycle = pgEnum('project_lifecycle', ['planning', 'active', 'completed', 'archived'])
 export const projectRole = pgEnum('project_role', ['owner', 'editor', 'reviewer', 'viewer'])
 export const membershipStatus = pgEnum('membership_status', ['invited', 'active', 'left', 'removed'])
@@ -239,6 +240,7 @@ export const analyticsEventName = pgEnum('analytics_event_name', [
   'archive_transfer_requested',
   'archive_transfer_completed',
   'course_qa_published',
+  'study_record_enabled',
 ])
 /** 기관 종류(C-01). 지금은 대학만. P2에서 bootcamp 등을 더합니다(SYSTEM_DESIGN §6.7.2 이관 원칙, ADR 0018). */
 export const institutionKind = pgEnum('institution_kind', ['university'])
@@ -608,6 +610,17 @@ export const projects = pgTable(
      */
     retroMode: boolean('retro_mode').notNull().default(false),
     /**
+     * 스터디 기록(kind = study, C-08, ADR 0026)일 때만: 연결된 스터디 방의 지금 이름 표시 방식을 옮겨 둔 값입니다.
+     * 커뮤니티 모듈(기록 켜기)과 worker(이름 표시 방식 변경 적용)만 같은 트랜잭션에서 씁니다. 공개 후보는 만들 때 이 값을 스냅샷에 고정하고,
+     * anonymous면 공개 이름 노출·케이스 스터디(포트폴리오)·공개 프로필 연결을 막습니다. 과제 쪽 모듈은 커뮤니티 테이블을 읽지 않고 이 열만 봅니다.
+     */
+    studyNameMode: communityNameMode('study_name_mode'),
+    /**
+     * 스터디 기록일 때만: 연결된 스터디 방의 정본 학교(학교 무관 방이면 null). C-05 열람 범위와 같게, 기록을 읽으려면 과제 멤버이면서
+     * 이 학교(null이면 아무 학교)의 active 학교 인증이 있어야 합니다(인증을 해제하면 다음 요청부터 404). 방의 학교는 바뀌지 않습니다.
+     */
+    studySchoolId: uuid('study_school_id').references(() => schools.id),
+    /**
      * 엠바고(§9.2). 학기를 연결하거나 바꿀 때마다 max(지금 값, 학기 종료·학기 엠바고)로만 올라가고,
      * 학기를 바꾸거나 떼어도 내려가지 않습니다(옛 학기로 바꿔 피하는 우회 방지). 낮추기는 운영자만(감사 기록).
      * 적용 엠바고는 이 값·지금 학기 종료·명시적 엠바고(embargoes)의 최댓값입니다(@peerchive/domain computeEffectiveEmbargo).
@@ -622,6 +635,8 @@ export const projects = pgTable(
     index('projects_owner_id_idx').on(t.ownerId),
     index('projects_course_term_id_idx').on(t.courseTermId),
     check('projects_version_check', sql`${t.version} >= 1`),
+    check('projects_study_name_mode_check', sql`(${t.kind}::text = 'study') = (${t.studyNameMode} is not null)`),
+    check('projects_study_school_check', sql`${t.studySchoolId} is null or ${t.kind}::text = 'study'`),
   ],
 )
 
@@ -3137,4 +3152,32 @@ export const archiveTransferConsents = pgTable(
     check('archive_transfer_consents_granted_check', sql`${t.status} <> 'granted' or ${t.contentHash} is not null`),
     check('archive_transfer_consents_label_check', sql`${t.displayLabel} is null or char_length(${t.displayLabel}) between 1 and 40`),
   ],
+)
+
+// C-08: 스터디 기록(ADR 0026). 스터디 방(community_spaces)과 내부 과제 공간(projects, kind = study)을 1:1로 잇습니다.
+// 커뮤니티 구역이므로 C-05 경계 검사가 자동으로 덮습니다. 방향은 커뮤니티 → 과제뿐이고, 과제 쪽 테이블은 이 행을 가리키지 않습니다.
+
+/**
+ * 스터디 기록(C-08, SYSTEM_DESIGN §6.7 StudyRecord, PROOFU_EVOLUTION_PLAN §8.9.5·§8.9.8).
+ * - 방장이 기록을 켜면 내부 과제 공간(kind = study)을 만들고 이 행으로 잇습니다. 방·과제 모두 하나씩(unique).
+ * - 과제 멤버십(project_members)은 방 멤버십에서 파생됩니다: 방 멤버십을 바꾸는 같은 트랜잭션에서 커뮤니티 모듈이 다시 계산해 씁니다
+ *   (@peerchive/domain planStudyRecordSync). 과제 쪽의 초대·역할·내보내기·나가기·소유권 이전은 409 `study_managed`.
+ * - 기록을 끄는 경로는 없습니다(공개 사례·동의가 이 과제를 가리킬 수 있으므로). 방이 보관되어도 기록은 남습니다.
+ */
+export const studyRecords = pgTable(
+  'study_records',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    spaceId: uuid('space_id')
+      .notNull()
+      .references(() => communitySpaces.id),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    enabledBy: uuid('enabled_by')
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('study_records_space_id_key').on(t.spaceId), uniqueIndex('study_records_project_id_key').on(t.projectId)],
 )

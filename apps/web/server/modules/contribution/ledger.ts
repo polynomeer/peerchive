@@ -48,7 +48,7 @@ import { type Actor, invalid } from '../errors'
 import { summarize } from '../logs/logs'
 import { claimedDateSchema } from '../logs/payloads'
 import { parseInput } from '../validation'
-import { loadReadableProject } from '../projects/access'
+import { loadPersonMask, loadReadableProject } from '../projects/access'
 import { projectClaimDtos } from './claims'
 import {
   CONTRIBUTION_DISCLAIMER,
@@ -102,7 +102,7 @@ export async function getContribution(
   const inPeriod = (column: Parameters<typeof lt>[0]) =>
     and(sql`${column} >= ${start.toISOString()}::timestamptz`, sql`${column} < ${end.toISOString()}::timestamptz`)
 
-  const [members, logCounts, stuckResolved, tasksDone, uploads, meetings, claimActivity] = await Promise.all([
+  const [rawMembers, logCounts, stuckResolved, tasksDone, uploads, meetings, claimActivity] = await Promise.all([
     db
       .select({
         userId: projectMembers.userId,
@@ -166,6 +166,9 @@ export async function getContribution(
       .innerJoin(roleClaims, eq(roleClaims.id, claimRevisions.claimId))
       .where(and(eq(roleClaims.projectId, project.id), inPeriod(claimRevisions.recordedAt))),
   ])
+  // 익명 스터디 기록(C-08)은 다른 멤버 이름을 가립니다(이름순 정렬도 가린 이름 기준).
+  const mask = await loadPersonMask(db, project, actor.userId)
+  const members = rawMembers.map(mask)
 
   const tally = new Map<string, Omit<LedgerMemberDto, 'member' | 'active' | 'claims'>>()
   const entry = (userId: string) => {
@@ -240,7 +243,7 @@ export async function getContribution(
       (row): UnresolvedStuckDto => ({
         id: row.id,
         summary: summarize('stuck', row.body, row.payload),
-        author: { userId: row.authorId, displayName: row.displayName, handle: row.handle },
+        author: mask({ userId: row.authorId, displayName: row.displayName, handle: row.handle }),
         createdAt: row.createdAt.toISOString(),
         openDays: openDays(row.createdAt, asOf),
       }),

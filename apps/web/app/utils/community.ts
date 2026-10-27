@@ -138,6 +138,10 @@ export const COMMUNITY_ERROR_MESSAGES: Record<string, string> = {
   write_restricted: '이용 제한으로 지금은 글·댓글·공감을 쓸 수 없습니다. 운영 조치 안내에서 사유를 확인하고 이의를 제기할 수 있습니다.',
   moderate_not_allowed: '이 공간의 운영진만 할 수 있습니다.',
   not_space_hidden: '방 운영진이 가린 상태가 아닙니다(이미 되돌렸거나 운영자가 가렸습니다).',
+  // C-08 스터디 기록
+  not_study_room: '스터디 방에서만 기록을 켤 수 있습니다.',
+  already_enabled: '이미 스터디 기록이 켜져 있습니다.',
+  study_managed: '스터디 기록의 멤버는 스터디 방 멤버를 따릅니다. 멤버 관리는 스터디 방에서 하세요.',
   // C-07 모집·지원
   no_recruiting_board: '이 공간에는 모집 게시판이 없습니다. 방장·운영진이 모집 게시판을 더하면 올릴 수 있습니다.',
   team_finding_disabled: '수업에서 팀을 배정하는 과목이라 팀원 찾기를 쓸 수 없습니다(스터디 모집은 됩니다).',

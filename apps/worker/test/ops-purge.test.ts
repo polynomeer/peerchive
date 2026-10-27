@@ -58,6 +58,7 @@ import {
   spaceInvitations,
   spaceMemberships,
   sql,
+  studyRecords,
   usefulnessSignals,
   users,
   weeklyCheckins,
@@ -407,6 +408,53 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect(ledger.map((l) => l.entityKind)).toEqual(expect.arrayContaining(['space_memberships', 'space_invitations', 'official_page_requests', 'spaces_archived']))
       // 공간 행은 가명 처리된 사용자를 가리킨 채 남음
       expect(await count(tx, communitySpaces, eq(communitySpaces.createdBy, U.id))).toBe(2)
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('study records follow the room: the purged owner\'s successor becomes project owner, records stay pseudonymized; a solo record is deleted with its link (C-08)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴스터디장', 'deleted')
+      const M = await user(tx, '스터디멤버')
+      const slug = () => id().replace(/-/g, '').slice(0, 10)
+      const t = (d: number) => new Date(NOW.getTime() - d * DAY)
+      const [room] = await tx.insert(communitySpaces).values({ kind: 'study_room', name: '스터디', slug: slug(), currentNameMode: 'display', joinPolicy: 'invite', discovery: 'unlisted', createdBy: U.id }).returning()
+      const [soloRoom] = await tx.insert(communitySpaces).values({ kind: 'study_room', name: '혼자 스터디', slug: slug(), currentNameMode: 'anonymous', joinPolicy: 'invite', discovery: 'unlisted', createdBy: U.id }).returning()
+      await tx.insert(spaceMemberships).values([
+        { spaceId: room!.id, userId: U.id, role: 'owner', status: 'active', joinedAt: t(30) },
+        { spaceId: room!.id, userId: M.id, role: 'member', status: 'active', joinedAt: t(20) },
+        { spaceId: soloRoom!.id, userId: U.id, role: 'owner', status: 'active', joinedAt: t(10) },
+      ])
+      const [record] = await tx.insert(projects).values({ ownerId: U.id, title: '스터디 기록', kind: 'study', studyNameMode: 'display' }).returning()
+      await tx.insert(projectMembers).values([
+        { projectId: record!.id, userId: U.id, role: 'owner' },
+        { projectId: record!.id, userId: M.id, role: 'editor' },
+      ])
+      const [solo] = await tx.insert(projects).values({ ownerId: U.id, title: '혼자 스터디 기록', kind: 'study', studyNameMode: 'anonymous' }).returning()
+      await tx.insert(projectMembers).values({ projectId: solo!.id, userId: U.id, role: 'owner' })
+      await tx.insert(studyRecords).values([
+        { spaceId: room!.id, projectId: record!.id, enabledBy: U.id },
+        { spaceId: soloRoom!.id, projectId: solo!.id, enabledBy: U.id },
+      ])
+      const kept = await log(tx, record!.id, U.id, '1주차 정리')
+      await log(tx, solo!.id, U.id, '혼자 정리')
+
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ space_owner_transfers: 1, spaces_archived: 1, study_record_syncs: 2, solo_projects: 1 })
+      // 방장 승계(M) → 과제 owner도 M, 탈퇴한 사람의 과제 멤버십은 removed, 기록은 남음(작성자는 가명 처리된 users 행)
+      const [p] = await tx.select().from(projects).where(eq(projects.id, record!.id))
+      expect(p!.ownerId).toBe(M.id)
+      const members = await tx.select().from(projectMembers).where(eq(projectMembers.projectId, record!.id))
+      expect(members.map((m) => [m.userId, m.role, m.status]).sort()).toEqual([[M.id, 'owner', 'active'], [U.id, 'editor', 'removed']].sort())
+      expect(await count(tx, logEntries, eq(logEntries.id, kept.id))).toBe(1)
+      const [pseudo] = await tx.select().from(users).where(eq(users.id, U.id))
+      expect(pseudo!.displayName).toBe(DELETED_DISPLAY_NAME)
+      expect(await count(tx, studyRecords, eq(studyRecords.projectId, record!.id))).toBe(1)
+      // 혼자였던 기록: 과제와 방 연결을 함께 지움(방은 보관됨)
+      expect(await count(tx, projects, eq(projects.id, solo!.id))).toBe(0)
+      expect(await count(tx, studyRecords, eq(studyRecords.spaceId, soloRoom!.id))).toBe(0)
+      const [archived] = await tx.select().from(communitySpaces).where(eq(communitySpaces.id, soloRoom!.id))
+      expect(archived!.status).toBe('archived')
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })

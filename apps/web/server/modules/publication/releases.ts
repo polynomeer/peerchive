@@ -193,7 +193,7 @@ export async function publishCandidate(
       name: 'publication_published',
       actorId: actor.userId,
       projectId: project.id,
-      props: { level: release!.level, releaseNo: nextRelease, republish: event === 'republish' },
+      props: { level: release!.level, releaseNo: nextRelease, republish: event === 'republish', ...(project.kind === 'study' && { origin: 'study' as const }) },
     })
     return { publication: toPublicationSummary(updated!, release!), release: toReleaseSummary(release!), idempotent: false }
   })

@@ -12,7 +12,7 @@ import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, forbidden, gone, notFound } from '../errors'
 import { generateToken, looksLikeToken, sha256Hex } from '../security/tokens'
 import { parseInput } from '../validation'
-import { findMembership, isUuid, loadReadableProject } from './access'
+import { assertNotStudyManaged, findMembership, isUuid, loadReadableProject } from './access'
 import { ASSIGNABLE_ROLES } from './members'
 import type { InvitationDto, InvitationStatus } from '../../../shared/types/api'
 
@@ -64,6 +64,8 @@ export async function createInvitation(
   const input = parseInput(createInvitationSchema, rawInput)
   return db.transaction(async (tx) => {
     const { project, membership } = await loadReadableProject(tx, actor, projectId)
+    // 스터디 기록의 멤버는 스터디 방 초대로만 들어옵니다(C-08).
+    assertNotStudyManaged(project)
     if (!canInvite({ userId: actor.userId }, project, membership, input.role)) throw forbidden()
     return issueInvitationInTx(tx, { projectId: project.id, role: input.role, createdBy: actor.userId }, now)
   })

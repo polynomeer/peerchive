@@ -68,6 +68,8 @@ const project: typeof projects.$inferSelect = {
   courseTermId: '00000000-0000-4000-8000-0000000000c7',
   assignmentBriefId: null,
   retroMode: true,
+  studyNameMode: null,
+  studySchoolId: null,
   embargoUntil: new Date('2026-12-31T14:59:59Z'),
   version: 3,
   createdAt: T,
@@ -376,6 +378,18 @@ describe('buildPublicSnapshot (whitelist)', () => {
     }
     // manifest는 비공개(후보에만 저장)지만 이메일·메모·저장소 키는 여기에도 없습니다.
     expect(JSON.stringify(manifest)).not.toMatch(/SENTINEL_/)
+  })
+
+  it('C-08: only study snapshots carry studyNameMode (team snapshots keep the old key set, so old manifest hashes do not change)', () => {
+    expect(snapshot.kind).toBe('team')
+    expect('studyNameMode' in snapshot).toBe(false)
+    const study = buildPublicSnapshot(source({ project: { ...project, kind: 'study', studyNameMode: 'anonymous' } }))
+    expect(study.kind).toBe('study')
+    expect(study.studyNameMode).toBe('anonymous')
+    const display = buildPublicSnapshot(source({ project: { ...project, kind: 'study', studyNameMode: 'display' } }))
+    expect(display.studyNameMode).toBe('display')
+    // 방식만 다르면 manifest 다이제스트도 달라집니다(동의는 방식까지 포함한 내용에 묶임).
+    expect(JSON.stringify(study)).not.toBe(JSON.stringify(display))
   })
 
   it('maps members to stable pseudonymous keys; anonymous members get "팀원 A" and no log authorship', () => {

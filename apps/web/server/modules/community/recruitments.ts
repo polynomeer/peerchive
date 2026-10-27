@@ -49,6 +49,7 @@ import {
   roomNameModeFor,
   sanitizeRecruitmentNoticePayload,
   studyRoomNameFor,
+  canLinkReleaseToPortfolio,
 } from '@peerchive/domain'
 import {
   and,
@@ -273,10 +274,13 @@ async function liveAttachments(db: DbExecutor, applicantId: string, handle: stri
   return { profile, cases }
 }
 
-/** 지원자가 active 멤버인 과제의, 지금 제공 중인 공개 사례. 아니면 null. */
+/**
+ * 지원자가 active 멤버인 과제의, 지금 제공 중인 공개 사례. 아니면 null.
+ * 익명 스터디 방의 기록(C-08, ADR 0026)은 사람과 연결하지 않으므로 첨부할 수 없고(not_yours와 같은 응답), 이미 붙인 것도 읽을 때 빠집니다.
+ */
 async function ownServedCase(db: DbExecutor, userId: string, slug: string, now: Date): Promise<{ slug: string; title: string } | null> {
   const served = await loadServedRelease(db, slug, now)
-  if (!served) return null
+  if (!served || !canLinkReleaseToPortfolio(served.snapshot)) return null
   const [m] = await db
     .select({ userId: projectMembers.userId })
     .from(projectMembers)

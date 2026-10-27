@@ -8,6 +8,7 @@
  *   방장에게 예약·취소(7일 뒤 적용, 멤버 전원에게 알림).
  * - 방 운영(C-06, 방장·admin·moderator): 방 운영진이 가린 글·댓글, 제재 요청과 상태(제재가 있었는지만), 이 방 범위 쓰기 제한 개수.
  *   누구에게 무엇이 내려졌는지는 보이지 않습니다.
+ * - 스터디 방(C-08): "게시판"·"기록" 탭. 기록 탭은 스터디 기록(빌드 로그·마일스톤·할 일·파일, StudyRecordSection).
  */
 import type {
   BoardKind,
@@ -45,6 +46,16 @@ function fail(e: unknown) {
 }
 
 const isMember = computed(() => space.value?.access === 'member')
+// 스터디 방의 탭(C-08). 주소의 #record로 기록 탭을 바로 엽니다.
+const tab = ref<'boards' | 'record'>('boards')
+const isStudyRoom = computed(() => space.value?.kind === 'study_room')
+onMounted(() => {
+  if (window.location.hash === '#record') tab.value = 'record'
+})
+function selectTab(next: 'boards' | 'record') {
+  tab.value = next
+  history.replaceState(history.state, '', next === 'record' ? '#record' : window.location.pathname + window.location.search)
+}
 const perms = computed(() => space.value?.permissions)
 const isManager = computed(() => !!perms.value && (perms.value.reviewRequests || perms.value.removeMembers))
 
@@ -339,7 +350,34 @@ const isMe = (m: SpaceMemberDto) => m.userId === me.value?.id
       </template>
 
       <template v-else>
-        <section aria-labelledby="boards">
+        <div v-if="isStudyRoom" class="tabs actions" role="tablist" aria-label="스터디 방 보기">
+          <button
+            id="tab-boards"
+            type="button"
+            role="tab"
+            :class="tab === 'boards' ? '' : 'secondary'"
+            :aria-selected="tab === 'boards'"
+            aria-controls="panel-boards"
+            @click="selectTab('boards')"
+          >
+            게시판
+          </button>
+          <button
+            id="tab-record"
+            type="button"
+            role="tab"
+            :class="tab === 'record' ? '' : 'secondary'"
+            :aria-selected="tab === 'record'"
+            aria-controls="panel-record"
+            @click="selectTab('record')"
+          >
+            기록
+          </button>
+        </div>
+        <div v-if="isStudyRoom && tab === 'record'" id="panel-record" role="tabpanel" aria-labelledby="tab-record">
+          <StudyRecordSection :slug="space.slug" :me-id="me?.id ?? null" />
+        </div>
+        <section v-show="!isStudyRoom || tab === 'boards'" id="panel-boards" :role="isStudyRoom ? 'tabpanel' : undefined" :aria-labelledby="isStudyRoom ? 'tab-boards' : 'boards'">
           <h2 id="boards">게시판</h2>
           <ul class="plain hub-list">
             <li v-for="b in space.boards" :key="b.id" class="hub-card">

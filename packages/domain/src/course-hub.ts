@@ -192,7 +192,7 @@ export interface HubSnapshotMilestone {
 export interface HubSnapshot {
   title: string
   summary: string
-  kind: 'individual' | 'team'
+  kind: 'individual' | 'team' | 'study'
   retrospective: boolean
   members: ReadonlyArray<unknown>
   milestones: ReadonlyArray<HubSnapshotMilestone>

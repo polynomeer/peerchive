@@ -190,7 +190,7 @@ function toCase(release: ServableRelease, forks: number): CourseHubCaseDto {
     termLabel: release.termLabel,
     level: release.level,
     kind: s.kind,
-    teamSize: s.kind === 'team' ? s.members.length : null,
+    teamSize: s.kind !== 'individual' ? s.members.length : null,
     milestoneCount: s.milestones.length,
     stuckCount: s.logs.filter((l) => l.tag === 'stuck').length,
     retrospective: s.retrospective,

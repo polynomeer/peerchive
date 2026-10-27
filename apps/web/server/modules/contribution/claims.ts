@@ -60,7 +60,7 @@ import { contentUrlFor } from '../artifacts/artifacts'
 import { type Actor, ServiceError, conflict, forbidden, invalid, notFound } from '../errors'
 import { summarize } from '../logs/logs'
 import { parseInput } from '../validation'
-import { type ProjectRow, isUuid, loadReadableProject } from '../projects/access'
+import { type ProjectRow, isUuid, loadPersonMask, loadReadableProject } from '../projects/access'
 import type {
   ClaimDto,
   ClaimEvidenceDto,
@@ -359,7 +359,12 @@ async function toClaimDtos(
   rows: SelectedClaim[],
 ): Promise<ClaimDto[]> {
   const revisionIds = rows.map((row) => row.revision.id)
-  const [evidence, loaded] = await Promise.all([evidenceByRevision(db, revisionIds), endorsementsByRevision(db, revisionIds)])
+  const [evidence, loaded, mask] = await Promise.all([
+    evidenceByRevision(db, revisionIds),
+    endorsementsByRevision(db, revisionIds),
+    // 익명 스터디 기록(C-08)은 다른 멤버 이름을 가립니다.
+    loadPersonMask(db, project, actor.userId),
+  ])
   const viewer = { userId: actor.userId }
   return rows.map(({ claim, revision, displayName, handle, memberStatus }) => {
     const domainClaim = {
@@ -373,7 +378,7 @@ async function toClaimDtos(
     return {
       id: claim.id,
       projectId: claim.projectId,
-      author: { userId: claim.userId, displayName, handle },
+      author: mask({ userId: claim.userId, displayName, handle }),
       authorActive: memberStatus === 'active',
       revisionId: revision.id,
       revisionNo: revision.revisionNo,
@@ -382,9 +387,9 @@ async function toClaimDtos(
       text: revision.text,
       createdAt: claim.createdAt.toISOString(),
       recordedAt: revision.recordedAt.toISOString(),
-      evidence: evidence.get(revision.id) ?? [],
+      evidence: (evidence.get(revision.id) ?? []).map((e) => (e.kind === 'log' ? { ...e, author: mask(e.author) } : e)),
       // 자기 확인은 저장되지 않지만, 혹시 있더라도 보여 주지 않습니다(판정도 무시함).
-      endorsements: own.filter((e) => e.endorserId !== claim.userId).map((e) => e.dto),
+      endorsements: own.filter((e) => e.endorserId !== claim.userId).map((e) => ({ ...e.dto, endorser: mask(e.dto.endorser) })),
       ...summary,
       canRevise: canReviseClaim(viewer, project, membership, claim),
       canEndorse: canEndorse(viewer, project, membership, claim),

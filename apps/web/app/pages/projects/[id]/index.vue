@@ -15,11 +15,14 @@ const { data: members, refresh: refreshMembers } = await useFetch<MemberDto[]>(
   { default: () => [] },
 )
 const isOwner = computed(() => project.value?.myRole === 'owner')
+// 스터디 기록(C-08): 멤버는 스터디 방에서 파생되므로 이 화면에서 초대·역할·나가기·소유권 이전을 하지 않습니다.
+const isStudy = computed(() => project.value?.kind === 'study')
+const manageMembers = computed(() => isOwner.value && !isStudy.value)
 const canEdit = computed(() => project.value?.myRole === 'owner' || project.value?.myRole === 'editor')
 
 const { data: invitations, refresh: refreshInvitations } = await useFetch<InvitationDto[]>(
   () => `/api/v1/projects/${id.value}/invitations`,
-  { default: () => [], immediate: isOwner.value, watch: false },
+  { default: () => [], immediate: isOwner.value && project.value?.kind !== 'study', watch: false },
 )
 
 useHead({ title: () => (project.value ? `${project.value.title} — Peerchive` : '과제 — Peerchive') })
@@ -28,7 +31,7 @@ const notice = ref<{ kind: 'ok' | 'error'; text: string } | null>(null)
 const say = (kind: 'ok' | 'error', text: string) => (notice.value = { kind, text })
 
 async function reloadAll() {
-  await Promise.all([refreshProject(), refreshMembers(), isOwner.value ? refreshInvitations() : Promise.resolve()])
+  await Promise.all([refreshProject(), refreshMembers(), manageMembers.value ? refreshInvitations() : Promise.resolve()])
 }
 
 // ── 기본 정보 수정 (낙관적 동시성) ──
@@ -237,14 +240,21 @@ const formatDate = (iso: string) => new Date(iso).toLocaleString('ko-KR', { date
       <h1>{{ project.title }}</h1>
       <p class="actions">
         <span class="badge private">🔒 팀만 보기</span>
+        <span v-if="isStudy" class="badge">스터디 기록</span>
         <span v-if="retro" class="badge retro">사후 작성</span>
         <span v-if="embargoText" class="badge embargo">{{ embargoText }}</span>
-        <span class="muted">{{ project.kind === 'team' ? '팀 과제' : '개인 과제' }} · 내 역할: {{ ROLE_LABELS[project.myRole] }}</span>
+        <span class="muted">{{ project.kind === 'study' ? '스터디 기록' : project.kind === 'team' ? '팀 과제' : '개인 과제' }} · 내 역할: {{ ROLE_LABELS[project.myRole] }}</span>
       </p>
       <p class="actions">
         <NuxtLink :to="`/projects/${project.id}/publish`">공개 준비(후보·점검·미리보기·동의)</NuxtLink>
       </p>
 
+      <p v-if="isStudy" class="hint">
+        스터디 방에서 켠 기록입니다. 멤버는 스터디 방 멤버를 그대로 따르고(방장은 운영 책임자, 다른 멤버는 편집자), 멤버 관리는 스터디 방에서 합니다.
+        <template v-if="project.studyNameMode === 'anonymous'">
+          익명 스터디 방이라 다른 멤버는 ‘스터디 멤버 N’으로 보이고, 공개는 모두 익명으로만 할 수 있으며 포트폴리오에는 연결할 수 없습니다.
+        </template>
+      </p>
       <p v-if="notice" :class="['notice', notice.kind]" :role="notice.kind === 'error' ? 'alert' : 'status'">
         {{ notice.text }}
       </p>
@@ -329,7 +339,7 @@ const formatDate = (iso: string) => new Date(iso).toLocaleString('ko-KR', { date
               <span v-if="m.userId === me?.id" class="muted"> (나)</span>
             </span>
             <span class="actions">
-              <template v-if="isOwner && m.role !== 'owner'">
+              <template v-if="manageMembers && m.role !== 'owner'">
                 <label :for="`role-${m.userId}`" class="muted">역할</label>
                 <select :id="`role-${m.userId}`" :value="m.role" @change="changeRole(m, ($event.target as HTMLSelectElement).value)">
                   <option v-for="r in ASSIGNABLE_ROLES" :key="r" :value="r">{{ ROLE_LABELS[r] }}</option>
@@ -342,7 +352,7 @@ const formatDate = (iso: string) => new Date(iso).toLocaleString('ko-KR', { date
         </ul>
       </section>
 
-      <section v-if="isOwner" class="card" aria-labelledby="invite-heading">
+      <section v-if="manageMembers" class="card" aria-labelledby="invite-heading">
         <h2 id="invite-heading">멤버 초대</h2>
         <p class="hint">초대 링크는 7일 동안 한 번만 쓸 수 있습니다. 링크는 지금 한 번만 표시되니 바로 전달하세요.</p>
         <form class="actions" @submit.prevent="createInvite">
@@ -371,7 +381,7 @@ const formatDate = (iso: string) => new Date(iso).toLocaleString('ko-KR', { date
         </ul>
       </section>
 
-      <section class="card" aria-labelledby="leave-heading">
+      <section v-if="!isStudy" class="card" aria-labelledby="leave-heading">
         <h2 id="leave-heading">{{ isOwner ? '소유권 이전' : '과제 나가기' }}</h2>
         <form v-if="isOwner" class="stack" @submit.prevent="transfer">
           <p class="hint">운영 책임자는 바로 나갈 수 없습니다. 다른 멤버에게 소유권을 넘기면 편집자가 되고, 그 뒤에 나갈 수 있습니다.</p>

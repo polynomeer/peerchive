@@ -59,6 +59,14 @@ export const SCOPE_LABELS: Record<string, string> = {
   claims: '내 역할 선언',
   artifacts: '내가 올린 파일',
   title_summary: '공개 제목·요약 작성',
+  study_member: '스터디 방 멤버(스터디 기록은 멤버 모두의 동의가 필요)',
+}
+
+/** 공개 사례의 종류 표시(C-08: 스터디 기록). */
+export const PUBLIC_KIND_LABELS: Record<'individual' | 'team' | 'study', string> = {
+  individual: '개인 과제',
+  team: '팀 과제',
+  study: '스터디 기록',
 }
 
 export const SOURCE_LABELS: Record<LogSource, string> = {
