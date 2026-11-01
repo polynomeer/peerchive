@@ -4,6 +4,7 @@
  * - 공개 색인 설정(`PEERCHIVE_PUBLIC_INDEXING`, ADR 0012)이 꺼져 있으면(파일럿 기본) 전부 막습니다(`Disallow: /`).
  * - 켜져 있으면 첫 화면(`/`)·공개 페이지(`/p/`·`/c/`·`/u/`·`/search`)와 공개 조회 API(`/api/v1/public/`)만 열고(나머지는 기본 차단), 커뮤니티·개인 화면·나머지 API는 막습니다.
  *   `/c/`(과목 허브)는 끝 슬래시를 붙여 `/community`와 겹치지 않게 합니다.
+ * - 제한 공유 링크(`/s/`, `/api/v1/public/share/`, E-07)는 설정과 무관하게 막습니다(더 긴 Disallow가 `/api/v1/public/` Allow보다 우선).
  * - 사이트맵은 없고 `Sitemap:` 줄도 넣지 않습니다. 사이트맵을 만들면 커뮤니티 경로를 넣지 않아야 합니다(test/community-visibility가 검사).
  * - robots.txt는 보조 장치입니다. 실제 차단은 로그인·정책 함수이고, 커뮤니티 응답은 설정과 무관하게 항상 noindex입니다.
  * - 요청마다 환경 변수를 읽습니다(공개 조회 X-Robots-Tag와 같은 설정, 재시작 없이 테스트 가능).
@@ -29,6 +30,9 @@ export const ROBOTS_DISALLOWED_PATHS = [
   '/login',
   '/onboarding',
   '/senior-notes',
+  // E-07(ADR 0051): 제한 공유 링크 페이지와 그 조회 API. 공개 색인을 켜도 늘 막고, 응답 자체도 늘 noindex입니다.
+  '/s/',
+  '/api/v1/public/share/',
 ] as const
 
 /** 공개 색인을 허용할 때만 여는 공개 경로(ADR 0012·0013·0014). */

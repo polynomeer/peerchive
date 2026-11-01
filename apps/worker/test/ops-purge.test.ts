@@ -96,6 +96,7 @@ import {
   stuckQaPosts,
   stuckQaThreads,
   interviewPrepEntries,
+  portfolioShareLinks,
   conceptTags,
   courseCurators,
   conceptTagMergeProposals,
@@ -851,6 +852,31 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect(counts).toMatchObject({ interview_prep_entries: 2 })
       expect(await count(tx, interviewPrepEntries, eq(interviewPrepEntries.userId, U.id))).toBe(0)
       expect(await count(tx, interviewPrepEntries, eq(interviewPrepEntries.userId, M.id))).toBe(1)
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('deletes the purged user\'s share links before their editions and keeps others (E-07)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴공유자', 'deleted')
+      const M = await user(tx, '남는공유자')
+      const hash = () => id().replace(/-/g, '').repeat(2)
+      const editionIds: string[] = []
+      for (const u of [U, M]) {
+        const [persona] = await tx.insert(personas).values({ userId: u.id, kind: 'real', handle: `e07-${id().slice(0, 8)}` }).returning()
+        const [edition] = await tx.insert(portfolioEditions).values({ userId: u.id, personaId: persona!.id, version: 1 }).returning()
+        editionIds.push(edition!.id)
+      }
+      const later = new Date(NOW.getTime() + 86_400_000)
+      await tx.insert(portfolioShareLinks).values([
+        { userId: U.id, editionId: editionIds[0]!, tokenHash: hash(), label: '채용 담당', expiresAt: later, createdAt: NOW, viewCount: 3 },
+        { userId: U.id, editionId: editionIds[0]!, tokenHash: hash(), expiresAt: later, createdAt: NOW, revokedAt: NOW },
+        { userId: M.id, editionId: editionIds[1]!, tokenHash: hash(), expiresAt: later, createdAt: NOW },
+      ])
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ portfolio_share_links: 2, portfolio_editions: 1 })
+      expect(await count(tx, portfolioShareLinks, eq(portfolioShareLinks.userId, U.id))).toBe(0)
+      expect(await count(tx, portfolioShareLinks, eq(portfolioShareLinks.userId, M.id))).toBe(1)
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })

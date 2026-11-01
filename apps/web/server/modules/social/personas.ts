@@ -56,6 +56,19 @@ export async function resolvePublicPersona(db: DbExecutor, rawHandle: unknown): 
   return { persona: row.persona, profile: row.profile, displayName: personaDisplayName(row.persona, row.accountName) }
 }
 
+/** 페르소나 id로 공개 페르소나를 찾습니다(E-07 제한 공유 링크, ADR 0051). 조건은 handle 조회와 같고, 없거나 비공개 상태면 404. */
+export async function resolvePublicPersonaById(db: DbExecutor, personaId: string): Promise<PublicPersona> {
+  const [row] = await db
+    .select({ persona: personas, profile: profiles, accountName: users.displayName })
+    .from(personas)
+    .innerJoin(profiles, eq(profiles.personaId, personas.id))
+    .innerJoin(users, eq(users.id, personas.userId))
+    .where(and(eq(personas.id, personaId), publiclyVisible()))
+    .limit(1)
+  if (!row) throw notFound()
+  return { persona: row.persona, profile: row.profile, displayName: personaDisplayName(row.persona, row.accountName) }
+}
+
 /**
  * 공개 DTO에 붙일 상대 페르소나 링크. `canSeeIdentityLink`가 false이면 상대 페르소나를 조회하지 않고 null입니다.
  * 켜져 있어도 상대가 지금 공개 상태가 아니면(숨김·비활성) null — 404가 날 링크를 걸지 않습니다.

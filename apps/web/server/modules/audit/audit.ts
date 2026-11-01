@@ -174,6 +174,10 @@ export type AuditAction =
   | 'stuck_qa.author_lookup'
   // E-06(ADR 0050): 면접 준비 팩 질문의 공개 선택 켜고 끄기(케이스 id·질문 키·참거짓). 답변 메모 글·메모 저장은 기록하지 않습니다.
   | 'interview_prep.shown_toggle'
+  // E-07(ADR 0051): 제한 공유 링크 만들기·철회·지우기. 링크 id(대상)와 판 id·만료 일수·이름 유무만. 토큰·해시·이름 글·열람 정보는 넣지 않습니다.
+  | 'share_link.create'
+  | 'share_link.revoke'
+  | 'share_link.delete'
   // A-06(ADR 0043): 수료 회고 쓰기·철회. 회고 id와 방식·넓혀졌는지 같은 플래그만(기관·기수·글 없음). 익명 회고는 행위자 없이.
   | 'completion_retro.create'
   | 'completion_retro.withdraw'
@@ -253,6 +257,7 @@ export async function recordAudit(
       | 'stuck_qa_card'
       | 'stuck_qa_post'
       | 'interview_prep_entry'
+      | 'share_link'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

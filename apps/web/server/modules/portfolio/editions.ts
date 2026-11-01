@@ -339,18 +339,20 @@ export async function loadCurrentEditionModel(db: DbExecutor, personaId: string)
     .where(and(eq(portfolioEditions.personaId, personaId), eq(portfolioEditions.status, 'current')))
     .limit(1)
   if (!edition) return null
+  return { edition, model: await editionModelOf(db, edition) }
+}
+
+/** 저장된 판 행의 모델(대표 케이스 순서·역량·근거). 공개 프로필(지금 판)과 제한 공유 링크(E-07, 링크가 가리키는 판)가 씁니다. */
+export async function editionModelOf(db: DbExecutor, edition: EditionRow): Promise<EditionModel> {
   const items = await db.select().from(portfolioItems).where(eq(portfolioItems.editionId, edition.id)).orderBy(asc(portfolioItems.position))
   const evidence = await db.select().from(competencyEvidence).where(eq(competencyEvidence.editionId, edition.id))
   return {
-    edition,
-    model: {
-      userId: edition.userId,
-      headline: edition.headline,
-      featured: items.map((i) => i.caseStudyId),
-      competencies: (edition.competencies as Array<{ label: string; preset: string | null }>).map((c) => ({ label: c.label, preset: c.preset ?? null })),
-      // 근거는 그 케이스의 고정 release 버전을 가리킵니다(케이스가 다른 release로 바뀌는 일은 없음).
-      evidence: evidence.map((e) => ({ competencyIndex: e.competencyIndex, caseStudyId: e.caseStudyId, kind: e.evidenceKind as CaseCitation['kind'], key: e.evidenceKey })),
-      skillsDeclared: edition.skillsDeclared,
-    },
+    userId: edition.userId,
+    headline: edition.headline,
+    featured: items.map((i) => i.caseStudyId),
+    competencies: (edition.competencies as Array<{ label: string; preset: string | null }>).map((c) => ({ label: c.label, preset: c.preset ?? null })),
+    // 근거는 그 케이스의 고정 release 버전을 가리킵니다(케이스가 다른 release로 바뀌는 일은 없음).
+    evidence: evidence.map((e) => ({ competencyIndex: e.competencyIndex, caseStudyId: e.caseStudyId, kind: e.evidenceKind as CaseCitation['kind'], key: e.evidenceKey })),
+    skillsDeclared: edition.skillsDeclared,
   }
 }

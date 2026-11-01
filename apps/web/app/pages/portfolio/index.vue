@@ -4,7 +4,7 @@
  * - 케이스 스터디 만들기: 내가 팀원으로 들어 있는 지금 게시 중인 공개 사례 → 지원 직무 고르기 → 템플릿 초안(모든 문장에 출처).
  *   익명으로 나오는 사례는 내 프로필과 연결된다는 경고를 보고 확인해야 만들 수 있습니다.
  * - 내 케이스 스터디: 상태(초안·게시·볼 수 없음), 출처 없는 문장 수, 원본이 바뀌면 "새 버전으로 다시 만들기".
- * - 포트폴리오 판과 내보내기(공개 프로필·인쇄 보기·README 카드).
+ * - 포트폴리오 판과 내보내기(공개 프로필·인쇄 보기·README 카드). 지금 판의 제한 공유 링크(E-07, ADR 0051)는 `ShareLinksSection`.
  */
 import type { CaseJobTarget, CaseStudyDto, CaseStudySourceDto, CaseStudySummaryDto, PortfolioEditionDto } from '~~/shared/types/api'
 
@@ -122,6 +122,7 @@ const currentEdition = computed(() => realEditions.value.find((e) => e.current) 
           <li v-for="e in realEditions.filter((x) => !x.current)" :key="e.id">v{{ e.version }} · {{ formatDateTime(e.createdAt) }} · {{ e.featured.map((f) => f.title).join(', ') || '대표 케이스 없음' }}</li>
         </ul>
       </details>
+      <ShareLinksSection :edition-id="currentEdition?.id ?? null" :edition-version="currentEdition?.version ?? null" />
     </section>
 
     <section v-if="me?.profile" aria-labelledby="export-heading">

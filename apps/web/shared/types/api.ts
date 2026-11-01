@@ -1883,6 +1883,48 @@ export interface PublicPortfolioProfileDto extends PortfolioViewDto {
   socialLinks: PublicSocialLinkDto[]
 }
 
+// ── 제한 공유 링크 (E-07, ADR 0051) ──────────────────────────────────────
+
+/** active: 열 수 있음 / revoked: 철회 / expired: 만료 / superseded: 새 판이 생겨 그 판이 지금 판이 아님(열면 404). */
+export type ShareLinkStatus = 'active' | 'revoked' | 'expired' | 'superseded'
+
+/** 본인 공유 링크 목록 항목. 원문 토큰은 만든 응답(`CreatedShareLinkDto`)에서 한 번만 줍니다. 열람은 횟수만 셉니다. */
+export interface ShareLinkDto {
+  id: string
+  edition: { id: string; version: number; personaKind: PersonaKind; personaHandle: string }
+  label: string | null
+  status: ShareLinkStatus
+  expiresAt: string
+  revokedAt: string | null
+  viewCount: number
+  createdAt: string
+}
+
+export interface CreatedShareLinkDto extends ShareLinkDto {
+  /** 원문 토큰(서버는 해시만 저장). 지금만 볼 수 있습니다. */
+  token: string
+  /** 공유 페이지 경로(`/s/<token>`). */
+  path: string
+}
+
+/**
+ * 공유 페이지 응답(`GET /api/v1/public/share/:token`). 그 판의 포트폴리오 보기와 프로필 기본 필드만 — 공개 프로필보다 좁습니다:
+ * 타임라인·후배 기여·과제 수행 목록·팔로우 수·소셜 링크·학교 인증 배지·상대 페르소나 링크(S-01)는 싣지 않습니다.
+ */
+export interface SharedPortfolioDto extends PortfolioViewDto {
+  handle: string
+  displayName: string
+  kind: PersonaKind
+  jobTargets: string[]
+  schoolLabel: string | null
+  gradTerm: string | null
+  contactText: string
+  openToWork: boolean
+  edition: { version: number; createdAt: string }
+  /** 링크 만료 시각(보는 사람에게 안내). */
+  expiresAt: string
+}
+
 // ── 학교 메일 인증 (C-01, ADR 0018) ──────────────────────────────────────
 
 export type AffiliationStanding = 'student' | 'alumni'

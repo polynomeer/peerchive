@@ -2,9 +2,11 @@
  * 공개 프로필·README 카드 HTTP handler (T-14, ADR 0012·0014). 공개 사례와 같은 공통 handler를 써서 no-store·nosniff·no-referrer·
  * noindex(기본)·운영 스위치(503)·404 정규화를 똑같이 적용합니다. 세션 미들웨어가 공개 GET을 건너뛰므로 쿠키를 읽거나 쓰지 않습니다.
  */
-import { getRouterParam, type EventHandler } from 'h3'
+import { createError, getRouterParam, setResponseHeader, type EventHandler, type H3Event } from 'h3'
 import { createPublicJsonHandler, createPublicTextHandler, type PublicHandlerDeps } from '../publication/public-http'
+import { hitRateLimit } from '../security/rate-limit'
 import { formatReadmeCard, getPublicPortfolioProfile } from './public-profile'
+import { SHARE_LINK_VIEW_RATE_LIMIT, getSharedPortfolio } from './share-links'
 
 /** GET /api/v1/public/profiles/:handle */
 export function createPublicProfileHandler(deps: PublicHandlerDeps): EventHandler {
@@ -21,4 +23,27 @@ export function createReadmeCardHandler(deps: ReadmeCardHandlerDeps): EventHandl
   return createPublicTextHandler(deps, 'text/markdown; charset=utf-8', async (db, event, now) =>
     formatReadmeCard(await getPublicPortfolioProfile(db, getRouterParam(event, 'handle'), now), deps.getOrigin()),
   )
+}
+
+export interface SharedPortfolioHandlerDeps extends PublicHandlerDeps {
+  /**
+   * 열람 한도 키(요청 IP). null이면 한도를 세지 않습니다 — 공유 페이지 SSR이 같은 프로세스 안에서 부르는 요청으로, 바깥 페이지 요청이
+   * 이미 IP마다 셌습니다(server/middleware/04.share-page.ts).
+   */
+  clientKey: (event: H3Event) => string | null
+}
+
+/**
+ * GET /api/v1/public/share/:token — 제한 공유 링크(E-07, ADR 0051). 공개 조회 공통 handler(no-store·nosniff·no-referrer·운영 스위치·404 정규화)
+ * 위에 **설정과 무관하게 늘 noindex**, IP마다 열람 한도(429)를 더합니다. 세션을 읽지 않습니다(공개 GET).
+ */
+export function createSharedPortfolioHandler(deps: SharedPortfolioHandlerDeps): EventHandler {
+  return createPublicJsonHandler(deps, async (db, event, now) => {
+    setResponseHeader(event, 'x-robots-tag', 'noindex, nofollow')
+    const key = deps.clientKey(event)
+    if (key !== null && !(await hitRateLimit(db, 'share_link_view', key, SHARE_LINK_VIEW_RATE_LIMIT, now))) {
+      throw createError({ statusCode: 429, statusMessage: 'Too Many Requests', data: { code: 'rate_limited' } })
+    }
+    return getSharedPortfolio(db, getRouterParam(event, 'token'), now)
+  })
 }

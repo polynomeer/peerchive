@@ -101,3 +101,11 @@ export function requestIp(event: H3Event): string {
     proxies: useTrustedProxies(),
   })
 }
+
+/**
+ * 같은 프로세스 안의 요청인지(SSR이 `useRequestFetch`·`$fetch`로 부른 API). nitro의 로컬 fetch는 unenv 가짜 요청 객체(`__unenv__`)를 쓰고,
+ * 바깥에서 온 요청은 Node IncomingMessage라 이 표시를 만들 수 없습니다. 바깥 페이지 요청에서 이미 센 요청 한도를 다시 세지 않을 때만 씁니다(E-07).
+ */
+export function isInProcessRequest(event: H3Event): boolean {
+  return '__unenv__' in event.node.req
+}

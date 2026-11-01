@@ -2833,6 +2833,41 @@ export const interviewPrepEntries = pgTable(
   ],
 )
 
+/**
+ * 포트폴리오 판 제한 공유 링크(E-07, SYSTEM_DESIGN §6.5 ShareGrant·§8 restricted-share, ADR 0051).
+ * - 판 하나를 가리키는 bearer 토큰. **원문 토큰은 저장하지 않고** SHA-256 hex만 둡니다(만든 응답에서 한 번만 원문을 돌려줌).
+ * - 만료(최대 90일)·철회(revoked_at)·열람 횟수(view_count)만 기록합니다. 보는 사람의 IP·브라우저·시각은 남기지 않습니다.
+ * - 공유 페이지는 요청마다 판·페르소나·케이스 공개 상태를 다시 판정하므로 이 행이 공개 범위를 넓히지 않습니다.
+ * 탈퇴 정리 때 그 사람의 행을 판보다 먼저 지웁니다.
+ */
+export const portfolioShareLinks = pgTable(
+  'portfolio_share_links',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    editionId: uuid('edition_id')
+      .notNull()
+      .references(() => portfolioEditions.id),
+    tokenHash: text('token_hash').notNull(),
+    label: text('label'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    viewCount: integer('view_count').notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('portfolio_share_links_token_hash_key').on(t.tokenHash),
+    index('portfolio_share_links_user_id_idx').on(t.userId),
+    index('portfolio_share_links_edition_id_idx').on(t.editionId),
+    check('portfolio_share_links_token_hash_check', sql`${t.tokenHash} ~ '^[0-9a-f]{64}$'`),
+    check('portfolio_share_links_label_check', sql`${t.label} is null or char_length(${t.label}) between 1 and 60`),
+    check('portfolio_share_links_view_count_check', sql`${t.viewCount} >= 0`),
+    check('portfolio_share_links_expiry_check', sql`${t.expiresAt} > ${t.createdAt}`),
+  ],
+)
+
 // ── 신고·운영 조치 (§6.6 Report·AuditEvent, §7.2 restricted, §8 운영 예외, T-15, ADR 0015) ─────────────
 
 /**
