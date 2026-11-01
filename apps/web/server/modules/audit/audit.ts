@@ -178,6 +178,12 @@ export type AuditAction =
   | 'share_link.create'
   | 'share_link.revoke'
   | 'share_link.delete'
+  // E-10(ADR 0054): 로그 피드백 댓글 쓰기·수정·지우기(작성자)와 숨김·해제(owner). 댓글 id(대상)와 로그 id만. 본문은 넣지 않습니다.
+  | 'log_comment.create'
+  | 'log_comment.edit'
+  | 'log_comment.delete'
+  | 'log_comment.hide'
+  | 'log_comment.unhide'
   // A-06(ADR 0043): 수료 회고 쓰기·철회. 회고 id와 방식·넓혀졌는지 같은 플래그만(기관·기수·글 없음). 익명 회고는 행위자 없이.
   | 'completion_retro.create'
   | 'completion_retro.withdraw'
@@ -258,6 +264,7 @@ export async function recordAudit(
       | 'stuck_qa_post'
       | 'interview_prep_entry'
       | 'share_link'
+      | 'log_comment'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

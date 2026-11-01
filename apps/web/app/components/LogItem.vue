@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 타임라인의 로그 한 건: 태그(텍스트 라벨)·작성자·수행일(자기 기입)/기록 시각·구조화 필드·링크·막힘↔해결 연결,
- * 사후 작성 표시·출처 할 일(T-07), 수정 이력(rN)과 작성자용 수정 폼. 수정은 expectedRevision을 보내고 409면 최신 내용을 다시 불러옵니다.
+ * 사후 작성 표시·출처 할 일(T-07), 수정 이력(rN)과 작성자용 수정 폼, 팀 안 피드백 댓글(E-10, LogComments). 수정은 expectedRevision을 보내고 409면 최신 내용을 다시 불러옵니다.
  */
 import type {
   DecisionPayload,
@@ -242,6 +242,8 @@ async function saveEdit() {
         </li>
       </ol>
     </div>
+
+    <LogComments :log-id="log.id" :count="log.commentCount" :current-revision="log.revisionNo" />
 
     <form v-if="editing" class="stack edit-form" novalidate @submit.prevent="saveEdit">
       <p class="hint">태그({{ LOG_TAG_LABELS[log.tag] }})는 바꿀 수 없습니다. 저장하면 새 버전(r{{ baseRevision + 1 }})이 생기고 이전 내용은 이력에 남습니다.</p>

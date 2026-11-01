@@ -397,6 +397,24 @@ ol.plain {
   margin: 0.25rem 0;
   padding-left: 1.1rem;
 }
+/* 로그 피드백 댓글(E-10) */
+.log-comments {
+  margin-top: 0.5rem;
+}
+.comment-list {
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+.comment-item {
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.comment-item p {
+  margin: 0.15rem 0;
+}
+.comment-item textarea {
+  width: 100%;
+}
 .edit-form {
   margin-top: 0.75rem;
   padding-top: 0.75rem;

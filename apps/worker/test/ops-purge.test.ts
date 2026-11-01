@@ -54,6 +54,7 @@ import {
   institutionAffiliations,
   institutionStaff,
   integrations,
+  logComments,
   logEntries,
   logRevisions,
   magicLinkTokens,
@@ -833,6 +834,35 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect((await tx.select().from(stuckQaCards).where(eq(stuckQaCards.id, mine!.id)))[0]).toMatchObject({ authorId: null, questionsAllowed: false })
       expect((await tx.select().from(stuckQaCards).where(eq(stuckQaCards.id, other!.id)))[0]).toMatchObject({ authorId: M.id, questionsAllowed: true })
       expect(await count(tx, stuckQaAliases, eq(stuckQaAliases.threadId, thread!.id))).toBe(2)
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('blanks the purged user\'s log comments in team projects (rows kept) and deletes comments with solo projects (E-10)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴댓글러', 'deleted')
+      const M = await user(tx, '남는팀원')
+      const team = await project(tx, M.id, '팀 과제', [{ userId: U.id, role: 'editor' }])
+      const teamLog = await log(tx, team.id, M.id, '팀 로그')
+      const [mine] = await tx.insert(logComments).values({ projectId: team.id, logEntryId: teamLog.id, authorId: U.id, revisionNo: 1, body: '탈퇴자 피드백' }).returning()
+      const [hidden] = await tx
+        .insert(logComments)
+        .values({ projectId: team.id, logEntryId: teamLog.id, authorId: U.id, revisionNo: 1, body: '숨긴 피드백', status: 'hidden', hiddenAt: NOW })
+        .returning()
+      const [theirs] = await tx.insert(logComments).values({ projectId: team.id, logEntryId: teamLog.id, authorId: M.id, revisionNo: 1, body: '남는 피드백' }).returning()
+      const solo = await project(tx, U.id, '혼자 과제')
+      const soloLog = await log(tx, solo.id, U.id, '혼자 로그')
+      await tx.insert(logComments).values({ projectId: solo.id, logEntryId: soloLog.id, authorId: U.id, revisionNo: 1, body: '혼자 메모' })
+
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ log_comments: 3 })
+      for (const c of [mine!, hidden!]) {
+        expect((await tx.select().from(logComments).where(eq(logComments.id, c.id)))[0]).toMatchObject({ status: 'deleted', body: '', authorId: U.id, hiddenAt: null, deletedAt: NOW })
+      }
+      expect((await tx.select().from(logComments).where(eq(logComments.id, theirs!.id)))[0]).toMatchObject({ status: 'published', body: '남는 피드백' })
+      expect(await count(tx, logComments, eq(logComments.projectId, solo.id))).toBe(0)
+      expect(await count(tx, logEntries, eq(logEntries.id, teamLog.id))).toBe(1)
+      expect((await tx.select().from(users).where(eq(users.id, U.id)))[0]).toMatchObject({ displayName: '탈퇴한 사용자' })
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })

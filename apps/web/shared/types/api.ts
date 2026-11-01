@@ -579,12 +579,45 @@ export interface LogDto extends RetrospectiveMarked {
   task: TaskRefDto | null
   /** 요청자가 새 revision을 만들 수 있는지(작성자 본인 + owner/editor). */
   canRevise: boolean
+  /** 게시 상태 피드백 댓글 수(E-10, 팀 안에서만). 공개 스냅샷에는 없습니다. */
+  commentCount: number
 }
 
 export interface LogPageDto {
   items: LogDto[]
   /** 다음 페이지 cursor. 없으면 마지막 페이지. */
   nextCursor: string | null
+}
+
+/** 로그 피드백 댓글 상태(E-10, ADR 0054). */
+export type LogCommentStatus = 'published' | 'deleted' | 'hidden'
+
+/**
+ * 로그 피드백 댓글 한 건(E-10, ADR 0054). 팀 안에서만 읽고 공개 응답에는 없습니다.
+ * 지운 댓글은 본문·작성자 없이 자리만, 숨긴 댓글은 작성자 본인과 owner에게만 본문·작성자를 싣습니다.
+ */
+export interface LogCommentDto {
+  id: string
+  logId: string
+  status: LogCommentStatus
+  author: LogAuthorDto | null
+  body: string | null
+  /** 쓸 때 로그의 현재 revision 번호(맥락 표시). */
+  revisionNo: number
+  createdAt: string
+  editedAt: string | null
+  mine: boolean
+  canEdit: boolean
+  canDelete: boolean
+  canHide: boolean
+}
+
+export interface LogCommentListDto {
+  items: LogCommentDto[]
+  /** 요청자가 새 댓글을 쓸 수 있는지(owner/editor/reviewer, 보관되지 않은 과제). */
+  canComment: boolean
+  /** 보관된 과제(읽기 전용)인지. */
+  archived: boolean
 }
 
 /** revision 이력 한 건. 정정 내역은 지우지 않고 모두 보여 줍니다. */

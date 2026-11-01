@@ -35,6 +35,7 @@ import {
   inArray,
   ne,
   sql,
+  logComments,
   logEntries,
   logRevisions,
   profiles,
@@ -172,7 +173,8 @@ async function toLogDtos(
 
   const taskSourced = logs.filter((log) => log.entry.source === 'task').map((log) => log.entry.id)
 
-  const [targets, solutions, evidence, milestoneRefs, sourceTasks] = await Promise.all([
+  const logIds = logs.map((log) => log.entry.id)
+  const [targets, solutions, evidence, milestoneRefs, sourceTasks, commentCounts] = await Promise.all([
     resolvesIds.length > 0
       ? selectLogs(db).where(and(eq(logEntries.projectId, project.id), inArray(logEntries.id, resolvesIds)))
       : Promise.resolve([]),
@@ -192,6 +194,14 @@ async function toLogDtos(
           .from(tasks)
           .where(inArray(tasks.logEntryId, taskSourced))
       : Promise.resolve([]),
+    // 피드백 댓글(E-10) 수: 게시 상태만 셉니다(펼치기 전 표시용). 본문은 싣지 않습니다.
+    logIds.length > 0
+      ? db
+          .select({ logEntryId: logComments.logEntryId, n: sql<number>`count(*)::int` })
+          .from(logComments)
+          .where(and(inArray(logComments.logEntryId, logIds), eq(logComments.status, 'published')))
+          .groupBy(logComments.logEntryId)
+      : Promise.resolve([]),
   ])
   // 익명 스터디 기록(C-08, ADR 0026 부록)은 다른 멤버를 "스터디 멤버 N"과 가명 키로 가립니다.
   const refs = await loadMemberRefs(db, project, actor.userId)
@@ -199,6 +209,7 @@ async function toLogDtos(
     const loaded = toLoaded(row)
     return { ...loaded, author: refs.person(loaded.author) }
   }
+  const commentCountByLog = new Map(commentCounts.map((row) => [row.logEntryId, row.n]))
   const taskByLog = new Map<string, TaskRefDto>(
     sourceTasks.flatMap((row) => (row.logEntryId ? [[row.logEntryId, { id: row.id, title: row.title }] as const] : [])),
   )
@@ -231,6 +242,7 @@ async function toLogDtos(
     // 공개 스냅샷(publication/snapshot.ts, T-11)도 isRetrospectiveLog로 이 표시를 그대로 옮깁니다.
     retrospective: isRetrospectiveLog(log.entry),
     canRevise: canReviseLog({ userId: actor.userId }, project, membership, log.entry),
+    commentCount: commentCountByLog.get(log.entry.id) ?? 0,
   }))
 }
 
@@ -243,7 +255,7 @@ async function loadLogById(db: DbExecutor, logId: string): Promise<LoadedLog | n
  * 로그와 그 프로젝트 접근 컨텍스트를 읽습니다. 로그가 없거나 프로젝트를 읽을 수 없으면 똑같이 404.
  * `lock: true`면 log_entries 행을 FOR UPDATE로 잠가 동시 수정을 직렬화합니다(트랜잭션 안에서만).
  */
-async function loadReadableLog(db: DbExecutor, actor: Actor, logId: unknown, options: { lock?: boolean } = {}) {
+export async function loadReadableLog(db: DbExecutor, actor: Actor, logId: unknown, options: { lock?: boolean } = {}) {
   if (!isUuid(logId)) throw notFound()
   const query = db.select().from(logEntries).where(eq(logEntries.id, logId)).limit(1)
   const [entry] = options.lock ? await query.for('update') : await query

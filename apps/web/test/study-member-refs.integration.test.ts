@@ -36,6 +36,7 @@ import { getContribution, recordReportExport } from '../server/modules/contribut
 import { createBindCode, listBindings, unbindChannel, updateBinding } from '../server/modules/discord/bindings'
 import { addProjectEmbargo } from '../server/modules/embargo/embargo'
 import { ServiceError } from '../server/modules/errors'
+import { createLogComment, deleteLogComment, editLogComment, listLogComments, setLogCommentHidden } from '../server/modules/logs/comments'
 import { createLog, getLog, listLogRevisions, listLogs, reviseLog } from '../server/modules/logs/logs'
 import {
   addSnapshot,
@@ -76,7 +77,7 @@ const UNKNOWN_KEY = 'sm_0123456789abcdef'
 
 const API = join(path.dirname(fileURLToPath(import.meta.url)), '../server/api/v1')
 /** 과제(기록)에 속한 데이터를 돌려주거나 받는 라우트 트리. 새 파일이 생기면 ROUTES에 분류해야 이 테스트가 통과합니다. */
-const ROUTE_DIRS = ['projects', 'logs', 'tasks', 'artifacts', 'claims', 'claim-revisions', 'milestones', 'candidates', 'uploads', 'publications', 'discord-bindings']
+const ROUTE_DIRS = ['projects', 'logs', 'log-comments', 'tasks', 'artifacts', 'claims', 'claim-revisions', 'milestones', 'candidates', 'uploads', 'publications', 'discord-bindings']
 /** 과제 밖이지만 과제 데이터(동의 요청·체크인·공개 동의)를 싣는 /me 경로. */
 const EXTRA_ROUTES = ['me/consent-requests.get.ts', 'me/checkins.get.ts', 'me/publication-consents.get.ts']
 
@@ -120,6 +121,12 @@ const ROUTES: Record<string, string> = {
   'logs/[id]/index.get.ts': 'getLog',
   'logs/[id]/revisions/index.get.ts': 'listLogRevisions',
   'logs/[id]/revisions/index.post.ts': 'reviseLog',
+  // E-10 피드백 댓글(ADR 0054): 작성자는 로그처럼 멤버 참조로 가립니다.
+  'logs/[id]/comments/index.get.ts': 'listLogComments',
+  'logs/[id]/comments/index.post.ts': 'createLogComment',
+  'log-comments/[id]/index.patch.ts': 'editLogComment',
+  'log-comments/[id]/index.delete.ts': 'deleteLogComment',
+  'log-comments/[id]/hidden.put.ts': 'setLogCommentHidden',
   'tasks/[id]/index.patch.ts': 'updateTask',
   'tasks/[id]/index.delete.ts': 'deleteTask',
   'tasks/[id]/complete.post.ts': 'completeTask',
@@ -346,6 +353,17 @@ describe.skipIf(!databaseUrl)('study member refs (PostgreSQL)', () => {
       )) as LogDto
       expect(revised.revisionNo).toBe(2)
       expect(revised.payload).toEqual(meeting.payload)
+
+      // 피드백 댓글(E-10): B·C가 쓴 댓글의 작성자는 가명 키(본인 것은 그대로)
+      const bComment = await createLogComment(tx, b, bLog.id, { body: 'B의 피드백' }, at(8))
+      await createLogComment(tx, c, bLog.id, { body: 'C의 피드백' }, at(8))
+      const thread = (await hit('logs/[id]/comments/index.get.ts', () => listLogComments(tx, A, bLog.id)))!
+      expect(thread.items.map((x) => x.author?.userId).sort()).toEqual([realKeyB, keyC].sort())
+      const myComment = (await hit('logs/[id]/comments/index.post.ts', () => createLogComment(tx, A, bLog.id, { body: 'A의 피드백' }, at(8))))!
+      expect(myComment.author?.userId).toBe(a.userId)
+      await hit('log-comments/[id]/index.patch.ts', () => editLogComment(tx, A, myComment.id, { body: 'A의 피드백(수정)' }, at(8)))
+      await hit('log-comments/[id]/hidden.put.ts', () => setLogCommentHidden(tx, A, bComment.id, { hidden: true }, at(8)))
+      await hit('log-comments/[id]/index.delete.ts', () => deleteLogComment(tx, A, myComment.id, at(8)))
 
       // 할 일: 담당자 가명 키
       const task = (await hit('projects/[id]/tasks/index.post.ts', () => createTask(tx, A, projectId, { title: '정리', assigneeId: realKeyB }, at(8))))!

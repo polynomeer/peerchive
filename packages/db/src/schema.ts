@@ -141,6 +141,8 @@ export const logTag = pgEnum('log_tag', [
   'validation',
   'retro',
 ])
+/** 로그 피드백 댓글 상태(E-10, ADR 0054): 게시 / 작성자가 지움(탈퇴 정리 포함, 본문을 비움) / owner가 숨김. */
+export const logCommentStatus = pgEnum('log_comment_status', ['published', 'deleted', 'hidden'])
 /** 산출물 종류(§6.3). 지금은 file만 만들 수 있고 link/repo/demo는 다음 slice에서 씁니다. */
 export const artifactKind = pgEnum('artifact_kind', ['file', 'link', 'repo', 'demo'])
 /** 파일 검사 상태(§10). 전이 규칙은 @peerchive/domain의 nextScanStatus입니다. */
@@ -1214,6 +1216,8 @@ export const logEntries = pgTable(
     uniqueIndex('log_entries_client_id_key').on(t.projectId, t.authorId, t.clientId),
     // log_revisions의 (log_entry_id, tag) 복합 외래 키 대상.
     unique('log_entries_id_tag_key').on(t.id, t.tag),
+    // log_comments의 (log_entry_id, project_id) 복합 외래 키 대상(E-10).
+    unique('log_entries_id_project_key').on(t.id, t.projectId),
     foreignKey({
       name: 'log_entries_current_revision_id_fk',
       columns: [t.currentRevisionId],
@@ -1412,6 +1416,52 @@ export const logRevisionEvidence = pgTable(
   (t) => [
     primaryKey({ name: 'log_revision_evidence_pkey', columns: [t.logRevisionId, t.artifactVersionId] }),
     index('log_revision_evidence_artifact_version_id_idx').on(t.artifactVersionId),
+  ],
+)
+
+/**
+ * 로그별 피드백 댓글(E-10, ADR 0054). revision이 아니라 로그(entry)에 붙어 로그를 고쳐도 남습니다. revision_no는 쓸 때 현재였던 revision(맥락 표시용).
+ * 팀 안에서만 읽고 쓰며 공개 스냅샷(ADR 0011 허용 목록)·공개 DTO·검색·케이스·기여 장부에 넣지 않습니다.
+ * project_id는 로그의 과제와 같음을 복합 외래 키로 강제합니다(과제 단위 정리·조회용).
+ * 지우면(작성자·탈퇴 정리) 본문을 비우고 행은 남겨 스레드 자리를 유지합니다. 작성자 칸은 탈퇴 때 가명 처리된 users를 가리킵니다(ADR 0016 팀 기록 규칙).
+ */
+export const logComments = pgTable(
+  'log_comments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    logEntryId: uuid('log_entry_id').notNull(),
+    authorId: uuid('author_id')
+      .notNull()
+      .references(() => users.id),
+    /** 쓸 때 로그의 현재 revision 번호(맥락 표시용, 바뀌지 않음). */
+    revisionNo: integer('revision_no').notNull(),
+    body: text('body').notNull(),
+    status: logCommentStatus('status').notNull().default('published'),
+    createdAt: createdAt(),
+    /** 작성자가 본문을 마지막으로 고친 시각(고친 적 없으면 null). */
+    editedAt: timestamp('edited_at', { withTimezone: true }),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    hiddenAt: timestamp('hidden_at', { withTimezone: true }),
+  },
+  (t) => [
+    foreignKey({
+      name: 'log_comments_log_entry_project_fk',
+      columns: [t.logEntryId, t.projectId],
+      foreignColumns: [logEntries.id, logEntries.projectId],
+    }),
+    index('log_comments_entry_created_idx').on(t.logEntryId, t.createdAt, t.id),
+    index('log_comments_project_idx').on(t.projectId),
+    index('log_comments_author_idx').on(t.authorId),
+    check('log_comments_revision_no_check', sql`${t.revisionNo} >= 1`),
+    check(
+      'log_comments_body_check',
+      sql`(${t.status}::text = 'deleted' and ${t.body} = '') or (${t.status}::text <> 'deleted' and char_length(${t.body}) between 1 and 2000)`,
+    ),
+    check('log_comments_deleted_check', sql`(${t.status}::text = 'deleted') = (${t.deletedAt} is not null)`),
+    check('log_comments_hidden_check', sql`(${t.status}::text = 'hidden') = (${t.hiddenAt} is not null)`),
   ],
 )
 
