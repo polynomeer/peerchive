@@ -51,6 +51,7 @@ import {
   or,
   hashSubject,
   institutionAffiliations,
+  institutionStaff,
   integrations,
   logEntries,
   logRevisions,
@@ -733,6 +734,25 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect(await count(tx, directoryEntries, eq(directoryEntries.userId, M.id))).toBe(2)
       const ledger = await tx.select().from(deletionLedger).where(eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, U.id)))
       expect(ledger.find((l) => l.entityKind === 'directory_entries')?.count).toBe(2)
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('deletes the purged user\'s institution staff rows and keeps rows they granted for others (I-02)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴운영진', 'deleted')
+      const M = await user(tx, '남는운영진')
+      const [camp] = await tx.insert(schools).values({ name: `퍼지캠프${id().slice(0, 8)}`, nameKey: `purgecamp${id().slice(0, 8)}`, kind: 'bootcamp' }).returning()
+      await tx.insert(institutionStaff).values([
+        { schoolId: camp!.id, userId: U.id, grantedBy: M.id, grantedAt: NOW },
+        { schoolId: camp!.id, userId: M.id, grantedBy: U.id, grantedAt: NOW },
+      ])
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ institution_staff: 1 })
+      expect(await count(tx, institutionStaff, eq(institutionStaff.userId, U.id))).toBe(0)
+      expect(await count(tx, institutionStaff, eq(institutionStaff.userId, M.id))).toBe(1)
+      const ledger = await tx.select().from(deletionLedger).where(eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, U.id)))
+      expect(ledger.find((l) => l.entityKind === 'institution_staff')?.count).toBe(1)
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })

@@ -300,7 +300,7 @@ export const spaceUnhideSchema = z.object({ note: optionalTrimmed(MODERATION_NOT
 
 /** 방 운영진 판정: 읽을 수 있고(아니면 404) canModerate(아니면 403 `moderate_not_allowed`), active 공간(아니면 409). */
 async function moderatorContext(tx: DbExecutor, actor: Actor, spaceId: string, now: Date, requireActive = true) {
-  const ctx = await loadReadableSpace(tx, actor, spaceId, false, now)
+  const ctx = await loadReadableSpace(tx, actor, spaceId, false, now, { institutionStaff: true })
   if (!canModerate(ctx.viewer, ctx.facts, membershipFacts(ctx.membership))) throw forbidden('moderate_not_allowed')
   if (requireActive && ctx.space.row.status !== 'active') throw conflict('space_not_active', { status: ctx.space.row.status })
   return ctx

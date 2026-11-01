@@ -6,6 +6,8 @@
  * - 기관 = `schools` 행 + `kind`. 대학(university)은 학생이 만들고 학교 메일로만 인증합니다. 대학이 아닌 기관(부트캠프 등)은 운영자만 만들고
  *   (`POST /operator/institutions`, CLI `institution create`), 초대 코드·기수 승인·수료증 확인으로 인증합니다. 과목·학교 검색에는 나오지 않습니다.
  * - 초대 코드: 운영자가 발급(`POST /operator/institutions/:id/invite-codes`, CLI), 원문은 그 응답에만. HMAC(affiliation pepper)만 저장.
+ *   I-02(ADR 0044): 그 기관의 운영진도 자기 기관 코드만 발급·목록·철회합니다(`/institutions/:id/invite-codes`, `/invite-codes/:id/revoke`).
+ *   다른 기관은 403 `institution_staff_only`, 다른 기관 코드의 철회는 404(코드 id가 있는지도 모름).
  *   사용(`POST /me/affiliations/invite-code`)은 사용자·IP별 한도(맞든 틀리든 셈) 뒤, 철회 410 / 만료 410 / 한도 410, 없는 코드 422.
  *   성공하면 그 기관(·코드의 기수) active 소속(method invite_code). 같은 기관의 진행 중 요청은 대체(expired)되고, 이미 active면 409.
  */
@@ -45,12 +47,13 @@ import { toDto } from '../affiliation/affiliations'
 import { emitAnalytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
 import { loadCanonicalSchool, type SchoolRow } from '../catalog/catalog'
-import { requireOperator } from '../catalog/operators'
+import { isOperator, requireOperator } from '../catalog/operators'
 import { type Actor, ServiceError, conflict, gone, invalid, notFound, rateLimited, sqlState } from '../errors'
 import { requireFeature } from '../features'
 import { isUuid } from '../projects/access'
 import { hitRateLimit } from '../security/rate-limit'
 import { parseInput } from '../validation'
+import { canManageInstitution, requireInstitutionManager } from './staff'
 import type { AffiliationDto, InstitutionDto, InviteCodeDto, IssuedInviteCodeDto } from '../../../shared/types/api'
 
 type AffiliationRow = typeof institutionAffiliations.$inferSelect
@@ -203,6 +206,72 @@ async function inviteDtos(db: DbExecutor, rows: InviteRow[]): Promise<InviteCode
   }))
 }
 
+interface IssueInput {
+  cohortLabel?: unknown
+  maxUses?: unknown
+  expiresInDays?: unknown
+}
+
+/** 발급 본체(운영자·운영진 공통). 기관은 호출자가 확인한 대학이 아닌 정본 기관. 감사 `byStaff`는 운영진으로서 발급했는지. */
+async function issueCodeFor(db: DbExecutor, actorId: string, institution: SchoolRow, input: IssueInput, byStaff: boolean, now: Date): Promise<IssuedInviteCodeDto> {
+  const checked = checkInviteIssue({ maxUses: input.maxUses, expiresInDays: input.expiresInDays }, now)
+  if (!checked.ok) throw invalid({ [checked.field]: checked.reason })
+  const pepper = affiliationPepper()
+  const code = generateInviteCode()
+  const normalized = normalizeInviteCode(code)!
+  return db.transaction(async (tx) => {
+    const cohort = input.cohortLabel === undefined || input.cohortLabel === null || input.cohortLabel === '' ? null : await findOrCreateCohort(tx, institution.id, input.cohortLabel, actorId)
+    const [row] = await tx
+      .insert(institutionInviteCodes)
+      .values({
+        schoolId: institution.id,
+        cohortId: cohort?.id ?? null,
+        codeHash: hashInviteCode(pepper, normalized),
+        issuedBy: actorId,
+        expiresAt: checked.expiresAt,
+        maxUses: checked.maxUses,
+        createdAt: now,
+      })
+      .returning()
+    await recordAudit(tx, {
+      actorId,
+      action: 'invite_code.issue',
+      targetType: 'invite_code',
+      targetId: row!.id,
+      metadata: { schoolId: institution.id, cohort: cohort !== null, maxUses: checked.maxUses, byStaff },
+    })
+    const [dto] = await inviteDtos(tx, [row!])
+    return { ...dto!, code: formatInviteCode(normalized) }
+  })
+}
+
+async function codesOf(db: DbExecutor, institutionId: string): Promise<InviteCodeDto[]> {
+  const rows = await db
+    .select()
+    .from(institutionInviteCodes)
+    .where(eq(institutionInviteCodes.schoolId, institutionId))
+    .orderBy(desc(institutionInviteCodes.createdAt), desc(institutionInviteCodes.id))
+    .limit(100)
+  return inviteDtos(db, rows)
+}
+
+/** 철회 본체(잠금, 멱등). `allowed`가 false면 404(코드가 있는지도 드러내지 않음). */
+async function revokeCode(db: DbExecutor, actor: Actor, codeId: unknown, now: Date, allowed: (schoolId: string) => Promise<boolean>, byStaff: boolean): Promise<InviteCodeDto> {
+  if (!isUuid(codeId)) throw notFound()
+  return db.transaction(async (tx) => {
+    const [row] = await tx.select().from(institutionInviteCodes).where(eq(institutionInviteCodes.id, codeId.toLowerCase())).limit(1).for('update')
+    if (!row || !(await allowed(row.schoolId))) throw notFound()
+    let current = row
+    if (!row.revokedAt) {
+      const [updated] = await tx.update(institutionInviteCodes).set({ revokedAt: now }).where(eq(institutionInviteCodes.id, row.id)).returning()
+      current = updated!
+      await recordAudit(tx, { actorId: actor.userId, action: 'invite_code.revoke', targetType: 'invite_code', targetId: row.id, metadata: { schoolId: row.schoolId, byStaff } })
+    }
+    const [dto] = await inviteDtos(tx, [current])
+    return dto!
+  })
+}
+
 /**
  * POST /operator/institutions/:id/invite-codes {maxUses, expiresInDays?, cohortLabel?} — 운영자만. 201 + 원문 코드(이 응답에만).
  * 대학이면 422 `institutionId: not_supported`. 사용 한도 1–1000, 유효 기간 1–90일(기본 14).
@@ -211,36 +280,8 @@ export async function issueInviteCode(db: DbExecutor, actor: Actor, institutionI
   requireFeature('institutions')
   await requireOperator(db, actor)
   const input = parseInput(issueSchema, rawInput)
-  const checked = checkInviteIssue({ maxUses: input.maxUses, expiresInDays: input.expiresInDays }, now)
-  if (!checked.ok) throw invalid({ [checked.field]: checked.reason })
-  const pepper = affiliationPepper()
-  const code = generateInviteCode()
-  const normalized = normalizeInviteCode(code)!
-  return db.transaction(async (tx) => {
-    const institution = await loadNonUniversityInstitution(tx, institutionId)
-    const cohort = input.cohortLabel === undefined || input.cohortLabel === null || input.cohortLabel === '' ? null : await findOrCreateCohort(tx, institution.id, input.cohortLabel, actor.userId)
-    const [row] = await tx
-      .insert(institutionInviteCodes)
-      .values({
-        schoolId: institution.id,
-        cohortId: cohort?.id ?? null,
-        codeHash: hashInviteCode(pepper, normalized),
-        issuedBy: actor.userId,
-        expiresAt: checked.expiresAt,
-        maxUses: checked.maxUses,
-        createdAt: now,
-      })
-      .returning()
-    await recordAudit(tx, {
-      actorId: actor.userId,
-      action: 'invite_code.issue',
-      targetType: 'invite_code',
-      targetId: row!.id,
-      metadata: { schoolId: institution.id, cohort: cohort !== null, maxUses: checked.maxUses },
-    })
-    const [dto] = await inviteDtos(tx, [row!])
-    return { ...dto!, code: formatInviteCode(normalized) }
-  })
+  const institution = await loadNonUniversityInstitution(db, institutionId)
+  return issueCodeFor(db, actor.userId, institution, input, false, now)
 }
 
 /** GET /operator/institutions/:id/invite-codes — 운영자만. 최근 100개(원문 없음). */
@@ -248,32 +289,39 @@ export async function listInviteCodes(db: DbExecutor, actor: Actor, institutionI
   requireFeature('institutions')
   await requireOperator(db, actor)
   const institution = await loadCanonicalSchool(db, institutionId)
-  const rows = await db
-    .select()
-    .from(institutionInviteCodes)
-    .where(eq(institutionInviteCodes.schoolId, institution.id))
-    .orderBy(desc(institutionInviteCodes.createdAt), desc(institutionInviteCodes.id))
-    .limit(100)
-  return inviteDtos(db, rows)
+  return codesOf(db, institution.id)
 }
 
 /** POST /operator/invite-codes/:id/revoke — 운영자만. 200(이미 철회했어도 200). 이미 만든 소속은 그대로입니다. */
 export async function revokeInviteCode(db: DbExecutor, actor: Actor, codeId: unknown, now = new Date()): Promise<InviteCodeDto> {
   requireFeature('institutions')
   await requireOperator(db, actor)
-  if (!isUuid(codeId)) throw notFound()
-  return db.transaction(async (tx) => {
-    const [row] = await tx.select().from(institutionInviteCodes).where(eq(institutionInviteCodes.id, codeId.toLowerCase())).limit(1).for('update')
-    if (!row) throw notFound()
-    let current = row
-    if (!row.revokedAt) {
-      const [updated] = await tx.update(institutionInviteCodes).set({ revokedAt: now }).where(eq(institutionInviteCodes.id, row.id)).returning()
-      current = updated!
-      await recordAudit(tx, { actorId: actor.userId, action: 'invite_code.revoke', targetType: 'invite_code', targetId: row.id, metadata: { schoolId: row.schoolId } })
-    }
-    const [dto] = await inviteDtos(tx, [current])
-    return dto!
-  })
+  return revokeCode(db, actor, codeId, now, async () => true, false)
+}
+
+/**
+ * POST /institutions/:id/invite-codes {maxUses, expiresInDays?, cohortLabel?} — 그 기관 운영진(또는 운영자, I-02). 201 + 원문 코드(이 응답에만).
+ * 다른 기관 403 `institution_staff_only`, 대학 422 `institutionId: not_supported`. 규칙은 운영자 발급과 같습니다.
+ */
+export async function issueStaffInviteCode(db: DbExecutor, actor: Actor, institutionId: unknown, rawInput: unknown, now = new Date()): Promise<IssuedInviteCodeDto> {
+  requireFeature('institutions')
+  const manager = await requireInstitutionManager(db, actor, institutionId)
+  const input = parseInput(issueSchema, rawInput)
+  return issueCodeFor(db, actor.userId, manager.institution, input, !manager.operator, now)
+}
+
+/** GET /institutions/:id/invite-codes — 그 기관 운영진(또는 운영자). 그 기관 코드 최근 100개(원문 없음). */
+export async function listStaffInviteCodes(db: DbExecutor, actor: Actor, institutionId: unknown): Promise<InviteCodeDto[]> {
+  requireFeature('institutions')
+  const manager = await requireInstitutionManager(db, actor, institutionId)
+  return codesOf(db, manager.institution.id)
+}
+
+/** POST /invite-codes/:id/revoke — 그 코드 기관의 운영진(또는 운영자). 200(멱등). 다른 기관 코드·없는 코드는 404. */
+export async function revokeStaffInviteCode(db: DbExecutor, actor: Actor, codeId: unknown, now = new Date()): Promise<InviteCodeDto> {
+  requireFeature('institutions')
+  const operator = await isOperator(db, actor.userId)
+  return revokeCode(db, actor, codeId, now, (schoolId) => canManageInstitution(db, actor, schoolId), !operator)
 }
 
 const redeemSchema = z.object({

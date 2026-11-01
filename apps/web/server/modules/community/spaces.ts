@@ -7,6 +7,8 @@
  *   정원은 2~300(그 이상은 300으로 만들고 요청값을 운영자 검토로 남김).
  * - 이름 표시 방식은 만들 때 정하고, 바꾸기는 C-03의 7일 예약(name-modes.ts)으로만 합니다(PATCH는 422 not_editable). 공식 페이지는 anonymous 고정.
  *   상세의 nameMode는 지금 효력이 있는 방식(effective_at이 지난 예약 포함), pendingNameModeChange는 아직 효력이 없는 예약입니다.
+ * - 기관 공간(I-02, ADR 0044): 기관 페이지·기수 방은 institutions 플래그가 꺼져 있으면 목록에서 빠지고 상세는 404. 기관 운영진은 자기 기관의
+ *   기관 페이지·기수 방을 내 공간 목록에서 보고(멤버십 없이), 기수 방은 그 기수 인증이 있는 사람에게만 찾기에 나옵니다.
  */
 import { randomInt } from 'node:crypto'
 import { z } from 'zod'
@@ -36,6 +38,8 @@ import {
   canReadSpace,
   readsByAlumniHistory,
   canWriteBoard,
+  isCohortRoom,
+  meetsRoomAffiliation,
   checkRoomCapacity,
   checkSpaceName,
   defaultBoardsFor,
@@ -53,6 +57,7 @@ import {
   communitySpaces,
   eq,
   inArray,
+  isNotNull,
   isNull,
   ne,
   or,
@@ -75,6 +80,8 @@ import { parseInput } from '../validation'
 import {
   type LoadedSpace,
   type SpaceContext,
+  hiddenInstitutionSpace,
+  institutionSpaceKind,
   loadReadableSpace,
   loadSpaceContext,
   loadSpacesWhere,
@@ -133,6 +140,7 @@ export function toSpaceSummary(
     status: space.row.status,
     memberCount: operatorKind ? null : memberCount,
     myMembership: membership && (membership.status === 'active' || membership.status === 'pending') ? { role: membership.role, status: membership.status } : null,
+    institutionSpace: institutionSpaceKind(space),
   }
 }
 
@@ -233,6 +241,8 @@ export async function listMySpaces(db: DbExecutor, actor: Actor): Promise<MySpac
   const schoolIds = viewer.affiliations.map((a) => a.schoolId)
   // 졸업생 인증 이력(A-04)만 있는 학교는 공식 학교 페이지만(학과 페이지 없음) 목록에 넣습니다. 플래그가 꺼지면 비어 있습니다.
   const historySchoolIds = (viewer.alumniHistorySchoolIds ?? []).filter((id) => !schoolIds.includes(id))
+  // 기관 운영진(I-02): 자기 기관의 기관 페이지·기수 방(멤버십 없이 운영 조치를 위해 읽음). 플래그가 꺼지면 비어 있습니다.
+  const staffSchoolIds = viewer.institutionStaffSchoolIds ?? []
   const myRows = await db
     .select({ spaceId: spaceMemberships.spaceId, role: spaceMemberships.role, status: spaceMemberships.status })
     .from(spaceMemberships)
@@ -247,6 +257,12 @@ export async function listMySpaces(db: DbExecutor, actor: Actor): Promise<MySpac
         viewer.status === 'active' && historySchoolIds.length
           ? and(eq(communitySpaces.kind, 'official_school'), inArray(sql`coalesce(${schools.mergedInto}, ${schools.id})`, historySchoolIds))
           : sql`false`,
+        viewer.status === 'active' && staffSchoolIds.length
+          ? and(
+              inArray(sql`coalesce(${schools.mergedInto}, ${schools.id})`, staffSchoolIds),
+              or(eq(communitySpaces.kind, 'official_school'), and(eq(communitySpaces.kind, 'user_room'), isNotNull(communitySpaces.cohortId))),
+            )
+          : sql`false`,
       ),
     ),
   )
@@ -254,6 +270,7 @@ export async function listMySpaces(db: DbExecutor, actor: Actor): Promise<MySpac
   const items: SpaceSummaryDto[] = []
   const pending: SpaceSummaryDto[] = []
   for (const s of sortSpaces(spaces)) {
+    if (hiddenInstitutionSpace(s)) continue
     const m = mine.get(s.row.id) ?? null
     const count = counts.get(s.row.id) ?? 0
     // 상세와 같은 정책 함수로 거릅니다(C-05): 학교 인증이 해제된 학교 연결 방, 초대 전용으로 바뀐 방의 승인 대기는 목록에도 없습니다.
@@ -313,6 +330,8 @@ export async function discoverSpaces(db: DbExecutor, actor: Actor, query: unknow
   const counts = await memberCounts(db, ids)
   return sortSpaces(rows)
     .filter((s) => mine.get(s.row.id)?.status !== 'removed')
+    // 기관 공간(I-02): 플래그가 꺼지면 빼고, 기수 방은 그 기관·그 기수 인증이 있는 사람에게만.
+    .filter((s) => !hiddenInstitutionSpace(s) && (!s.row.cohortId || meetsRoomAffiliation(viewer, { schoolId: s.schoolId, cohortId: s.row.cohortId })))
     .slice(0, 50)
     .map((s) => toSpaceSummary(s, counts.get(s.row.id) ?? 0, mine.get(s.row.id) ?? null))
 }
@@ -372,6 +391,8 @@ export interface NewSpaceInput {
   template?: SpaceTemplate
   /** 토픽 분류(A-05, kind = topic만). */
   topicCategory?: TopicCategory | null
+  /** 기수 방의 기수(I-02, 사용자 방 + 기관 연결만). */
+  cohortId?: string | null
   discovery: 'listed' | 'unlisted'
   joinPolicy: 'open' | 'approval' | 'invite'
   capacity: number
@@ -401,6 +422,7 @@ export async function insertSpace(tx: DbExecutor, input: NewSpaceInput, now: Dat
             currentNameMode: input.nameMode,
             template: input.template ?? 'general',
             topicCategory: input.topicCategory ?? null,
+            cohortId: input.cohortId ?? null,
             discovery: input.discovery,
             joinPolicy: input.joinPolicy,
             capacity: input.capacity,
@@ -577,10 +599,11 @@ export async function updateSpace(db: DbExecutor, actor: Actor, ref: unknown, ra
   const input = parseInput(updateSpaceSchema, rawInput)
   if (input.nameMode !== undefined) throw invalid({ nameMode: 'not_editable' })
   const slug = await db.transaction(async (tx) => {
-    const ctx = await loadReadableSpace(tx, actor, ref, true)
+    const ctx = await loadReadableSpace(tx, actor, ref, true, now, { institutionStaff: true })
     assertCanManage(ctx, 'update_settings')
     const official = isOperatorSpaceKind(ctx.space.row.kind)
-    if (official && (input.joinPolicy !== undefined || input.discovery !== undefined)) {
+    // 기수 방(I-02)은 그 기수 인증이 곧 가입 자격이라 가입 방식·찾기를 바꾸지 않습니다(방장이 없어 승인·초대할 사람도 없음).
+    if ((official || isCohortRoom(ctx.facts)) && (input.joinPolicy !== undefined || input.discovery !== undefined)) {
       throw invalid({ [input.joinPolicy !== undefined ? 'joinPolicy' : 'discovery']: 'not_editable' })
     }
     const name = input.name === undefined ? undefined : nameOrThrow(input.name, !official)
@@ -652,7 +675,7 @@ export const updateBoardSchema = z.object({
 
 /** GET /community/spaces/:slug/boards — 읽을 수 있는 사람만(404). */
 export async function listBoards(db: DbExecutor, actor: Actor, ref: unknown): Promise<BoardDto[]> {
-  const ctx = await loadReadableSpace(db, actor, ref)
+  const ctx = await loadReadableSpace(db, actor, ref, false, new Date(), { institutionStaff: true })
   return (await loadBoards(db, ctx.space.row.id)).map((b) => toBoardDto(b, ctx))
 }
 
@@ -663,7 +686,7 @@ export async function listBoards(db: DbExecutor, actor: Actor, ref: unknown): Pr
 export async function createBoard(db: DbExecutor, actor: Actor, ref: unknown, rawInput: unknown, now = new Date()): Promise<BoardDto> {
   const input = parseInput(createBoardSchema, rawInput)
   return db.transaction(async (tx) => {
-    const ctx = await loadReadableSpace(tx, actor, ref, true)
+    const ctx = await loadReadableSpace(tx, actor, ref, true, now, { institutionStaff: true })
     assertCanManage(ctx, 'manage_boards')
     const official = isOperatorSpaceKind(ctx.space.row.kind)
     if (!official && !ROOM_BOARD_KINDS.includes(input.kind)) throw invalid({ kind: 'not_allowed' })
@@ -694,7 +717,7 @@ export async function updateBoard(db: DbExecutor, actor: Actor, boardId: unknown
   return db.transaction(async (tx) => {
     const [board] = await tx.select().from(boards).where(eq(boards.id, boardId.toLowerCase())).limit(1)
     if (!board) throw notFound()
-    const ctx = await loadReadableSpace(tx, actor, board.spaceId, true)
+    const ctx = await loadReadableSpace(tx, actor, board.spaceId, true, now, { institutionStaff: true })
     assertCanManage(ctx, 'manage_boards')
     if (input.title !== undefined && input.title !== board.title) {
       const [taken] = await tx.select({ id: boards.id }).from(boards).where(and(eq(boards.spaceId, board.spaceId), eq(boards.title, input.title))).limit(1)

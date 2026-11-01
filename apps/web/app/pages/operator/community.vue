@@ -173,7 +173,7 @@ async function decideCapacity(s: OperatorSpaceDto) {
           <div class="field">
             <label for="official-school-id">학교 id</label>
             <input id="official-school-id" v-model="form.schoolId" class="mono" autocomplete="off" aria-describedby="official-school-hint" />
-            <p id="official-school-hint" class="hint">학교 id는 `/api/v1/schools?q=` 또는 위 요청 목록에서 채웁니다(병합된 학교면 정본으로 열림).</p>
+            <p id="official-school-hint" class="hint">학교 id는 `/api/v1/schools?q=` 또는 위 요청 목록에서 채웁니다(병합된 학교면 정본으로 열림). 대학이 아닌 기관(I-02 기관 페이지, 학과 없음)은 `기관 운영진` 화면에 보이는 기관 id를 씁니다.</p>
           </div>
           <div class="field">
             <label for="official-dept">학과 (선택, 비우면 학교 페이지)</label>

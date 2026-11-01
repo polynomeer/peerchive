@@ -1831,6 +1831,53 @@ export interface IssuedInviteCodeDto extends InviteCodeDto {
   code: string
 }
 
+// ── 기관 페이지·기수 방·기관 운영진 (I-02, ADR 0044) ───────────────────
+
+/** GET /operator/institutions/:id/staff — 운영자만 보는 운영진 목록. */
+export interface InstitutionStaffDto {
+  /** 지정 행 id. */
+  id: string
+  userId: string
+  /** 계정 표시 이름(운영자 확인용). */
+  displayName: string
+  grantedAt: string
+}
+
+/** 기관이 운영하는 기수 방 요약(운영진·운영자). 멤버 수는 5 미만이면 null(사람 목록 없음). */
+export interface CohortRoomSummaryDto {
+  slug: string
+  name: string
+  cohortLabel: string
+  status: SpaceStatus
+  nameMode: NameMode
+  memberCount: number | null
+}
+
+/** GET /community/institutions/:id — 운영진·운영자의 기관 운영 화면(기관 페이지·기수 방). 소속 사용자 목록은 없습니다. */
+export interface InstitutionOverviewDto {
+  institution: InstitutionDto
+  /** 운영자로 보는지(아니면 그 기관 운영진). */
+  asOperator: boolean
+  page: { slug: string; name: string; status: SpaceStatus } | null
+  cohortRooms: CohortRoomSummaryDto[]
+}
+
+/**
+ * GET /community/institutions/:id/stats — 기관 집계(임계값 적용). 모든 수는 `minGroup`(5) 미만이면 null이고, 합계는 싣지 않습니다
+ * (가린 칸을 빼기로 되살리지 못하게). 사람·글 단위 값은 없습니다.
+ */
+export interface InstitutionStatsDto {
+  institution: InstitutionDto
+  minGroup: number
+  /** 지금 인증된 회원 수(신분별, 사람 단위). */
+  verifiedMembers: { student: number | null; alumni: number | null }
+  /** 기관 페이지의 최근 30일 게시 글·댓글 수(페이지가 없으면 null). */
+  page: { posts30d: number | null; comments30d: number | null } | null
+  /** 보관되지 않은 기수 방 수(사람 수가 아니므로 가리지 않음). */
+  cohortRooms: number
+  generatedAt: string
+}
+
 /** GET /affiliations/:id/cohort-approval — 승인할 수 있는 멤버에게만 보이는 기수 승인 요청. */
 export interface CohortApprovalRequestDto {
   id: string
@@ -2392,6 +2439,11 @@ export interface SpaceSummaryDto {
   memberCount: number | null
   /** 내 멤버십(없으면 null). 공식 페이지는 모더레이터일 때만. */
   myMembership: { role: SpaceRole; status: SpaceMembershipStatus } | null
+  /**
+   * 기관 공간(I-02, ADR 0044): `page`는 대학이 아닌 기관의 공식 페이지(기관 페이지), `cohort_room`은 기관 기수 방. 그 밖은 null.
+   * 기관 공간에서는 그 기관 운영진이 운영 조치를 위해 읽을 수 있습니다(화면 안내).
+   */
+  institutionSpace: 'page' | 'cohort_room' | null
 }
 
 export interface MySpacesDto {

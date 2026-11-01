@@ -12,9 +12,14 @@
  * - 공식 페이지 개설: `POST /operator/community/official-pages {schoolId, departmentLabel?, name?, description?}` → 201(기본 게시판 7개,
  *   이름 표시 anonymous 고정). 학교·학과마다 하나(409 `official_exists`).
  * - 공간 목록·제한·제한 해제·보관·정원 결정·모더레이터 지정. 운영자는 사용자 방의 게시판·멤버 목록을 읽지 않습니다(공간 정보만).
+ *
+ * 기관 페이지(I-02, ADR 0044): 대학이 아닌 기관의 공식 학교 페이지(종류는 official_school 그대로). P2 institutions 플래그가 켜져 있을 때만
+ * 요청·개설할 수 있고(꺼져 있으면 404), 학과 페이지는 없습니다(422 `departmentLabel: not_supported`). 기본 게시판은 새내기 없이 `수료생`
+ * (INSTITUTION_PAGE_DEFAULT_BOARDS). 개설 요청은 그 기관 active 인증이면 낼 수 있고(수요 신호), 여는 것은 대학과 같이 운영자입니다.
  */
 import { z } from 'zod'
 import {
+  INSTITUTION_PAGE_DEFAULT_BOARDS,
   OFFICIAL_DEFAULT_BOARDS,
   SPACE_CAPACITY_MIN,
   SPACE_CAPACITY_REVIEW_MAX,
@@ -25,6 +30,7 @@ import {
   defaultOfficialName,
   departmentKey,
   hasSchoolAffiliation,
+  isNonUniversityKind,
   isOfficialKind,
   normalizeDepartmentLabel,
   officialRequestThresholdReached,
@@ -49,6 +55,7 @@ import { recordAudit } from '../audit/audit'
 import { loadCanonicalSchool } from '../catalog/catalog'
 import { requireOperator } from '../catalog/operators'
 import { type Actor, ServiceError, conflict, invalid, notFound, sqlState } from '../errors'
+import { requireFeature } from '../features'
 import { isUuid } from '../projects/access'
 import { parseInput } from '../validation'
 import { type LoadedSpace, findMembership, loadSpace, loadSpacesWhere, loadViewer } from './access'
@@ -67,6 +74,13 @@ function parseDepartment(raw: unknown): { label: string | null; key: string } {
   const checked = normalizeDepartmentLabel(raw)
   if (!checked.ok) throw invalid({ departmentLabel: checked.reason })
   return { label: checked.value, key: departmentKey(checked.value) ?? '' }
+}
+
+/** 기관 페이지(I-02) 전제: 대학이 아닌 기관이면 플래그(꺼져 있으면 404)와 학과 없음(422). 대학이면 아무것도 하지 않습니다. */
+function assertInstitutionPageTarget(school: { kind: string }, dept: { label: string | null }): void {
+  if (!isNonUniversityKind(school.kind)) return
+  requireFeature('institutions')
+  if (dept.label) throw invalid({ departmentLabel: 'not_supported' })
 }
 
 /** 정본 학교의 공식 페이지(학과 키 ''는 학교 페이지). 병합 전 학교를 가리키는 페이지도 찾습니다. */
@@ -152,6 +166,7 @@ export async function requestOfficialPage(
   const input = parseInput(officialRequestSchema, rawInput)
   const dept = parseDepartment(input.departmentLabel)
   const school = await loadCanonicalSchool(db, input.schoolId)
+  assertInstitutionPageTarget(school, dept)
   const viewer = await loadViewer(db, actor)
   if (viewer.status !== 'active' || !hasSchoolAffiliation(viewer, school.id)) {
     throw new ServiceError('FORBIDDEN', 'affiliation_required', undefined, { requirement: 'school_affiliation', schoolId: school.id })
@@ -289,6 +304,8 @@ export async function createOfficialPage(db: DbExecutor, actor: Actor, rawInput:
   const input = parseInput(createOfficialSchema, rawInput)
   const dept = parseDepartment(input.departmentLabel)
   const school = await loadCanonicalSchool(db, input.schoolId)
+  assertInstitutionPageTarget(school, dept)
+  const institutionPage = isNonUniversityKind(school.kind)
   const nameRaw = input.name === undefined || input.name === null || input.name === '' ? defaultOfficialName(school.name, dept.label) : input.name
   const checked = checkSpaceName(nameRaw, { reserved: false })
   if (!checked.ok) throw invalid({ name: checked.reason })
@@ -315,7 +332,7 @@ export async function createOfficialPage(db: DbExecutor, actor: Actor, rawInput:
           capacityRequested: null,
           createdBy: actor.userId,
           ownerId: null,
-          boards: OFFICIAL_DEFAULT_BOARDS,
+          boards: institutionPage ? INSTITUTION_PAGE_DEFAULT_BOARDS : OFFICIAL_DEFAULT_BOARDS,
         },
         now,
       )
@@ -329,7 +346,7 @@ export async function createOfficialPage(db: DbExecutor, actor: Actor, rawInput:
       action: 'community.official_create',
       targetType: 'community_space',
       targetId: row.id,
-      metadata: { kind, schoolId: school.id, requesters: stats.requesters, studentCouncil: stats.studentCouncil },
+      metadata: { kind, schoolId: school.id, requesters: stats.requesters, studentCouncil: stats.studentCouncil, institutionPage },
     })
     await emitAnalytics(tx, { name: 'space_created', actorId: actor.userId, props: { kind }, now })
     return row.slug

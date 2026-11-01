@@ -7,6 +7,9 @@
  * canWriteBoard·canModerate·canManageSpace)를 거칩니다.
  *
  * 학교는 정본으로 비교합니다: 공간·소속이 병합 전 학교를 가리켜도 coalesce(merged_into, id)로 읽습니다.
+ *
+ * I-02(ADR 0044): 기관 공간(대학이 아닌 기관의 공식 페이지 = 기관 페이지, 기수 방)은 P2 institutions 플래그가 꺼져 있으면 없는 공간과 같습니다(404).
+ * 기관 운영진 권한(viewer.institutionStaffSchoolIds)도 플래그가 켜져 있을 때만 채웁니다.
  */
 import {
   type CommunityViewer,
@@ -15,6 +18,11 @@ import {
   type WriteRestriction,
   type BoardKind,
   activeWriteRestriction,
+  isCohortRoom,
+  isInstitutionStaffFor,
+  isNonUniversityKind,
+  isOfficialKind,
+  meetsRoomAffiliation,
   canReadBoard,
   canReadSpace,
   departmentKey,
@@ -39,6 +47,7 @@ import {
 import { isOperator } from '../catalog/operators'
 import { type Actor, ServiceError, notFound } from '../errors'
 import { isFeatureOn } from '../features'
+import { staffInstitutionIds } from '../institutions/staff'
 import { isUuid } from '../projects/access'
 
 export type SpaceRow = typeof communitySpaces.$inferSelect
@@ -69,6 +78,7 @@ export async function loadViewer(db: DbExecutor, actor: Actor, spaceId: string |
       schoolId: sql<string>`coalesce(${schools.mergedInto}, ${schools.id})`,
       schoolName: sql<string>`coalesce((select c.name from schools c where c.id = ${schools.mergedInto}), ${schools.name})`,
       departmentLabel: institutionAffiliations.departmentLabel,
+      cohortId: institutionAffiliations.cohortId,
     })
     .from(institutionAffiliations)
     .innerJoin(schools, eq(schools.id, institutionAffiliations.schoolId))
@@ -78,8 +88,9 @@ export async function loadViewer(db: DbExecutor, actor: Actor, spaceId: string |
     userId: actor.userId,
     status: user?.status ?? 'deleted',
     operator: await isOperator(db, actor.userId),
-    affiliations: rows.map((r) => ({ schoolId: r.schoolId, departmentKey: departmentKey(r.departmentLabel) })),
+    affiliations: rows.map((r) => ({ schoolId: r.schoolId, departmentKey: departmentKey(r.departmentLabel), cohortId: r.cohortId })),
     ...(isFeatureOn('alumni') && { alumniHistorySchoolIds: await alumniHistorySchoolIds(db, actor.userId) }),
+    ...(isFeatureOn('institutions') && { institutionStaffSchoolIds: await staffInstitutionIds(db, actor.userId) }),
     communityWriteSuspended: restriction !== null,
     writeRestriction: restriction,
     schools: [...new Map(rows.map((r) => [r.schoolId, { id: r.schoolId, name: r.schoolName, departmentLabel: r.departmentLabel }])).values()],
@@ -107,17 +118,34 @@ async function alumniHistorySchoolIds(db: DbExecutor, userId: string): Promise<s
   return rows.map((r) => r.schoolId)
 }
 
-/** 공간 행 + 정본 학교 id·이름. */
+/** 공간 행 + 정본 학교 id·이름·종류. */
 export interface LoadedSpace {
   row: SpaceRow
   schoolId: string | null
   schoolName: string | null
+  /** 정본 학교의 기관 종류(I-01). 학교에 묶이지 않은 공간은 null. */
+  schoolKind: (typeof schools.$inferSelect)['kind'] | null
 }
 
 const spaceColumns = {
   row: communitySpaces,
   schoolId: sql<string | null>`coalesce(${schools.mergedInto}, ${schools.id})`,
   schoolName: sql<string | null>`coalesce((select c.name from schools c where c.id = ${schools.mergedInto}), ${schools.name})`,
+  schoolKind: sql<(typeof schools.$inferSelect)['kind'] | null>`coalesce((select c.kind from schools c where c.id = ${schools.mergedInto}), ${schools.kind})`,
+}
+
+/**
+ * 기관 공간(I-02, ADR 0044)의 종류: 대학이 아닌 기관의 공식 페이지는 `page`(기관 페이지), 기수가 묶인 사용자 방은 `cohort_room`. 그 밖은 null.
+ */
+export function institutionSpaceKind(space: Pick<LoadedSpace, 'row' | 'schoolKind'>): 'page' | 'cohort_room' | null {
+  if (space.row.cohortId && space.row.kind === 'user_room') return 'cohort_room'
+  if (isOfficialKind(space.row.kind) && space.schoolKind && isNonUniversityKind(space.schoolKind)) return 'page'
+  return null
+}
+
+/** 플래그가 꺼져 있어 숨기는 기관 공간인지(목록에서 거르고, 상세·글은 404). */
+export function hiddenInstitutionSpace(space: Pick<LoadedSpace, 'row' | 'schoolKind'>): boolean {
+  return institutionSpaceKind(space) !== null && !isFeatureOn('institutions')
 }
 
 export async function loadSpacesWhere(db: DbExecutor, where: ReturnType<typeof and>): Promise<LoadedSpace[]> {
@@ -168,6 +196,7 @@ export function spaceFacts(space: LoadedSpace, activeMembers: number): SpaceFact
     status: space.row.status,
     capacity: space.row.capacity,
     activeMembers,
+    cohortId: space.row.cohortId,
   }
 }
 
@@ -178,6 +207,23 @@ export interface SpaceContext {
   space: LoadedSpace
   membership: MembershipRow | null
   facts: SpaceFacts
+  /**
+   * 기수 방(I-02)을 멤버가 아니라 기관 운영진으로만 읽는 사람인지. 그런 사람은 `institutionStaff` 옵션을 준 경로(상세·게시판·글 읽기·운영 조치·
+   * 공지 쓰기·설정·게시판 관리)만 쓰고, 멤버 단위 기능(방별 프로필·명부·일정·투표·앨범·스터디 기록·모집·옮기기 등)은 없는 방처럼 404입니다.
+   */
+  staffOnly: boolean
+}
+
+/** 읽기 판정 옵션. */
+export interface ReadOptions {
+  /** 기수 방을 운영진으로만 읽는 사람도 받는지(I-02, ADR 0044). 기본 false — 멤버 단위 기능은 멤버만. */
+  institutionStaff?: boolean
+}
+
+/** 기수 방에서 멤버로서가 아니라 기관 운영진으로만 읽는지. */
+function staffOnlyReader(viewer: LoadedViewer, facts: SpaceFacts, membership: MembershipRow | null): boolean {
+  if (!isCohortRoom(facts) || !isInstitutionStaffFor(viewer, facts)) return false
+  return !(membership?.status === 'active' && meetsRoomAffiliation(viewer, facts))
 }
 
 /** 공간 + 요청한 사람(그 공간 기준의 제재 포함) + 멤버십 + 판정 재료를 한 번에. */
@@ -186,19 +232,23 @@ export async function loadSpaceContext(db: DbExecutor, actor: Actor, ref: unknow
   // 토픽(A-05, ADR 0042)은 P2 topics 플래그가 꺼져 있으면 없는 공간과 같습니다(상세·게시판·글·댓글·신고·공감 모두 이 함수를 거침).
   // 운영자 공간 도구(official.ts)는 loadSpace를 바로 써서 플래그와 무관하게 조치할 수 있습니다.
   if (space.row.kind === 'topic' && !isFeatureOn('topics')) throw notFound()
+  // 기관 페이지·기수 방(I-02)은 P2 institutions 플래그가 꺼져 있으면 없는 공간과 같습니다.
+  if (hiddenInstitutionSpace(space)) throw notFound()
   const [viewer, membership, count] = await Promise.all([
     loadViewer(db, actor, space.row.id, now),
     findMembership(db, space.row.id, actor.userId, lock),
     // 운영자가 연 공간(공식 페이지·토픽)은 멤버 수를 세지 않습니다(자격이 인증에서 나옴).
     isOperatorSpaceKind(space.row.kind) ? Promise.resolve(0) : activeMemberCount(db, space.row.id),
   ])
-  return { viewer, space, membership, facts: spaceFacts(space, count) }
+  const facts = spaceFacts(space, count)
+  return { viewer, space, membership, facts, staffOnly: staffOnlyReader(viewer, facts, membership) }
 }
 
-/** 읽을 수 있는 공간만(아니면 404). */
-export async function loadReadableSpace(db: DbExecutor, actor: Actor, ref: unknown, lock = false, now = new Date()): Promise<SpaceContext> {
+/** 읽을 수 있는 공간만(아니면 404). 기수 방을 운영진으로만 읽는 사람은 `institutionStaff` 옵션이 있을 때만(아니면 404). */
+export async function loadReadableSpace(db: DbExecutor, actor: Actor, ref: unknown, lock = false, now = new Date(), options: ReadOptions = {}): Promise<SpaceContext> {
   const ctx = await loadSpaceContext(db, actor, ref, lock, now)
   if (!canReadSpace(ctx.viewer, ctx.facts, membershipFacts(ctx.membership))) throw notFound()
+  if (ctx.staffOnly && !options.institutionStaff) throw notFound()
   return ctx
 }
 
@@ -218,9 +268,11 @@ export async function loadBoardReadableSpace(
   boardKind: BoardKind,
   lock = false,
   now = new Date(),
+  options: ReadOptions = {},
 ): Promise<BoardReadContext> {
   const ctx = await loadSpaceContext(db, actor, ref, lock, now)
   const m = membershipFacts(ctx.membership)
+  if (ctx.staffOnly && !options.institutionStaff) throw notFound()
   if (canReadSpace(ctx.viewer, ctx.facts, m)) return { ...ctx, alumniHistoryOnly: false }
   if (canReadBoard(ctx.viewer, ctx.facts, m, boardKind)) return { ...ctx, alumniHistoryOnly: true }
   throw notFound()

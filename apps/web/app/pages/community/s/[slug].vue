@@ -329,7 +329,7 @@ const isMe = (m: SpaceMemberDto) => m.userId === me.value?.id
         <span v-if="space.official" class="badge">공식</span>
       </h1>
       <p class="small muted">
-        {{ SPACE_KIND_LABELS[space.kind] }}
+        {{ space.institutionSpace === 'page' ? '기관 페이지' : space.institutionSpace === 'cohort_room' ? '기수 방' : SPACE_KIND_LABELS[space.kind] }}
         <template v-if="space.school"> · {{ space.school.name }}</template>
         <template v-if="space.departmentLabel"> · {{ space.departmentLabel }}</template>
         <template v-if="space.memberCount !== null"> · 멤버 {{ space.memberCount }}명</template>
@@ -341,7 +341,12 @@ const isMe = (m: SpaceMemberDto) => m.userId === me.value?.id
         학교를 넘나드는 토픽입니다. 학교·기관 인증이 있으면 누구나 읽고 쓰며, 글에는 이름 대신 소속과 신분만 보입니다(인증 회원이 적은 소속은 넓은 범주로).
         <NuxtLink to="/community/topics">토픽 목록</NuxtLink>
       </p>
-      <p v-if="space.official" class="hint">‘공식’은 Peerchive가 열고 운영하는 페이지라는 뜻이며 학교가 인정했다는 뜻이 아닙니다. 이 학교 메일로 인증한 계정만 읽습니다.</p>
+      <p v-if="space.official && space.institutionSpace !== 'page'" class="hint">‘공식’은 Peerchive가 열고 운영하는 페이지라는 뜻이며 학교가 인정했다는 뜻이 아닙니다. 이 학교 메일로 인증한 계정만 읽습니다.</p>
+      <p v-if="space.institutionSpace" class="hint" data-testid="institution-space-hint">
+        <template v-if="space.institutionSpace === 'page'">기관 페이지입니다. ‘공식’은 Peerchive가 열고 운영한다는 뜻이며, 이 기관 인증 계정만 읽습니다.</template>
+        <template v-else>기수 방입니다. 이 기관·이 기수로 인증한 계정만 들어오고, 인증이 끝나면 더 읽지 못합니다.</template>
+        이 기관의 운영진이 운영 조치(가리기·공지·게시판 관리)를 위해 읽을 수 있습니다. 운영진도 익명 글의 작성자를 알 수 없고 멤버 목록을 보지 않습니다.
+      </p>
       <p v-if="space.description" class="pre">{{ space.description }}</p>
       <p v-if="space.status !== 'active'" class="notice error" role="status">{{ SPACE_STATUS_LABELS[space.status] }}</p>
       <p v-if="notice" :class="['notice', notice.kind]" :role="notice.kind === 'error' ? 'alert' : 'status'">{{ notice.text }}</p>

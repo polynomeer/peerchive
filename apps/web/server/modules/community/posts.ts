@@ -455,7 +455,7 @@ export async function listBoardPosts(db: DbExecutor, actor: Actor, boardId: unkn
   const { cursor } = parseInput(listQuery, rawQuery ?? {})
   const board = await findBoard(db, boardId)
   // 졸업생 인증 이력(A-04, ADR 0041)으로는 공식 학교 페이지의 졸업생·자유 게시판만 읽습니다(쓰기 자격은 composer가 그대로 판정).
-  const ctx = await loadBoardReadableSpace(db, actor, board.spaceId, board.kind, false, now)
+  const ctx = await loadBoardReadableSpace(db, actor, board.spaceId, board.kind, false, now, { institutionStaff: true })
   let after: { createdAt: Date; id: string } | null = null
   if (cursor) {
     const [row] = await db
@@ -499,7 +499,7 @@ export async function listBoardPosts(db: DbExecutor, actor: Actor, boardId: unkn
 export async function getPost(db: DbExecutor, actor: Actor, postId: unknown, now = new Date()): Promise<CommunityPostDto> {
   const post = await findPost(db, postId)
   const board = await findBoard(db, post.boardId)
-  const ctx = await loadBoardReadableSpace(db, actor, post.spaceId, board.kind, false, now)
+  const ctx = await loadBoardReadableSpace(db, actor, post.spaceId, board.kind, false, now, { institutionStaff: true })
   return postDetail(db, ctx, post, now)
 }
 
@@ -624,7 +624,7 @@ export async function createPost(db: DbExecutor, actor: Actor, boardId: unknown,
   const postId = await db.transaction(async (tx) => {
     const board = await findBoard(tx, boardId)
     await shareLockSpace(tx, board.spaceId)
-    const ctx = await loadReadableSpace(tx, actor, board.spaceId, false, now)
+    const ctx = await loadReadableSpace(tx, actor, board.spaceId, false, now, { institutionStaff: true })
     assertWritable(ctx, canWriteBoard(ctx.viewer, ctx.facts, membershipFacts(ctx.membership), boardFacts(board)))
     const { mode, personaId } = await decideNameMode(tx, ctx, now, input.nameMode)
     const label = await affiliationColumns(tx, ctx, mode, input)
@@ -741,7 +741,7 @@ export async function editPost(db: DbExecutor, actor: Actor, postId: unknown, ra
   const id = await db.transaction(async (tx) => {
     const peek = await findPost(tx, postId)
     await shareLockSpace(tx, peek.spaceId)
-    const ctx = await loadReadableSpace(tx, actor, peek.spaceId)
+    const ctx = await loadReadableSpace(tx, actor, peek.spaceId, false, now, { institutionStaff: true })
     const post = await findPost(tx, peek.id, true)
     ownChangeOrThrow(canChangeOwnItem(post, actor.userId, ctx.space.row.status, 'edit'))
     if (post.version !== input.expectedVersion) throw conflict('version_conflict', { currentVersion: post.version })
@@ -769,7 +769,7 @@ export async function deletePost(db: DbExecutor, actor: Actor, postId: unknown, 
   const id = await db.transaction(async (tx) => {
     const peek = await findPost(tx, postId)
     await shareLockSpace(tx, peek.spaceId)
-    const ctx = await loadReadableSpace(tx, actor, peek.spaceId)
+    const ctx = await loadReadableSpace(tx, actor, peek.spaceId, false, now, { institutionStaff: true })
     const post = await findPost(tx, peek.id, true)
     ownChangeOrThrow(canChangeOwnItem(post, actor.userId, ctx.space.row.status, 'delete'))
     await tx

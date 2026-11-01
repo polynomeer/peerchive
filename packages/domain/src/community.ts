@@ -11,6 +11,9 @@
  * - 가입: open → active, approval → pending(방장·admin 승인), invite → 초대 링크로만. 정원(기본 300)을 넘으면 409. 방장이 떠나면 가장 오래된
  *   admin → 가장 오래된 다른 active 멤버 순으로 넘기고, 없으면 보관(archived).
  * - 상태: archived(보관: 읽기만, 가입·쓰기·관리 없음), restricted(운영 조치: 읽기만, 목록·가입·쓰기·관리 없음, 운영자만 해제).
+ * - 기관 페이지·기수 방·기관 운영진(I-02, ADR 0044): 대학이 아닌 기관의 공식 학교 페이지(kind official_school 그대로)가 기관 페이지이고,
+ *   사용자 방에 기수(cohortId)를 묶으면 기수 방입니다(그 기수 active 인증만 들어옴). 기관 운영진은 자기 기관의 기관 페이지·기수 방에서
+ *   모더레이터와 같은 운영 조치 + 설정·게시판 관리만 합니다(isInstitutionStaffFor). 작성자 확인·멤버 목록·가입 관리는 없습니다.
  * - 글쓰기 권한(canWriteBoard)만 여기서 정합니다. 실제 글·댓글은 C-04, 이름 표시 방식 변경은 C-03(name-modes.ts), 이용 제한(제재)은 C-06
  *   (community-moderation.ts)이며 서버가 그 공간 기준의 제재를 읽어 `communityWriteSuspended`를 채웁니다.
  *
@@ -195,6 +198,19 @@ export const OFFICIAL_DEFAULT_BOARDS: readonly BoardTemplate[] = [
   { kind: 'notice', title: '공지', writeRole: 'moderator' },
 ]
 
+/**
+ * 기관 페이지 기본 게시판(I-02, ADR 0044): 공식 학교 페이지에서 새내기를 빼고 졸업생 게시판을 `수료생`으로 부릅니다(종류는 alumni 그대로라
+ * 졸업생 인증 이력 읽기(A-04)·라운지 미디어(자유 게시판) 규칙이 같게 적용됨).
+ */
+export const INSTITUTION_PAGE_DEFAULT_BOARDS: readonly BoardTemplate[] = [
+  { kind: 'free', title: '자유', writeRole: 'member' },
+  { kind: 'alumni', title: '수료생', writeRole: 'member' },
+  { kind: 'question', title: '질문', writeRole: 'member' },
+  { kind: 'info', title: '정보', writeRole: 'member' },
+  { kind: 'recruiting', title: '모집', writeRole: 'member' },
+  { kind: 'notice', title: '공지', writeRole: 'moderator' },
+]
+
 /** 사용자 방·스터디 방 기본 게시판: 하나. 방장·운영진이 MAX_BOARDS_PER_ROOM까지 더합니다. */
 export const ROOM_DEFAULT_BOARDS: readonly BoardTemplate[] = [{ kind: 'general', title: '게시판', writeRole: 'member' }]
 
@@ -221,8 +237,13 @@ export interface CommunityViewer {
   userId: string
   status: 'active' | 'suspended' | 'deleted'
   operator: boolean
-  /** active 학교 인증들(C-01). */
-  affiliations: ReadonlyArray<{ schoolId: string; departmentKey: string | null }>
+  /** active 학교 인증들(C-01). cohortId는 대학이 아닌 기관 인증의 기수(I-01, 없으면 null) — 기수 방(I-02) 자격에 씁니다. */
+  affiliations: ReadonlyArray<{ schoolId: string; departmentKey: string | null; cohortId?: string | null }>
+  /**
+   * 기관 운영진(I-02, ADR 0044)으로 지정된 정본 기관 id. P2 institutions 플래그가 켜졌을 때만 서버가 채웁니다(꺼지면 비어 있어 운영진 권한 없음).
+   * 운영진 권한은 그 기관의 기관 페이지·기수 방에만 미칩니다(isInstitutionStaffFor).
+   */
+  institutionStaffSchoolIds?: ReadonlyArray<string>
   /**
    * 졸업생 인증 이력이 있는 학교(정본 id, A-04, ADR 0041 — @peerchive/domain countsAsAlumniHistory). P2 alumni 플래그가 켜졌을 때만 서버가 채우고,
    * 꺼져 있거나 비어 있으면 열람은 active 인증만 봅니다(기존 동작). 이 값은 공식 학교 페이지의 졸업생 게시판·공감 라운지 **열람에만** 씁니다.
@@ -246,6 +267,8 @@ export interface SpaceFacts {
   capacity: number
   /** 지금 active 멤버 수(정원 판정). */
   activeMembers: number
+  /** 기수 방(I-02)이면 그 기수 id(사용자 방만). 그 기관·그 기수의 active 인증만 들어오고 읽습니다. */
+  cohortId?: string | null
 }
 
 export interface MembershipFacts {
@@ -271,8 +294,29 @@ export function hasDepartmentAffiliation(viewer: CommunityViewer, schoolId: stri
   return !!schoolId && !!deptKey && viewer.affiliations.some((a) => a.schoolId === schoolId && a.departmentKey === deptKey)
 }
 
-/** 사용자 방에 들어갈 학교 자격: 학교 연결 방은 그 학교 인증, 연결 안 한 방은 아무 학교 인증 하나. */
-export function meetsRoomAffiliation(viewer: CommunityViewer, space: Pick<SpaceFacts, 'schoolId'>): boolean {
+/** 그 기관(정본)·그 기수의 active 인증이 있는지(I-02). 인증 수단은 묻지 않습니다(초대 코드·기수 승인·수료증 확인 모두). */
+export function hasCohortAffiliation(viewer: CommunityViewer, schoolId: string | null, cohortId: string | null | undefined): boolean {
+  return !!schoolId && !!cohortId && viewer.affiliations.some((a) => a.schoolId === schoolId && a.cohortId === cohortId)
+}
+
+/** 기수 방(I-02, ADR 0044): 기관 기수에 묶인 사용자 방. */
+export function isCohortRoom(space: Pick<SpaceFacts, 'kind' | 'cohortId'>): boolean {
+  return space.kind === 'user_room' && !!space.cohortId
+}
+
+/**
+ * 기관 운영진으로서 이 공간을 운영하는지(I-02, ADR 0044, SYSTEM_DESIGN §8.4): 그 기관(정본)의 운영진이고, 공간이 그 기관의 기관 페이지
+ * (official_school) 또는 기수 방. 사용자가 만든 기관 연결 방·학과 페이지·다른 기관의 공간에는 아무 권한이 없습니다.
+ */
+export function isInstitutionStaffFor(viewer: CommunityViewer | null | undefined, space: Pick<SpaceFacts, 'kind' | 'schoolId' | 'cohortId'>): boolean {
+  if (!isActiveViewer(viewer) || !space.schoolId) return false
+  if (!(viewer.institutionStaffSchoolIds ?? []).includes(space.schoolId)) return false
+  return space.kind === 'official_school' || isCohortRoom(space)
+}
+
+/** 사용자 방에 들어갈 학교 자격: 기수 방은 그 기관·그 기수 인증, 학교 연결 방은 그 학교 인증, 연결 안 한 방은 아무 학교 인증 하나. */
+export function meetsRoomAffiliation(viewer: CommunityViewer, space: Pick<SpaceFacts, 'schoolId'> & { cohortId?: string | null }): boolean {
+  if (space.cohortId) return hasCohortAffiliation(viewer, space.schoolId, space.cohortId)
   return space.schoolId ? hasSchoolAffiliation(viewer, space.schoolId) : viewer.affiliations.length > 0
 }
 
@@ -292,13 +336,14 @@ export function canCreateRoom(viewer: CommunityViewer | null | undefined, school
  * - 사용자 방·스터디 방: active 멤버 + 지금도 학교 자격이 있을 것(C-05). 학교 연결 방은 그 학교 active 인증, 학교 무관 방은 아무 학교
  *   active 인증 하나(들어올 때의 조건과 같음). 인증이 해제·취소되면 멤버십이 남아도 다음 요청부터 404이고, 다시 인증하면 돌아옵니다.
  *   보관·제한 상태여도 멤버는 읽기만. 운영자도 멤버가 아니면 못 읽습니다.
+ * - 기관 운영진(I-02): 자기 기관의 기관 페이지·기수 방을 운영 조치를 위해 읽습니다(모더레이터와 같은 범위, 멤버 목록·작성자는 없음).
  */
 export function canReadSpace(viewer: CommunityViewer | null | undefined, space: SpaceFacts, membership: MembershipFacts | null | undefined): boolean {
   if (!isActiveViewer(viewer)) return false
   // 토픽(A-05, ADR 0042): 학교를 넘나드는 공간 — active 기관 인증이 하나라도 있으면(대학·부트캠프 무관) 또는 운영자. 플래그는 서버가 공간을 불러올 때 봅니다.
   if (space.kind === 'topic') return viewer.operator || viewer.affiliations.length > 0
-  if (isOfficialKind(space.kind)) return viewer.operator || hasSchoolAffiliation(viewer, space.schoolId)
-  return activeMember(membership) && meetsRoomAffiliation(viewer, space)
+  if (isOfficialKind(space.kind)) return viewer.operator || hasSchoolAffiliation(viewer, space.schoolId) || isInstitutionStaffFor(viewer, space)
+  return (activeMember(membership) && meetsRoomAffiliation(viewer, space)) || isInstitutionStaffFor(viewer, space)
 }
 
 /** 졸업생 인증 이력으로 읽는 공식 학교 페이지 게시판(A-04, ADR 0041): 자유 게시판(공감 라운지)과 졸업생 게시판. */
@@ -396,9 +441,11 @@ const ROOM_MODERATOR_ROLES: readonly SpaceRole[] = ['owner', 'admin', 'moderator
 /**
  * 공간 운영(글 숨김·공지 고정 등, C-04~C-06에서 씀)을 할 수 있는지.
  * 공식 페이지: active 모더레이터 멤버십 또는 운영자. 사용자 방: active owner·admin·moderator. 운영자의 사용자 방 조치는 운영 화면(신고 처리)으로만 합니다.
+ * 기관 운영진(I-02): 자기 기관의 기관 페이지·기수 방에서 모더레이터와 같은 조치(가리기·되돌리기·제재 요청·공지 쓰기). 작성자 확인은 여전히 운영자만.
  */
 export function canModerate(viewer: CommunityViewer | null | undefined, space: SpaceFacts, membership: MembershipFacts | null | undefined): boolean {
   if (!isActiveViewer(viewer) || !canReadSpace(viewer, space, membership)) return false
+  if (isInstitutionStaffFor(viewer, space)) return true
   if (isOperatorSpaceKind(space.kind)) return viewer.operator || (activeMember(membership) && membership.role === 'moderator')
   return activeMember(membership) && ROOM_MODERATOR_ROLES.includes(membership.role)
 }
@@ -445,6 +492,8 @@ export type SpaceManageAction = (typeof SPACE_MANAGE_ACTIONS)[number]
  * - 공식 페이지: 설정·게시판·보관은 운영자만. 가입·초대·역할이 없습니다(모더레이터 지정은 운영자 API).
  * - 사용자 방: 설정·게시판·승인·내보내기·초대는 owner·admin, 역할 변경·보관·이름 표시 방식 변경 예약(C-03)은 owner.
  *   공식 페이지의 이름 표시 방식은 운영자도 바꿀 수 없습니다(anonymous 고정).
+ * - 기관 운영진(I-02): 자기 기관의 기관 페이지·기수 방에서 설정(이름·소개)·게시판만. 보관·가입 관리·초대·역할·이름 표시 방식 변경은 없습니다
+ *   (방장 권한을 넘지 않음). 기수 방에는 방장이 없어 그 밖의 관리 동작은 아무도 하지 않습니다(보관은 운영자 도구).
  */
 export function canManageSpace(
   viewer: CommunityViewer | null | undefined,
@@ -453,6 +502,7 @@ export function canManageSpace(
   action: SpaceManageAction,
 ): boolean {
   if (!isActiveViewer(viewer) || space.status !== 'active') return false
+  if (isInstitutionStaffFor(viewer, space) && (action === 'update_settings' || action === 'manage_boards')) return true
   if (isOperatorSpaceKind(space.kind)) {
     return viewer.operator && (action === 'update_settings' || action === 'manage_boards' || action === 'archive')
   }

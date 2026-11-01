@@ -168,7 +168,7 @@ async function saveRealName() {
 
 const spaceMeta = (s: SpaceSummaryDto) =>
   [
-    s.official ? SPACE_KIND_LABELS[s.kind] : s.school ? s.school.name : '학교 무관',
+    s.institutionSpace === 'page' ? '기관 페이지' : s.institutionSpace === 'cohort_room' ? `기수 방 · ${s.school?.name ?? ''}` : s.official ? SPACE_KIND_LABELS[s.kind] : s.school ? s.school.name : '학교 무관',
     `이름 표시: ${NAME_MODE_LABELS[s.nameMode]}`,
     s.official ? null : JOIN_POLICY_LABELS[s.joinPolicy],
     s.memberCount !== null ? `멤버 ${s.memberCount}명` : null,
@@ -189,7 +189,7 @@ const spaceMeta = (s: SpaceSummaryDto) =>
       <NuxtLink to="/community/notices">커뮤니티 알림<template v-if="mine?.unreadNotices"> (읽지 않음 {{ mine.unreadNotices }}개)</template></NuxtLink>
       · <NuxtLink to="/community/recruitments">모집·내 지원</NuxtLink>
       <template v-if="flags.topics"> · <NuxtLink to="/community/topics" data-testid="topics-link">학교를 넘나드는 토픽</NuxtLink></template>
-      <template v-if="flags.institutions"> · <NuxtLink to="/community/retros" data-testid="retros-link">수료 회고</NuxtLink></template>
+      <template v-if="flags.institutions"> · <NuxtLink to="/community/retros" data-testid="retros-link">수료 회고</NuxtLink> · <NuxtLink to="/institutions/manage" data-testid="institution-manage-link">기관 운영(운영진)</NuxtLink></template>
     </p>
 
     <template v-if="!schools.length">

@@ -57,6 +57,8 @@
  * A-02(0035 migration): 동문회·OB 방의 일정(room_events)·회차별 참석 응답(room_event_rsvps)·공지 읽음 표시(notice_reads)·
  * 투표(room_polls·room_poll_votes)·앨범 사진(room_album_photos, 격리 키 + 검사·메타데이터 제거). 결정은 ADR 0039.
  * A-03(0036 migration): 동문회·OB 방의 멤버 명부 동의(directory_entries, 동의한 멤버만 행·철회·나가기 시 즉시 삭제). 결정은 ADR 0040.
+ * I-02(0041 migration): 기관 운영진(institution_staff: 운영자가 지정·해제, 기관당 사람마다 열린 행 하나)과 기수 방(community_spaces.cohort_id,
+ * 사용자 방만, 기수마다 보관되지 않은 방 하나). 결정은 ADR 0044.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -3126,6 +3128,38 @@ export const certificateChecks = pgTable(
   ],
 )
 
+// ── 기관 운영진 (I-02, PROOFU_EVOLUTION_PLAN §8.9.11, SYSTEM_DESIGN §6.7.2 InstitutionAdmin·§8.4, ADR 0044) ─────────────
+//
+// 기관 운영진은 운영자만 지정·해제합니다(감사 id만). 권한은 자기 기관의 기관 페이지·기수 방에서 모더레이터 범위 + 설정·게시판 관리,
+// 자기 기관의 초대 코드 발급·철회뿐입니다. 작성자 확인·수료증 확인·기관 단위 사용자 조회는 없습니다.
+
+/**
+ * 기관 운영진 지정(SYSTEM_DESIGN §6.7.2 InstitutionAdmin). 대학이 아닌 정본 기관에만 둡니다(서버 판정). 해제하면 revoked_at·revoked_by를 남기고
+ * 행은 지우지 않습니다(누가 언제 운영진이었는지는 운영 기록). 탈퇴 정리는 그 사람의 행을 지웁니다.
+ */
+export const institutionStaff = pgTable(
+  'institution_staff',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    schoolId: uuid('school_id')
+      .notNull()
+      .references(() => schools.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    /** 지정한 운영자. */
+    grantedBy: uuid('granted_by').references(() => users.id),
+    grantedAt: timestamp('granted_at', { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    revokedBy: uuid('revoked_by').references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex('institution_staff_open_key').on(t.schoolId, t.userId).where(sql`${t.revokedAt} is null`),
+    index('institution_staff_user_id_idx').on(t.userId),
+    check('institution_staff_revoked_check', sql`${t.revokedAt} is not null or ${t.revokedBy} is null`),
+  ],
+)
+
 // ── 수료 회고 (A-06, PROOFU_EVOLUTION_PLAN §8.9.10 "가져오지 않는 것"·§8.9.11, SYSTEM_DESIGN §6.7.2 "수료 회고", ADR 0043) ─────────────
 //
 // 부트캠프·교육 프로그램·동아리 연합 수료생이 그 기관(과 기수)에 남기는 구조화된 회고입니다. 선배 노트 형식(질문별 답)이고 **별점·연봉·추천 점수 열이
@@ -3245,6 +3279,11 @@ export const communitySpaces = pgTable(
     template: communitySpaceTemplate('template').notNull().default('general'),
     /** 토픽 분류(A-05, ADR 0042). kind = topic일 때만 있습니다(check). */
     topicCategory: topicCategory('topic_category'),
+    /**
+     * 기수 방(I-02, ADR 0044): 기관 기수. 사용자 방 + school_id(그 기관)일 때만(check). 그 기관·그 기수의 active 인증만 들어오고 읽습니다.
+     * 기수마다 보관되지 않은 기수 방 하나(부분 unique).
+     */
+    cohortId: uuid('cohort_id').references(() => institutionCohorts.id),
     discovery: spaceDiscovery('discovery').notNull().default('listed'),
     joinPolicy: spaceJoinPolicy('join_policy').notNull().default('open'),
     capacity: integer('capacity').notNull().default(300),
@@ -3265,6 +3304,7 @@ export const communitySpaces = pgTable(
     uniqueIndex('community_spaces_official_department_key').on(t.schoolId, t.departmentKey).where(sql`${t.kind} = 'official_department'`),
     index('community_spaces_school_id_idx').on(t.schoolId),
     index('community_spaces_status_discovery_idx').on(t.status, t.discovery),
+    uniqueIndex('community_spaces_cohort_room_key').on(t.cohortId).where(sql`${t.cohortId} is not null and ${t.status} <> 'archived'`),
     check('community_spaces_slug_check', sql`${t.slug} ~ '^[a-z0-9]{10}$'`),
     check('community_spaces_name_check', sql`char_length(${t.name}) between 1 and 60`),
     check('community_spaces_description_check', sql`${t.description} is null or char_length(${t.description}) between 1 and 300`),
@@ -3282,6 +3322,7 @@ export const communitySpaces = pgTable(
     check('community_spaces_archived_check', sql`${t.status} <> 'archived' or ${t.archivedAt} is not null`),
     check('community_spaces_restricted_check', sql`${t.status} <> 'restricted' or ${t.restrictedAt} is not null`),
     check('community_spaces_template_check', sql`${t.template}::text = 'general' or ${t.kind}::text = 'user_room'`),
+    check('community_spaces_cohort_check', sql`${t.cohortId} is null or (${t.kind}::text = 'user_room' and ${t.schoolId} is not null)`),
     // A-05(ADR 0042): 토픽은 학교에 묶이지 않고 이름 표시가 소속 표시 익명으로 고정, 소속 표시 익명은 토픽에만. enum 값을 같은 migration에서 더해 text로 비교합니다.
     check('community_spaces_topic_category_check', sql`(${t.kind}::text = 'topic') = (${t.topicCategory} is not null)`),
     check(

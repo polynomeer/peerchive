@@ -99,6 +99,10 @@ export type AuditAction =
   | 'cohort_approval.approve'
   | 'certificate_check.view'
   | 'certificate_check.decide'
+  /** I-02(ADR 0044): 기관 운영진 지정·해제(지정 행 id + 기관·대상 사용자 id만), 기수 방 만들기(기관·기수 id·방식·운영진 여부). */
+  | 'institution_staff.grant'
+  | 'institution_staff.revoke'
+  | 'community.cohort_room_create'
   | 'community.board_create'
   | 'community.board_update'
   | 'community.capacity_decide'
@@ -228,6 +232,7 @@ export async function recordAudit(
       | 'profile_post'
       | 'invite_code'
       | 'certificate_check'
+      | 'institution_staff'
       | 'completion_retro'
     targetId?: string | null
     projectId?: string | null
