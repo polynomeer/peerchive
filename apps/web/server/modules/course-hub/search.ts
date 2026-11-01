@@ -8,6 +8,7 @@
  *   노트 = 노트가 published이고 문서를 만든 version과 지금 version이 같음, 막힘 Q&A(C-09) = 항목이 published.
  *   그래서 철회 직후 정리 handler가 아직 돌지 않아 문서 행이 남아 있어도 결과에 나오지 않습니다.
  * - 일치: 정규화한 글의 부분 일치(ILIKE, 한국어 두 글자 검색어도 됨) 또는 pg_trgm 단어 유사도(`<%`). 유사도 순 → 최근 순.
+ * - 단계적 개방(E-02, ADR 0047): 허브 안에서만 읽을 수 있는 노트·막힘 Q&A 결과는 그 과목 허브가 "준비 중"이면 뺍니다(사례·막힘은 /p/:slug라 그대로).
  */
 import { SEARCH_KINDS, SEARCH_QUERY_MAX, normalizeSearchText, type SearchKind } from '@peerchive/domain'
 import {
@@ -33,6 +34,7 @@ import { isUuid } from '../projects/access'
 import { publicQaPath } from './course-qa'
 import { publicCasePath, publicStuckPath } from './hub'
 import { courseScopeSql, servableReleaseSql } from './public-scope'
+import { openCourseIds } from './staged-opening'
 import type { PublicSearchDto, SearchResultDto } from '../../../shared/types/api'
 
 export const SEARCH_RESULT_LIMIT = 20
@@ -125,7 +127,14 @@ async function searchReleases(db: DbExecutor, query: SearchQuery, kinds: Array<'
   }))
 }
 
-async function searchNotes(db: DbExecutor, query: SearchQuery): Promise<SearchResultDto[]> {
+/** 허브 경로(/c/:id#…)로 가는 결과 중 허브가 준비 중인 과목의 것을 뺍니다(E-02, 플래그가 꺼져 있으면 그대로). */
+async function onlyOpenHubs(db: DbExecutor, results: SearchResultDto[], now: Date): Promise<SearchResultDto[]> {
+  const ids = results.map((r) => r.course?.id).filter((id): id is string => !!id)
+  const open = await openCourseIds(db, ids, now)
+  return results.filter((r) => !r.course || open.has(r.course.id))
+}
+
+async function searchNotes(db: DbExecutor, query: SearchQuery, now: Date): Promise<SearchResultDto[]> {
   const rows = await db
     .select({
       noteId: seniorNotes.id,
@@ -147,7 +156,7 @@ async function searchNotes(db: DbExecutor, query: SearchQuery): Promise<SearchRe
     .orderBy(desc(scoreSql(query.q)), desc(seniorNotes.publishedAt), searchDocuments.id)
     .limit(SEARCH_RESULT_LIMIT)
   const labels = await courseLabels(db, rows.map((r) => r.courseId))
-  return rows.map((r) => {
+  const results = rows.map((r) => {
     const course = labels.get(r.courseId) ?? null
     return {
       kind: 'note' as const,
@@ -157,10 +166,11 @@ async function searchNotes(db: DbExecutor, query: SearchQuery): Promise<SearchRe
       course,
     }
   })
+  return onlyOpenHubs(db, results, now)
 }
 
 /** 막힘 Q&A(C-09): 문서가 남아 있어도 항목이 지금 published일 때만(철회·숨김은 같은 쿼리에서 빠짐). */
-async function searchQa(db: DbExecutor, query: SearchQuery): Promise<SearchResultDto[]> {
+async function searchQa(db: DbExecutor, query: SearchQuery, now: Date): Promise<SearchResultDto[]> {
   const rows = await db
     .select({ id: courseQaItems.id, courseId: courseQaItems.courseId, title: searchDocuments.title, snippet: searchDocuments.snippet })
     .from(searchDocuments)
@@ -176,10 +186,11 @@ async function searchQa(db: DbExecutor, query: SearchQuery): Promise<SearchResul
     .orderBy(desc(scoreSql(query.q)), desc(courseQaItems.publishedAt), searchDocuments.id)
     .limit(SEARCH_RESULT_LIMIT)
   const labels = await courseLabels(db, rows.map((r) => r.courseId))
-  return rows.map((r) => {
+  const results = rows.map((r) => {
     const course = labels.get(r.courseId) ?? null
     return { kind: 'qa' as const, title: r.title, snippet: r.snippet, path: publicQaPath(course?.id ?? r.courseId, r.id), course }
   })
+  return onlyOpenHubs(db, results, now)
 }
 
 /** GET /public/search — 검색어가 비면 빈 결과. 형식 오류 422(q too_long, type·course invalid). 없는 과목이면 빈 결과. */
@@ -199,7 +210,7 @@ export async function searchPublic(db: DbExecutor, rawQuery: Record<string, unkn
   const results: SearchResultDto[] = []
   const releaseKinds = (['case', 'stuck'] as const).filter((k) => !query.type || query.type === k)
   if (releaseKinds.length > 0) results.push(...(await searchReleases(db, query, [...releaseKinds], now)))
-  if (!query.type || query.type === 'note') results.push(...(await searchNotes(db, query)))
-  if (!query.type || query.type === 'qa') results.push(...(await searchQa(db, query)))
+  if (!query.type || query.type === 'note') results.push(...(await searchNotes(db, query, now)))
+  if (!query.type || query.type === 'qa') results.push(...(await searchQa(db, query, now)))
   return { q: query.q, type: query.type, courseId, results }
 }

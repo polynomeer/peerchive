@@ -428,6 +428,8 @@ export const recruitmentStatus = pgEnum('recruitment_status', ['open', 'closed',
 export const applicationStatus = pgEnum('application_status', ['pending', 'accepted', 'declined', 'withdrawn'])
 export const archiveTransferTarget = pgEnum('archive_transfer_target', ['course_qa', 'stuck_log', 'senior_note'])
 export const archiveTransferStatus = pgEnum('archive_transfer_status', ['awaiting_consent', 'done', 'cancelled'])
+/** 과목 허브 단계적 개방(E-02)의 본인 알림 행: 열리면 알려 주기 신청 / 선배 노트 요청 닫음. */
+export const courseHubNoticeKind = pgEnum('course_hub_notice_kind', ['open_notify', 'note_request'])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -2319,6 +2321,39 @@ export const courseRegistrations = pgTable(
     index('course_registrations_course_term_idx').on(t.courseTermId),
     index('course_registrations_prompt_due_idx').on(t.courseTermId).where(sql`${t.postTermPromptedAt} is null`),
     check('course_registrations_dismissed_check', sql`${t.promptDismissedAt} is null or ${t.postTermPromptedAt} is not null`),
+  ],
+)
+
+// ── 과목 허브 단계적 개방 (E-02, PROOFU_EVOLUTION_PLAN §8.6, DELIVERY_PLAN §4.4, ADR 0047) ─────────────
+
+/**
+ * 과목 허브 단계적 개방의 본인 알림 행. 허브가 열렸는지는 저장하지 않고 요청마다 계산합니다(course-hub/staged-opening.ts).
+ * - kind = 'open_notify': "준비 중" 허브를 등록한 학생이 "열리면 알려 주세요"를 누른 행. 홈이 읽을 때 허브가 열렸으면 `opened_at`을 한 번 채우고
+ *   (조건부 갱신이라 몇 번 읽어도 한 번) "열렸습니다" 알림을 보여 줍니다. 본인이 닫으면 `dismissed_at`.
+ * - kind = 'note_request': 과목을 마친 학생에게 보이는 "선배 노트를 남겨 주세요"를 본인이 닫은 행(닫을 때만 만들어짐, `dismissed_at` 필수).
+ * - **본인만 봅니다**: /me 경로만 읽고 쓰며, 신청 수는 어디에도(공개·운영자 화면 포함) 내보내지 않습니다. 감사 기록·분석 이벤트도 남기지 않습니다.
+ * - course_id는 정본 과목. 과목 병합 때 같은 트랜잭션에서 정본으로 옮깁니다(같은 사람·종류가 이미 있으면 원본 쪽 행을 지움). 탈퇴 정리 때 삭제.
+ */
+export const courseHubNotices = pgTable(
+  'course_hub_notices',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    courseId: uuid('course_id')
+      .notNull()
+      .references(() => courses.id),
+    kind: courseHubNoticeKind('kind').notNull(),
+    openedAt: timestamp('opened_at', { withTimezone: true }),
+    dismissedAt: timestamp('dismissed_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('course_hub_notices_user_course_kind_key').on(t.userId, t.courseId, t.kind),
+    index('course_hub_notices_course_idx').on(t.courseId),
+    check('course_hub_notices_opened_check', sql`${t.openedAt} is null or ${t.kind} = 'open_notify'`),
+    check('course_hub_notices_note_request_check', sql`${t.kind} <> 'note_request' or ${t.dismissedAt} is not null`),
   ],
 )
 

@@ -6,8 +6,16 @@
  *   경로 처리기·테스트가 같은 판정을 받습니다.
  * - 화면은 `GET /api/v1/features`(로그인 없이)로 같은 값을 받아 진입점을 숨깁니다(useFeatures).
  * - A-01~A-07·I-02도 이 helper를 씁니다(영역: alumni·topics·institutions).
+ * - E-02 과목 허브 단계적 개방(P1 영역 hubStagedOpening, ADR 0047)도 같은 방식이고, 개방 기준(`PEERCHIVE_HUB_OPEN_THRESHOLD`, 기본 3)도 여기서 읽습니다.
  */
-import { FEATURE_ENV_NAMES, type FeatureArea, type FeatureFlags, parseFeatureFlags } from '@peerchive/domain'
+import {
+  FEATURE_ENV_NAMES,
+  HUB_OPEN_THRESHOLD_ENV,
+  type FeatureArea,
+  type FeatureFlags,
+  parseFeatureFlags,
+  parseHubOpenThreshold,
+} from '@peerchive/domain'
 import { notFound } from './errors'
 
 type Env = Readonly<Record<string, string | undefined>>
@@ -23,7 +31,7 @@ function currentEnv(): Env {
   if (envOverride) return envOverride
   const env = (globalThis.process?.env ?? {}) as Env
   const out: Record<string, string | undefined> = {}
-  for (const name of FEATURE_ENV_NAMES) out[name] = env[name]
+  for (const name of [...FEATURE_ENV_NAMES, HUB_OPEN_THRESHOLD_ENV]) out[name] = env[name]
   return out
 }
 
@@ -38,4 +46,9 @@ export function isFeatureOn(area: FeatureArea): boolean {
 /** 꺼져 있으면 404. */
 export function requireFeature(area: FeatureArea): void {
   if (!isFeatureOn(area)) throw notFound()
+}
+
+/** 과목 허브 개방 기준(공개 사례 + 선배 노트 합계, E-02). 1~100의 정수, 아니면 기본 3. */
+export function hubOpenThreshold(): number {
+  return parseHubOpenThreshold(currentEnv()[HUB_OPEN_THRESHOLD_ENV])
 }

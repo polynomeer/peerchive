@@ -4,12 +4,12 @@
  */
 import { getQuery, getRouterParam, type EventHandler } from 'h3'
 import { createPublicJsonHandler, type PublicHandlerDeps } from '../publication/public-http'
-import { getPublicCourseHub } from './hub'
 import { searchPublic } from './search'
+import { getCourseHubView } from './staged-opening'
 
-/** GET /api/v1/public/courses/:id */
+/** GET /api/v1/public/courses/:id — 열린 허브 또는 "준비 중"(E-02 단계적 개방, 플래그가 꺼져 있으면 항상 열린 허브). */
 export function createPublicCourseHubHandler(deps: PublicHandlerDeps): EventHandler {
-  return createPublicJsonHandler(deps, (db, event, now) => getPublicCourseHub(db, getRouterParam(event, 'id'), now))
+  return createPublicJsonHandler(deps, (db, event, now) => getCourseHubView(db, getRouterParam(event, 'id'), now))
 }
 
 /** GET /api/v1/public/search?q=&type=&course= */

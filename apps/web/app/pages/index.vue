@@ -14,6 +14,8 @@ const { me } = useAuth()
     </p>
     <!-- 이번 학기 과목(E-01): 본인에게만, 화면이 뜬 뒤 불러옵니다. -->
     <ClientOnly><CourseRegistrationCards v-if="me" /></ClientOnly>
+    <!-- 과목 허브 소식(E-02): 단계적 개방이 켜져 있을 때 본인에게만(열림 알림·선배 노트 요청). -->
+    <ClientOnly><HubOpeningNotices v-if="me" /></ClientOnly>
   </div>
 </template>
 

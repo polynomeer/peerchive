@@ -247,6 +247,14 @@ const REGISTRATION_ALLOWED = [
   'api/v1/me/course-registrations/index.post.ts',
   'api/v1/me/course-registrations/[id].delete.ts',
   'api/v1/me/course-registrations/[id]/dismiss-prompt.post.ts',
+  // E-02(ADR 0047): 과목 허브 단계적 개방의 본인 화면(등록 여부·마친 과목 판정). /me 경로만.
+  'modules/course-registrations/hub-opening.ts',
+  'api/v1/me/course-hubs/[id]/opening.get.ts',
+  'api/v1/me/course-hubs/[id]/notify.post.ts',
+  'api/v1/me/course-hubs/[id]/notify.delete.ts',
+  'api/v1/me/course-hubs/[id]/dismiss-note-request.post.ts',
+  'api/v1/me/course-hub-notices/index.get.ts',
+  'api/v1/me/course-hub-notices/[id]/dismiss.post.ts',
 ].map((p) => join(SERVER, p))
 
 describe('E-01 boundary lint: course registrations stay with their owner (source)', () => {
@@ -263,6 +271,16 @@ describe('E-01 boundary lint: course registrations stay with their owner (source
       .filter((f) => f.startsWith(SERVER) && REGISTRATION_NAME_PATTERN.test(readFileSync(f, 'utf8')))
       .map(rel)
     expect(offenders).toEqual([])
+  })
+})
+
+// E-02(ADR 0047): 과목 허브 알림 신청·닫음 행은 본인만 봅니다. 테이블을 부르는 서버 파일은 본인 화면 모듈과 과목 병합(정본으로 옮기기)뿐입니다.
+const HUB_NOTICE_NAME_PATTERN = /\b(courseHubNotices|course_hub_notices)\b/
+
+describe('E-02 boundary lint: hub notify requests stay with their owner (source)', () => {
+  it('only the owner module and the course merge name the hub notices table', () => {
+    const touching = listTs(SERVER).filter((f) => HUB_NOTICE_NAME_PATTERN.test(readFileSync(f, 'utf8')))
+    expect(touching.map(rel).sort()).toEqual(['modules/catalog/merge.ts', 'modules/course-registrations/hub-opening.ts'].map((p) => rel(join(SERVER, p))).sort())
   })
 })
 
@@ -392,8 +410,8 @@ describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
       )) as unknown as Array<{ column_name: string; sel: boolean }>
       expect(cols.filter((c) => c.sel).map((c) => c.column_name)).toEqual(['display_name', 'id', 'status'])
       // 원천 테이블(선배 노트·공개 후보)도 social 역할은 읽지 않습니다(투영 검사는 트리거가 테이블 주인 권한으로).
-      // E-01: 이번 학기 과목 등록도 social 역할은 읽지 않습니다(본인만 보는 정보).
-      for (const t of ['senior_notes', 'publication_candidates', 'course_qa_items', 'audit_events', 'course_registrations'])
+      // E-01: 이번 학기 과목 등록도 social 역할은 읽지 않습니다(본인만 보는 정보). E-02 허브 알림 신청·닫음도 마찬가지.
+      for (const t of ['senior_notes', 'publication_candidates', 'course_qa_items', 'audit_events', 'course_registrations', 'course_hub_notices'])
         expect((await tx.execute(sql`select has_table_privilege(${SOCIAL_ROLE}, ${`public.${t}`}, 'SELECT') as sel`))[0], t).toEqual({ sel: false })
       // S-05: 원본 재확인·카드는 SECURITY DEFINER 함수 하나만 실행(원천 확인·거두기 함수는 실행 권한 없음, PUBLIC에서도 거둠).
       const fn = async (signature: string) =>

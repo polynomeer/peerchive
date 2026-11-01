@@ -13,6 +13,9 @@
  *   (@peerchive/domain aggregateCheckinStats). 개인을 구분할 값은 결과에 없습니다.
  * - 다른 학교에서는: 같은 개념 태그를 가진 다른 학교의 정본 과목(최대 5개).
  * - 이번 학기 수강 중(E-01, ADR 0046): 지금 학기에 이 과목을 등록한 active 사용자 수만(course-registrations/enrollment-count.ts), 5명 미만이면 null.
+ *
+ * 단계적 개방(E-02, ADR 0047): 이 함수는 열린 허브의 내용을 만듭니다. HTTP 경로는 `staged-opening.ts`의 `getCourseHubView`를 거쳐,
+ * 플래그가 켜져 있고 기준 미만이면 이 함수를 부르지 않고 "준비 중"만 돌려줍니다.
  */
 import {
   CHECKIN_STATS_MIN_GROUP,
@@ -317,6 +320,7 @@ export async function getPublicCourseHub(db: DbExecutor, courseId: unknown, now 
   const otherSchools = await relatedCourses(db, course, tags)
 
   return {
+    status: 'open',
     course: { id: course.id, title: course.title, code: course.code, school: { name: school?.name ?? '' }, authoredBy: 'student' },
     conceptTags: tags,
     cases,

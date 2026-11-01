@@ -3,7 +3,7 @@
  * 내 선배 노트(T-13, PROOFU_EVOLUTION_PLAN §8.3). `?course=<과목 id>`로 오면 그 과목에 새 노트를 쓸 수 있습니다.
  * 노트는 초안으로 저장되고, 공개 전 점검 경고를 확인한 뒤 게시합니다. 게시·철회는 작성자만, 철회는 즉시 공개에서 사라집니다.
  */
-import type { HubWriteEligibilityDto, PublicCourseHubDto, SeniorNoteDto } from '~~/shared/types/api'
+import type { CourseHubViewDto, HubWriteEligibilityDto, SeniorNoteDto } from '~~/shared/types/api'
 
 definePageMeta({ middleware: 'auth' })
 
@@ -12,7 +12,7 @@ const courseId = computed(() => (typeof route.query.course === 'string' ? route.
 
 const { data: course } = await useAsyncData(
   () => `senior-note-course:${courseId.value}`,
-  () => (courseId.value ? $fetch<PublicCourseHubDto>(`/api/v1/public/courses/${encodeURIComponent(courseId.value)}`).catch(() => null) : Promise.resolve(null)),
+  () => (courseId.value ? $fetch<CourseHubViewDto>(`/api/v1/public/courses/${encodeURIComponent(courseId.value)}`).catch(() => null) : Promise.resolve(null)),
   { watch: [courseId] },
 )
 // 과목 허브 작성 자격(C-01): 그 학교 메일 인증이 없으면 폼 대신 인증 안내를 보여 줍니다(서버도 403으로 막음).

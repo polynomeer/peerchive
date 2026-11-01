@@ -21,6 +21,7 @@ import {
   and,
   conceptTags,
   courseConceptTags,
+  courseHubNotices,
   courseRegistrations,
   courseTerms,
   courses,
@@ -237,6 +238,13 @@ export async function mergeCourse(db: DbExecutor, actor: Actor, sourceId: unknow
       .set({ courseId: target.id })
       .where(eq(courseQaItems.courseId, source.id))
       .returning({ id: courseQaItems.id })
+
+    // 과목 허브 단계적 개방(E-02)의 본인 알림 행도 정본으로 옮깁니다. 같은 사람·종류가 정본에 이미 있으면 원본 쪽 행을 지웁니다.
+    // 신청 수가 운영자에게 드러나지 않도록 감사 metadata에는 옮긴 수를 남기지 않습니다.
+    await tx.execute(sql`
+      delete from ${courseHubNotices} n where n.course_id = ${source.id}
+        and exists (select 1 from ${courseHubNotices} t where t.course_id = ${target.id} and t.user_id = n.user_id and t.kind = n.kind)`)
+    await tx.update(courseHubNotices).set({ courseId: target.id }).where(eq(courseHubNotices.courseId, source.id))
 
     await tx.update(courses).set({ mergedInto: target.id }).where(eq(courses.mergedInto, source.id))
     await tx.update(courses).set({ mergedInto: target.id, mergedAt: now }).where(eq(courses.id, source.id))

@@ -7,8 +7,10 @@
  * - 신호 버튼·선배 노트 쓰기·신고(T-15)는 화면이 뜬 뒤 클라이언트에서 로그인 여부를 확인합니다.
  * - "이번 학기 수강 중 N명"(E-01): 서버가 5명 이상일 때만 주는 익명 집계. 등록한 사람은 드러나지 않습니다.
  * - 막힘 Q&A(C-09): 커뮤니티 질문과 채택된 답변을 두 사람의 동의로 옮긴 복사본입니다. 각자 고른 이름만 보이고 원 글로 가는 링크는 없습니다.
+ * - 단계적 개방(E-02, ADR 0047): 서버가 "준비 중"을 주면 과목 이름과 개방 진행만 보여 주고(내용 목록 없음, 항상 noindex), 로그인한 사람에게는
+ *   클라이언트에서 알림 신청(등록한 학생)·선배 노트 요청(마친 학생)을 보여 줍니다(HubPreparingPanel).
  */
-import type { PublicCourseHubDto } from '~~/shared/types/api'
+import type { CourseHubViewDto } from '~~/shared/types/api'
 
 definePageMeta({ layout: 'public' })
 
@@ -17,8 +19,11 @@ const id = computed(() => String(route.params.id))
 
 const { data, error } = await useAsyncData(
   () => `public-course:${id.value}`,
-  () => $fetch<PublicCourseHubDto>(`/api/v1/public/courses/${encodeURIComponent(id.value)}`),
+  () => $fetch<CourseHubViewDto>(`/api/v1/public/courses/${encodeURIComponent(id.value)}`),
 )
+/** 열린 허브(내용 있음). 준비 중이면 null. */
+const hub = computed(() => (data.value?.status === 'open' ? data.value : null))
+const preparing = computed(() => (data.value?.status === 'preparing' ? data.value : null))
 
 if (data.value && data.value.course.id !== id.value) {
   await navigateTo(`/c/${data.value.course.id}`, { replace: true, redirectCode: 301 })
@@ -26,7 +31,7 @@ if (data.value && data.value.course.id !== id.value) {
 
 const status = computed(() => ((error.value as { statusCode?: number } | null)?.statusCode === 503 ? 503 : 404))
 const indexing = usePublicIndexing()
-const indexable = computed(() => indexing.value && !!data.value)
+const indexable = computed(() => indexing.value && !!hub.value)
 if (import.meta.server) {
   useResponseHeader('cache-control').value = 'no-store'
   useResponseHeader('referrer-policy').value = 'no-referrer'
@@ -41,7 +46,12 @@ const courseName = computed(() => {
 })
 useSeoMeta({
   title: () => (data.value ? `${courseName.value} · ${data.value.course.school.name} — Peerchive` : '과목 — Peerchive'),
-  description: () => (data.value ? `${data.value.course.school.name} ${data.value.course.title}의 공개 사례·막힘·선배 노트(학생 작성)` : undefined),
+  description: () =>
+    hub.value
+      ? `${hub.value.course.school.name} ${hub.value.course.title}의 공개 사례·막힘·선배 노트(학생 작성)`
+      : preparing.value
+        ? `${preparing.value.course.school.name} ${preparing.value.course.title} 과목 페이지 준비 중`
+        : undefined,
   robots: () => (indexable.value ? 'index, follow' : 'noindex, nofollow'),
 })
 
@@ -51,7 +61,7 @@ onMounted(() => {
 })
 
 const workloadRows = computed(() => {
-  const stats = data.value?.workload.stats
+  const stats = hub.value?.workload.stats
   if (!stats) return []
   const total = Object.values(stats.timeBuckets).reduce((a, b) => a + b, 0) || 1
   return (Object.keys(CHECKIN_BUCKET_LABELS) as Array<keyof typeof CHECKIN_BUCKET_LABELS>).map((bucket) => ({
@@ -61,7 +71,7 @@ const workloadRows = computed(() => {
   }))
 })
 const difficultyText = computed(() => {
-  const d = data.value?.workload.stats?.difficulty
+  const d = hub.value?.workload.stats?.difficulty
   if (!d) return ''
   return (['1', '2', '3', '4', '5'] as const).map((k) => `${k}점 ${d[k]}`).join(' · ')
 })
@@ -79,23 +89,37 @@ const difficultyText = computed(() => {
         <p>주소가 틀렸거나 없는 과목입니다. <NuxtLink to="/search">검색</NuxtLink>으로 찾아보세요.</p>
       </template>
     </template>
-    <template v-else>
+    <template v-else-if="preparing">
       <header>
-        <p class="small muted">{{ data.course.school.name }} <span class="badge">학생 작성</span></p>
+        <p class="small muted">{{ preparing.course.school.name }} <span class="badge">학생 작성</span></p>
+        <h1>{{ courseName }}</h1>
+      </header>
+      <section aria-labelledby="hub-preparing" data-testid="hub-preparing">
+        <h2 id="hub-preparing">과목 페이지 준비 중</h2>
+        <p>
+          공개 사례와 선배 노트가 {{ preparing.opening.threshold }}개 모이면 이 과목 페이지를 엽니다. 지금 {{ preparing.opening.count }}개입니다.
+        </p>
+        <p class="hint">이미 공개된 사례는 사례 페이지에서 그대로 볼 수 있습니다. 이 과목을 마쳤다면 선배 노트로 후배를 도와주세요.</p>
+        <ClientOnly><HubPreparingPanel :course-id="preparing.course.id" /></ClientOnly>
+      </section>
+    </template>
+    <template v-else-if="hub">
+      <header>
+        <p class="small muted">{{ hub.course.school.name }} <span class="badge">학생 작성</span></p>
         <h1>{{ courseName }}</h1>
         <p class="hint">
           학교·과목 이름과 아래 내용은 학생이 직접 쓴 것입니다. 공식 강의 정보가 아니며, 교수 개인 평가나 과제 정답은 다루지 않습니다.
         </p>
-        <ClientOnly><CourseTeamFindingLink :course-id="data.course.id" /></ClientOnly>
+        <ClientOnly><CourseTeamFindingLink :course-id="hub.course.id" /></ClientOnly>
         <!-- E-01: 지금 학기 등록 인원은 5명 이상일 때만 서버가 줍니다(익명 집계). 없으면 아무것도 보이지 않습니다. -->
-        <p v-if="data.enrollment" class="small muted" data-testid="hub-enrollment">
-          {{ data.enrollment.termLabel }} 수강 중 {{ data.enrollment.count }}명
+        <p v-if="hub.enrollment" class="small muted" data-testid="hub-enrollment">
+          {{ hub.enrollment.termLabel }} 수강 중 {{ hub.enrollment.count }}명
         </p>
-        <p v-if="data.conceptTags.length" class="chips" aria-label="개념 태그">
-          <span v-for="tag in data.conceptTags" :key="tag.id" class="chip static">#{{ tag.label }}</span>
+        <p v-if="hub.conceptTags.length" class="chips" aria-label="개념 태그">
+          <span v-for="tag in hub.conceptTags" :key="tag.id" class="chip static">#{{ tag.label }}</span>
         </p>
         <form class="hub-search" role="search" action="/search" method="get">
-          <input type="hidden" name="course" :value="data.course.id" />
+          <input type="hidden" name="course" :value="hub.course.id" />
           <label class="visually-hidden" for="hub-search-q">이 과목에서 검색</label>
           <input id="hub-search-q" name="q" type="search" placeholder="이 과목의 막힘·사례·노트 검색" maxlength="100" />
           <button type="submit" class="secondary">검색</button>
@@ -104,8 +128,8 @@ const difficultyText = computed(() => {
 
       <section aria-labelledby="hub-workload">
         <h2 id="hub-workload">체감 소요 시간·난이도</h2>
-        <template v-if="data.workload.stats">
-          <p class="small muted">통계 공유에 동의한 {{ data.workload.stats.contributors }}명의 주간 체크인(익명 집계)</p>
+        <template v-if="hub.workload.stats">
+          <p class="small muted">통계 공유에 동의한 {{ hub.workload.stats.contributors }}명의 주간 체크인(익명 집계)</p>
           <table class="ledger-table workload-table">
             <caption class="visually-hidden">주당 투입 시간 분포</caption>
             <thead>
@@ -121,14 +145,14 @@ const difficultyText = computed(() => {
           </table>
           <p class="small">난이도(1 쉬움 ~ 5 어려움): {{ difficultyText }}</p>
         </template>
-        <p v-else class="notice">{{ data.workload.message }} — 통계 공유에 동의한 학생이 {{ data.workload.minGroup }}명 이상이면 보여 줍니다.</p>
+        <p v-else class="notice">{{ hub.workload.message }} — 통계 공유에 동의한 학생이 {{ hub.workload.minGroup }}명 이상이면 보여 줍니다.</p>
       </section>
 
       <section aria-labelledby="hub-stuck">
         <h2 id="hub-stuck">자주 막히는 지점</h2>
         <p class="hint">공개 사례의 🧱막힘 기록입니다. "나도 여기서 막혔어요"가 많은 순서로 보여 줍니다. 해결 방법은 사례 페이지에서 확인하세요.</p>
-        <ol v-if="data.stuckItems.length" class="plain hub-list">
-          <li v-for="item in data.stuckItems" :key="`${item.slug}:${item.key}`" class="hub-card">
+        <ol v-if="hub.stuckItems.length" class="plain hub-list">
+          <li v-for="item in hub.stuckItems" :key="`${item.slug}:${item.key}`" class="hub-card">
             <p class="hub-card-title"><NuxtLink :to="item.path">{{ item.symptom }}</NuxtLink></p>
             <p class="small muted">
               <span class="badge" :class="{ resolved: item.resolved }">{{ item.resolved ? '해결됨' : '미해결' }}</span>
@@ -148,8 +172,8 @@ const difficultyText = computed(() => {
           커뮤니티 질문 게시판의 질문과 채택된 답변을, 질문한 학생과 답한 학생이 모두 동의해 옮긴 것입니다. 이름은 두 사람이 각자 고른 대로 보입니다. 원리·접근 위주
           답변을 권장하며 과제 정답 공유는 허용하지 않습니다.
         </p>
-        <ul v-if="data.qaItems.length" class="plain hub-list">
-          <li v-for="qa in data.qaItems" :id="`qa-${qa.id}`" :key="qa.id" class="hub-card">
+        <ul v-if="hub.qaItems.length" class="plain hub-list">
+          <li v-for="qa in hub.qaItems" :id="`qa-${qa.id}`" :key="qa.id" class="hub-card">
             <p class="hub-card-title">Q. {{ qa.questionTitle }}</p>
             <p class="small muted"><strong>{{ qa.asker }}</strong> · <span class="badge">학생 작성</span></p>
             <p class="pre qa-text">{{ qa.questionBody }}</p>
@@ -172,11 +196,11 @@ const difficultyText = computed(() => {
         <h2 id="hub-notes">선배 노트</h2>
         <p class="hint">과목을 마친 학생이 후배에게 남긴 짧은 회고입니다.</p>
         <p>
-          <NuxtLink :to="`/senior-notes?course=${data.course.id}`">선배 노트 쓰기</NuxtLink>
+          <NuxtLink :to="`/senior-notes?course=${hub.course.id}`">선배 노트 쓰기</NuxtLink>
           <span v-if="loggedIn === false" class="small muted"> (로그인 필요)</span>
         </p>
-        <ul v-if="data.seniorNotes.length" class="plain hub-list">
-          <li v-for="note in data.seniorNotes" :id="noteAnchor(note.id)" :key="note.id" class="hub-card">
+        <ul v-if="hub.seniorNotes.length" class="plain hub-list">
+          <li v-for="note in hub.seniorNotes" :id="noteAnchor(note.id)" :key="note.id" class="hub-card">
             <p class="small muted">
               <strong>{{ note.author }}</strong>
               <template v-if="note.termLabel"> · {{ note.termLabel }}</template>
@@ -206,8 +230,8 @@ const difficultyText = computed(() => {
 
       <section aria-labelledby="hub-cases">
         <h2 id="hub-cases">공개 사례</h2>
-        <ul v-if="data.cases.length" class="plain hub-list">
-          <li v-for="c in data.cases" :key="c.slug" class="hub-card">
+        <ul v-if="hub.cases.length" class="plain hub-list">
+          <li v-for="c in hub.cases" :key="c.slug" class="hub-card">
             <p class="hub-card-title"><NuxtLink :to="c.path">{{ c.title }}</NuxtLink></p>
             <p class="small muted">
               <template v-if="c.termLabel">{{ c.termLabel }} · </template><template v-if="c.kind === 'study'"><span class="badge" data-testid="hub-study-badge">스터디</span>{{ c.teamSize ? ` ${c.teamSize}명` : '' }}</template><template v-else>{{ c.kind === 'team' ? `팀 과제${c.teamSize ? ` ${c.teamSize}명` : ''}` : '개인 과제' }}</template>
@@ -220,11 +244,11 @@ const difficultyText = computed(() => {
         <p v-else class="muted">아직 공개된 사례가 없습니다.</p>
       </section>
 
-      <section v-if="data.otherSchools.length" aria-labelledby="hub-others">
+      <section v-if="hub.otherSchools.length" aria-labelledby="hub-others">
         <h2 id="hub-others">다른 학교에서는</h2>
         <p class="hint">같은 개념 태그를 가진 다른 학교 과목입니다.</p>
         <ul class="plain">
-          <li v-for="o in data.otherSchools" :key="o.id">
+          <li v-for="o in hub.otherSchools" :key="o.id">
             <NuxtLink :to="`/c/${o.id}`">{{ o.schoolName }} · {{ o.title }}<template v-if="o.code"> ({{ o.code }})</template></NuxtLink>
             <span class="small muted"> — {{ o.sharedTags.map((t) => `#${t.label}`).join(' ') }}</span>
           </li>

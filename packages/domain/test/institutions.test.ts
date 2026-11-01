@@ -36,10 +36,10 @@ describe('P2 feature flags', () => {
     for (const v of ['off', '0', 'false', 'no', 'enabled']) expect(parseFlagValue(v)).toBe(false)
   })
   it('turn on per area, or all via PEERCHIVE_FEATURE_P2 with per-area off', () => {
-    expect(parseFeatureFlags({ PEERCHIVE_FEATURE_P2_INSTITUTIONS: 'on' })).toEqual({ alumni: false, topics: false, institutions: true })
-    expect(parseFeatureFlags({ PEERCHIVE_FEATURE_P2: 'on' })).toEqual({ alumni: true, topics: true, institutions: true })
-    expect(parseFeatureFlags({ PEERCHIVE_FEATURE_P2: 'on', PEERCHIVE_FEATURE_P2_ALUMNI: 'off' })).toEqual({ alumni: false, topics: true, institutions: true })
-    expect(parseFeatureFlags({ PEERCHIVE_FEATURE_P2: 'off', PEERCHIVE_FEATURE_P2_TOPICS: '1' })).toEqual({ alumni: false, topics: true, institutions: false })
+    expect(parseFeatureFlags({ PEERCHIVE_FEATURE_P2_INSTITUTIONS: 'on' })).toEqual({ ...FEATURES_OFF, institutions: true })
+    expect(parseFeatureFlags({ PEERCHIVE_FEATURE_P2: 'on' })).toEqual({ alumni: true, topics: true, institutions: true, hubStagedOpening: false })
+    expect(parseFeatureFlags({ PEERCHIVE_FEATURE_P2: 'on', PEERCHIVE_FEATURE_P2_ALUMNI: 'off' })).toEqual({ ...FEATURES_OFF, topics: true, institutions: true })
+    expect(parseFeatureFlags({ PEERCHIVE_FEATURE_P2: 'off', PEERCHIVE_FEATURE_P2_TOPICS: '1' })).toEqual({ ...FEATURES_OFF, topics: true })
   })
 })
 

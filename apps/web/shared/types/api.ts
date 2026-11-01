@@ -1442,6 +1442,8 @@ export interface CourseHubRelatedDto {
 
 /** GET /public/courses/:id — 정본 과목의 허브. 병합된 id로 부르면 정본을 돌려줍니다(course.id가 다름). */
 export interface PublicCourseHubDto {
+  /** E-02: 열린 허브. 단계적 개방 플래그가 꺼져 있으면 항상 open입니다. */
+  status: 'open'
   course: { id: string; title: string; code: string | null; school: { name: string }; authoredBy: 'student' }
   conceptTags: ConceptTagDto[]
   cases: CourseHubCaseDto[]
@@ -1453,6 +1455,57 @@ export interface PublicCourseHubDto {
   otherSchools: CourseHubRelatedDto[]
   /** "이번 학기 수강 중 N명"(E-01): 지금 학기에 이 과목을 등록한 active 사용자 수. 5명 미만이면 null(표시하지 않음). 익명 집계뿐입니다. */
   enrollment: { termLabel: string; count: number } | null
+}
+
+/**
+ * 과목 허브 "준비 중"(E-02, ADR 0047): 단계적 개방이 켜져 있고 공개 사례 + 선배 노트가 기준 미만인 과목. 내용 목록(사례·막힘·노트·Q&A·통계·수강 인원)은
+ * 싣지 않습니다. count는 이미 공개된 항목 수라 그대로 보여 줍니다.
+ */
+export interface PreparingCourseHubDto {
+  status: 'preparing'
+  course: PublicCourseHubDto['course']
+  opening: { count: number; threshold: number }
+}
+
+/** GET /api/v1/public/courses/:id */
+export type CourseHubViewDto = PublicCourseHubDto | PreparingCourseHubDto
+
+/** GET /api/v1/me/course-hubs/:id/opening — 준비 중 허브에서 로그인한 본인에게만 보이는 상태(E-02). 신청 수 같은 다른 사람의 정보는 없습니다. */
+export interface MyHubOpeningDto {
+  courseId: string
+  status: 'open' | 'preparing'
+  count: number
+  threshold: number
+  /** 이 과목을 (어느 학기든) 등록했는지. "열리면 알려 주세요"는 등록한 학생만. */
+  registered: boolean
+  /** 이 과목을 마쳤는지(끝난 학기 등록 또는 끝난 학기 과제 공간의 멤버). */
+  finished: boolean
+  notifyRequested: boolean
+  /** 이 과목에 내 선배 노트(초안 포함, 철회 제외)가 있는지. */
+  wroteNote: boolean
+}
+
+export interface HubNoticeCourseDto {
+  id: string
+  title: string
+  code: string | null
+  schoolName: string
+}
+
+/** GET /api/v1/me/course-hub-notices — 홈의 과목 허브 알림(E-02). 본인 것만. */
+export interface MyHubNoticesDto {
+  /** 알림을 신청한 허브가 열렸음(닫기 전까지). */
+  opened: Array<{ id: string; course: HubNoticeCourseDto; openedAt: string }>
+  /** 마친 과목 중 아직 준비 중인 허브: 선배 노트 요청. */
+  noteRequests: Array<{ course: HubNoticeCourseDto; count: number; threshold: number }>
+}
+
+/** GET /api/v1/operator/course-hubs/opening — 과목별 개방 진행(E-02). 공개 항목 수 집계만(사람·신청 정보 없음). */
+export interface OperatorHubOpeningDto {
+  stagedOpening: boolean
+  threshold: number
+  summary: { coursesWithContent: number; open: number; preparing: number }
+  items: Array<{ course: HubNoticeCourseDto; cases: number; notes: number; total: number; status: 'open' | 'preparing' }>
 }
 
 /** 공개 막힘 Q&A(C-09, ADR 0025). 커뮤니티 질문·채택된 답변을 두 사람의 동의로 복사한 것. */
@@ -1839,6 +1892,8 @@ export interface FeatureFlagsDto {
   alumni: boolean
   topics: boolean
   institutions: boolean
+  /** E-02 과목 허브 단계적 개방(P1 영역, 기본 꺼짐). */
+  hubStagedOpening: boolean
 }
 
 /** 대학이 아닌 기관(검색·운영자 생성 결과). */

@@ -88,6 +88,7 @@ import {
   weeklyCheckins,
   courses,
   courseRegistrations,
+  courseHubNotices,
   courseTerms,
   schools,
   type Database,
@@ -780,6 +781,26 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect(await count(tx, courseRegistrations, eq(courseRegistrations.userId, M.id))).toBe(1)
       const ledger = await tx.select().from(deletionLedger).where(eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, U.id)))
       expect(ledger.find((l) => l.entityKind === 'course_registrations')?.count).toBe(1)
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('deletes the purged user\'s hub notify requests and dismissed note requests and keeps others (E-02)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴신청자', 'deleted')
+      const M = await user(tx, '남는신청자')
+      const tag = id().slice(0, 8)
+      const [school] = await tx.insert(schools).values({ name: `개방대학${tag}`, nameKey: `openschool${tag}` }).returning()
+      const [course] = await tx.insert(courses).values({ schoolId: school!.id, title: `개방과목${tag}`, titleKey: `opencourse${tag}` }).returning()
+      await tx.insert(courseHubNotices).values([
+        { userId: U.id, courseId: course!.id, kind: 'open_notify', openedAt: NOW },
+        { userId: U.id, courseId: course!.id, kind: 'note_request', dismissedAt: NOW },
+        { userId: M.id, courseId: course!.id, kind: 'open_notify' },
+      ])
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ course_hub_notices: 2 })
+      expect(await count(tx, courseHubNotices, eq(courseHubNotices.userId, U.id))).toBe(0)
+      expect(await count(tx, courseHubNotices, eq(courseHubNotices.userId, M.id))).toBe(1)
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })
