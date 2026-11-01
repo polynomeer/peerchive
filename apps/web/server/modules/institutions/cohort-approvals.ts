@@ -189,7 +189,7 @@ export async function approveCohortMember(db: DbExecutor, actor: Actor, affiliat
           targetId: found.row.id,
           metadata: { schoolId: found.institutionId, method: 'cohort_approval', standing: found.row.standing },
         })
-        await emitAnalytics(tx, { name: 'affiliation_verified', actorId: found.row.userId, props: { standing: found.row.standing }, now })
+        await emitAnalytics(tx, { name: 'affiliation_verified', actorId: found.row.userId, props: { standing: found.row.standing, method: 'cohort_approval' }, now })
       }
     })
   } catch (error) {

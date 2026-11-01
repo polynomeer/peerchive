@@ -308,7 +308,7 @@ export async function decideCertificateCheck(db: DbExecutor, actor: Actor, check
     await tx.update(certificateChecks).set({ result: input.result, reviewedBy: actor.userId, decidedAt: now }).where(eq(certificateChecks.id, found.check.id))
     if (input.result === 'approved') {
       await tx.update(institutionAffiliations).set({ status: 'active', verifiedAt: now, updatedAt: now }).where(eq(institutionAffiliations.id, found.affiliation.id))
-      await emitAnalytics(tx, { name: 'affiliation_verified', actorId: found.affiliation.userId, props: { standing: found.affiliation.standing }, now })
+      await emitAnalytics(tx, { name: 'affiliation_verified', actorId: found.affiliation.userId, props: { standing: found.affiliation.standing, method: 'certificate_check' }, now })
     } else {
       await tx
         .update(institutionAffiliations)

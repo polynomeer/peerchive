@@ -382,6 +382,8 @@ describe('I-02 no institution-level user lookup routes (source)', () => {
       'v1/operator/institutions/[id]/staff/index.get.ts',
       'v1/operator/institutions/[id]/staff/index.post.ts',
       'v1/operator/institutions/index.post.ts',
+      // A-07(ADR 0045): 운영자 전용 인증 수단별 처리 큐(기관·기수 이름과 나이만, 사람 id 없음).
+      'v1/operator/institutions/verification-queue.get.ts',
       'v1/operator/invite-codes/[id]/revoke.post.ts',
     ])
     // 운영진이 쓰는 경로(운영자 경로 밖)에는 사람·프로필·과제·소속·내보내기 경로가 없습니다.

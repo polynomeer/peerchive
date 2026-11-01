@@ -36,6 +36,9 @@ export const REPORT_TARGET_TYPES = [
   'social_link',
   // A-06(ADR 0043): 수료 회고(읽을 수 있는 사람 — active 기관 인증이 있는 계정 — 이 게시 중인 회고를 신고).
   'completion_retro',
+  // A-07(ADR 0045): 동문회·OB 방의 항목(명부 항목·일정·투표·앨범 사진·방별 프로필). 그 방 active 멤버가 지금 보는 것만 신고하고,
+  // 대상은 항목 종류(ROOM_ITEM_KINDS) + 항목 id 하나입니다(주인 사용자 id는 신고·조치 행에 두지 않음).
+  'room_item',
 ] as const
 export type ReportTargetType = (typeof REPORT_TARGET_TYPES)[number]
 
@@ -43,12 +46,39 @@ export type ReportTargetType = (typeof REPORT_TARGET_TYPES)[number]
  * 신고 사유. `impersonation`(S-07, ADR 0036): 표시명 사칭 — 다른 실존 인물·단체로 오인하게 하는 표시명·handle·소개. 프로필(페르소나·실명 프로필)
  * 신고에만 고를 수 있습니다(reasonApplicable). 처리 기준은 RUNBOOK §4.5.
  */
-export const REPORT_REASONS = ['personal_info', 'answer_sharing', 'copyright', 'harassment', 'false_claim', 'spam', 'other', 'impersonation'] as const
+export const REPORT_REASONS = [
+  'personal_info',
+  'answer_sharing',
+  'copyright',
+  'harassment',
+  'false_claim',
+  'spam',
+  'other',
+  'impersonation',
+  // A-07(ADR 0045): 소속·기수 사칭 — 토픽 글의 소속 표시, 명부·방별 프로필의 기수, 수료 회고의 기관이 사실과 다르게 보이게 함(가짜 인증·기수 자기 신고).
+  'affiliation_impersonation',
+] as const
 export type ReportReason = (typeof REPORT_REASONS)[number]
 
-/** 이 대상에 이 사유를 고를 수 있는지. 표시명 사칭은 프로필(페르소나·실명 프로필)에만. */
-export function reasonApplicable(target: ReportTargetType, reason: ReportReason): boolean {
-  return reason !== 'impersonation' || target === 'persona' || target === 'profile'
+/** A-07(ADR 0045): 동문회·OB 방에서 신고할 수 있는 항목 종류. */
+export const ROOM_ITEM_KINDS = ['directory_entry', 'event', 'poll', 'album_photo', 'room_profile'] as const
+export type RoomItemKind = (typeof ROOM_ITEM_KINDS)[number]
+
+/** 소속·기수 사칭을 고를 수 있는 대상: 커뮤니티 글·댓글(토픽의 소속 표시 포함), 수료 회고, 방 항목 중 기수를 적는 명부 항목·방별 프로필. */
+export const AFFILIATION_IMPERSONATION_TARGETS: readonly ReportTargetType[] = ['community_post', 'community_comment', 'completion_retro', 'room_item']
+const AFFILIATION_IMPERSONATION_ROOM_ITEMS: readonly RoomItemKind[] = ['directory_entry', 'room_profile']
+
+/**
+ * 이 대상에 이 사유를 고를 수 있는지. 표시명 사칭은 프로필(페르소나·실명 프로필)에만, 소속·기수 사칭(A-07)은 소속·기수가 보이는 대상에만
+ * (방 항목이면 명부 항목·방별 프로필만 — roomItemKind를 넘기지 않으면 방 항목은 거부).
+ */
+export function reasonApplicable(target: ReportTargetType, reason: ReportReason, roomItemKind?: RoomItemKind | null): boolean {
+  if (reason === 'impersonation') return target === 'persona' || target === 'profile'
+  if (reason === 'affiliation_impersonation') {
+    if (!AFFILIATION_IMPERSONATION_TARGETS.includes(target)) return false
+    return target !== 'room_item' || (!!roomItemKind && AFFILIATION_IMPERSONATION_ROOM_ITEMS.includes(roomItemKind))
+  }
+  return true
 }
 
 export const REPORT_STATUSES = ['open', 'in_review', 'resolved', 'dismissed'] as const
@@ -82,6 +112,8 @@ export const MODERATION_ACTION_KINDS = [
   'hide_social_link',
   // A-06(ADR 0043): 수료 회고 숨기기(published → hidden, 되돌리면 다시 published — 그사이 철회했으면 그대로).
   'hide_retro',
+  // A-07(ADR 0045): 방 항목 하나 숨기기(그 행의 hidden_at — 방 멤버 화면에서 빠짐, 되돌리면 다시 보임).
+  'hide_room_item',
 ] as const
 export type ModerationActionKind = (typeof MODERATION_ACTION_KINDS)[number]
 
@@ -126,6 +158,7 @@ export const ACTIONS_BY_TARGET: Readonly<Record<ReportTargetType, readonly Moder
   profile_post: ['none', 'hide_profile_post'],
   social_link: ['none', 'hide_social_link'],
   completion_retro: ['none', 'hide_retro'],
+  room_item: ['none', 'hide_room_item'],
 }
 
 export function isActionApplicable(target: ReportTargetType, action: ModerationActionKind): boolean {
@@ -181,6 +214,7 @@ export type ReportTargetIdentity =
   | { type: 'profile_post'; profilePostId: string }
   | { type: 'social_link'; socialLinkId: string }
   | { type: 'completion_retro'; retroId: string }
+  | { type: 'room_item'; kind: RoomItemKind; itemId: string }
 
 export function reportTargetKey(target: ReportTargetIdentity): string {
   switch (target.type) {
@@ -214,6 +248,8 @@ export function reportTargetKey(target: ReportTargetIdentity): string {
       return `social_link:${target.socialLinkId}`
     case 'completion_retro':
       return `completion_retro:${target.retroId}`
+    case 'room_item':
+      return `room_item:${target.kind}:${target.itemId}`
   }
 }
 

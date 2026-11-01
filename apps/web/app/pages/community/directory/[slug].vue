@@ -6,6 +6,7 @@
  * - 명부: 동의한 멤버의 동의한 항목만, 한 쪽에 최대 20명. 내보내기(CSV·PDF)·전체 보기는 없고, 짧은 시간에 많은 쪽을 넘기면 잠시 막힙니다(429).
  * - P2 alumni 플래그가 꺼져 있거나 멤버가 아니면 "찾을 수 없습니다"(서버 404). 익명 방에는 명부가 없습니다.
  * 방 밖(공개 프로필·검색·추천·피드·활동)에는 이 화면의 값이 나가지 않습니다.
+ * - A-07(ADR 0045): 다른 멤버의 항목마다 "신고"(사유에 소속·기수 사칭 포함). 운영 조치로 숨긴 내 항목은 "운영 조치로 숨김"으로 보이고 다른 멤버에게는 보이지 않습니다.
  */
 import type { DirectoryEntryDto, DirectoryPageDto, MyDirectoryEntryDto, SpaceDetailDto } from '~~/shared/types/api'
 
@@ -154,6 +155,9 @@ async function withdraw() {
             </p>
           </div>
           <p v-if="mine" class="small"><span class="badge">명부에 올라 있음</span></p>
+          <p v-if="mine?.hidden" class="notice" data-testid="directory-hidden">
+            운영 조치로 숨겨져 다른 멤버에게 보이지 않습니다. 고친 뒤 <NuxtLink to="/me/moderation-notices">내 알림</NuxtLink>에서 이의를 제기할 수 있어요.
+          </p>
           <form v-if="state?.writable !== false" class="stack" novalidate @submit.prevent="save">
             <div class="field">
               <label for="dir-cohort">기수 (선택)</label>
@@ -210,6 +214,13 @@ async function withdraw() {
                 <p v-if="e.currentWork" class="small">{{ e.currentWork }}</p>
                 <p v-if="e.interests.length" class="small">관심사: {{ e.interests.join(', ') }}</p>
                 <p v-if="e.contactMethod" class="small">연락: {{ e.contactMethod }}</p>
+                <p v-if="!e.mine" class="small">
+                  <ReportButton
+                    :id-prefix="`dir-${e.id}`"
+                    label="신고"
+                    :targets="[{ id: e.id, label: `명부 항목 · ${e.name}`, targetType: 'room_item', targetRef: { spaceSlug: slug, kind: 'directory_entry', itemId: e.id } }]"
+                  />
+                </p>
               </li>
             </ul>
             <p v-else class="muted">{{ state.page > 1 ? '이 쪽에는 항목이 없습니다.' : '아직 명부에 동의한 멤버가 없습니다.' }}</p>

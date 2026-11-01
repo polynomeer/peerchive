@@ -11,6 +11,8 @@
  * - 방을 나가거나 내보내지면 같은 트랜잭션에서 그 사람의 방별 프로필과 기수 이력을 지웁니다(deleteRoomProfileInTx). 탈퇴는 worker purge.
  * - 이 모듈은 커뮤니티 모듈 안에 있고 social 모듈·공개 경로는 import하지 않습니다(S-02 경계 테스트가 확인).
  * - 감사 기록에는 id·종류·플래그만(이름·기수·소개 값 없음).
+ * - A-07(ADR 0045): 운영 조치로 숨긴 방별 프로필(`hidden_at`)은 다른 멤버의 목록·글 작성자 표시·응답자 이름에서 없는 것처럼 보이고(이름은
+ *   `방별 이름 없음`, 배지·기수 없음), 본인에게만 `hidden: true`로 보입니다. 숨긴 동안에도 고칠 수 있고 이의제기로 되돌립니다.
  */
 import {
   REAL_NAME_MISSING_LABEL,
@@ -32,6 +34,8 @@ import {
   eq,
   inArray,
   institutionAffiliations,
+  isNull,
+  or,
   roomProfileCohortChanges,
   roomProfiles,
   schools,
@@ -102,8 +106,8 @@ function tagOf(row: Pick<ProfileRow, 'badges' | 'cohortLabel' | 'userId'>, verif
   return { badges, cohortLabel: row.cohortLabel, alumniVerified: badges.includes('alumni') && verified.has(row.userId) }
 }
 
-/** active 멤버의 방별 프로필(+ 실명 방이면 실명). */
-async function loadProfiles(db: DbExecutor, spaceId: string, userIds?: string[]) {
+/** active 멤버의 방별 프로필(+ 실명 방이면 실명). 숨긴 프로필은 includeHiddenOf(본인)일 때만. */
+async function loadProfiles(db: DbExecutor, spaceId: string, userIds?: string[], includeHiddenOf?: string) {
   return db
     .select({ profile: roomProfiles, realName: users.realName })
     .from(roomProfiles)
@@ -115,6 +119,7 @@ async function loadProfiles(db: DbExecutor, spaceId: string, userIds?: string[])
         eq(spaceMemberships.status, 'active'),
         eq(users.status, 'active'),
         userIds ? (userIds.length ? inArray(roomProfiles.userId, userIds) : sql`false`) : undefined,
+        includeHiddenOf ? or(isNull(roomProfiles.hiddenAt), eq(roomProfiles.userId, includeHiddenOf)) : isNull(roomProfiles.hiddenAt),
       ),
     )
     .orderBy(asc(roomProfiles.cohortLabel), asc(roomProfiles.createdAt), asc(roomProfiles.id))
@@ -132,6 +137,7 @@ function toDto(mode: 'real' | 'display', row: { profile: ProfileRow; realName: s
     ...tagOf(row.profile, verified),
     bio: row.profile.bio,
     mine: row.profile.userId === viewerId,
+    hidden: row.profile.hiddenAt !== null,
     updatedAt: row.profile.updatedAt.toISOString(),
   }
 }
@@ -139,7 +145,7 @@ function toDto(mode: 'real' | 'display', row: { profile: ProfileRow; realName: s
 /** GET /community/spaces/:slug/room-profiles — 방 멤버만. 내 프로필(편집용 값 포함)과 active 멤버의 프로필 목록. */
 export async function listRoomProfiles(db: DbExecutor, actor: Actor, ref: unknown, now = new Date()): Promise<RoomProfilesDto> {
   const { ctx, mode } = await loadProfileSpace(db, actor, ref, false, now)
-  const rows = await loadProfiles(db, ctx.space.row.id)
+  const rows = await loadProfiles(db, ctx.space.row.id, undefined, actor.userId)
   const verified = await verifiedAlumni(db, ctx.space, rows.map((r) => r.profile.userId))
   const profiles = rows.map((r) => toDto(mode, r, actor.userId, verified))
   const mineRow = rows.find((r) => r.profile.userId === actor.userId)

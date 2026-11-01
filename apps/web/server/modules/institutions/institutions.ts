@@ -382,7 +382,7 @@ export async function redeemInviteCode(db: DbExecutor, actor: Actor, rawInput: u
         targetId: row!.id,
         metadata: { schoolId: institution.id, method: 'invite_code', standing: input.standing, inviteCodeId: code.id },
       })
-      await emitAnalytics(tx, { name: 'affiliation_verified', actorId: actor.userId, props: { standing: input.standing }, now })
+      await emitAnalytics(tx, { name: 'affiliation_verified', actorId: actor.userId, props: { standing: input.standing, method: 'invite_code' }, now })
       return { kind: 'ok', row: row! }
     })
   } catch (error) {

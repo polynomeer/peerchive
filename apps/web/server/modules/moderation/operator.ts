@@ -58,7 +58,7 @@ import {
 } from '@peerchive/db'
 import { loadRetroForOperator } from '../institutions/completion-retros'
 import { recordAudit } from '../audit/audit'
-import { communityItemStatuses, operatorCommunityItem, operatorRecruitmentItem, operatorSpaceContent } from '../community/reporting'
+import { communityItemStatuses, operatorCommunityItem, operatorRecruitmentItem, operatorRoomItem, operatorSpaceContent } from '../community/reporting'
 import { requireOperator } from '../catalog/operators'
 import { publicNotePath } from '../course-hub/search'
 import { publicQaPath, toPublicCourseQa } from '../course-hub/course-qa'
@@ -221,7 +221,7 @@ const toReportDto = (r: ReportRow): OperatorReportDto => ({
   closedAt: r.closedAt?.toISOString() ?? null,
 })
 
-async function contentFor(db: DbExecutor, report: ReportRow, now: Date): Promise<{ content: OperatorTargetContentDto; publicPath: string | null; servedNow: boolean }> {
+async function contentFor(db: DbExecutor, report: ReportRow, now: Date, operatorId: string): Promise<{ content: OperatorTargetContentDto; publicPath: string | null; servedNow: boolean }> {
   const unavailable = (message: string) => ({ kind: 'unavailable' as const, message })
   switch (report.targetType) {
     case 'publication':
@@ -353,6 +353,12 @@ async function contentFor(db: DbExecutor, report: ReportRow, now: Date): Promise
       if (!loaded || loaded.status === 'withdrawn') return { content: unavailable('작성자가 회고를 철회했습니다.'), publicPath: null, servedNow: false }
       return { content: { kind: 'completion_retro', retro: loaded.dto, status: loaded.status }, publicPath: null, servedNow: loaded.status === 'published' }
     }
+    // A-07: 방 항목 하나(지금 행, 숨긴 것도 내용 포함). 만든·올린 사람 id·이름은 없습니다(명부·방별 프로필은 방 멤버에게 보이는 이름만).
+    case 'room_item': {
+      const roomItem = report.roomItemKind && report.roomItemId ? await operatorRoomItem(db, report.roomItemKind, report.roomItemId, operatorId, now) : null
+      if (!roomItem) return { content: unavailable('항목을 찾을 수 없습니다(철회·나가기·삭제).'), publicPath: null, servedNow: false }
+      return { content: { kind: 'room_item', roomItem }, publicPath: null, servedNow: !roomItem.hidden }
+    }
   }
 }
 
@@ -390,11 +396,11 @@ async function loadReport(db: DbExecutor, reportId: unknown, lock = false): Prom
   return row
 }
 
-async function detail(db: DbExecutor, report: ReportRow, now: Date): Promise<OperatorReportDetailDto> {
+async function detail(db: DbExecutor, report: ReportRow, now: Date, operatorId: string): Promise<OperatorReportDetailDto> {
   const siblings = await db.select().from(reports).where(eq(reports.targetKey, report.targetKey)).orderBy(desc(reports.createdAt), desc(reports.id)).limit(200)
   const [labels, { content, publicPath, servedNow }, actions] = await Promise.all([
     targetLabels(db, [pointerOf(report)]),
-    contentFor(db, report, now),
+    contentFor(db, report, now, operatorId),
     actionsFor(db, report.targetKey),
   ])
   const holdRows = await db
@@ -428,7 +434,7 @@ async function detail(db: DbExecutor, report: ReportRow, now: Date): Promise<Ope
 /** GET /operator/reports/:id */
 export async function getReportDetail(db: DbExecutor, actor: Actor, reportId: unknown, now = new Date()): Promise<OperatorReportDetailDto> {
   await requireOperator(db, actor)
-  return detail(db, await loadReport(db, reportId), now)
+  return detail(db, await loadReport(db, reportId), now, actor.userId)
 }
 
 // ── 담당·처리·기각 ───────────────────────────────────────────────────────
@@ -461,7 +467,7 @@ export async function assignReport(db: DbExecutor, actor: Actor, reportId: unkno
       targetId: report.id,
       metadata: { reports: group.length, targetType: report.targetType },
     })
-    return detail(tx, await loadReport(tx, report.id), now)
+    return detail(tx, await loadReport(tx, report.id), now, actor.userId)
   })
 }
 
@@ -509,7 +515,7 @@ export async function resolveReport(db: DbExecutor, actor: Actor, reportId: unkn
   return db.transaction(async (tx) => {
     const report = await loadReport(tx, reportId, true)
     await closeGroup(tx, actor, report, { kind: input.action, outcome: 'resolved', note: input.note, publicReason: input.publicReason, notifyOwner: input.notifyOwner }, now)
-    return detail(tx, await loadReport(tx, report.id), now)
+    return detail(tx, await loadReport(tx, report.id), now, actor.userId)
   })
 }
 
@@ -520,7 +526,7 @@ export async function dismissReport(db: DbExecutor, actor: Actor, reportId: unkn
   return db.transaction(async (tx) => {
     const report = await loadReport(tx, reportId, true)
     await closeGroup(tx, actor, report, { kind: 'none', outcome: 'dismissed', note: input.note, publicReason: null, notifyOwner: false }, now)
-    return detail(tx, await loadReport(tx, report.id), now)
+    return detail(tx, await loadReport(tx, report.id), now, actor.userId)
   })
 }
 

@@ -255,11 +255,12 @@ describe('A-03 no export paths for the member directory', () => {
       'v1/community/spaces/[slug]/directory/me.put.ts',
     ])
     for (const r of directoryRoutes) expect(r).not.toMatch(/csv|pdf|export|download|bulk|all/i)
-    // 명부 행을 읽는 서버 코드는 명부 모듈뿐(검색·추천·피드·공개 프로필·운영 화면은 읽지 않음). worker는 삭제(탈퇴·익명 전환)만.
+    // 명부 행을 읽는 서버 코드는 명부 모듈뿐(검색·추천·피드·공개 프로필은 읽지 않음). worker는 삭제(탈퇴·익명 전환)만.
+    // A-07(ADR 0045): 신고된 명부 항목 하나를 판정·숨기고 운영자 상세에 싣는 방 항목 신고 모듈(항목 id로 한 행씩, 목록·내보내기 없음).
     const readers = walk(join(webRoot, 'server'))
       .filter((p) => p.endsWith('.ts') && readFileSync(p, 'utf8').includes('directoryEntries'))
       .map((p) => relative(webRoot, p))
-    expect(readers).toEqual(['server/modules/community/member-directory.ts'])
+    expect(readers.sort()).toEqual(['server/modules/community/member-directory.ts', 'server/modules/community/room-item-reports.ts'])
     const workerSrc = join(webRoot, '..', 'worker', 'src')
     const workerUsers = walk(workerSrc)
       .filter((p) => p.endsWith('.ts') && readFileSync(p, 'utf8').includes('directoryEntries'))

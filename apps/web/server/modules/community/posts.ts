@@ -89,7 +89,7 @@ import {
   users,
   type DbExecutor,
 } from '@peerchive/db'
-import { emitAnalytics } from '../analytics/analytics'
+import { emitAnalytics, emitP2Analytics } from '../analytics/analytics'
 import { type Actor, ServiceError, conflict, forbidden, invalid, notFound, rateLimited, sqlState } from '../errors'
 import { isUuid } from '../projects/access'
 import { hitRateLimit } from '../security/rate-limit'
@@ -662,6 +662,16 @@ export async function createPost(db: DbExecutor, actor: Actor, boardId: unknown,
     const kind = ctx.space.row.kind
     const area = kind === 'user_room' ? 'room' : kind === 'study_room' ? 'study' : kind === 'topic' ? 'topic' : 'official'
     await emitAnalytics(tx, { name: 'post_created', actorId: actor.userId, unlinked: mode === 'anonymous' || mode === 'affiliated_anonymous', props: { kind: board.kind, mode, area }, now })
+    // A-07(§6.2 topic_post_created(label_scope_applied·broadened)): 토픽 글만, 적용된 소속 표시 범위와 넓혀졌는지. 익명·소속 표시 익명이면 사용자 키 없음.
+    if (kind === 'topic') {
+      await emitP2Analytics(tx, {
+        name: 'topic_post_created',
+        actorId: actor.userId,
+        unlinked: mode === 'anonymous' || mode === 'affiliated_anonymous',
+        props: { labelScope: label.labelScopeApplied ?? 'none', broadened: label.labelScopeApplied !== null && label.labelScopeApplied !== label.labelScopeRequested },
+        now,
+      })
+    }
     return post!.id
   })
   return getPost(db, actor, postId, now)

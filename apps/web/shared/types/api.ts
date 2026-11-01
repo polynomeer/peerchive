@@ -1968,8 +1968,21 @@ export type ReportTargetType =
   | 'social_link'
   /** A-06: 수료 회고. */
   | 'completion_retro'
-/** impersonation(표시명 사칭, S-07)은 프로필 신고에만. */
-export type ReportReason = 'personal_info' | 'answer_sharing' | 'copyright' | 'harassment' | 'false_claim' | 'spam' | 'other' | 'impersonation'
+  /** A-07: 동문회·OB 방 항목(명부 항목·일정·투표·앨범 사진·방별 프로필). */
+  | 'room_item'
+/** A-07: 신고할 수 있는 방 항목 종류(@peerchive/domain ROOM_ITEM_KINDS). */
+export type RoomItemKind = 'directory_entry' | 'event' | 'poll' | 'album_photo' | 'room_profile'
+/** impersonation(표시명 사칭, S-07)은 프로필 신고에만. affiliation_impersonation(소속·기수 사칭, A-07)은 커뮤니티 글·댓글·수료 회고·명부 항목·방별 프로필에만. */
+export type ReportReason =
+  | 'personal_info'
+  | 'answer_sharing'
+  | 'copyright'
+  | 'harassment'
+  | 'false_claim'
+  | 'spam'
+  | 'other'
+  | 'impersonation'
+  | 'affiliation_impersonation'
 export type ReportStatus = 'open' | 'in_review' | 'resolved' | 'dismissed'
 export type ModerationActionKind =
   | 'none'
@@ -1997,6 +2010,8 @@ export type ModerationActionKind =
   | 'hide_social_link'
   /** A-06: 수료 회고 숨기기. */
   | 'hide_retro'
+  /** A-07: 방 항목 하나 숨기기. */
+  | 'hide_room_item'
 export type HiddenItemKind = 'log' | 'claim' | 'artifact'
 export type AppealStatus = 'open' | 'upheld' | 'reversed'
 
@@ -2023,6 +2038,8 @@ export type ReportTargetRef =
   | { handle: string; url: string }
   /** 수료 회고(A-06): 신고자가 읽을 수 있는 게시 중인 회고. */
   | { retroId: string }
+  /** 방 항목(A-07): 그 방 active 멤버가 지금 보는 숨기지 않은 항목. */
+  | { spaceSlug: string; kind: RoomItemKind; itemId: string }
 
 export interface HiddenItemPlaceholderDto {
   kind: HiddenItemKind
@@ -2161,7 +2178,21 @@ export type OperatorTargetContentDto =
   | { kind: 'social_link'; persona: OperatorPersonaRefDto; link: { provider: SocialLinkProvider; url: string; verification: SocialLinkVerification; hidden: boolean } }
   /** 수료 회고(A-06): 읽는 사람이 보는 것과 같은 회고 하나(작성자 id 없음). */
   | { kind: 'completion_retro'; retro: CompletionRetroDto; status: CompletionRetroStatus }
+  /** 방 항목(A-07): 그 항목 하나. 만든 사람·올린 사람의 id·이름은 싣지 않습니다(명부·방별 프로필은 방 멤버에게 보이는 이름만). */
+  | { kind: 'room_item'; roomItem: OperatorRoomItemDto }
   | { kind: 'unavailable'; message: string }
+
+/** A-07: 운영자 신고 상세의 방 항목. 방 이름·지금 이름 표시 방식과 항목 값만. */
+export interface OperatorRoomItemDto {
+  itemKind: RoomItemKind
+  space: { name: string; slug: string; nameMode: 'real' | 'display' | 'anonymous' | 'affiliated_anonymous' }
+  hidden: boolean
+  /** 명부 항목·방별 프로필: 방 멤버에게 보이는 이름(실명 방은 실명, 표시명 방은 방별 이름). 그 밖은 null. */
+  name: string | null
+  fields: Array<{ label: string; value: string }>
+  /** 앨범 사진: 운영자에게만 맞는 짧은 서명 URL(검사 통과한 사진만). */
+  photoUrl: string | null
+}
 
 /** 운영자 화면의 페르소나 이름표(S-07): 그 페르소나 자신의 값만. */
 export interface OperatorPersonaRefDto {
@@ -2283,6 +2314,88 @@ export interface OperatorProfileMetricsDto {
   followerCountShown: RateMetricDto
   settings: { visibilityChanged: number | null; projectListed: number | null }
   ownerLookups: number | null
+}
+
+/**
+ * GET /api/v1/operator/metrics/community/p2?from=&to= — §6.2 P2 졸업생·토픽·기관 지표(A-07). 운영자만. 영역 플래그가 꺼진 칸은 null(화면에서 숨김).
+ * @peerchive/domain P2Metrics와 같은 모양, 모든 칸 5 미만 null. 사람·방·기관 id는 싣지 않습니다.
+ */
+export interface OperatorP2MetricsDto {
+  from: string
+  to: string
+  minGroup: number
+  flags: { alumni: boolean; topics: boolean; institutions: boolean }
+  generatedAt: string
+  notes: string[]
+  alumni: {
+    alumniToNotes: RateMetricDto
+    supply: number | null
+    activeRooms: RateMetricDto
+    rsvpRate: RateMetricDto
+    directoryConsent: RateMetricDto
+    events: {
+      alumniRoomsCreated: number | null
+      cohortRoomsCreated: number | null
+      eventsCreated: number | null
+      rsvps: number | null
+      directoryConsents: number | null
+      directoryWithdrawals: number | null
+    }
+    reportsByKind: Record<RoomItemKind, number | null>
+    hiddenConfirmed: number | null
+  } | null
+  topics: {
+    topicToNote: RateMetricDto
+    broadened: RateMetricDto
+    postsByScope: { institution: number | null; institutionKind: number | null; none: number | null }
+    impersonation: { reports: number | null; confirmed: number | null }
+  } | null
+  institutions: {
+    verifiedByMethod: { invite_code: number | null; cohort_approval: number | null; certificate_check: number | null }
+    certificate: CertificateDecisionSummaryDto
+    impersonation: { revokedByOperator: number | null; reports: number | null; confirmed: number | null }
+    retrosPublished: number | null
+    cohortRoomSupply: null
+  } | null
+}
+
+/** 수료증 처리 시간(받은 시각 → 결정 시각) 요약. 표본 5 미만이면 중앙값·p90 null. */
+export interface CertificateDecisionSummaryDto {
+  decided: number | null
+  medianHours: number | null
+  p90Hours: number | null
+  withinSla: RateMetricDto
+  slaHours: number
+  medianTargetHours: number
+}
+
+/**
+ * GET /api/v1/operator/institutions/verification-queue(A-07) — 인증 수단별 처리 큐. 운영자만, institutions 플래그가 꺼지면 404.
+ * 초대 코드는 즉시 인증이라 대기 건이 없고 기간 안 사용 수만, 기수 승인은 승인 대기(운영자가 처리하지 않음 — 나이·만료만), 수료증 확인은 운영자 대기(기한·나이).
+ */
+export interface VerificationQueueDto {
+  generatedAt: string
+  inviteCode: { instant: true; redeemedLast7Days: number | null; activeCodes: number }
+  cohortApproval: {
+    slaHours: null
+    pending: Array<{ affiliationId: string; institutionName: string; cohortLabel: string | null; approvals: number; required: number; requestedAt: string; ageHours: number; expiresAt: string }>
+  }
+  certificateCheck: {
+    slaHours: number
+    pending: Array<{
+      checkId: string
+      institutionName: string
+      cohortLabel: string | null
+      /** 파일을 받은 시각(처리 시간의 시작). 아직 안 받았으면 null(운영자 대기가 아님). */
+      receivedAt: string | null
+      scanStatus: 'pending' | 'scanning' | 'clean' | 'quarantined' | 'failed'
+      ageHours: number | null
+      dueAt: string | null
+      sla: 'ok' | 'due_soon' | 'overdue' | null
+    }>
+    /** 최근 30일 결정의 처리 시간(받은 시각 → 결정 시각). */
+    recent: CertificateDecisionSummaryDto
+  }
 }
 
 export type HealthCheckStatus = 'ok' | 'error' | 'stale' | 'missing'
@@ -2753,6 +2866,8 @@ export interface RoomProfileDto extends RoomProfileTagDto {
   bio: string | null
   /** 내 프로필인지. */
   mine: boolean
+  /** A-07: 운영 조치로 숨김(본인 프로필에만 true가 올 수 있음). */
+  hidden: boolean
   updatedAt: string
 }
 
@@ -2897,6 +3012,8 @@ export interface AlbumUploadDto {
 
 /** 명부 항목 하나. 사람 id·핸들·프로필 링크·항목 id가 없습니다(방 안에서 이름과 동의한 값만). */
 export interface DirectoryEntryDto {
+  /** A-07: 신고에 쓰는 항목 id(동의마다 새 무작위 값 — 사람 id가 아님). */
+  id: string
   /** real 방은 실명(없으면 `실명 미입력`), display 방은 방별 프로필 이름(없으면 `방별 이름 없음`). */
   name: string
   cohortLabel: string | null
@@ -2906,6 +3023,8 @@ export interface DirectoryEntryDto {
   contactMethod: string | null
   /** 내 항목인지. */
   mine: boolean
+  /** A-07: 운영 조치로 숨김(본인 항목에만 true가 올 수 있음 — 다른 멤버에게는 숨긴 항목이 오지 않음). */
+  hidden: boolean
   updatedAt: string
 }
 

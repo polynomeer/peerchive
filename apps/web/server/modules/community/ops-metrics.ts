@@ -20,8 +20,10 @@ import {
   type ReportCaseFact,
   type SanctionFact,
   type SpaceItemFact,
+  type RoomItemKind,
   communityMetricsCsv,
   computeCommunityMetrics,
+  computeP2Metrics,
   computeSpaceBreakdown,
   isoWeeksBetween,
 } from '@peerchive/domain'
@@ -52,12 +54,14 @@ import {
 import { recordAudit } from '../audit/audit'
 import { requireOperator } from '../catalog/operators'
 import { type Actor, conflict, notFound, rateLimited } from '../errors'
+import { featureFlags } from '../features'
+import { certificateDecisionDurations, currentCertificateSlaHours } from '../institutions/verification-queue'
 import { currentReportSlaTargets } from '../moderation/sla'
 import { parseMetricsRange } from '../ops/metrics'
 import { opsTimeFacts } from '../ops/time-log'
 import { isUuid } from '../projects/access'
 import { hitRateLimit, type RateLimitRule } from '../security/rate-limit'
-import type { CommunityMetricsDto, CommunityMetricsSpaceOptionDto, CommunitySpaceBreakdownDto } from '../../../shared/types/api'
+import type { CommunityMetricsDto, CommunityMetricsSpaceOptionDto, CommunitySpaceBreakdownDto, OperatorP2MetricsDto } from '../../../shared/types/api'
 
 export const METRICS_EXPORT_RATE_LIMIT: RateLimitRule = { limit: 10, windowMs: 60 * 60 * 1000 }
 export const METRICS_SPACE_MIN_MEMBERS_ENV = 'PEERCHIVE_METRICS_SPACE_MIN_MEMBERS'
@@ -344,4 +348,172 @@ export async function exportCommunityMetricsCsv(db: DbExecutor, actor: Actor, ra
     const day = (d: Date) => new Date(d.getTime() + 9 * 3_600_000).toISOString().slice(0, 10)
     return { csv: communityMetricsCsv(metrics), filename: `peerchive-community-metrics-${day(from)}-${day(new Date(to.getTime() - 1))}.csv` }
   })
+}
+
+// ── A-07(ADR 0045): §6.2 P2 졸업생·토픽·기관 지표 ──────────────────────────
+//
+// `GET /api/v1/operator/metrics/community/p2?from=&to=` — 운영자만. 이 집계는 커뮤니티 테이블(동문 방·일정·공지·명부·토픽 글·댓글·옮기기)을 세므로
+// C-05 경계에 따라 커뮤니티 모듈에 둡니다(운영 지표 라우트는 이 파일만 import). 사람 행동은 분석 이벤트(사용자 키 있는 것만 사람으로 셈), 나머지는
+// 개수로만. **모든 칸 5 미만 null**, 꺼진 영역의 칸은 null(@peerchive/domain computeP2Metrics). 사람·방·기관 id·이름은 응답에 없습니다.
+
+const P2_METRIC_EVENTS = [
+  'alumni_room_created',
+  'event_created',
+  'rsvp_submitted',
+  'directory_consent_changed',
+  'topic_post_created',
+  'completion_retro_published',
+  'senior_note_published',
+] as const
+
+type CountRow = { n: number }
+const one = async (db: DbExecutor, query: ReturnType<typeof sql>): Promise<number> => ((await db.execute(query)) as unknown as CountRow[])[0]?.n ?? 0
+
+/** 방 항목·토픽·회고의 신고(기간 안 접수) — 종류·사유·확정(숨김·가리기, 되돌리지 않음)만. */
+async function p2ReportFacts(db: DbExecutor, from: Date, to: Date) {
+  const fromTs = sql`${from.toISOString()}::timestamptz`
+  const toTs = sql`${to.toISOString()}::timestamptz`
+  const rows = (await db.execute(sql`
+    select r.target_type::text as target_type, r.room_item_kind::text as room_item_kind, r.reason::text as reason,
+      coalesce(a.kind::text <> 'none' and a.reversed_at is null, false) as confirmed,
+      coalesce((select s.kind::text from community_posts p join community_spaces s on s.id = p.space_id
+        where p.id = coalesce(r.community_post_id, (select c.post_id from community_comments c where c.id = r.community_comment_id))) = 'topic', false) as topic
+    from ${reports} r left join ${moderationActions} a on a.id = r.action_id
+    where r.created_at >= ${fromTs} and r.created_at < ${toTs}
+      and (r.target_type::text in ('room_item', 'completion_retro') or r.reason::text = 'affiliation_impersonation')`)) as unknown as Array<{
+    target_type: string
+    room_item_kind: RoomItemKind | null
+    reason: string
+    confirmed: boolean
+    topic: boolean
+  }>
+  return rows
+}
+
+export async function getP2Metrics(db: DbExecutor, actor: Actor, rawQuery: unknown, now = new Date()): Promise<OperatorP2MetricsDto> {
+  await requireOperator(db, actor)
+  const { from, to } = parseMetricsRange(rawQuery, now)
+  // 원시 SQL에는 Date를 바로 넘기지 않고 timestamptz로 바꿔 씁니다.
+  const fromTs = sql`${from.toISOString()}::timestamptz`
+  const toTs = sql`${to.toISOString()}::timestamptz`
+  const flags = featureFlags()
+  const events = await db
+    .select({ name: analyticsEvents.name, occurredAt: analyticsEvents.occurredAt, actorHash: analyticsEvents.actorHash, projectHash: analyticsEvents.projectHash, props: analyticsEvents.props })
+    .from(analyticsEvents)
+    .where(and(gte(analyticsEvents.occurredAt, from), lt(analyticsEvents.occurredAt, to), inArray(analyticsEvents.name, [...P2_METRIC_EVENTS])))
+  const reportRows = await p2ReportFacts(db, from, to)
+
+  // 동문 방(보관되지 않은 alumni 템플릿 사용자 방).
+  const alumniRooms = sql`select id, current_name_mode from community_spaces where template::text = 'alumni' and kind::text = 'user_room' and status::text <> 'archived'`
+  const rooms = flags.alumni ? await one(db, sql`select count(*)::int as n from (${alumniRooms}) ar`) : 0
+  const activeRooms = flags.alumni
+    ? await one(
+        db,
+        sql`select count(*)::int as n from (${alumniRooms}) ar where exists (select 1 from room_events e where e.space_id = ar.id and e.created_at >= ${fromTs} and e.created_at < ${toTs})
+          or exists (select 1 from community_posts p join boards b on b.id = p.board_id where p.space_id = ar.id and b.kind::text = 'notice' and p.created_at >= ${fromTs} and p.created_at < ${toTs})`,
+      )
+    : 0
+  // 기간에 걸친(시작이 기간 끝 전이고, 반복이면 끝나는 날이 기간 시작 뒤) 숨기지 않은 일정: 응답한 (일정, 사람) 수 / 그 방 active 멤버 수 합.
+  const periodEvents = sql`select e.id, e.space_id from room_events e join (${alumniRooms}) ar on ar.id = e.space_id
+    where e.hidden_at is null and e.starts_at < ${toTs} and coalesce((e.repeat_until + 1)::timestamptz, e.starts_at) >= ${fromTs}`
+  const rsvpResponders = flags.alumni
+    ? await one(
+        db,
+        sql`select count(*)::int as n from (select distinct r.event_id, r.user_id from room_event_rsvps r join (${periodEvents}) pe on pe.id = r.event_id
+          join space_memberships m on m.space_id = pe.space_id and m.user_id = r.user_id and m.status::text = 'active') x`,
+      )
+    : 0
+  const rsvpAudience = flags.alumni
+    ? await one(db, sql`select coalesce(sum((select count(*) from space_memberships m where m.space_id = pe.space_id and m.status::text = 'active')), 0)::int as n from (${periodEvents}) pe`)
+    : 0
+  const directoryEligible = flags.alumni
+    ? await one(
+        db,
+        sql`select count(*)::int as n from space_memberships m join (${alumniRooms}) ar on ar.id = m.space_id
+          where m.status::text = 'active' and ar.current_name_mode::text in ('real', 'display')`,
+      )
+    : 0
+  const directoryCount = flags.alumni
+    ? await one(
+        db,
+        sql`select count(*)::int as n from directory_entries d join (${alumniRooms}) ar on ar.id = d.space_id
+          join space_memberships m on m.space_id = d.space_id and m.user_id = d.user_id and m.status::text = 'active'
+          where ar.current_name_mode::text in ('real', 'display')`,
+      )
+    : 0
+
+  // 토픽 답변(댓글)과 그중 선배 노트로 옮겨진 것.
+  const topicComments = sql`select c.id from community_comments c join community_posts p on p.id = c.post_id join community_spaces s on s.id = p.space_id
+    where s.kind::text = 'topic' and c.created_at >= ${fromTs} and c.created_at < ${toTs}`
+  const answers = flags.topics ? await one(db, sql`select count(*)::int as n from (${topicComments}) tc`) : 0
+  const moved = flags.topics
+    ? await one(
+        db,
+        sql`select count(distinct t.source_comment_id)::int as n from archive_transfers t join (${topicComments}) tc on tc.id = t.source_comment_id
+          where t.target::text = 'senior_note' and t.status::text = 'done'`,
+      )
+    : 0
+
+  // 기관 인증(대학이 아닌 기관, 메일 제외).
+  const methodRows = flags.institutions
+    ? await db
+        .select({ method: institutionAffiliations.method, n: sql<number>`count(*)::int` })
+        .from(institutionAffiliations)
+        .where(and(gte(institutionAffiliations.verifiedAt, from), lt(institutionAffiliations.verifiedAt, to), sql`${institutionAffiliations.method}::text <> 'email'`))
+        .groupBy(institutionAffiliations.method)
+    : []
+  const byMethod = (m: string) => methodRows.find((r) => r.method === m)?.n ?? 0
+  const revokedByOperator = flags.institutions
+    ? await one(
+        db,
+        sql`select count(*)::int as n from institution_affiliations where revoked_reason = 'operator' and method::text <> 'email' and revoked_at >= ${fromTs} and revoked_at < ${toTs}`,
+      )
+    : 0
+  const durations = flags.institutions ? await certificateDecisionDurations(db, from, to) : []
+
+  const impersonation = reportRows.filter((r) => r.reason === 'affiliation_impersonation')
+  const topicImpersonation = impersonation.filter((r) => r.topic)
+  const institutionImpersonation = impersonation.filter((r) => r.target_type === 'room_item' || r.target_type === 'completion_retro')
+  const metrics = computeP2Metrics(
+    {
+      flags,
+      events,
+      alumni: {
+        rooms,
+        activeRooms,
+        rsvpResponders,
+        rsvpAudience,
+        directoryConsented: directoryCount,
+        directoryEligible,
+        reports: reportRows.filter((r) => r.target_type === 'room_item' && r.room_item_kind).map((r) => ({ kind: r.room_item_kind!, reason: r.reason, confirmed: r.confirmed })),
+      },
+      topics: { answers, movedToNotes: moved, impersonationReports: topicImpersonation.length, impersonationConfirmed: topicImpersonation.filter((r) => r.confirmed).length },
+      institutions: {
+        verifiedByMethod: { invite_code: byMethod('invite_code'), cohort_approval: byMethod('cohort_approval'), certificate_check: byMethod('certificate_check') },
+        certificateDecisionMs: durations,
+        certificateSlaHours: currentCertificateSlaHours(),
+        revokedByOperator,
+        impersonationReports: institutionImpersonation.length,
+        impersonationConfirmed: institutionImpersonation.filter((r) => r.confirmed).length,
+      },
+    },
+    ANALYTICS_MIN_GROUP,
+  )
+  return {
+    from: from.toISOString(),
+    to: to.toISOString(),
+    minGroup: ANALYTICS_MIN_GROUP,
+    flags,
+    generatedAt: now.toISOString(),
+    notes: [
+      `${ANALYTICS_MIN_GROUP} 미만인 값은 가렸습니다(null). 꺼진 영역은 비웁니다.`,
+      '졸업생 → 선배 노트 공급은 동문 방 활동(방 만들기·일정·응답·명부)을 한 사람 중 같은 기간에 선배 노트·수료 회고를 게시한 비율입니다(같은 기간 근사, 토픽 참여는 사용자 키가 없어 빠짐).',
+      '동문 방 활성은 기간 안에 일정을 만들었거나 공지를 올린 방의 비율, 참석 응답률은 기간에 걸친 일정의 (일정, 응답한 멤버) 수 / 그 방 지금 멤버 수입니다.',
+      '수료증 처리 시간은 파일을 받은 시각부터 결정 시각까지입니다. 기관 기수 방에서 시작된 공개 사례 수는 잴 수 없어 비워 둡니다.',
+      'P2 이벤트는 시 단위 시각이고, 익명 방의 일정·응답과 익명·소속 표시 익명 토픽 글, 익명 회고는 사용자 키가 없습니다.',
+    ],
+    alumni: metrics.alumni,
+    topics: metrics.topics,
+    institutions: metrics.institutions,
+  }
 }

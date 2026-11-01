@@ -39,7 +39,7 @@ import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, notFound, sqlState } from '../errors'
 import { isUuid } from '../projects/access'
 import { parseInput } from '../validation'
-import { affectedUserIds, pointerOf, targetLabels } from './targets'
+import { affectedUserIds, pointerOf, roomItemLabels, targetLabels } from './targets'
 import type { ActionRow } from './actions'
 import type { AppealDto, ModerationNoticeDto, PublicSnapshot } from '../../../shared/types/api'
 
@@ -129,6 +129,11 @@ async function toNotices(db: DbExecutor, actions: readonly ActionRow[], viewerId
       })
     }
   }
+  // A-07: 방 항목의 당사자 화면(명부·모임·방별 프로필 화면, 지워졌으면 없음).
+  const roomItemBy = await roomItemLabels(
+    db,
+    visible.filter((a) => a.roomItemKind && a.roomItemId).map((a) => ({ kind: a.roomItemKind!, id: a.roomItemId! })),
+  )
   const out: ModerationNoticeDto[] = []
   for (const a of visible) {
     const affected = await affectedUserIds(db, pointerOf(a))
@@ -148,6 +153,7 @@ async function toNotices(db: DbExecutor, actions: readonly ActionRow[], viewerId
     else if (a.personaId || a.profilePostId || a.socialLinkId) ownerPath = '/settings/personas'
     // A-06: 수료 회고는 내 회고 목록(철회·이의제기).
     else if (a.completionRetroId) ownerPath = '/community/retros'
+    else if (a.roomItemKind && a.roomItemId) ownerPath = roomItemBy.get(`${a.roomItemKind}:${a.roomItemId}`)?.ownerPath ?? '/community'
     const snapshot = a.releaseId ? snapshotBy.get(a.releaseId) : undefined
     out.push({
       actionId: a.id,
@@ -185,7 +191,13 @@ function affectedSql(userId: string): SQL {
     or (${moderationActions.personaId} is not null and exists (select 1 from ${personas} pe where pe.id = ${moderationActions.personaId} and pe.user_id = ${userId}))
     or (${moderationActions.profilePostId} is not null and exists (select 1 from ${profilePosts} pp where pp.id = ${moderationActions.profilePostId} and pp.user_id = ${userId}))
     or (${moderationActions.socialLinkId} is not null and exists (select 1 from ${socialLinks} sl where sl.id = ${moderationActions.socialLinkId} and sl.user_id = ${userId}))
-    or (${moderationActions.completionRetroId} is not null and exists (select 1 from ${completionRetros} cr where cr.id = ${moderationActions.completionRetroId} and cr.author_id = ${userId})))`
+    or (${moderationActions.completionRetroId} is not null and exists (select 1 from ${completionRetros} cr where cr.id = ${moderationActions.completionRetroId} and cr.author_id = ${userId}))
+    or (${moderationActions.roomItemId} is not null and (
+      (${moderationActions.roomItemKind}::text = 'directory_entry' and exists (select 1 from directory_entries de where de.id = ${moderationActions.roomItemId} and de.user_id = ${userId}))
+      or (${moderationActions.roomItemKind}::text = 'room_profile' and exists (select 1 from room_profiles rp where rp.id = ${moderationActions.roomItemId} and rp.user_id = ${userId}))
+      or (${moderationActions.roomItemKind}::text = 'event' and exists (select 1 from room_events re where re.id = ${moderationActions.roomItemId} and re.created_by = ${userId}))
+      or (${moderationActions.roomItemKind}::text = 'poll' and exists (select 1 from room_polls po where po.id = ${moderationActions.roomItemId} and po.created_by = ${userId}))
+      or (${moderationActions.roomItemKind}::text = 'album_photo' and exists (select 1 from room_album_photos ap where ap.id = ${moderationActions.roomItemId} and ap.uploader_id = ${userId})))))`
 }
 
 /** GET /me/moderation-notices — 내가 당사자인 조치 중 운영자가 알림을 켠 것(되돌린 것 포함, 최근 50). */

@@ -19,6 +19,7 @@
  * | hide_persona(S-07) | 그 페르소나의 profiles.hidden_at(실명·표시명 하나만 — 같은 사람의 다른 페르소나는 그대로) | hidden_at = null |
  * | hide_profile_post(S-07) | 프로필 글 published → hidden(활동은 같은 트랜잭션의 DB 트리거가 거둠) | hidden → published(트리거가 원천을 다시 확인해 되살림) |
  * | hide_social_link(S-07) | social_links.hidden_at(공개 DTO에서 빠짐) | hidden_at = null |
+ * | hide_room_item(A-07) | 방 항목(명부 항목·일정·투표·앨범 사진·방별 프로필) 하나의 hidden_at(방 멤버 화면·서명 URL에서 빠짐) | hidden_at = null(행이 지워졌으면 그대로) |
  *
  * 공개 읽기는 이 상태를 요청마다 읽으므로 커밋 즉시 효력이 있습니다(worker 무관). outbox `moderation.action`은 worker가 검색 문서 같은 남은 사본을
  * 맞추는 데만 씁니다. 삭제 조치는 없습니다(차단 ≠ 삭제).
@@ -49,10 +50,12 @@ import { liftSpaceRestrictionInTx, restrictSpaceInTx } from '../community/offici
 import {
   hideCommunityItemInTx,
   hideRecruitmentItemInTx,
+  hideRoomItemInTx,
   restoreAutoHiddenInTx,
   revokeSanctionByActionInTx,
   unhideCommunityItemInTx,
   unhideRecruitmentItemInTx,
+  unhideRoomItemInTx,
 } from '../community/reporting'
 import { conflict, notFound } from '../errors'
 import { lockPublication } from '../publication/candidates'
@@ -88,6 +91,7 @@ function auditTarget(
     | 'profilePostId'
     | 'socialLinkId'
     | 'completionRetroId'
+    | 'roomItemId'
   >,
 ) {
   switch (action.targetType) {
@@ -121,6 +125,9 @@ function auditTarget(
       return { targetType: 'social_link' as const, targetId: action.socialLinkId }
     case 'completion_retro':
       return { targetType: 'completion_retro' as const, targetId: action.completionRetroId }
+    // A-07: 항목 id만(종류는 metadata의 itemKind). 주인 사용자는 없습니다.
+    case 'room_item':
+      return { targetType: 'room_item' as const, targetId: action.roomItemId }
   }
 }
 
@@ -197,6 +204,8 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
   if (input.kind === 'hide_post' && !target.communityPostId) throw notFound()
   if (input.kind === 'hide_comment' && !target.communityCommentId) throw notFound()
   if (input.kind === 'hide_recruitment' && !target.communityRecruitmentId) throw notFound()
+  // A-07: 행 잠금·상태 확인은 조치 행을 만든 뒤 hideRoomItemInTx가 합니다(없음 404, 이미 숨김 409 — 같은 트랜잭션이라 함께 되돌아감).
+  if (input.kind === 'hide_room_item' && (!target.roomItemKind || !target.roomItemId)) throw notFound()
   if (input.kind === 'hide_application' && !target.communityApplicationId) throw notFound()
   if (input.kind === 'hide_profile') {
     const [profile] = await tx.select().from(profiles).where(eq(profiles.userId, target.profileUserId!)).limit(1).for('update')
@@ -247,6 +256,8 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
       profilePostId: target.profilePostId,
       socialLinkId: target.socialLinkId,
       completionRetroId: target.completionRetroId,
+      roomItemKind: target.roomItemKind,
+      roomItemId: target.roomItemId,
       internalNote: input.internalNote,
       publicReason: input.publicReason,
       notifyOwner: input.notifyOwner,
@@ -317,6 +328,9 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
     case 'hide_application':
       await hideRecruitmentItemInTx(tx, 'application', target.communityApplicationId!, now)
       break
+    case 'hide_room_item':
+      await hideRoomItemInTx(tx, target.roomItemKind!, target.roomItemId!, now)
+      break
   }
   await emit(tx, action!.id, 'applied', now)
   await recordAudit(tx, {
@@ -324,7 +338,7 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
     action: 'moderation.apply',
     ...auditTarget(action!),
     projectId,
-    metadata: { actionId: action!.id, kind: input.kind, itemKind: target.itemKind, notifyOwner: input.notifyOwner },
+    metadata: { actionId: action!.id, kind: input.kind, itemKind: target.itemKind ?? target.roomItemKind, notifyOwner: input.notifyOwner },
   })
   return action!
 }
@@ -420,6 +434,9 @@ export async function undoModeration(
       break
     case 'hide_application':
       await unhideRecruitmentItemInTx(tx, 'application', action.communityApplicationId!, now)
+      break
+    case 'hide_room_item':
+      await unhideRoomItemInTx(tx, action.roomItemKind!, action.roomItemId!)
       break
   }
   await tx

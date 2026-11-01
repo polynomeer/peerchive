@@ -37,7 +37,7 @@ import {
   sql,
   type DbExecutor,
 } from '@peerchive/db'
-import { emitAnalytics } from '../analytics/analytics'
+import { emitAnalytics, emitP2Analytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, invalid, sqlState } from '../errors'
 import { requireFeature } from '../features'
@@ -162,6 +162,7 @@ export async function createCohortRoom(db: DbExecutor, actor: Actor, institution
       metadata: { schoolId: institution.id, cohortId: cohort.id, nameMode: row.currentNameMode, byStaff: !manager.operator },
     })
     await emitAnalytics(tx, { name: 'space_created', actorId: actor.userId, props: { kind: 'user_room' }, now })
+    await emitP2Analytics(tx, { name: 'alumni_room_created', actorId: actor.userId, props: { mode: row.currentNameMode as 'real' | 'display' | 'anonymous', cohortRoom: true }, now })
     return row.slug
   })
   return getSpaceDetail(db, actor, slug, now)

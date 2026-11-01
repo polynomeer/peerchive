@@ -5,6 +5,8 @@
  * - 멤버 목록: 이름·배지·기수·소개. 방장·운영진은 멤버의 기수를 고칠 수 있고, 고친 이력은 방장·운영진과 본인만 봅니다.
  * - P2 alumni 플래그가 꺼져 있거나 멤버가 아니면 "찾을 수 없습니다"(서버 404). 익명 방은 방별 프로필이 없습니다.
  * 방 밖(공개 프로필·검색·피드·활동)에는 이 화면의 값이 나가지 않습니다.
+ * - A-07(ADR 0045): 다른 멤버의 프로필마다 "신고"(사유에 소속·기수 사칭 포함). 운영 조치로 숨긴 내 프로필은 "운영 조치로 숨김"으로 보이고
+ *   다른 멤버에게는 프로필이 없는 것처럼(`방별 이름 없음`) 보입니다.
  */
 import type { RoomProfileCohortChangeDto, RoomProfileDto, RoomProfilesDto, RoomStoredBadge, SpaceDetailDto } from '~~/shared/types/api'
 
@@ -188,8 +190,16 @@ const CHANGED_BY_TEXT: Record<RoomProfileCohortChangeDto['changedBy'], string> =
                 <strong>{{ p.name }}</strong>
                 <RoomBadges :tag="p" />
                 <span v-if="p.mine" class="badge">나</span>
+                <span v-if="p.hidden" class="badge" data-testid="room-profile-hidden">운영 조치로 숨김(다른 멤버에게 보이지 않음)</span>
               </p>
               <p v-if="p.bio" class="small pre">{{ p.bio }}</p>
+              <p v-if="!p.mine" class="small">
+                <ReportButton
+                  :id-prefix="`rp-${p.id}`"
+                  label="신고"
+                  :targets="[{ id: p.id, label: `방별 프로필 · ${p.name}`, targetType: 'room_item', targetRef: { spaceSlug: slug, kind: 'room_profile', itemId: p.id } }]"
+                />
+              </p>
               <form v-if="state.canEditCohort" class="row" novalidate @submit.prevent="saveCohort(p)">
                 <label :for="`cohort-${p.id}`" class="small">기수 고치기</label>
                 <input :id="`cohort-${p.id}`" v-model="cohortDraft[p.id]" :placeholder="p.cohortLabel ?? '없음'" :maxlength="ROOM_COHORT_LABEL_MAX" />

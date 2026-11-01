@@ -165,7 +165,7 @@ for (const p2 of ['off', 'on'] as const) describe.skipIf(!databaseUrl)(`school a
       expect(JSON.stringify(audit!.metadata)).not.toContain(local)
       expect(audit!.metadata).not.toHaveProperty('departmentLabel')
       const events = await tx.select().from(analyticsEvents).where(eq(analyticsEvents.actorHash, hashSubject(analyticsPepper()!, user.id)))
-      expect(events.map((e) => [e.name, e.props])).toEqual([['affiliation_verified', { standing: 'student' }]])
+      expect(events.map((e) => [e.name, e.props])).toEqual([['affiliation_verified', { method: 'email', standing: 'student' }]])
 
       const list = await listMyAffiliations(tx, { userId: user.id })
       expect(list).toMatchObject({ showBadge: false, hubRequiresAffiliation: true, items: [{ id: r.id, status: 'active' }] })

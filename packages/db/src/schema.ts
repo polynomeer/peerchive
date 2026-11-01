@@ -229,9 +229,26 @@ export const reportTargetType = pgEnum('report_target_type', [
   'social_link',
   // A-06(ADR 0043): 수료 회고(읽을 수 있는 사람이 신고).
   'completion_retro',
+  // A-07(ADR 0045): 동문회·OB 방 항목(명부 항목·일정·투표·앨범 사진·방별 프로필) — 종류는 room_item_kind.
+  'room_item',
 ])
-/** 신고 사유(T-15, REPORT_REASONS). 개인정보·저작권은 공개 사례에 보류를 겁니다. impersonation(표시명 사칭, S-07)은 프로필 신고에만. */
-export const reportReason = pgEnum('report_reason', ['personal_info', 'answer_sharing', 'copyright', 'harassment', 'false_claim', 'spam', 'other', 'impersonation'])
+/** A-07(ADR 0045, @peerchive/domain ROOM_ITEM_KINDS): 신고·숨길 수 있는 동문회·OB 방 항목 종류. */
+export const roomItemKind = pgEnum('room_item_kind', ['directory_entry', 'event', 'poll', 'album_photo', 'room_profile'])
+/**
+ * 신고 사유(T-15, REPORT_REASONS). 개인정보·저작권은 공개 사례에 보류를 겁니다. impersonation(표시명 사칭, S-07)은 프로필 신고에만.
+ * affiliation_impersonation(소속·기수 사칭, A-07)은 커뮤니티 글·댓글·수료 회고·방 항목에만.
+ */
+export const reportReason = pgEnum('report_reason', [
+  'personal_info',
+  'answer_sharing',
+  'copyright',
+  'harassment',
+  'false_claim',
+  'spam',
+  'other',
+  'impersonation',
+  'affiliation_impersonation',
+])
 /** 신고 상태(T-15): 접수 → 검토 중 → 처리됨/기각. 닫힌 신고는 다시 열지 않습니다. */
 export const reportStatus = pgEnum('report_status', ['open', 'in_review', 'resolved', 'dismissed'])
 /** 운영 조치 종류(T-15, MODERATION_ACTION_KINDS). 모두 공개 차단이며 삭제는 없습니다. */
@@ -257,6 +274,8 @@ export const moderationActionKind = pgEnum('moderation_action_kind', [
   'hide_social_link',
   // A-06(ADR 0043): 수료 회고 숨기기(published → hidden, 되돌리면 다시 published).
   'hide_retro',
+  // A-07(ADR 0045): 방 항목 하나의 hidden_at.
+  'hide_room_item',
 ])
 /** 공개 사례 안에서 가릴 수 있는 항목(T-15, HIDDEN_ITEM_KINDS). */
 export const hiddenItemKind = pgEnum('hidden_item_kind', ['log', 'claim', 'artifact'])
@@ -311,6 +330,13 @@ export const analyticsEventName = pgEnum('analytics_event_name', [
   'mute_created',
   'feed_item_opened',
   'social_link_verified',
+  // A-07(DELIVERY_PLAN §6.2 P2, ADR 0045): 사용자 키만(익명 내용은 키 없음), 시 단위 시각.
+  'alumni_room_created',
+  'event_created',
+  'rsvp_submitted',
+  'directory_consent_changed',
+  'topic_post_created',
+  'completion_retro_published',
 ])
 /** 기관 종류(C-01은 university만, I-01에서 나머지, SYSTEM_DESIGN §6.7.2, ADR 0018·0037). */
 export const institutionKind = pgEnum('institution_kind', ['university', 'bootcamp', 'training_program', 'club_federation'])
@@ -2479,6 +2505,12 @@ export const moderationActions = pgTable(
     socialLinkId: uuid('social_link_id'),
     /** 수료 회고 숨기기(hide_retro, A-06). */
     completionRetroId: uuid('completion_retro_id').references((): AnyPgColumn => completionRetros.id),
+    /**
+     * A-07(ADR 0045): 방 항목 숨기기(hide_room_item). 종류 + 그 행의 id. **외래 키가 없습니다**(명부 철회·방 나가기·탈퇴 정리가 행을 지워도 조치 기록은
+     * 남음). 주인 사용자 id는 두지 않습니다.
+     */
+    roomItemKind: roomItemKind('room_item_kind'),
+    roomItemId: uuid('room_item_id'),
     internalNote: text('internal_note').notNull(),
     publicReason: text('public_reason'),
     notifyOwner: boolean('notify_owner').notNull().default(false),
@@ -2508,6 +2540,7 @@ export const moderationActions = pgTable(
     index('moderation_actions_profile_post_idx').on(t.profilePostId),
     index('moderation_actions_social_link_idx').on(t.socialLinkId),
     index('moderation_actions_completion_retro_idx').on(t.completionRetroId),
+    index('moderation_actions_room_item_idx').on(t.roomItemId),
     check('moderation_actions_outcome_check', sql`${t.outcome} in ('resolved', 'dismissed') and (${t.outcome} = 'resolved' or ${t.kind} = 'none')`),
     check('moderation_actions_internal_note_check', sql`char_length(${t.internalNote}) between 1 and 1000`),
     check('moderation_actions_public_reason_check', sql`${t.publicReason} is null or char_length(${t.publicReason}) between 1 and 300`),
@@ -2527,6 +2560,7 @@ export const moderationActions = pgTable(
     check('moderation_actions_profile_post_check', sql`${t.kind}::text <> 'hide_profile_post' or ${t.profilePostId} is not null`),
     check('moderation_actions_social_link_check', sql`${t.kind}::text <> 'hide_social_link' or ${t.socialLinkId} is not null`),
     check('moderation_actions_completion_retro_check', sql`${t.kind}::text <> 'hide_retro' or ${t.completionRetroId} is not null`),
+    check('moderation_actions_room_item_check', sql`${t.kind}::text <> 'hide_room_item' or (${t.roomItemKind} is not null and ${t.roomItemId} is not null)`),
     // C-06: 방 운영진 가리기·제재는 글 또는 댓글 하나를 가리키고 공간 id는 비웁니다(방장이 당사자가 되지 않게, ADR 0023).
     check(
       'moderation_actions_community_item_check',
@@ -2581,6 +2615,9 @@ export const reports = pgTable(
     socialLinkId: uuid('social_link_id'),
     /** 신고한 수료 회고(A-06). 내용은 복사하지 않습니다. */
     completionRetroId: uuid('completion_retro_id').references((): AnyPgColumn => completionRetros.id),
+    /** 신고한 방 항목(A-07, ADR 0045). 종류 + 그 행의 id, 외래 키 없음(행이 지워져도 신고 기록은 남음), 내용 복사 없음, 주인 사용자 id 없음. */
+    roomItemKind: roomItemKind('room_item_kind'),
+    roomItemId: uuid('room_item_id'),
     reason: reportReason('reason').notNull(),
     details: text('details'),
     status: reportStatus('status').notNull().default('open'),
@@ -2609,6 +2646,7 @@ export const reports = pgTable(
     index('reports_closed_at_idx').on(t.closedAt),
     index('reports_reporter_idx').on(t.reporterId, t.createdAt),
     index('reports_completion_retro_idx').on(t.completionRetroId),
+    index('reports_room_item_idx').on(t.roomItemId),
     check('reports_details_check', sql`${t.details} is null or char_length(${t.details}) between 1 and 1000`),
     check('reports_first_action_check', sql`${t.firstActionAt} is null or ${t.firstActionAt} >= ${t.createdAt}`),
     check('reports_closed_check', sql`(${t.status} in ('resolved', 'dismissed')) = (${t.closedAt} is not null and ${t.actionId} is not null)`),
@@ -2629,10 +2667,17 @@ export const reports = pgTable(
         or (${t.targetType}::text = 'persona' and ${t.personaId} is not null)
         or (${t.targetType}::text = 'profile_post' and ${t.profilePostId} is not null)
         or (${t.targetType}::text = 'social_link' and ${t.socialLinkId} is not null)
-        or (${t.targetType}::text = 'completion_retro' and ${t.completionRetroId} is not null)`,
+        or (${t.targetType}::text = 'completion_retro' and ${t.completionRetroId} is not null)
+        or (${t.targetType}::text = 'room_item' and ${t.roomItemKind} is not null and ${t.roomItemId} is not null)`,
     ),
     // 표시명 사칭은 프로필 신고에만(@peerchive/domain reasonApplicable).
     check('reports_impersonation_check', sql`${t.reason}::text <> 'impersonation' or ${t.targetType}::text in ('persona', 'profile')`),
+    // 소속·기수 사칭(A-07)은 커뮤니티 글·댓글·수료 회고·방 항목(명부 항목·방별 프로필)에만.
+    check(
+      'reports_affiliation_impersonation_check',
+      sql`${t.reason}::text <> 'affiliation_impersonation' or ${t.targetType}::text in ('community_post', 'community_comment', 'completion_retro')
+        or (${t.targetType}::text = 'room_item' and ${t.roomItemKind}::text in ('directory_entry', 'room_profile'))`,
+    ),
   ],
 )
 
@@ -4135,6 +4180,8 @@ export const roomProfiles = pgTable(
     badges: text('badges').array().notNull().default(sql`'{}'::text[]`),
     cohortLabel: text('cohort_label'),
     bio: text('bio'),
+    /** A-07(ADR 0045): 운영 조치(hide_room_item)로 숨김. 다른 멤버에게는 방별 프로필이 없는 것처럼 보입니다(이름은 `방별 이름 없음`). */
+    hiddenAt: timestamp('hidden_at', { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -4200,6 +4247,8 @@ export const roomEvents = pgTable(
     status: roomEventStatus('status').notNull().default('scheduled'),
     createdBy: uuid('created_by').references(() => users.id),
     cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    /** A-07(ADR 0045): 운영 조치(hide_room_item)로 숨김. 목록·응답·응답자 목록에서 빠집니다(방장·운영진 포함). */
+    hiddenAt: timestamp('hidden_at', { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -4278,6 +4327,8 @@ export const roomPolls = pgTable(
     options: text('options').array().notNull(),
     closesAt: timestamp('closes_at', { withTimezone: true }).notNull(),
     createdBy: uuid('created_by').references(() => users.id),
+    /** A-07(ADR 0045): 운영 조치(hide_room_item)로 숨김. 목록·투표에서 빠집니다. */
+    hiddenAt: timestamp('hidden_at', { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -4344,6 +4395,8 @@ export const roomAlbumPhotos = pgTable(
     mediaType: text('media_type'),
     /** 메타데이터를 지운 내용이 격리 키에 있는지(clean이면 true). */
     metadataStripped: boolean('metadata_stripped').notNull().default(false),
+    /** A-07(ADR 0045): 운영 조치(hide_room_item)로 숨김. 목록·서명 URL에서 빠집니다(올린 사람 포함). */
+    hiddenAt: timestamp('hidden_at', { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -4373,6 +4426,11 @@ export const roomAlbumPhotos = pgTable(
 export const directoryEntries = pgTable(
   'directory_entries',
   {
+    /**
+     * A-07(ADR 0045): 신고·조치가 가리키는 항목 id(동의마다 새로 생김 — 철회 뒤 다시 동의하면 새 id). 사용자 id와 무관한 무작위 값이라 다른 방의
+     * 항목과 이어지지 않습니다. 기본 키는 그대로 (방, 사람)입니다.
+     */
+    id: uuid('id').notNull().defaultRandom(),
     spaceId: uuid('space_id')
       .notNull()
       .references(() => communitySpaces.id),
@@ -4384,10 +4442,13 @@ export const directoryEntries = pgTable(
     interests: text('interests').array().notNull().default(sql`'{}'::text[]`),
     contactMethod: text('contact_method'),
     consentedAt: timestamp('consented_at', { withTimezone: true }).notNull(),
+    /** A-07(ADR 0045): 운영 조치(hide_room_item)로 숨김. 다른 멤버의 명부에서 빠집니다(본인에게는 "운영 조치로 숨김"). 철회하면 행과 함께 지워집니다. */
+    hiddenAt: timestamp('hidden_at', { withTimezone: true }),
     updatedAt: updatedAt(),
   },
   (t) => [
     primaryKey({ name: 'directory_entries_pkey', columns: [t.spaceId, t.userId] }),
+    uniqueIndex('directory_entries_id_key').on(t.id),
     index('directory_entries_space_consented_idx').on(t.spaceId, t.consentedAt),
     index('directory_entries_user_id_idx').on(t.userId),
     check('directory_entries_cohort_check', sql`${t.cohortLabel} is null or char_length(${t.cohortLabel}) between 1 and 20`),

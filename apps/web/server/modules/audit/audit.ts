@@ -234,6 +234,7 @@ export async function recordAudit(
       | 'certificate_check'
       | 'institution_staff'
       | 'completion_retro'
+      | 'room_item'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

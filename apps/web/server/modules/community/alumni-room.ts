@@ -10,7 +10,7 @@
  * - 이 모듈들은 커뮤니티 모듈 안에 있고 social 모듈·공개 경로는 import하지 않습니다(S-02 경계 테스트가 확인).
  */
 import { REAL_NAME_MISSING_LABEL, ROOM_PROFILE_NAME_MISSING_LABEL, type NameMode } from '@peerchive/domain'
-import { and, eq, inArray, noticeReads, roomEventRsvps, roomEvents, roomPollVotes, roomPolls, roomProfiles, sql, users, type DbExecutor } from '@peerchive/db'
+import { and, eq, inArray, isNull, noticeReads, roomEventRsvps, roomEvents, roomPollVotes, roomPolls, roomProfiles, sql, users, type DbExecutor } from '@peerchive/db'
 import { type Actor, conflict, notFound } from '../errors'
 import { requireFeature } from '../features'
 import { type SpaceContext, loadReadableSpace, writeRestricted } from './access'
@@ -49,10 +49,11 @@ export async function roomMemberNames(db: DbExecutor, spaceId: string, mode: Nam
     const rows = await db.select({ id: users.id, realName: users.realName }).from(users).where(inArray(users.id, ids))
     return new Map(rows.map((r) => [r.id, r.realName?.trim() || REAL_NAME_MISSING_LABEL]))
   }
+  // A-07: 운영 조치로 숨긴 방별 프로필은 없는 것처럼(`방별 이름 없음`).
   const rows = await db
     .select({ userId: roomProfiles.userId, displayName: roomProfiles.displayName })
     .from(roomProfiles)
-    .where(and(eq(roomProfiles.spaceId, spaceId), inArray(roomProfiles.userId, ids)))
+    .where(and(eq(roomProfiles.spaceId, spaceId), inArray(roomProfiles.userId, ids), isNull(roomProfiles.hiddenAt)))
   const named = new Map(rows.map((r) => [r.userId, r.displayName ?? ROOM_PROFILE_NAME_MISSING_LABEL]))
   return new Map(ids.map((id) => [id, named.get(id) ?? ROOM_PROFILE_NAME_MISSING_LABEL]))
 }

@@ -7,9 +7,10 @@
  * - **결과는 선택지별 개수만**: 누가 무엇을 골랐는지는 방장·운영진·운영자를 포함해 누구에게도 내보내지 않습니다. 응답에는 내 선택(`myVote`)만.
  * - 방을 나가거나 내보내지거나 탈퇴하면 그 사람의 표를 지웁니다(집계도 줄어듦, 마감한 투표 포함 — ADR 0039).
  * - 감사 기록에는 id·개수만(질문·선택지·누가 무엇을 골랐는지 없음). 투표 자체는 감사 기록을 남기지 않습니다(누가 투표했는지도 남기지 않음).
+ * - A-07(ADR 0045): 운영 조치로 숨긴 투표(`hidden_at`)는 목록에서 빠지고 투표·마감 경로는 404입니다(방장·운영진 포함).
  */
 import { ROOM_POLL_OPEN_LIMIT, canManageRoomGatherings, checkRoomPollInput, isPollOpen } from '@peerchive/domain'
-import { and, desc, eq, gt, inArray, roomPollVotes, roomPolls, type DbExecutor } from '@peerchive/db'
+import { and, desc, eq, gt, inArray, isNull, roomPollVotes, roomPolls, type DbExecutor } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, forbidden, invalid, notFound, rateLimited, sqlState } from '../errors'
 import { hitRateLimit } from '../security/rate-limit'
@@ -66,7 +67,7 @@ export async function listRoomPolls(db: DbExecutor, actor: Actor, ref: unknown, 
   const rows = await db
     .select()
     .from(roomPolls)
-    .where(eq(roomPolls.spaceId, room.ctx.space.row.id))
+    .where(and(eq(roomPolls.spaceId, room.ctx.space.row.id), isNull(roomPolls.hiddenAt)))
     .orderBy(desc(roomPolls.createdAt), desc(roomPolls.id))
     .limit(POLL_LIST_LIMIT)
   const dtos = await toPollDtos(db, room, rows, actor.userId, now)
@@ -85,7 +86,8 @@ async function loadPoll(db: DbExecutor, spaceId: string, pollId: unknown, lock: 
     .where(and(eq(roomPolls.id, id), eq(roomPolls.spaceId, spaceId)))
     .limit(1)
   const [row] = lock ? await query.for('update') : await query
-  if (!row) throw notFound()
+  // A-07: 숨긴 투표는 없는 것과 같습니다.
+  if (!row || row.hiddenAt) throw notFound()
   return row
 }
 

@@ -5,9 +5,9 @@
  *   (공개 페이지 SSR은 로그인 상태를 읽지 않음).
  * - 대상이 여럿이면(사례 전체 / 그 안의 기록·선언·파일, 프로필 / 대표 케이스) 고를 수 있습니다.
  * - 신고 설명은 운영자만 보고, 신고한 사람은 게시자에게 알려지지 않습니다. 처리 상태는 `/me/reports`에서 봅니다.
- * - 사유는 대상마다 고를 수 있는 것만(S-07: 표시명 사칭은 프로필 신고에만, 처리 기준 안내와 함께).
+ * - 사유는 대상마다 고를 수 있는 것만(S-07: 표시명 사칭은 프로필 신고에만, 처리 기준 안내와 함께. A-07: 소속·기수 사칭은 글·댓글·회고·명부·방별 프로필에만).
  */
-import type { ReportReason, ReportReceiptDto } from '~~/shared/types/api'
+import type { ReportReason, ReportReceiptDto, RoomItemKind } from '~~/shared/types/api'
 import type { ReportChoice } from '~/utils/moderation'
 
 const props = withDefaults(defineProps<{ targets: ReportChoice[]; label?: string; idPrefix: string }>(), { label: '신고하기' })
@@ -26,7 +26,9 @@ const hint = computed(() => {
 })
 const reasons = computed(() => {
   const target = props.targets.find((t) => t.id === choice.value)
-  return target ? reportReasonsFor(target.targetType) : []
+  if (!target) return []
+  const ref = target.targetRef as { kind?: unknown }
+  return reportReasonsFor(target.targetType, target.targetType === 'room_item' ? (ref.kind as RoomItemKind) : null)
 })
 // 대상을 바꿔 지금 사유를 고를 수 없게 되면 비웁니다.
 watch(reasons, (list) => {

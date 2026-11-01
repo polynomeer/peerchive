@@ -8,6 +8,8 @@
  * - 수집 거부(users.analytics_opt_out)한 사람은 기록하지 않습니다. 거부하면 그 사람의 지난 이벤트도 지웁니다(setAnalyticsOptOut).
  * - 공개 프로필·팔로우 이벤트(S-07, DELIVERY_PLAN §6.2, ADR 0036)는 `emitSocialAnalytics`로: 사용자 키는 붙이고, 페르소나 id·handle·상대방 키는
  *   허용 목록에 자리가 없으며, 시각은 시 단위로 내립니다(팔로우·차단 행의 정확한 시각과 맞춰 페르소나와 사용자 키를 잇기 어렵게).
+ * - §6.2 P2 이벤트(A-07, ADR 0045)는 `emitP2Analytics`로: 같은 시 단위 시각, 프로젝트 키 없음. 익명 방의 일정·응답, 익명·소속 표시 익명 토픽 글,
+ *   익명 수료 회고는 `unlinked`(사용자 키 없음)로 부릅니다. 방·글·기관·기수·페르소나 id는 허용 목록에 자리가 없습니다.
  */
 import { z } from 'zod'
 import { type AnalyticsEventName, sanitizeAnalyticsProps, socialEventTime } from '@peerchive/domain'
@@ -82,6 +84,11 @@ export async function emitAnalytics(db: DbExecutor, input: AnalyticsInput): Prom
 
 /** 공개 프로필·팔로우 이벤트(S-07): 사용자 키 + 시 단위 시각(socialEventTime). 프로젝트 키·사용자 키 없는 기록은 쓰지 않습니다. */
 export function emitSocialAnalytics(db: DbExecutor, input: Omit<AnalyticsInput, 'unlinked' | 'projectId'>): Promise<boolean> {
+  return emitAnalytics(db, { ...input, now: socialEventTime(input.now ?? new Date()) })
+}
+
+/** §6.2 P2 이벤트(A-07): 시 단위 시각(socialEventTime), 프로젝트 키 없음. 익명 내용이면 호출자가 unlinked를 켭니다. */
+export function emitP2Analytics(db: DbExecutor, input: Omit<AnalyticsInput, 'projectId'>): Promise<boolean> {
   return emitAnalytics(db, { ...input, now: socialEventTime(input.now ?? new Date()) })
 }
 

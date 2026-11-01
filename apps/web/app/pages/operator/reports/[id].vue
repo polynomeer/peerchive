@@ -244,6 +244,27 @@ async function loadAudit() {
           </dl>
           <p class="hint">회고 하나만 보입니다. 숨기면 목록에서 빠지고 작성자에게 안내가 가며, 이의제기로 되돌리면 다시 보입니다.</p>
         </template>
+        <template v-else-if="data.content.kind === 'room_item'">
+          <p data-testid="op-room-item">
+            <strong>{{ ROOM_ITEM_KIND_LABELS[data.content.roomItem.itemKind] }}</strong>
+            · {{ data.content.roomItem.space.name }}
+            <template v-if="data.content.roomItem.name"> · {{ data.content.roomItem.name }}</template>
+            <span v-if="data.content.roomItem.hidden" class="badge">운영 조치로 숨김</span>
+          </p>
+          <dl>
+            <template v-for="f in data.content.roomItem.fields" :key="f.label">
+              <dt>{{ f.label }}</dt>
+              <dd class="pre">{{ f.value }}</dd>
+            </template>
+          </dl>
+          <p v-if="data.content.roomItem.photoUrl">
+            <img :src="data.content.roomItem.photoUrl" alt="신고된 앨범 사진" style="max-width: 100%; max-height: 360px" referrerpolicy="no-referrer" />
+          </p>
+          <p class="hint">
+            동문 방 항목 하나만 보입니다. 일정·투표·사진을 만든·올린 사람은 운영자에게도 보이지 않고, 명부·방별 프로필은 방 멤버에게 보이는 이름만 보입니다.
+            숨기면 방 멤버 화면에서 빠지고 당사자에게 안내가 가며, 이의제기로 되돌리면 다시 보입니다. 사진 주소는 5분 동안 나에게만 맞습니다.
+          </p>
+        </template>
         <template v-else-if="data.content.kind === 'persona' || data.content.kind === 'profile_post' || data.content.kind === 'social_link'">
           <p data-testid="op-persona">
             <strong>{{ data.content.persona.displayName }}</strong> @{{ data.content.persona.handle }}

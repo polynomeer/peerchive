@@ -11,9 +11,12 @@
  * - 이름은 방별 프로필 규칙(A-01, roomMemberNames): 실명 방은 실명, 표시명 방은 방별 이름. 응답에는 사람 id·핸들·계정 표시 이름·항목 id가 없습니다.
  * - 이 모듈은 커뮤니티 모듈 안에 있고 social 모듈·공개 경로·검색·추천은 이 표를 읽지 않습니다(S-02 경계 테스트가 확인).
  * - 감사 기록에는 새 동의 여부·채운 항목 수·철회 원인만(값 없음). 명부 조회는 남기지 않습니다.
+ * - A-07(ADR 0045): 항목마다 신고용 `id`(동의마다 새 무작위 값)를 싣습니다. 운영 조치로 숨긴 항목(`hidden_at`)은 다른 멤버의 명부에서 빠지고
+ *   본인에게는 `hidden: true`로 보입니다. 숨긴 동안에도 고치거나 철회할 수 있습니다(철회권 우선 — 행이 지워짐). 분석 `directory_consent_changed`.
  */
 import { checkDirectoryEntryInput, directoryAvailable, filledDirectoryFields, parseDirectoryQuery } from '@peerchive/domain'
-import { and, asc, directoryEntries, eq, spaceMemberships, users, type DbExecutor } from '@peerchive/db'
+import { and, asc, directoryEntries, eq, isNull, spaceMemberships, users, type DbExecutor } from '@peerchive/db'
+import { emitP2Analytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, invalid, rateLimited } from '../errors'
 import { hitRateLimit } from '../security/rate-limit'
@@ -40,12 +43,14 @@ async function loadDirectoryRoom(db: DbExecutor, actor: Actor, ref: unknown, loc
 
 function toDto(row: EntryRow, name: string, viewerId: string): DirectoryEntryDto {
   return {
+    id: row.id,
     name,
     cohortLabel: row.cohortLabel,
     currentWork: row.currentWork,
     interests: row.interests,
     contactMethod: row.contactMethod,
     mine: row.userId === viewerId,
+    hidden: row.hiddenAt !== null,
     updatedAt: row.updatedAt.toISOString(),
   }
 }
@@ -79,7 +84,7 @@ export async function listDirectory(db: DbExecutor, actor: Actor, ref: unknown, 
     .from(directoryEntries)
     .innerJoin(spaceMemberships, and(eq(spaceMemberships.spaceId, directoryEntries.spaceId), eq(spaceMemberships.userId, directoryEntries.userId)))
     .innerJoin(users, eq(users.id, directoryEntries.userId))
-    .where(and(eq(directoryEntries.spaceId, spaceId), eq(spaceMemberships.status, 'active'), eq(users.status, 'active')))
+    .where(and(eq(directoryEntries.spaceId, spaceId), eq(spaceMemberships.status, 'active'), eq(users.status, 'active'), isNull(directoryEntries.hiddenAt)))
     .orderBy(asc(directoryEntries.consentedAt), asc(directoryEntries.userId))
     .offset((parsed.page - 1) * parsed.pageSize)
     .limit(parsed.pageSize + 1)
@@ -134,6 +139,8 @@ export async function putMyDirectoryEntry(db: DbExecutor, actor: Actor, ref: unk
       targetId: spaceId,
       metadata: { created: !existing, filled: filledDirectoryFields(v) },
     })
+    // A-07(§6.2 directory_consent_changed): 처음 동의할 때만(항목 바꾸기는 세지 않음). 채운 항목 수만.
+    if (!existing) await emitP2Analytics(tx, { name: 'directory_consent_changed', actorId: actor.userId, props: { consented: true, filled: filledDirectoryFields(v) }, now })
     return { entry: await myEntry(tx, room, actor.userId) }
   })
 }
@@ -148,6 +155,7 @@ export async function withdrawMyDirectoryEntry(db: DbExecutor, actor: Actor, ref
     const withdrawn = await deleteDirectoryEntryInTx(tx, room.ctx.space.row.id, actor.userId)
     if (withdrawn) {
       await recordAudit(tx, { actorId: actor.userId, action: 'community.directory_withdraw', targetType: 'community_space', targetId: room.ctx.space.row.id, metadata: { cause: 'self' } })
+      await emitP2Analytics(tx, { name: 'directory_consent_changed', actorId: actor.userId, props: { consented: false }, now })
     }
     return { entry: null, withdrawn }
   })

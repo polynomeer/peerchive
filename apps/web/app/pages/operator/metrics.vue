@@ -2,8 +2,9 @@
 /**
  * 운영자 pilot 지표·시스템 상태(T-16, ADR 0016). 운영자가 아니면 404로 보입니다(API는 403 operator_only).
  * 지표는 분석 이벤트만으로 계산하고 5 미만은 "가림"으로 보입니다. 상태는 /api/v1/health?deep=1입니다.
+ * A-07(ADR 0045): §6.2 P2 졸업생·토픽·기관 칸은 `/api/v1/operator/metrics/community/p2`(같은 기간). 꺼진 영역은 칸을 숨깁니다.
  */
-import type { DeepHealthDto, OperatorMetricsDto } from '~~/shared/types/api'
+import type { DeepHealthDto, OperatorMetricsDto, OperatorP2MetricsDto, RateMetricDto, RoomItemKind } from '~~/shared/types/api'
 
 definePageMeta({ middleware: 'auth' })
 useHead({ title: '지표·상태 — Peerchive', meta: [{ name: 'robots', content: 'noindex' }] })
@@ -15,6 +16,10 @@ const query = computed(() => ({ ...(pick('from') && { from: pick('from') }), ...
 
 const { data: metrics, error } = await useFetch<OperatorMetricsDto>('/api/v1/operator/metrics', { query })
 const { data: health, refresh: refreshHealth } = await useFetch<DeepHealthDto>('/api/v1/health', { query: { deep: 1 } })
+const { data: p2 } = await useFetch<OperatorP2MetricsDto>('/api/v1/operator/metrics/community/p2', { query })
+const p2Shown = computed(() => !!p2.value && (p2.value.flags.alumni || p2.value.flags.topics || p2.value.flags.institutions))
+const rateRow = (m: RateMetricDto) => [m.denominator, m.numerator, m.rate] as const
+const ROOM_ITEM_KINDS: RoomItemKind[] = ['directory_entry', 'event', 'poll', 'album_photo', 'room_profile']
 
 const denied = computed(() => !!error.value && [401, 403].includes(error.value.statusCode ?? 0))
 if (import.meta.server && denied.value) {
@@ -90,6 +95,66 @@ const STATUS_LABELS: Record<string, string> = { ok: '정상', error: '오류', s
           <li>연결 켜기 {{ show(metrics.profile.identityLink.turnedOn) }} · 끄기 {{ show(metrics.profile.identityLink.turnedOff) }} · 공개 범위 변경 {{ show(metrics.profile.settings.visibilityChanged) }} · 과제 수행 목록 {{ show(metrics.profile.settings.projectListed) }}</li>
           <li>정체성 누출(필수): 이벤트로 재지 않음 — 신고·사고 기록과 S-02 회귀 테스트로 확인</li>
         </ul>
+        <template v-if="p2Shown && p2">
+          <h2>졸업생·토픽·기관(§6.2 P2)</h2>
+          <section v-if="p2.alumni" data-testid="p2-alumni">
+            <h3>졸업생 공간</h3>
+            <table class="ledger-table">
+              <thead><tr><th scope="col">지표</th><th scope="col">분모</th><th scope="col">분자</th><th scope="col">비율</th></tr></thead>
+              <tbody>
+                <tr v-for="[label, m] in ([['졸업생 → 선배 노트 공급(동문 방 활동한 사람 중 노트·회고 게시)', p2.alumni.alumniToNotes], ['동문 방 활성(일정·공지가 있던 방)', p2.alumni.activeRooms], ['일정당 참석 응답률', p2.alumni.rsvpRate], ['명부 동의율(지금)', p2.alumni.directoryConsent]] as const)" :key="label">
+                  <th scope="row">{{ label }}</th><td>{{ show(rateRow(m)[0]) }}</td><td>{{ show(rateRow(m)[1]) }}</td><td>{{ pct(rateRow(m)[2]) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <ul class="plain">
+              <li>선배 노트·수료 회고 게시: {{ show(p2.alumni.supply) }}</li>
+              <li>
+                동문 방 만들기 {{ show(p2.alumni.events.alumniRoomsCreated) }}(기수 방 {{ show(p2.alumni.events.cohortRoomsCreated) }}) · 일정 {{ show(p2.alumni.events.eventsCreated) }} · 응답
+                {{ show(p2.alumni.events.rsvps) }} · 명부 동의 {{ show(p2.alumni.events.directoryConsents) }} · 철회 {{ show(p2.alumni.events.directoryWithdrawals) }}
+              </li>
+              <li>방 항목 신고: <template v-for="k in ROOM_ITEM_KINDS" :key="k">{{ ROOM_ITEM_KIND_LABELS[k] }} {{ show(p2.alumni.reportsByKind[k]) }} · </template>숨김 확정 {{ show(p2.alumni.hiddenConfirmed) }}</li>
+            </ul>
+          </section>
+          <section v-if="p2.topics" data-testid="p2-topics">
+            <h3>토픽</h3>
+            <table class="ledger-table">
+              <thead><tr><th scope="col">지표</th><th scope="col">분모</th><th scope="col">분자</th><th scope="col">비율</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">토픽 → 선배 노트 전환(답변 중 옮겨진 것)</th><td>{{ show(p2.topics.topicToNote.denominator) }}</td><td>{{ show(p2.topics.topicToNote.numerator) }}</td><td>{{ pct(p2.topics.topicToNote.rate) }}</td></tr>
+                <tr><th scope="row">소속 표시 상향(토픽 글 중 넓혀짐)</th><td>{{ show(p2.topics.broadened.denominator) }}</td><td>{{ show(p2.topics.broadened.numerator) }}</td><td>{{ pct(p2.topics.broadened.rate) }}</td></tr>
+              </tbody>
+            </table>
+            <ul class="plain">
+              <li>소속 표시: 기관 {{ show(p2.topics.postsByScope.institution) }} · 기관 유형 {{ show(p2.topics.postsByScope.institutionKind) }} · 없음 {{ show(p2.topics.postsByScope.none) }}</li>
+              <li>소속·기수 사칭 신고(토픽): {{ show(p2.topics.impersonation.reports) }}건, 가리기 확정 {{ show(p2.topics.impersonation.confirmed) }}건</li>
+            </ul>
+          </section>
+          <section v-if="p2.institutions" data-testid="p2-institutions">
+            <h3>기관 인증</h3>
+            <ul class="plain">
+              <li>
+                인증: 초대 코드 {{ show(p2.institutions.verifiedByMethod.invite_code) }} · 기수 승인 {{ show(p2.institutions.verifiedByMethod.cohort_approval) }} · 수료증 확인
+                {{ show(p2.institutions.verifiedByMethod.certificate_check) }}
+              </li>
+              <li data-testid="p2-certificate-time">
+                수료증 처리 시간(받은 시각 → 결정): {{ show(p2.institutions.certificate.decided) }}건, 중앙값
+                {{ p2.institutions.certificate.medianHours === null ? '가림(5건 미만)' : `${p2.institutions.certificate.medianHours}시간` }}, p90
+                {{ p2.institutions.certificate.p90Hours === null ? '가림' : `${p2.institutions.certificate.p90Hours}시간` }} (목표 중앙값 {{ p2.institutions.certificate.medianTargetHours }}시간, 기한
+                {{ p2.institutions.certificate.slaHours }}시간 안 {{ pct(p2.institutions.certificate.withinSla.rate) }})
+              </li>
+              <li>
+                사칭 판정: 운영자 소속 취소 {{ show(p2.institutions.impersonation.revokedByOperator) }} · 소속·기수 사칭 신고(명부·방별 프로필·회고)
+                {{ show(p2.institutions.impersonation.reports) }}, 확정 {{ show(p2.institutions.impersonation.confirmed) }}
+              </li>
+              <li>수료 회고 게시: {{ show(p2.institutions.retrosPublished) }} · 기관 기수 방에서 시작된 공개 사례: 재지 않음</li>
+              <li><NuxtLink to="/operator/verification-queue">인증 수단별 처리 큐 보기</NuxtLink></li>
+            </ul>
+          </section>
+          <ul class="small muted">
+            <li v-for="note in p2.notes" :key="note">{{ note }}</li>
+          </ul>
+        </template>
         <details>
           <summary>이벤트별 개수</summary>
           <ul class="plain small">

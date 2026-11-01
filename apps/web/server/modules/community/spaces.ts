@@ -67,7 +67,7 @@ import {
   sql,
   type DbExecutor,
 } from '@peerchive/db'
-import { emitAnalytics } from '../analytics/analytics'
+import { emitAnalytics, emitP2Analytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
 import { type Actor, ServiceError, conflict, forbidden, invalid, notFound, rateLimited, sqlState } from '../errors'
 import { requireFeature } from '../features'
@@ -529,6 +529,8 @@ export async function createRoom(db: DbExecutor, actor: Actor, rawInput: unknown
       metadata: { kind: row.kind, schoolLinked: schoolId !== null, nameMode: row.currentNameMode, joinPolicy: row.joinPolicy, capacityRequested: requested, template: row.template },
     })
     await emitAnalytics(tx, { name: 'space_created', actorId: actor.userId, props: { kind: 'user_room' }, now })
+    // A-07(§6.2 alumni_room_created): 동문회·OB 방이면 이름 표시 방식만.
+    if (row.template === 'alumni') await emitP2Analytics(tx, { name: 'alumni_room_created', actorId: actor.userId, props: { mode: row.currentNameMode as 'real' | 'display' | 'anonymous', cohortRoom: false }, now })
     return row
   })
   return getSpaceDetail(db, actor, space.slug)

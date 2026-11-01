@@ -10,6 +10,8 @@
  *   않으므로 표시명 신고가 실명 프로필·실명 handle과 이어지지 않습니다. 이름표는 그 페르소나 자신의 handle입니다.
  * - A-06(ADR 0043): 수료 회고(`{retroId}`). 공개 대상이 아니라 신고자가 읽을 수 있는(active 기관 인증) 게시 중인 회고만, institutions 플래그가
  *   꺼지면 404. 당사자는 작성자, 이름표는 "수료 회고 · 고정된 기관 표시"(넓혀졌으면 넓힌 문자열 — 기관 이름을 새로 드러내지 않음).
+ * - A-07(ADR 0045): 동문회·OB 방 항목(`{spaceSlug, kind, itemId}`). 그 방 active 멤버가 지금 보는 숨기지 않은 항목만(alumni 플래그 꺼짐 404).
+ *   포인터는 종류 + 항목 id, 당사자는 그 항목의 주인(명부·방별 프로필의 사람, 일정·투표를 만든 사람, 사진을 올린 사람), 이름표는 "종류 · 방 이름".
  */
 import { z } from 'zod'
 import {
@@ -17,6 +19,7 @@ import {
   ITEM_KEY_MAX,
   type HiddenItemKind,
   type ReportTargetIdentity,
+  type RoomItemKind,
   type ReportTargetType,
   reportTargetKey,
 } from '@peerchive/domain'
@@ -52,6 +55,10 @@ import {
   resolveReportablePost,
   resolveReportableRecruitment,
   resolveReportableSpace,
+  resolveReportableRoomItem,
+  roomItemKindOf,
+  roomItemLabels,
+  roomItemOwnerIds,
 } from '../community/reporting'
 import { type Actor, invalid, notFound } from '../errors'
 import { HANDLE_PATTERN } from '../identity/profiles'
@@ -93,6 +100,9 @@ export interface TargetPointer {
   socialLinkId: string | null
   /** A-06: 수료 회고. */
   completionRetroId: string | null
+  /** A-07: 방 항목(종류 + 항목 id, 주인 사용자 없음). */
+  roomItemKind: RoomItemKind | null
+  roomItemId: string | null
 }
 
 const empty = (targetType: ReportTargetType, identity: ReportTargetIdentity): TargetPointer => ({
@@ -117,6 +127,8 @@ const empty = (targetType: ReportTargetType, identity: ReportTargetIdentity): Ta
   profilePostId: null,
   socialLinkId: null,
   completionRetroId: null,
+  roomItemKind: null,
+  roomItemId: null,
 })
 
 const slug = z.string({ error: 'invalid' }).trim().toLowerCase().min(3, { error: 'invalid' }).max(60, { error: 'invalid' })
@@ -289,6 +301,12 @@ export async function resolvePublicTarget(db: DbExecutor, type: ReportTargetType
       const retroId = await resolveReportableRetro(db, actor, ref.retroId)
       return { ...empty(type, { type, retroId }), completionRetroId: retroId }
     }
+    // A-07: 신고자가 그 방 active 멤버로 지금 보는 숨기지 않은 방 항목.
+    case 'room_item': {
+      if (!actor) throw notFound()
+      const { kind, itemId } = await resolveReportableRoomItem(db, actor, rawRef, now)
+      return { ...empty(type, { type, kind, itemId }), roomItemKind: kind, roomItemId: itemId }
+    }
   }
 }
 
@@ -330,6 +348,8 @@ export async function affectedUserIds(
     | 'profilePostId'
     | 'socialLinkId'
     | 'completionRetroId'
+    | 'roomItemKind'
+    | 'roomItemId'
   >,
 ): Promise<string[]> {
   switch (target.targetType) {
@@ -394,6 +414,8 @@ export async function affectedUserIds(
       const [row] = await db.select({ userId: completionRetros.authorId }).from(completionRetros).where(eq(completionRetros.id, target.completionRetroId)).limit(1)
       return row ? [row.userId] : []
     }
+    case 'room_item':
+      return roomItemOwnerIds(db, target.roomItemKind, target.roomItemId)
   }
 }
 
@@ -426,6 +448,10 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
     ? await db.select({ id: completionRetros.id, label: completionRetros.institutionLabel }).from(completionRetros).where(inArray(completionRetros.id, retroIds))
     : []
   const retroLabelBy = new Map(retroRows.map((r) => [r.id, r.label]))
+  const roomItemBy = await roomItemLabels(
+    db,
+    targets.filter((t) => t.roomItemKind && t.roomItemId).map((t) => ({ kind: t.roomItemKind!, id: t.roomItemId! })),
+  )
   const personaHandleBy = await personaHandles(db, targets)
   const [pubRows, noteRows, caseRows] = await Promise.all([
     pubIds.length ? db.select({ id: publications.id, slug: publications.slug }).from(publications).where(inArray(publications.id, pubIds)) : [],
@@ -505,6 +531,9 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
         label = `수료 회고${l ? ` · ${l}` : ''}`
         break
       }
+      case 'room_item':
+        label = roomItemBy.get(`${t.roomItemKind}:${t.roomItemId}`)?.label ?? '방 항목'
+        break
     }
     out.set(t.targetKey, label)
   }
@@ -552,6 +581,8 @@ export function pointerOf(
     | 'profilePostId'
     | 'socialLinkId'
     | 'completionRetroId'
+    | 'roomItemKind'
+    | 'roomItemId'
   > & {
     noteVersion?: number | null
     caseStudyVersion?: number | null
@@ -565,6 +596,8 @@ export function pointerOf(
     profilePostId?: string | null
     socialLinkId?: string | null
     completionRetroId?: string | null
+    roomItemKind?: RoomItemKind | null
+    roomItemId?: string | null
   },
 ): TargetPointer {
   return {
@@ -589,7 +622,12 @@ export function pointerOf(
     profilePostId: row.profilePostId ?? null,
     socialLinkId: row.socialLinkId ?? null,
     completionRetroId: row.completionRetroId ?? null,
+    roomItemKind: row.roomItemKind ?? null,
+    roomItemId: row.roomItemId ?? null,
   }
 }
 
 export { isUuid }
+
+// A-07: notices.ts·reports.ts는 커뮤니티 모듈을 직접 import하지 않고 여기서 받습니다(C-05 경계의 어댑터는 operator·targets·actions뿐).
+export { roomItemKindOf, roomItemLabels }

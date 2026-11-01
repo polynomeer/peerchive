@@ -121,3 +121,16 @@ export {
   reportableRecruitment as resolveReportableRecruitment,
   unhideRecruitmentItemInTx,
 } from './recruitments'
+
+// ── A-07(ADR 0045): 동문회·OB 방 항목(명부 항목·일정·투표·앨범 사진·방별 프로필) 신고·숨김 — moderation 모듈은 이 어댑터만 부릅니다 ──────────
+
+export {
+  hideRoomItemInTx,
+  operatorRoomItem,
+  resolveReportableRoomItem,
+  roomItemKindOf,
+  roomItemLabels,
+  roomItemOwnerIds,
+  roomItemVisible,
+  unhideRoomItemInTx,
+} from './room-item-reports'

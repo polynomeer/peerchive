@@ -8,6 +8,8 @@
  * - 응답: 회차마다 (일정, 회차 날짜, 사람) 하나(PK). 다시 보내면 바꾸기, null이면 지우기. 회차가 시작한 뒤·취소된 일정은 409.
  * - 응답자 목록: 방 active 멤버만. 이름은 방별 프로필 이름 규칙(실명 방은 실명, 표시명 방은 방별 이름), 익명 방은 수만.
  * - 감사 기록에는 id·종류·플래그만(제목·장소 값 없음). 알림은 없습니다.
+ * - A-07(ADR 0045): 운영 조치로 숨긴 일정(`hidden_at`)은 목록에서 빠지고 상세 경로(고치기·취소·응답·응답자)는 모두 404입니다(방장·운영진 포함).
+ *   분석 `event_created`·`rsvp_submitted`(시 단위 시각, 익명 방이면 사용자 키 없음). 방 대기 수(too_many_events)는 숨긴 일정도 셉니다.
  */
 import {
   RSVP_RESPONSES,
@@ -25,7 +27,8 @@ import {
   eventOccurrences,
   findOccurrence,
 } from '@peerchive/domain'
-import { and, asc, desc, eq, inArray, roomEventRsvps, roomEvents, sql, type DbExecutor } from '@peerchive/db'
+import { and, asc, desc, eq, inArray, isNull, roomEventRsvps, roomEvents, sql, type DbExecutor } from '@peerchive/db'
+import { emitP2Analytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, forbidden, invalid, notFound, rateLimited } from '../errors'
 import { hitRateLimit } from '../security/rate-limit'
@@ -118,7 +121,7 @@ export async function listRoomEvents(db: DbExecutor, actor: Actor, ref: unknown,
   const rows = await db
     .select()
     .from(roomEvents)
-    .where(eq(roomEvents.spaceId, room.ctx.space.row.id))
+    .where(and(eq(roomEvents.spaceId, room.ctx.space.row.id), isNull(roomEvents.hiddenAt)))
     // 최근 것부터 가져와 정렬합니다(오래된 일정이 많아도 새 일정이 빠지지 않게).
     .orderBy(desc(roomEvents.startsAt), desc(roomEvents.id))
     .limit(EVENT_LIST_LIMIT * 2)
@@ -138,7 +141,8 @@ async function loadEvent(db: DbExecutor, spaceId: string, eventId: unknown, lock
     .where(and(eq(roomEvents.id, id), eq(roomEvents.spaceId, spaceId)))
     .limit(1)
   const [row] = lock ? await query.for('update') : await query
-  if (!row) throw notFound()
+  // A-07: 숨긴 일정은 없는 것과 같습니다.
+  if (!row || row.hiddenAt) throw notFound()
   return row
 }
 
@@ -188,6 +192,7 @@ export async function createRoomEvent(db: DbExecutor, actor: Actor, ref: unknown
       targetId: room.ctx.space.row.id,
       metadata: { eventId: row!.id, recurrence: v.recurrence },
     })
+    await emitP2Analytics(tx, { name: 'event_created', actorId: actor.userId, unlinked: room.mode === 'anonymous', props: { recurrence: v.recurrence }, now })
     return eventDto(tx, row!, actor.userId, now)
   })
 }
@@ -276,6 +281,11 @@ export async function respondToEvent(db: DbExecutor, actor: Actor, ref: unknown,
     if (response === null) {
       await tx.delete(roomEventRsvps).where(where)
     } else {
+      const [before] = await tx.select({ response: roomEventRsvps.response }).from(roomEventRsvps).where(where).limit(1)
+      // A-07(§6.2 rsvp_submitted): 처음 응답·다른 응답으로 바꾸기만(같은 응답 다시 보내기·지우기는 세지 않음). 익명 방이면 사용자 키 없음.
+      if (before?.response !== response) {
+        await emitP2Analytics(tx, { name: 'rsvp_submitted', actorId: actor.userId, unlinked: room.mode === 'anonymous', props: { response: response as RsvpResponse, changed: !!before }, now })
+      }
       await tx
         .insert(roomEventRsvps)
         .values({ eventId: row.id, occurrenceDate: occurrence.date, userId: actor.userId, response: response as RsvpResponse, createdAt: now, updatedAt: now })

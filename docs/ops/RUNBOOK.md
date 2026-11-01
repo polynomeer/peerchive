@@ -186,9 +186,9 @@ P2 기능은 코드가 있어도 **기본으로 꺼져 있고** 이 게이트(DE
 
 | 변수 | 영역 | 켜기 전 확인 |
 |---|---|---|
-| `PEERCHIVE_FEATURE_P2_INSTITUTIONS=on` | 기관 확장(I-01 초대 코드·기수 승인·수료증 확인, A-06 수료 회고, I-02 기관 페이지·기수 방·기관 운영진) | **A-06 수료 회고 회귀 테스트**(`topic-answer-retros.integration.test.ts`: 별점·연봉·추천 점수 열·숫자형 열·입력 없음, 수료생만, 익명 회고의 두 단계 임계값 고정·넓혀지면 기관 목록 제외·작성자에게만 안내, 기관 인증 계정만 읽음, 신고·`hide_retro`·이의제기, 탈퇴 정리) 통과, 회고 신고 처리 담당 운영자 지정, GC 통과·§6.1 근거, 협력 기관 확보(제품 기획 §19 질문 13), **수료증 파일 삭제 절차 검토**(아래 §4.6·§8, worker `certificate-files`가 돌고 있는지 `/operator/metrics` 시스템 상태에서 확인), 수료증 확인 담당 운영자 지정, **기관 운영진 권한 범위 검토(I-02)**: 회귀 테스트(`institution-staff.integration.test.ts`: 자기 기관 페이지·기수 방에서 모더레이터 범위만·다른 기관 404·작성자 확인 403·멤버 목록·방별 프로필·명부 404·자기 기관 초대 코드만·수료증 403·집계 5 미만 null·기관 단위 사용자 조회 라우트 없음·지정/해제 감사 id만, 도메인 `institution-staff.test.ts`: 운영진 관리 동작 ⊂ 방장) 통과, 협력 기관과 운영진 범위(작성자·사람 조회·내보내기 없음, 기수 방은 운영진이 읽음)를 계약·안내에 적음(DELIVERY_PLAN §9 G4), 운영진 지정 담당 운영자 |
-| `PEERCHIVE_FEATURE_P2_ALUMNI=on` | 졸업생 공간(A-01 동문회·OB 방·방별 프로필, A-02 일정·참석·공지 읽음·투표·앨범, A-03 멤버 명부 동의, A-04 공감 라운지 이미지·졸업생 인증 이력 열람) | A-03 명부 회귀 테스트(`member-directory.integration.test.ts`: 동의 없는 행 0건·항목별 비우기·철회·나가기 즉시 삭제·내보내기 경로 없음·쪽 크기·조회 rate limit, [ADR 0040](../adr/0040-member-directory.md)) 통과, 함께 열 동문 모임 확보, 방별 프로필·모임 도구·명부 경계(S-02 속성 테스트에 alumni 방·일정·투표·명부 포함, [ADR 0038](../adr/0038-alumni-rooms.md)·[0039](../adr/0039-alumni-events.md)) 통과 확인, **앨범 사진 검사 큐 `album-photo-scan`과 라운지 미디어 검사 큐 `post-media-scan`이 도는지**(worker 시작 로그·dead-letter `album-photo-scan-dead`·`post-media-scan-dead` 없음), A-04 회귀 테스트(`lounge-media.integration.test.ts`: 읽는 사람만 서명 URL·가린·지운 글 404·한도·졸업생 이력 열람과 해제 이력 제외, [ADR 0041](../adr/0041-lounge-media-alumni-access.md)) 통과 |
-| `PEERCHIVE_FEATURE_P2_TOPICS=on` | 토픽·소속 표시 익명(A-05 학교를 넘나드는 토픽·작성 시점 소속 표시·임계값, A-06 현직자 답변 → 선배 노트) | **A-06 이동 회귀 테스트**(`topic-answer-retros.integration.test.ts`: 이름 표시 네 가지, 소속 표시 유지는 원 글 문자열 복사·바꾸기 금지·투영 0건, 실명·표시명은 복사본 노트만 투영·원 글 연결 없음)와 **S-02 확장**(속성 테스트가 토픽 답변을 네 방식으로 옮긴 세계까지, [ADR 0043](../adr/0043-topic-answer-transfer-retros.md)) 통과, **A-05 임계값 회귀 테스트**(`topics.integration.test.ts`: 시나리오 Y — 30명 부트캠프 → `부트캠프 수료생`, 60명 대학 졸업생 → `○○대 · 졸업생`, 표시 안 함 → 없음, 이후 회원 증가·소속 해제에도 표시 그대로, 학과·기수 미표시, 넓혀졌는지는 작성자에게만, 세는 회원 = 정본 기관·같은 신분의 인증된 active 소속 + active 계정, 범주(기관 유형·신분)도 50명 미만이면 표시 안 함) 통과, **S-02 확장 회귀 테스트**(`identity-boundary.integration.test.ts` 속성 테스트에 토픽·소속 표시 익명 글·댓글 포함, 투영 0건, [ADR 0042](../adr/0042-topics-affiliation-labels.md)) 통과, 임계값 값 확인(`PEERCHIVE_AFFILIATION_LABEL_THRESHOLD`, 기본 50·5 미만 불가), 첫 토픽(취준 등) 운영자 준비 |
+| `PEERCHIVE_FEATURE_P2_INSTITUTIONS=on` | 기관 확장(I-01 초대 코드·기수 승인·수료증 확인, A-06 수료 회고, I-02 기관 페이지·기수 방·기관 운영진) | **A-06 수료 회고 회귀 테스트**(`topic-answer-retros.integration.test.ts`: 별점·연봉·추천 점수 열·숫자형 열·입력 없음, 수료생만, 익명 회고의 두 단계 임계값 고정·넓혀지면 기관 목록 제외·작성자에게만 안내, 기관 인증 계정만 읽음, 신고·`hide_retro`·이의제기, 탈퇴 정리) 통과, 회고 신고 처리 담당 운영자 지정, GC 통과·§6.1 근거, 협력 기관 확보(제품 기획 §19 질문 13), **수료증 파일 삭제 절차 검토**(아래 §4.6·§8, worker `certificate-files`가 돌고 있는지 `/operator/metrics` 시스템 상태에서 확인), 수료증 확인 담당 운영자 지정, **기관 운영진 권한 범위 검토(I-02)**: 회귀 테스트(`institution-staff.integration.test.ts`: 자기 기관 페이지·기수 방에서 모더레이터 범위만·다른 기관 404·작성자 확인 403·멤버 목록·방별 프로필·명부 404·자기 기관 초대 코드만·수료증 403·집계 5 미만 null·기관 단위 사용자 조회 라우트 없음·지정/해제 감사 id만, 도메인 `institution-staff.test.ts`: 운영진 관리 동작 ⊂ 방장) 통과, 협력 기관과 운영진 범위(작성자·사람 조회·내보내기 없음, 기수 방은 운영진이 읽음)를 계약·안내에 적음(DELIVERY_PLAN §9 G4), 운영진 지정 담당 운영자, **A-07 처리 큐·계측**(`p2-ops.integration.test.ts`: 인증 수단별 묶음·나이·기한, 수료증 처리 시간(받은 시각 → 결정) 중앙값·p90 5건 미만 가림, 운영자만·플래그 404, 소속·기수 사칭 사유, P2 이벤트 키·시 단위·수집 거부) 통과, 수료증 건별 기한(`PEERCHIVE_CERTIFICATE_SLA_HOURS`, 기본 72)과 처리 큐 확인 담당(§4.7) |
+| `PEERCHIVE_FEATURE_P2_ALUMNI=on` | 졸업생 공간(A-01 동문회·OB 방·방별 프로필, A-02 일정·참석·공지 읽음·투표·앨범, A-03 멤버 명부 동의, A-04 공감 라운지 이미지·졸업생 인증 이력 열람) | A-03 명부 회귀 테스트(`member-directory.integration.test.ts`: 동의 없는 행 0건·항목별 비우기·철회·나가기 즉시 삭제·내보내기 경로 없음·쪽 크기·조회 rate limit, [ADR 0040](../adr/0040-member-directory.md)) 통과, 함께 열 동문 모임 확보, 방별 프로필·모임 도구·명부 경계(S-02 속성 테스트에 alumni 방·일정·투표·명부 포함, [ADR 0038](../adr/0038-alumni-rooms.md)·[0039](../adr/0039-alumni-events.md)) 통과 확인, **앨범 사진 검사 큐 `album-photo-scan`과 라운지 미디어 검사 큐 `post-media-scan`이 도는지**(worker 시작 로그·dead-letter `album-photo-scan-dead`·`post-media-scan-dead` 없음), A-04 회귀 테스트(`lounge-media.integration.test.ts`: 읽는 사람만 서명 URL·가린·지운 글 404·한도·졸업생 이력 열람과 해제 이력 제외, [ADR 0041](../adr/0041-lounge-media-alumni-access.md)) 통과, **A-07 방 항목 신고 회귀 테스트**(`p2-ops.integration.test.ts`: 명부 항목·일정·투표·앨범 사진·방별 프로필마다 신고 → 대기열 → 숨김 → 다른 멤버에게서 빠짐 → 이의제기 되돌림, 운영자 상세에 주인 id·계정 이름 없음, 멤버 아님·플래그 꺼짐 404, [ADR 0045](../adr/0045-p2-ops-metrics.md)) 통과와 방 항목 신고 처리 담당 지정(§4.7) |
+| `PEERCHIVE_FEATURE_P2_TOPICS=on` | 토픽·소속 표시 익명(A-05 학교를 넘나드는 토픽·작성 시점 소속 표시·임계값, A-06 현직자 답변 → 선배 노트) | **A-06 이동 회귀 테스트**(`topic-answer-retros.integration.test.ts`: 이름 표시 네 가지, 소속 표시 유지는 원 글 문자열 복사·바꾸기 금지·투영 0건, 실명·표시명은 복사본 노트만 투영·원 글 연결 없음)와 **S-02 확장**(속성 테스트가 토픽 답변을 네 방식으로 옮긴 세계까지, [ADR 0043](../adr/0043-topic-answer-transfer-retros.md)) 통과, **A-05 임계값 회귀 테스트**(`topics.integration.test.ts`: 시나리오 Y — 30명 부트캠프 → `부트캠프 수료생`, 60명 대학 졸업생 → `○○대 · 졸업생`, 표시 안 함 → 없음, 이후 회원 증가·소속 해제에도 표시 그대로, 학과·기수 미표시, 넓혀졌는지는 작성자에게만, 세는 회원 = 정본 기관·같은 신분의 인증된 active 소속 + active 계정, 범주(기관 유형·신분)도 50명 미만이면 표시 안 함) 통과, **S-02 확장 회귀 테스트**(`identity-boundary.integration.test.ts` 속성 테스트에 토픽·소속 표시 익명 글·댓글 포함, 투영 0건, [ADR 0042](../adr/0042-topics-affiliation-labels.md)) 통과, 임계값 값 확인(`PEERCHIVE_AFFILIATION_LABEL_THRESHOLD`, 기본 50·5 미만 불가), 첫 토픽(취준 등) 운영자 준비, **A-07**: 소속·기수 사칭 처리 기준(§4.7) 공지, 소속 표시 익명 토픽 글 신고의 운영자 상세에 작성자 없음(`p2-ops.integration.test.ts`) 확인 |
 | `PEERCHIVE_FEATURE_P2=on` | 위 셋 모두(영역 변수 `off`가 우선) | 위 모두 |
 
 - 값은 `on`·`1`·`true`·`yes`만 켜짐, 그 밖은 꺼짐. web은 요청마다 읽으므로 바꾼 뒤 web을 재시작합니다. 확인: `curl -s https://<사이트>/api/v1/features` → `{"alumni":false,"topics":false,"institutions":true}`.
@@ -425,7 +425,7 @@ pnpm --filter @peerchive/db institution revoke-code <codeId>
 1. `/operator/certificates`(플래그가 켜져 있을 때 `/operator`에 링크). 대기 목록은 오래된 것부터입니다. 검사 전·격리된 파일은 열 수 없습니다.
 2. "파일 보기(60초)"는 그 운영자에게만 맞는 짧은 서명 URL을 새 창으로 엽니다(보기마다 감사 `certificate_check.view`). **화면 캡처·내려받기·옮겨 적기를 하지 않습니다.** 확인하는 것: 수료증의 이름이 계정 이름과 맞는지, 기관·(있으면) 기수가 맞는지, 위조 흔적.
 3. 승인 또는 거절(확인 대화상자). 결정 시각이 남고(처리 시간 지표), 결정 뒤에는 운영자도 파일을 볼 수 없습니다. 판단이 어려우면 결정하지 않고 운영 회의로 넘깁니다(30일 지나면 자동 만료·파일 삭제).
-4. 목표 처리 시간: `<시간>`(운영 회의에서 정함). 대기 목록이 쌓이면 §4.4 주간 루틴에서 봅니다.
+4. 목표 처리 시간: **건별 72시간, 처리 시간 중앙값 3일 이내**(DELIVERY_PLAN §6.2 기관 인증 판단 초안, [ADR 0045](../adr/0045-p2-ops-metrics.md) §3). 처리 시간은 파일을 받은 시각부터 결정 시각까지입니다. 건별 기한은 `PEERCHIVE_CERTIFICATE_SLA_HOURS`(기본 72, 1~720)로 바꿀 수 있고 중앙값 목표는 바꾸지 않습니다. 대기 목록·기한 넘김은 `/operator/verification-queue`(§4.7)에서, 중앙값은 §4.4 주간 루틴에서 봅니다.
 
 **수료증 파일 삭제 점검.** worker 주기 작업 `certificate-files`(10분마다, `PEERCHIVE_CRON_CERTIFICATE_FILES`)가 결정·취소·격리·미업로드(하루)·미결정(30일) 파일을 지우고 삭제 장부에 `entity_kind = certificate_file`, `source = retention` 행을 남깁니다(사용자 id 없음, 확인 id의 HMAC). 끄지 않습니다(GA 점검 항목). 점검 SQL:
 
@@ -441,6 +441,32 @@ select column_name from information_schema.columns where table_name = 'instituti
 ```
 
 백업을 복구한 뒤에는 `pnpm ops:reapply-deletions`가 계정 정리와 함께 `retention` 항목의 수료증 파일도 다시 지웁니다(계정은 건드리지 않음, 출력의 `certificateFiles=`).
+
+### 4.7 P2 신고·인증 처리 큐·계측(A-07, ADR 0045)
+
+**동문 방 항목 신고.** 대기열 이름표 `명부 항목 · 방 이름`·`일정 · …`·`투표 · …`·`앨범 사진 · …`·`방별 프로필 · …`. 상세에는 그 항목 하나만 보입니다: 명부·방별 프로필은 방 멤버에게 보이는 이름(실명 방은 실명, 표시명 방은 방별 이름), 일정·투표·사진은 만든·올린 사람 없이 내용만, 사진은 나에게만 맞는 5분 주소(캡처·내려받기 금지 — 수료증과 같음). 처리 기한은 §4.4의 일반 신고(72시간)입니다.
+
+| 조치 | 효과 | 되돌림 |
+|---|---|---|
+| 방 항목 숨기기 | 그 항목 하나가 다음 요청부터 방 멤버 화면에서 빠짐(일정·투표는 응답·투표도 404, 사진은 주소도 404, 방장·운영진 포함). 명부 항목·방별 프로필은 본인에게만 "운영 조치로 숨김", 숨긴 방별 프로필의 이름은 다른 멤버에게 `방별 이름 없음` | 이의제기 되돌림 |
+
+- 당사자는 명부·방별 프로필의 주인, 일정·투표를 만든 사람, 사진을 올린 사람입니다(안내 `/me/moderation-notices`, 당사자 화면은 그 방의 명부·모임·방별 프로필 화면). 방장·방 운영진·기관 운영진은 이 신고를 보지 않습니다.
+- 숨긴 명부 항목도 본인이 철회할 수 있고(행이 지워짐, 상세는 "찾을 수 없음"), 다시 동의하면 새 항목이라 숨김이 이어지지 않습니다. 다시 신고로 다룹니다. 숨긴 사진은 올린 사람·방장·운영진이 지울 수 있습니다.
+- 공지 읽음·투표 표·참석 응답은 신고 대상이 아닙니다(내용 없음). 공지 글은 커뮤니티 글 신고입니다.
+
+**소속·기수 사칭 신고.** 사유 "소속·기수 사칭"은 토픽 글·댓글(소속 표시), 명부 항목·방별 프로필(기수), 수료 회고(기관)에서 고를 수 있습니다. 처리 순서: ① 신고 상세에서 내용만 봅니다(작성자는 보이지 않음). ② 소속을 확인해야 하면 §4.3 작성자 확인(사유 기록, 소속 표시 익명 글이면 표시에 쓴 소속 id 포함)을 거쳐 그 소속을 봅니다. ③ 사칭이 확인되면 내용은 가리기·숨기기, 소속은 `POST /api/v1/operator/affiliations/:id/revoke`(사유는 감사), 기수 승인으로 들어온 계정이면 §4.6의 승인자 확인을 함께 합니다. 방별 프로필·명부의 기수 자기 신고 오류는 숨김 + 당사자 사유("기수를 고친 뒤 이의제기하세요")로 충분합니다(소속 취소 아님). 확정 건수는 `/operator/metrics`의 "사칭 판정"에 잡힙니다(DELIVERY_PLAN §6.2 "사칭 확정 시 승인 경로 점검").
+
+**인증 수단별 처리 큐**(`/operator/verification-queue`, `institutions` 플래그가 켜졌을 때 `/operator`에 링크). 매일 신고 대기열과 함께 봅니다.
+
+| 수단 | 할 일 |
+|---|---|
+| 수료증 확인 | "기한 넘김"(받은 뒤 72시간 초과)이 없어야 합니다. 있으면 그날 `/operator/certificates`에서 결정하거나 운영 회의로 넘깁니다. 검사 대기·격리가 오래 남으면 §3.5 worker 상태 확인 |
+| 기수 승인 | 운영자가 처리하지 않습니다(같은 기수 멤버 2명). 승인 0~1개로 오래된 요청이 한 기관에 몰리면 협력 기관 담당자에게 초대 코드 발급을 안내합니다. 30일이 지나면 자동 만료 |
+| 초대 코드 | 대기 없음. 최근 7일 사용 수가 갑자기 늘면 코드 유출을 의심하고 §4.6대로 철회 |
+
+주간 루틴(§4.4)에 더합니다: `/operator/metrics`의 "졸업생·토픽·기관" 칸에서 수료증 처리 시간 **중앙값이 72시간을 넘으면** 운영 회의 안건(담당·시간 재조정), 사칭 판정이 반복되면 승인 경로 점검(§9.2), 소속 표시 상향 비율이 과반이면 임계값 재검토(§19 — 낮추기는 GA 게이트와 같은 검토). 5 미만 값은 "가림"이고 꺼진 영역의 칸은 보이지 않습니다. 기관 기수 방에서 시작된 공개 사례 수는 기록이 없어 재지 않습니다.
+
+**분석 이벤트.** P2 이벤트는 시 단위 시각이고, 익명 방의 일정·응답, 익명·소속 표시 익명 토픽 글, 익명 수료 회고는 사용자 키가 없습니다. 분석 접근권한은 `analytics_events`만이라는 전제(ADR 0016·0036)를 그대로 지킵니다. 점검: `select name, count(*) filter (where actor_hash is null) as unlinked, count(*) from analytics_events where name::text in ('topic_post_created','event_created','rsvp_submitted','completion_retro_published') group by 1;` — `topic_post_created`는 대부분 키 없음이어야 합니다(토픽은 익명·소속 표시 익명). `select count(*) from analytics_events where name::text in ('alumni_room_created','event_created','rsvp_submitted','directory_consent_changed','topic_post_created','completion_retro_published') and date_trunc('hour', occurred_at) <> occurred_at;`(0이어야 함 — 시 단위).
 
 ## 5. 백업 일정과 보존
 

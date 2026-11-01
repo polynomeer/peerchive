@@ -17,8 +17,12 @@ const hex = (n: number) => n.toString(16).padStart(64, '0')
 
 describe('analytics allowlist', () => {
   it('covers the DELIVERY_PLAN §6 events plus login_succeeded, affiliation_verified the C-02·C-03 space events, the C-04 post events, the C-06 moderation events, the C-07 recruitment events, the C-09 transfer events, the C-08 study_record_enabled event and the C-10 community_author_lookup event', () => {
-    expect(ANALYTICS_EVENT_NAMES).toHaveLength(46)
+    expect(ANALYTICS_EVENT_NAMES).toHaveLength(52)
     expect(ANALYTICS_EVENT_NAMES).toContain('community_author_lookup')
+    // A-07(§6.2 P2): 졸업생·토픽·기관 이벤트 6개(affiliation_verified는 C-01부터 있고 method만 더함).
+    expect(ANALYTICS_EVENT_NAMES).toEqual(
+      expect.arrayContaining(['alumni_room_created', 'event_created', 'rsvp_submitted', 'directory_consent_changed', 'topic_post_created', 'completion_retro_published']),
+    )
     // S-07(§6.2 P1): 공개 프로필·팔로우 이벤트 11개.
     expect(ANALYTICS_EVENT_NAMES).toEqual(
       expect.arrayContaining([

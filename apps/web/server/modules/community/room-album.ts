@@ -16,6 +16,8 @@
  *   사진과 파일을 지웁니다. 끝나지 않은 올리기·통과하지 못한 사진은 worker가 하루 뒤 지웁니다.
  * - 서명은 수료증 파일 URL과 같은 비밀(affiliation pepper)에 다른 접두어(`album-photo:v1`)를 붙인 HMAC입니다.
  * - 감사 기록에는 id·종류만(파일 이름·설명 없음).
+ * - A-07(ADR 0045): 운영 조치로 숨긴 사진(`hidden_at`)은 목록(올린 사람 포함)과 서명 URL에서 빠집니다(404). 지우기는 그대로 됩니다(올린 본인·방장·운영진 —
+ *   지우면 되돌릴 것도 없음). 운영자는 신고 상세에서 따로 서명한 URL로 그 사진 하나만 봅니다(room-item-reports.ts).
  */
 import { createHmac } from 'node:crypto'
 import type { Readable } from 'node:stream'
@@ -92,6 +94,7 @@ export async function getAlbum(db: DbExecutor, actor: Actor, ref: unknown, now =
     .where(
       and(
         eq(roomAlbumPhotos.spaceId, room.ctx.space.row.id),
+        isNull(roomAlbumPhotos.hiddenAt),
         or(eq(roomAlbumPhotos.scanStatus, 'clean'), and(eq(roomAlbumPhotos.uploaderId, actor.userId), sql`${roomAlbumPhotos.uploadedAt} is not null`)),
       ),
     )
@@ -233,7 +236,7 @@ export async function openAlbumPhoto(
   if (!Number.isFinite(exp) || !sig || exp <= now.getTime() || exp > now.getTime() + ALBUM_PHOTO_URL_TTL_MS) throw notFound()
   if (!constantTimeEqualHex(sig, albumPhotoSignature(affiliationPepper(), photo.id, actor.userId, exp))) throw notFound()
   const key = photo.objectKey
-  if (!servable(photo) || !isObjectKey(key)) throw notFound()
+  if (!servable(photo) || photo.hiddenAt || !isObjectKey(key)) throw notFound()
   try {
     const stream = await storage.get(key)
     return { stream, mediaType: photo.mediaType!, bytes: photo.byteSize }

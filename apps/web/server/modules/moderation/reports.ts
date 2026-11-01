@@ -13,6 +13,8 @@
  *   서로 다른 인증 신고자 수를 세어 기준(공식 5·방 3)에 이르면 임시 숨김합니다(afterReportCreated). 감사 metadata에 `autoHidden` 참거짓을 더하고,
  *   분석 `community_report_filed {targetKind}`(사용자 키 없음)를 남깁니다.
  *
+ * - A-07(ADR 0045): 동문회·OB 방 항목(`room_item`). 소속·기수 사칭(`affiliation_impersonation`)은 커뮤니티 글·댓글·수료 회고·명부 항목·방별 프로필에만
+ *   (아니면 422 `reason: not_applicable`). 방 항목 신고는 커뮤니티 분석 이벤트(`community_report_filed`)를 남기지 않습니다(그 이벤트의 대상 종류 밖).
  * - S-07(ADR 0036): 페르소나·프로필 글·소셜 링크. 표시명 사칭(`impersonation`)은 프로필 신고에만(아니면 422 `reason: not_applicable`). 신고자 응답·
  *   내 신고 목록의 이름표는 신고한 그 페르소나의 handle뿐이고 주인 사용자·다른 페르소나는 싣지 않습니다. 감사 metadata는 대상 종류·사유뿐입니다.
  *
@@ -26,7 +28,7 @@ import { recordAudit } from '../audit/audit'
 import { type Actor, invalid, rateLimited, sqlState } from '../errors'
 import { type RateLimitRule, hitRateLimit } from '../security/rate-limit'
 import { parseInput } from '../validation'
-import { afterReportCreated, pointerOf, resolvePublicTarget, targetLabels } from './targets'
+import { afterReportCreated, pointerOf, resolvePublicTarget, roomItemKindOf, targetLabels } from './targets'
 import type { MyReportDto, ReportReceiptDto } from '../../../shared/types/api'
 
 export const REPORT_RATE_LIMIT: RateLimitRule = { limit: 10, windowMs: 60 * 60 * 1000 }
@@ -51,8 +53,9 @@ export interface ReportResult extends ReportReceiptDto {}
 /** POST /reports — 201(새 신고) 또는 200(같은 대상의 처리 전 신고가 이미 있음, created: false). 404·422·429. */
 export async function createReport(db: DbExecutor, actor: Actor, rawInput: unknown, now = new Date()): Promise<ReportResult> {
   const input = parseInput(createReportSchema, rawInput)
-  // 표시명 사칭(S-07)은 프로필(페르소나·실명 프로필) 신고에만.
-  if (!reasonApplicable(input.targetType, input.reason)) throw invalid({ reason: 'not_applicable' })
+  // 표시명 사칭(S-07)은 프로필(페르소나·실명 프로필) 신고에만, 소속·기수 사칭(A-07)은 소속·기수가 보이는 대상에만.
+  const roomItemKind = input.targetType === 'room_item' ? roomItemKindOf(input.targetRef) : null
+  if (!reasonApplicable(input.targetType, input.reason, roomItemKind)) throw invalid({ reason: 'not_applicable' })
   return db.transaction(async (tx) => {
     const target = await resolvePublicTarget(tx, input.targetType, input.targetRef, now, actor)
     // 커뮤니티 글·댓글은 신고자·대상마다 한 번(C-06): 닫힌 신고가 있어도 새로 받지 않습니다(같은 사람이 기각 뒤 다시 숨기지 못하게).

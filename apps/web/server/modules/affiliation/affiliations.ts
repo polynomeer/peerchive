@@ -397,7 +397,7 @@ export async function verifyAffiliation(db: DbExecutor, actor: Actor, affiliatio
             targetId: row.id,
             metadata: { schoolId: row.schoolId, standing: row.standing, emailDomain: row.emailDomain },
           })
-          await emitAnalytics(tx, { name: 'affiliation_verified', actorId: actor.userId, props: { standing: row.standing }, now })
+          await emitAnalytics(tx, { name: 'affiliation_verified', actorId: actor.userId, props: { standing: row.standing, method: 'email' }, now })
           return { kind: 'ok', dto: await toDto(tx, updated!) }
         }
       }

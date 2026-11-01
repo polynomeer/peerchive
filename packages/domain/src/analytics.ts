@@ -2,7 +2,8 @@
  * pilot 분석 이벤트 규칙 (DELIVERY_PLAN §6 측정 계획, SYSTEM_DESIGN §14 관측, T-16, ADR 0016).
  *
  * - 이벤트 이름은 DELIVERY_PLAN §6의 최소 분석 이벤트 15개 + `login_succeeded`(활성화 지표의 가입 시점) + `affiliation_verified`(C-01, props는 standing만) + `space_created`·`space_joined`(C-02, 종류·가입 방식만) + `name_mode_scheduled`·`name_mode_applied`(C-03, 바꾸기 전·후 방식만) + `post_created`·`comment_created`·`reaction_added`(C-04, 게시판 종류·방식·답글 여부·대상 종류만) + `community_report_filed`·`community_auto_hidden`·`community_sanction_issued`(C-06, 대상 종류·제재 수준·범위만) + `recruitment_created`·`application_submitted`·`recruitment_closed`(C-07, 모집 종류·마감 결과만) + `archive_transfer_requested`·`archive_transfer_completed`·`course_qa_published`(C-09, 옮길 곳 종류만) + `study_record_enabled`(C-08, 방 이름 표시 방식·과목 연결 여부만) + `community_author_lookup`(C-10, 근거 종류만)
- *   + §6.2 공개 프로필·팔로우 이벤트 11개(S-07, ADR 0036: 사용자 키만, 페르소나 id·상대방 키 없음, 시 단위 시각)입니다.
+ *   + §6.2 공개 프로필·팔로우 이벤트 11개(S-07, ADR 0036: 사용자 키만, 페르소나 id·상대방 키 없음, 시 단위 시각)
+ *   + §6.2 P2 졸업생·토픽·기관 이벤트 6개와 `affiliation_verified`의 `method`(A-07, ADR 0045: 사용자 키만·시 단위 시각, 익명·소속 표시 익명 내용은 키 없음)입니다.
  * - 사용자 키 없는 이벤트(C-10, ADR 0027)는 actorHash가 null입니다. 사람 단위 지표(활성화·기록 유지·공유한 사람 수·주간 활성)는 키 있는 이벤트만 셉니다.
  * - props는 이벤트마다 허용 목록(ANALYTICS_PROP_SPECS)의 키만, 값은 정해진 enum 문자열·참거짓·범위 안의 정수만 받습니다.
  *   자유 문자열 필드는 없으므로 과제 본문·제목·파일 이름·URL·이메일·검색어가 들어갈 자리가 없습니다(§6 "본문·파일 내용·검색 원문·연락처 없음").
@@ -59,6 +60,14 @@ export const ANALYTICS_EVENT_NAMES = [
   'mute_created',
   'feed_item_opened',
   'social_link_verified',
+  // A-07(DELIVERY_PLAN §6.2 P2, ADR 0045): 졸업생·토픽·기관. 사용자 키만(방·글·기관·기수·페르소나 id 없음), 시 단위 시각(P2_EVENT_NAMES).
+  // 익명 방의 일정·응답, 익명·소속 표시 익명 토픽 글, 익명 수료 회고는 사용자 키 없이 기록합니다.
+  'alumni_room_created',
+  'event_created',
+  'rsvp_submitted',
+  'directory_consent_changed',
+  'topic_post_created',
+  'completion_retro_published',
 ] as const
 export type AnalyticsEventName = (typeof ANALYTICS_EVENT_NAMES)[number]
 
@@ -116,7 +125,8 @@ export const ANALYTICS_PROP_SPECS: Readonly<Record<AnalyticsEventName, Readonly<
   portfolio_shared: { featured: count(5), competencies: count(12), skills: count(20) },
   login_succeeded: { newUser: bool },
   // 학교 메일 인증 성공(C-01). 학교 id·도메인은 넣지 않습니다(작은 학교는 학교만으로 사람을 좁힐 수 있음). 재학/졸업생 구분만.
-  affiliation_verified: { standing: enumOf(['student', 'alumni']) },
+  // A-07(§6.2 affiliation_verified(method)): 인증 수단(학교 메일·초대 코드·기수 승인·수료증 확인). 기관 id·기수는 넣지 않습니다.
+  affiliation_verified: { standing: enumOf(['student', 'alumni']), method: enumOf(['email', 'invite_code', 'cohort_approval', 'certificate_check']) },
   // 커뮤니티 공간(C-02). 공간·학교 id·이름은 넣지 않습니다(사용자 키만 해시). 종류·가입 방식만.
   space_created: { kind: enumOf(['official_school', 'official_department', 'user_room', 'study_room', 'topic']) },
   space_joined: {
@@ -172,7 +182,30 @@ export const ANALYTICS_PROP_SPECS: Readonly<Record<AnalyticsEventName, Readonly<
   feed_item_opened: { sourceType: enumOf(['publication_release', 'senior_note', 'study_release', 'profile_post', 'community_post']) },
   // worker가 되돌림 링크 확인으로 verified가 된 순간(unverified·lost → verified). 서비스 종류만(주소 없음).
   social_link_verified: { provider: enumOf(['github', 'blog', 'linkedin', 'instagram', 'youtube', 'other']) },
+  // A-07(ADR 0045, §6.2 P2). 방·글·기관·기수·페르소나 id, 제목·이름·명부 값은 넣지 않습니다(종류·코드·개수·참거짓만).
+  // 동문회·OB 방 만들기: 그때의 이름 표시 방식과 기수 방(I-02, 기관 운영진이 만듦) 여부.
+  alumni_room_created: { mode: enumOf(NAME_MODE_VALUES), cohortRoom: bool },
+  // 일정 만들기: 반복 규칙만. 익명 방이면 사용자 키 없음.
+  event_created: { recurrence: enumOf(['none', 'weekly', 'monthly']) },
+  // 참석 응답(회차마다 처음 응답·바꾸기, 지우기는 세지 않음). 익명 방이면 사용자 키 없음.
+  rsvp_submitted: { response: enumOf(['going', 'not_going', 'maybe']), changed: bool },
+  // 명부 동의·철회(본인). 채운 항목 수만(값 없음).
+  directory_consent_changed: { consented: bool, filled: count(4) },
+  // 토픽 글(§6.2 topic_post_created(label_scope_applied·broadened)): 적용된 소속 표시 범위와 넓혀졌는지. 익명·소속 표시 익명이면 사용자 키 없음.
+  topic_post_created: { labelScope: enumOf(['institution', 'institution_kind', 'none']), broadened: bool },
+  // 수료 회고 게시: 이름 표시 방식·적용된 기관 표시 범위·넓혀졌는지. 익명 회고면 사용자 키 없음.
+  completion_retro_published: { displayMode: enumOf(['name', 'display', 'anonymous']), labelScope: enumOf(['institution', 'institution_kind', 'none']), broadened: bool },
 }
+
+/** A-07(ADR 0045): 시 단위 시각으로 기록하는 P2 이벤트(affiliation_verified는 C-01부터 있던 이벤트라 시각을 그대로 둠). */
+export const P2_EVENT_NAMES: readonly AnalyticsEventName[] = [
+  'alumni_room_created',
+  'event_created',
+  'rsvp_submitted',
+  'directory_consent_changed',
+  'topic_post_created',
+  'completion_retro_published',
+]
 
 /** 페르소나·팔로우 이벤트(S-07)의 시각 단위: 1시간으로 내림(ADR 0036). */
 export const SOCIAL_EVENT_TIME_BUCKET_MS = 60 * 60 * 1000

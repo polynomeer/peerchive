@@ -1,7 +1,7 @@
 /**
  * 신고·운영 조치 화면 문구(T-15, ADR 0015). 서버 응답 코드·값을 한국어로 바꿉니다.
  */
-import type { AppealStatus, ModerationActionKind, MyReportDto, ReportReason, ReportTargetRef, ReportTargetType } from '~~/shared/types/api'
+import type { AppealStatus, ModerationActionKind, MyReportDto, ReportReason, ReportTargetRef, ReportTargetType, RoomItemKind } from '~~/shared/types/api'
 
 /** 신고 대화상자의 대상 하나(공개 화면에 보이는 값으로만 가리킴). */
 export interface ReportChoice {
@@ -20,6 +20,7 @@ export const REPORT_REASON_LABELS: Record<ReportReason, string> = {
   spam: '스팸·홍보',
   other: '기타',
   impersonation: '표시명 사칭(다른 사람·단체로 오인하게 함)',
+  affiliation_impersonation: '소속·기수 사칭(인증·기수를 사실과 다르게 보이게 함)',
 }
 
 export const REPORT_REASON_HINTS: Partial<Record<ReportReason, string>> = {
@@ -27,11 +28,32 @@ export const REPORT_REASON_HINTS: Partial<Record<ReportReason, string>> = {
   copyright: '타인의 저작물·과제 원문 등. 처리될 때까지 이 사례의 새 게시가 보류됩니다.',
   impersonation:
     '다른 실존 인물(교수·학생·졸업생 등)이나 학교·기업·단체로 오인하게 하는 이름·handle·소개. 비슷한 이름만으로는 사칭이 아니며, 확인되면 그 프로필만 숨기고 본인이 고친 뒤 이의제기로 다시 열 수 있습니다.',
+  affiliation_impersonation:
+    '토픽 글의 소속 표시, 명부·방별 프로필의 기수, 수료 회고의 기관이 사실과 다르다고 보일 때(그 기관·기수 사람이 아닌데 인증·기수를 내세움). 신고한 사람은 알려지지 않고, 운영자가 확인해 가리거나 인증을 취소합니다.',
 }
 
-/** 대상 종류별로 고를 수 있는 사유(서버 reasonApplicable과 같음): 표시명 사칭은 프로필 신고에만. */
-export function reportReasonsFor(targetType: ReportTargetType): ReportReason[] {
-  return (Object.keys(REPORT_REASON_LABELS) as ReportReason[]).filter((r) => r !== 'impersonation' || targetType === 'persona' || targetType === 'profile')
+/**
+ * 대상 종류별로 고를 수 있는 사유(서버 reasonApplicable과 같음): 표시명 사칭은 프로필 신고에만, 소속·기수 사칭(A-07)은 커뮤니티 글·댓글·수료 회고와
+ * 방 항목 중 명부 항목·방별 프로필에만.
+ */
+export function reportReasonsFor(targetType: ReportTargetType, roomItemKind?: RoomItemKind | null): ReportReason[] {
+  return (Object.keys(REPORT_REASON_LABELS) as ReportReason[]).filter((r) => {
+    if (r === 'impersonation') return targetType === 'persona' || targetType === 'profile'
+    if (r === 'affiliation_impersonation') {
+      if (targetType === 'room_item') return roomItemKind === 'directory_entry' || roomItemKind === 'room_profile'
+      return targetType === 'community_post' || targetType === 'community_comment' || targetType === 'completion_retro'
+    }
+    return true
+  })
+}
+
+/** A-07: 방 항목 종류 이름. */
+export const ROOM_ITEM_KIND_LABELS: Record<RoomItemKind, string> = {
+  directory_entry: '명부 항목',
+  event: '일정',
+  poll: '투표',
+  album_photo: '앨범 사진',
+  room_profile: '방별 프로필',
 }
 
 export const REPORT_TARGET_LABELS: Record<ReportTargetType, string> = {
@@ -50,6 +72,7 @@ export const REPORT_TARGET_LABELS: Record<ReportTargetType, string> = {
   profile_post: '프로필 글',
   social_link: '소셜 링크',
   completion_retro: '수료 회고',
+  room_item: '동문 방 항목',
 }
 
 export const REPORTER_STATUS_LABELS: Record<MyReportDto['status'], string> = {
@@ -79,6 +102,7 @@ export const ACTION_LABELS: Record<ModerationActionKind, string> = {
   hide_profile_post: '프로필 글 숨기기',
   hide_social_link: '소셜 링크 숨기기',
   hide_retro: '수료 회고 숨기기',
+  hide_room_item: '방 항목 숨기기(그 항목 하나만)',
 }
 
 /** 당사자에게 보이는 조치 설명. */
@@ -101,6 +125,7 @@ export const NOTICE_TITLES: Record<Exclude<ModerationActionKind, 'none'>, string
   hide_profile_post: '운영 조치로 숨겨진 프로필 글',
   hide_social_link: '운영 조치로 숨겨진 소셜 링크',
   hide_retro: '운영 조치로 숨겨진 수료 회고',
+  hide_room_item: '운영 조치로 숨겨진 동문 방 항목',
 }
 
 export const APPEAL_STATUS_LABELS: Record<AppealStatus, string> = {

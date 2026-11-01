@@ -6,6 +6,7 @@
  * - 앨범: 이미지(PNG·JPEG·WebP)만, 파일 검사·위치 정보(EXIF) 제거를 통과한 사진만 보입니다. 사진 주소는 5분 동안 나에게만 맞습니다.
  * - 운영진 공지(읽음 수)는 방의 "공지" 게시판에서 씁니다.
  * P2 alumni 플래그가 꺼져 있거나 멤버가 아니면 "찾을 수 없습니다"(서버 404).
+ * - A-07(ADR 0045): 일정·투표·사진마다 "신고". 운영 조치로 숨긴 항목은 이 화면에서 빠집니다(만든·올린 사람에게는 내 알림으로 안내).
  */
 import type {
   AlbumDto,
@@ -304,6 +305,13 @@ async function deletePhoto(id: string) {
             <p v-if="events.canManage && ev.status === 'scheduled' && !ev.ended" class="actions">
               <button type="button" class="secondary" :disabled="busy === `cancel-${ev.id}`" @click="cancelEvent(ev)">일정 취소</button>
             </p>
+            <p class="small">
+              <ReportButton
+                :id-prefix="`ev-${ev.id}`"
+                label="신고"
+                :targets="[{ id: ev.id, label: `일정 · ${ev.title}`, targetType: 'room_item', targetRef: { spaceSlug: slug, kind: 'event', itemId: ev.id } }]"
+              />
+            </p>
           </li>
         </ul>
         <p v-else class="muted">아직 일정이 없습니다.</p>
@@ -364,6 +372,13 @@ async function deletePhoto(id: string) {
             <p v-if="p.canClose" class="actions">
               <button type="button" class="secondary" :disabled="busy === `close-${p.id}`" @click="closePoll(p)">지금 마감</button>
             </p>
+            <p class="small">
+              <ReportButton
+                :id-prefix="`poll-${p.id}`"
+                label="신고"
+                :targets="[{ id: p.id, label: `투표 · ${p.question}`, targetType: 'room_item', targetRef: { spaceSlug: slug, kind: 'poll', itemId: p.id } }]"
+              />
+            </p>
           </li>
         </ul>
         <p v-else class="muted">아직 투표가 없습니다.</p>
@@ -401,6 +416,13 @@ async function deletePhoto(id: string) {
               </p>
               <p v-if="ph.canDelete" class="actions">
                 <button type="button" class="secondary" :disabled="busy === `photo-delete-${ph.id}`" @click="deletePhoto(ph.id)">지우기</button>
+              </p>
+              <p v-if="!ph.mine && ph.scanStatus === 'clean'" class="small">
+                <ReportButton
+                  :id-prefix="`photo-${ph.id}`"
+                  label="신고"
+                  :targets="[{ id: ph.id, label: '앨범 사진', targetType: 'room_item', targetRef: { spaceSlug: slug, kind: 'album_photo', itemId: ph.id } }]"
+                />
               </p>
             </li>
           </ul>

@@ -56,6 +56,7 @@ import {
   users,
   type DbExecutor,
 } from '@peerchive/db'
+import { emitP2Analytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
 import { affiliationLabelThreshold, verifiedCategoryCount, verifiedMemberCount } from './member-counts'
 import { type Actor, ServiceError, conflict, invalid, notFound, rateLimited } from '../errors'
@@ -318,6 +319,14 @@ export async function createCompletionRetro(db: DbExecutor, actor: Actor, rawInp
       targetType: 'completion_retro',
       targetId: row!.id,
       metadata: { displayMode: input.displayMode, broadened: decision.broadened, warnings: warnings.length },
+    })
+    // A-07(§6.2 completion_retro_published): 익명 회고는 사용자 키 없음(감사 행위자를 비운 것과 같은 이유).
+    await emitP2Analytics(tx, {
+      name: 'completion_retro_published',
+      actorId: actor.userId,
+      unlinked: anonymous,
+      props: { displayMode: input.displayMode, labelScope: decision.applied, broadened: decision.broadened },
+      now,
     })
     return row!.id
   })
