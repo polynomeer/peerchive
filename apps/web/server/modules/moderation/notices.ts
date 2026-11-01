@@ -15,6 +15,7 @@ import {
   and,
   appeals,
   caseStudies,
+  completionRetros,
   courseQaItems,
   desc,
   eq,
@@ -145,6 +146,8 @@ async function toNotices(db: DbExecutor, actions: readonly ActionRow[], viewerId
     else if (a.courseQaItemId) ownerPath = '/me/course-qa'
     // S-07: 페르소나·프로필 글·소셜 링크는 페르소나 관리 화면(이름·소개를 고치고 이의제기).
     else if (a.personaId || a.profilePostId || a.socialLinkId) ownerPath = '/settings/personas'
+    // A-06: 수료 회고는 내 회고 목록(철회·이의제기).
+    else if (a.completionRetroId) ownerPath = '/community/retros'
     const snapshot = a.releaseId ? snapshotBy.get(a.releaseId) : undefined
     out.push({
       actionId: a.id,
@@ -181,7 +184,8 @@ function affectedSql(userId: string): SQL {
     or (${moderationActions.courseQaItemId} is not null and exists (select 1 from ${courseQaItems} q where q.id = ${moderationActions.courseQaItemId} and (q.asker_id = ${userId} or q.answerer_id = ${userId})))
     or (${moderationActions.personaId} is not null and exists (select 1 from ${personas} pe where pe.id = ${moderationActions.personaId} and pe.user_id = ${userId}))
     or (${moderationActions.profilePostId} is not null and exists (select 1 from ${profilePosts} pp where pp.id = ${moderationActions.profilePostId} and pp.user_id = ${userId}))
-    or (${moderationActions.socialLinkId} is not null and exists (select 1 from ${socialLinks} sl where sl.id = ${moderationActions.socialLinkId} and sl.user_id = ${userId})))`
+    or (${moderationActions.socialLinkId} is not null and exists (select 1 from ${socialLinks} sl where sl.id = ${moderationActions.socialLinkId} and sl.user_id = ${userId}))
+    or (${moderationActions.completionRetroId} is not null and exists (select 1 from ${completionRetros} cr where cr.id = ${moderationActions.completionRetroId} and cr.author_id = ${userId})))`
 }
 
 /** GET /me/moderation-notices — 내가 당사자인 조치 중 운영자가 알림을 켠 것(되돌린 것 포함, 최근 50). */
@@ -211,6 +215,11 @@ export const publicationNotices = (db: DbExecutor, actor: Actor, publicationId: 
 
 export async function seniorNoteNotice(db: DbExecutor, actor: Actor, noteId: string): Promise<ModerationNoticeDto | null> {
   return (await activeNotices(db, actor, and(eq(moderationActions.seniorNoteId, noteId), eq(moderationActions.kind, 'hide_note'))))[0] ?? null
+}
+
+/** A-06: 숨겨진 수료 회고의 안내(작성자에게만 주는 DTO). */
+export async function completionRetroNotice(db: DbExecutor, actor: Actor, retroId: string): Promise<ModerationNoticeDto | null> {
+  return (await activeNotices(db, actor, and(eq(moderationActions.completionRetroId, retroId), eq(moderationActions.kind, 'hide_retro'))))[0] ?? null
 }
 
 export async function caseStudyNotice(db: DbExecutor, actor: Actor, caseStudyId: string): Promise<ModerationNoticeDto | null> {

@@ -6,7 +6,8 @@
  *   저장소에 ESLint가 없어 이 테스트가 CI lint 역할을 합니다.
  * - DB(DATABASE_URL): social DB 역할(peerchive_social)의 권한(커뮤니티 테이블 권한 0, 소셜 읽기 테이블 SELECT), 그 역할로 실제 공개 프로필 읽기,
  *   작성 시점 페르소나·투영 트리거, 그리고 무작위(시드 고정) 사용자·페르소나·공간·글 조합에서 모든 페르소나의 공개 응답·활동 목록에
- *   0~1단계 글의 id·본문·본문 해시·작성 시각이 0건인지 보는 속성 기반 회귀 테스트.
+ *   0~1단계 글의 id·본문·본문 해시·작성 시각이 0건인지 보는 속성 기반 회귀 테스트. A-06: 토픽 답변을 선배 노트로 옮긴 세계에서도 같은 검사를 하고,
+ *   소속 표시 유지·익명 복사본은 어떤 페르소나에도 없으며 실명·표시명 복사본은 그 노트(복사본)로만 나타나는지 봅니다.
  * 각 DB 테스트는 rollback 트랜잭션 안에서 자기가 만든 학교·사용자만 봅니다.
  */
 import { createHash } from 'node:crypto'
@@ -29,12 +30,15 @@ import {
   outboxEvents,
   personaActivities,
   personas,
+  seniorNotes,
   sql,
   type DbExecutor,
 } from '@peerchive/db'
 import { applyNameModeChange } from '../../worker/src/ops/name-modes'
 import { handlePersonaActivityProject } from '../../worker/src/persona-activities'
-import { createSchool } from '../server/modules/catalog/catalog'
+import { createCourse, createSchool } from '../server/modules/catalog/catalog'
+import { createArchiveTransfer } from '../server/modules/community/archive-transfers'
+import { publishSeniorNote, updateSeniorNote } from '../server/modules/course-hub/senior-notes'
 import { joinSpace } from '../server/modules/community/memberships'
 import { scheduleNameModeChange } from '../server/modules/community/name-modes'
 import { createOfficialPage } from '../server/modules/community/official'
@@ -718,6 +722,10 @@ async function buildWorld(tx: DbExecutor, seed: number) {
 
   // A-05(ADR 0042): 학교를 넘나드는 토픽의 소속 표시 익명(1단계) 글·댓글(별도 난수 — 기존 세계는 그대로). 표시 범위를 무작위로 고르고,
   // 위의 "모든 페르소나로 투영 시도"·outbox 처리에 함께 들어가 0건이어야 합니다. 토픽 이름·소속 표시도 페르소나 출력에 없어야 합니다.
+  // A-06: 소속 표시 유지 복사본을 만들 수 있게 범주(대학 재학생)를 임계값 이상으로 채웁니다(다른 학교의 인증 재학생 50명, 난수를 쓰지 않음 — 세계는 그대로).
+  // 이 세계의 학교 자체는 사람이 적어 기관 이름은 여전히 넓혀집니다.
+  const filler = await createSchool(tx, { userId: opId }, { name: `채움${tag}학교`, confirmNew: true }, T0)
+  for (let i = 0; i < 50; i++) await verifiedAffiliation(tx, (await createUser(tx, { displayName: `채움${i}` })).id, filler.id)
   const tr = rng(seed ^ 0xa05)
   const topicMark = `${seed.toString(36)}t${crypto.randomUUID().slice(0, 4)}`
   const topic = await createTopic(tx, { userId: opId }, { name: `TOPIC${topicMark}`, category: tr.pick(['career', 'grad_school', 'startup'] as const) }, T0)
@@ -731,9 +739,9 @@ async function buildWorld(tx: DbExecutor, seed: number) {
     const scope = tr.pick(['institution', 'institution_kind', 'none'] as const)
     const post = await createPost(tx, { userId: author.userId }, topicBoard, { title: `제목 ${marker}`, body: `본문 ${marker}`, affiliationScope: scope }, at)
     expect(post.nameMode, `seed ${seed} topic post mode`).toBe('affiliated_anonymous')
-    // 사람 수가 임계값보다 훨씬 적으므로 기관 이름은 언제나 넓혀집니다(이 세계의 학교 이름이 소속 표시로도 나가지 않음). 두 단계 임계값(ADR 0042 §4):
-    // DB 전체의 대학 재학생이 50명 미만이면 범주도 표시하지 않습니다.
-    expect([null, ...(scope === 'none' ? [] : ['대학 재학생'])], `seed ${seed} topic label`).toContain(post.affiliationLabel)
+    // 사람 수가 임계값보다 훨씬 적으므로 기관 이름은 언제나 넓혀집니다(이 세계의 학교 이름이 소속 표시로도 나가지 않음). 범주(대학 재학생)는 위에서
+    // 50명 이상으로 채웠으므로 표시 안 함을 고르지 않으면 범주 글자입니다(두 단계 임계값, ADR 0042 §4).
+    expect(post.affiliationLabel ?? null, `seed ${seed} topic label`).toBe(scope === 'none' ? null : '대학 재학생')
     items.push({ kind: 'post', id: post.id, postId: post.id, authorId: author.userId, mode: post.nameMode, title: `제목 ${marker}`, body: `본문 ${marker}`, createdAt: at })
     for (let c = tr.int(0, 2); c > 0; c--) {
       const cMarker = `S02TC-${seed}-${i}-${c}-${crypto.randomUUID().slice(0, 6)}`
@@ -743,6 +751,45 @@ async function buildWorld(tx: DbExecutor, seed: number) {
       const mine = thread.comments.flatMap((x) => [x, ...x.replies]).find((x) => x.body === `댓글 ${cMarker}`)!
       items.push({ kind: 'comment', id: mine.id, postId: post.id, authorId: who.userId, mode: mine.nameMode, title: null, body: `댓글 ${cMarker}`, createdAt: cAt })
     }
+  }
+
+  // A-06(ADR 0043): 토픽 답변(소속 표시 익명 댓글·글)의 일부를 선배 노트로 옮겨 게시합니다(별도 난수 — 기존 세계는 그대로). 이름 표시는 무작위로
+  // 실명(name)·표시명(display)·익명·소속 표시 유지. 원 글의 id·작성 시각·토픽 값은 여전히 어떤 출력에도 없어야 하고, 실명·표시명 복사본은 그 노트로만
+  // (원 글과 연결 없이) 같은 종류 페르소나 활동이 되며, 익명·소속 표시 유지 복사본은 어떤 페르소나에도 없어야 합니다.
+  const mr = rng(seed ^ 0xa06)
+  const noteCourse = await createCourse(tx, { userId: opId }, schoolId, { title: `노트과목${tag}`, confirmNew: true }, T0)
+  const movedNotes: MovedNote[] = []
+  const perAuthor = new Map<string, number>()
+  for (const item of items.filter((i) => i.mode === 'affiliated_anonymous')) {
+    if (!mr.chance(0.7) || (perAuthor.get(item.authorId) ?? 0) >= 3) continue
+    const [src] =
+      item.kind === 'comment'
+        ? await tx.select({ label: communityComments.affiliationLabel }).from(communityComments).where(eq(communityComments.id, item.id))
+        : await tx.select({ label: communityPosts.affiliationLabel }).from(communityPosts).where(eq(communityPosts.id, item.id))
+    let mode = mr.pick(['name', 'display', 'anonymous', 'affiliation'] as const)
+    if (mode === 'affiliation' && !src!.label) mode = 'anonymous'
+    const actor = { userId: item.authorId }
+    const transfer = await createArchiveTransfer(
+      tx,
+      actor,
+      item.postId,
+      {
+        target: 'senior_note',
+        courseId: noteCourse.id,
+        ...(item.kind === 'comment' && { commentId: item.id }),
+        answerKey: 'wishKnew',
+        displayMode: mode,
+        ...(mode === 'display' && { displayName: `노트표시${tag}` }),
+        noAnswersConfirmed: true,
+      },
+      tick(),
+    )
+    const [row] = await tx.select().from(seniorNotes).where(eq(seniorNotes.id, transfer.result.seniorNoteId!))
+    expect(row!.affiliationLabel, `seed ${seed} copied label`).toBe(mode === 'affiliation' ? src!.label : null)
+    const draft = await updateSeniorNote(tx, actor, row!.id, { expectedVersion: row!.version, answers: { ...(row!.answers as object), firstWeek: `첫 주 ${tag}` } }, tick())
+    await publishSeniorNote(tx, actor, row!.id, { expectedVersion: draft.version, confirmWarnings: true }, tick())
+    perAuthor.set(item.authorId, (perAuthor.get(item.authorId) ?? 0) + 1)
+    movedNotes.push({ itemId: item.id, noteId: row!.id, transferId: transfer.id, authorId: item.authorId, mode })
   }
 
   // 원본 모듈(outbox 처리)이 하듯: 모든 글을 작성자의 모든 페르소나로 투영 시도(규칙이 거름).
@@ -797,7 +844,16 @@ async function buildWorld(tx: DbExecutor, seed: number) {
     expect(seen.lounge?.items.map((m) => m.id), `seed ${seed} lounge media`).toEqual([media!.id])
     loungeMediaValues.push(media!.id, seen.lounge!.items[0]!.url!)
   }
-  return { people, items, roomProfileValues, directoryValues, loungeMediaValues, topicValues, now: new Date(clock + HOUR) }
+  return { people, items, roomProfileValues, directoryValues, loungeMediaValues, topicValues, movedNotes, noteCourseId: noteCourse.id, now: new Date(clock + HOUR) }
+}
+
+/** A-06: 토픽 답변을 옮긴 선배 노트(복사본). */
+interface MovedNote {
+  itemId: string
+  noteId: string
+  transferId: string
+  authorId: string
+  mode: 'name' | 'display' | 'anonymous' | 'affiliation'
 }
 
 /** 활동 목록 전부(cursor를 따라감). */
@@ -820,11 +876,25 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
   afterEach(() => setFeatureEnvForTesting(null))
 
   it(`for ${WORLDS} seeded random worlds, every persona's public JSON, README card, old profile DTO, activity list (raw and API for every viewer), follow lists, every person's feed and suggestions carry 0 anonymous or affiliated-anonymous (topic) post ids, bodies, body hashes or timestamps`, async () => {
-    const totals = { worlds: 0, personas: 0, anonymous: 0, affiliated: 0, projected: 0, follows: 0, feedItems: 0, roomProfileValues: 0, directoryValues: 0, loungeMedia: 0 }
+    const totals = {
+      worlds: 0,
+      personas: 0,
+      anonymous: 0,
+      affiliated: 0,
+      projected: 0,
+      follows: 0,
+      feedItems: 0,
+      roomProfileValues: 0,
+      directoryValues: 0,
+      loungeMedia: 0,
+      movedNotes: 0,
+      keptLabelNotes: 0,
+      projectedCopies: 0,
+    }
     for (let w = 0; w < WORLDS; w++) {
       const seed = BASE_SEED + w
       await withRollback(async (tx) => {
-        const { people, items, roomProfileValues, directoryValues, loungeMediaValues, topicValues, now } = await buildWorld(tx, seed)
+        const { people, items, roomProfileValues, directoryValues, loungeMediaValues, topicValues, movedNotes, noteCourseId, now } = await buildWorld(tx, seed)
         // S-04: 무작위 팔로우(실명·표시명 주체 모두)와 전체 공개 팔로우 목록. 목록은 새 공개 출력이라 같은 검사에 넣습니다.
         const r = rng(seed ^ 0x5f04)
         const all = people.flatMap((p) => [p.real, p.display].filter((x): x is NonNullable<typeof x> => !!x).map((persona) => ({ owner: p, persona })))
@@ -853,6 +923,9 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
         forbidden.push(...loungeMediaValues)
         // A-05: 토픽 이름·주소도 페르소나 출력에 0건(소속 표시 익명 글이 어느 토픽에 있었는지로도 이어지지 않음).
         forbidden.push(...topicValues)
+        // A-06: 옮기기 요청 id(원 글과 복사본을 잇는 값)는 어디에도 없고, 익명·소속 표시 유지 복사본은 노트 id조차 페르소나 출력에 없습니다.
+        forbidden.push(...movedNotes.map((m) => m.transferId))
+        forbidden.push(...movedNotes.filter((m) => m.mode === 'anonymous' || m.mode === 'affiliation').map((m) => m.noteId))
         totals.loungeMedia += loungeMediaValues.length / 2
         totals.roomProfileValues += roomProfileValues.length
         totals.directoryValues += directoryValues.length
@@ -894,9 +967,15 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
             for (const value of forbidden) expect(body.includes(value), `seed ${seed} ${kind} @${persona.handle} leaks ${value.slice(0, 24)}`).toBe(false)
             // 활동 목록은 정확히 "이 페르소나로 작성 시점에 고정된, listed 공간의 같은 종류 방식 글"뿐(다른 종류·익명·unlisted 없음).
             const expected = postRows.filter((r) => r.personaId === persona.id && r.nameMode === kind && r.discovery === 'listed').map((r) => r.id)
-            expect(activities.map((a) => a.sourceId).sort(), `seed ${seed} ${kind} @${persona.handle} activities`).toEqual(expected.sort())
-            // 본인 눈의 활동 목록 API도 정확히 같은 글(본인은 모든 방의 멤버이고 학교 인증이 있어 모두 읽을 수 있음).
-            expect(ownView.map((i) => i.href).sort(), `seed ${seed} ${kind} @${persona.handle} activity API`).toEqual(expected.map((id) => `/community/p/${id}`).sort())
+            // A-06: 이 사람이 같은 종류(name → 실명, display → 표시명)로 옮긴 노트 복사본만 더해집니다(원 글이 아니라 노트 id).
+            const copies = movedNotes.filter((m) => m.authorId === p.userId && m.mode === (kind === 'real' ? 'name' : 'display')).map((m) => m.noteId)
+            expect(activities.map((a) => a.sourceId).sort(), `seed ${seed} ${kind} @${persona.handle} activities`).toEqual([...expected, ...copies].sort())
+            for (const a of activities) if (copies.includes(a.sourceId)) expect(a.sourceType, `seed ${seed} copy source type`).toBe('senior_note')
+            totals.projectedCopies += copies.length
+            // 본인 눈의 활동 목록 API도 정확히 같은 글(본인은 모든 방의 멤버이고 학교 인증이 있어 모두 읽을 수 있음). 노트 카드는 과목 허브로만 갑니다.
+            expect(ownView.map((i) => i.href).sort(), `seed ${seed} ${kind} @${persona.handle} activity API`).toEqual(
+              [...expected.map((id) => `/community/p/${id}`), ...copies.map(() => `/c/${noteCourseId}`)].sort(),
+            )
             totals.personas++
             totals.projected += activities.length
           }
@@ -935,6 +1014,14 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
           )) as unknown as Array<{ n: number }>
           expect(Number(attributed!.n), `seed ${seed}`).toBe(0)
         }
+        // A-06: 익명·소속 표시 유지 복사본은 DB 전체로도 어떤 페르소나 활동에도 없습니다.
+        const unlinkedNotes = movedNotes.filter((m) => m.mode === 'anonymous' || m.mode === 'affiliation').map((m) => m.noteId)
+        if (unlinkedNotes.length) {
+          const [n] = (await tx.execute(sql`select count(*)::int as n from persona_activities where source_id in ${unlinkedNotes}`)) as unknown as Array<{ n: number }>
+          expect(n!.n, `seed ${seed} unlinked notes projected`).toBe(0)
+        }
+        totals.movedNotes += movedNotes.length
+        totals.keptLabelNotes += movedNotes.filter((m) => m.mode === 'affiliation').length
         // A-05: 소속 표시 익명 글·댓글은 페르소나가 없고(행), 소속 표시가 있어도 페르소나 활동이 0건입니다(위 anonIds 검사에 포함).
         const affiliated = items.filter((i) => i.mode === 'affiliated_anonymous')
         totals.affiliated += affiliated.length
@@ -953,5 +1040,8 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
     expect(totals.roomProfileValues).toBeGreaterThan(WORLDS)
     expect(totals.loungeMedia).toBeGreaterThanOrEqual(WORLDS)
     expect(totals.directoryValues).toBeGreaterThan(0)
+    expect(totals.movedNotes).toBeGreaterThanOrEqual(WORLDS)
+    expect(totals.keptLabelNotes).toBeGreaterThan(0)
+    expect(totals.projectedCopies).toBeGreaterThan(0)
   })
 })

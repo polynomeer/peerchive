@@ -4,6 +4,7 @@
  * 고치기·지우기는 내 댓글에만, 공감·신고는 남의 게시 중인 댓글에만 보입니다. 서버 응답(스레드 전체)을 부모에게 올려 다시 그립니다.
  * 방 운영진이면(spaceHiddenIds가 null이 아님, C-06) 가리기·되돌리기·제재 요청 도구가 보입니다.
  * 질문 게시판(C-09): 채택된 답변에는 "채택된 답변" 표시가 붙고(작성자 표시는 그대로), 글쓴이(canAccept)는 최상위 댓글을 채택하거나 풉니다.
+ * 토픽(A-06): 내 소속 표시 익명 댓글(답변)은 "선배 노트로 옮기기"로 선배 노트 초안을 만들 수 있습니다(이름 표시를 다시 고름).
  */
 import type { CommunityCommentDto, CommunityPostDto, CommunityReactionDto } from '~~/shared/types/api'
 
@@ -16,6 +17,8 @@ const replying = ref(false)
 const editBody = ref('')
 const replyBody = ref('')
 const replyMode = ref<'' | 'display'>('')
+const moving = ref(false)
+const canMoveToNote = computed(() => !!c.value.author.mine && c.value.nameMode === 'affiliated_anonymous' && c.value.status === 'published')
 const busy = ref(false)
 const reaction = ref<CommunityReactionDto>({ count: props.comment.reactionCount, reacted: props.comment.reacted })
 watch(
@@ -156,6 +159,16 @@ async function toggleReaction() {
       </button>
       <button v-if="canAccept && c.accepted" type="button" class="link-button" :disabled="busy" @click="setAccepted(false)">채택 풀기</button>
       <button v-if="c.canEdit" type="button" class="link-button" @click="startEdit">고치기</button>
+      <button
+        v-if="canMoveToNote"
+        type="button"
+        class="link-button"
+        :aria-expanded="moving"
+        :data-testid="`move-to-note-${c.id}`"
+        @click="moving = !moving"
+      >
+        선배 노트로 옮기기
+      </button>
       <button v-if="c.canDelete" type="button" class="link-button" :disabled="busy" @click="remove">지우기</button>
       <ReportButton
         v-if="c.canReport"
@@ -175,6 +188,7 @@ async function toggleReaction() {
         @status="emit('status', $event)"
       />
     </p>
+    <ArchiveTransferForm v-if="moving" :post-id="postId" :comment-id="c.id" @close="moving = false" />
     <form v-if="replying" class="stack" novalidate @submit.prevent="reply">
       <fieldset v-if="official">
         <legend>이름 표시</legend>

@@ -13,15 +13,20 @@
  * - 작성자 표시: 계정 이름 / 표시명 / 익명("익명 선배"). 공개 응답에는 작성자 id가 없고, 운영자는 감사 기록(actor)으로만 압니다.
  * - C-09(ADR 0025): 커뮤니티 글을 옮겨 만든 초안(`createSeniorNoteDraftFromTransfer`)은 답이 하나뿐일 수 있습니다. 게시할 때 답 2개 이상을 다시
  *   확인합니다(422 `answers: too_few`). 작성 자격·과목당 한도·만들기 한도는 직접 만들기와 같습니다.
+ * - A-06(ADR 0043): 토픽(소속 표시 익명) 답변을 옮긴 초안은 원 글의 고정된 소속 표시를 복사해(affiliation_label, 다시 계산하지 않음) 표시 방식
+ *   `affiliation`을 고를 수 있습니다. 직접 만들기는 이 방식을 받지 않고(422 `displayMode: invalid`), 고치기는 복사한 소속 표시가 있는 노트만
+ *   이 방식으로 바꿀 수 있습니다(없으면 422 `displayMode: label_unavailable`). 투영(S-05)은 name·display만입니다.
  */
 import { z } from 'zod'
 import {
+  SENIOR_NOTE_ALL_DISPLAY_MODES,
   SENIOR_NOTE_DISPLAY_MODES,
   SENIOR_NOTE_DISPLAY_NAME_MAX,
   SENIOR_NOTE_PER_COURSE_LIMIT,
   SENIOR_NOTE_TERM_LABEL_MAX,
   SENIOR_NOTE_TIME_BUCKETS,
   hubWriteDecision,
+  isPersonaSeniorNoteMode,
   normalizeLabel,
   normalizeSeniorNoteAnswers,
   runPublicationChecks,
@@ -90,7 +95,8 @@ export const createSeniorNoteSchema = z.object({
 
 export const updateSeniorNoteSchema = z.object({
   expectedVersion: z.number({ error: requiredOr('invalid') }).int({ error: 'invalid' }).min(1, { error: 'invalid' }),
-  displayMode: fields.displayMode.optional(),
+  /** affiliation은 복사한 소속 표시가 있는 노트만(A-06). */
+  displayMode: z.enum(SENIOR_NOTE_ALL_DISPLAY_MODES, { error: 'invalid' }).optional(),
   displayName: fields.displayName.optional(),
   termLabel: fields.termLabel.optional(),
   totalTimeBucket: fields.totalTimeBucket.optional(),
@@ -120,9 +126,9 @@ async function accountName(db: DbExecutor, userId: string): Promise<string | nul
   return name ? name.slice(0, 80) : null
 }
 
-/** 저장할 표시 이름: name이면 지금 계정 이름, display면 입력값, anonymous면 null. */
+/** 저장할 표시 이름: name이면 지금 계정 이름, display면 입력값, anonymous·affiliation이면 null. */
 async function displaySnapshot(db: DbExecutor, userId: string, mode: NoteRow['displayMode'], displayName: string | null) {
-  if (mode === 'anonymous') return null
+  if (mode === 'anonymous' || mode === 'affiliation') return null
   if (mode === 'display') return displayName
   return accountName(db, userId)
 }
@@ -150,8 +156,9 @@ async function toDto(db: DbExecutor, row: NoteRow): Promise<SeniorNoteDto> {
     id: row.id,
     course: course ?? { id: row.courseId, title: '', schoolName: '' },
     displayMode: row.displayMode,
-    displayName: row.displayMode === 'anonymous' ? null : row.displayNameSnapshot,
-    publicLabel: seniorNoteAuthorLabel(row.displayMode, row.displayNameSnapshot),
+    displayName: isPersonaSeniorNoteMode(row.displayMode) ? row.displayNameSnapshot : null,
+    publicLabel: seniorNoteAuthorLabel(row.displayMode, row.displayNameSnapshot, row.affiliationLabel),
+    affiliationLabel: row.affiliationLabel,
     termLabel: row.termLabel,
     totalTimeBucket: row.totalTimeBucket,
     answers: row.answers as SeniorNoteAnswers,
@@ -267,15 +274,17 @@ export async function createSeniorNote(
 /**
  * 커뮤니티 글에서 옮겨 온 선배 노트 초안(C-09, 옮기기 트랜잭션 안에서). 글 본문을 고른 질문 하나의 답으로 넣습니다(1000자 이하는 호출자가 확인).
  * 작성 자격(403 hub_write_not_allowed)·만들기 한도(429)·과목당 3개(409 limit_reached)는 직접 만들기와 같습니다. 정본 과목 id를 넘기세요.
+ * A-06: 토픽 원본이면 원 글에 고정된 소속 표시(affiliationLabel)를 그대로 복사합니다. `affiliation` 방식은 이 값이 있어야 합니다(호출자가 확인).
  */
 export async function createSeniorNoteDraftFromTransfer(
   tx: DbExecutor,
   actor: Actor,
   course: { id: string; mergedInto: string | null; schoolId: string },
-  input: { answerKey: keyof SeniorNoteAnswers; body: string; displayMode: NoteRow['displayMode']; displayName: string | null },
+  input: { answerKey: keyof SeniorNoteAnswers; body: string; displayMode: NoteRow['displayMode']; displayName: string | null; affiliationLabel?: string | null },
   now: Date,
 ): Promise<SeniorNoteDto> {
   checkDisplay(input.displayMode, input.displayName)
+  if (input.displayMode === 'affiliation' && !input.affiliationLabel) throw invalid({ displayMode: 'label_unavailable' })
   await assertCanWrite(tx, actor, course)
   if (!(await hitRateLimit(tx, 'senior_note_create', actor.userId, SENIOR_NOTE_CREATE_RATE_LIMIT, now))) throw rateLimited()
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`senior-note:${actor.userId}:${course.id}`}))`)
@@ -291,6 +300,7 @@ export async function createSeniorNoteDraftFromTransfer(
       authorId: actor.userId,
       displayMode: input.displayMode,
       displayNameSnapshot: await displaySnapshot(tx, actor.userId, input.displayMode, input.displayName),
+      affiliationLabel: input.affiliationLabel ?? null,
       answers: { [input.answerKey]: input.body },
       noAnswersConfirmed: true,
       createdAt: now,
@@ -339,6 +349,8 @@ export async function updateSeniorNote(
     if (row.status === 'hidden') throw conflict('hidden')
     if (row.version !== input.expectedVersion) throw conflict('version_conflict', { currentVersion: row.version })
     const displayMode = input.displayMode ?? row.displayMode
+    // A-06: 소속 표시 방식은 복사한 소속 표시가 있는 노트만(직접 만든 노트는 원 글이 없음).
+    if (displayMode === 'affiliation' && !row.affiliationLabel) throw invalid({ displayMode: 'label_unavailable' })
     const displayName =
       input.displayName !== undefined ? input.displayName : displayMode === 'display' && row.displayMode === 'display' ? row.displayNameSnapshot : null
     checkDisplay(displayMode, displayName)
@@ -416,7 +428,8 @@ export async function publishSeniorNote(
     await emit(tx, SENIOR_NOTE_PUBLISHED_TOPIC, updated!, now)
     // S-05(ADR 0035): 이름·표시명 노트만 작성자의 같은 종류 페르소나 활동으로 투영 요청. 익명 노트는 이벤트가 없습니다(§6.7.1 "기존 규칙과의 관계").
     // 아카이브로 옮겨 온 초안(C-09)도 여기서 게시되므로 복사본 노트만 투영됩니다(원 글과의 연결은 싣지 않음). 거두기는 DB 트리거.
-    if (updated!.displayMode !== 'anonymous') {
+    // A-06: 소속 표시 노트(토픽 답변을 1단계로 옮긴 것)도 이벤트가 없습니다(페르소나와 연결하지 않음).
+    if (isPersonaSeniorNoteMode(updated!.displayMode)) {
       await tx.insert(outboxEvents).values({
         topic: PERSONA_ACTIVITY_PROJECT_TOPIC,
         payload: { sourceType: 'senior_note', sourceId: updated!.id } satisfies PersonaActivityProjectOutboxPayload,

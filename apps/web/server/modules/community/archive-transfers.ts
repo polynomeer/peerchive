@@ -11,6 +11,11 @@
  * - **이름 다시 고르기**: 막힘 Q&A는 각자 익명/표시명/실명(실명을 넣은 사람만) 중에서, 선배 노트는 기존 선배 노트 방식(이름/표시명/익명)에서 고릅니다.
  * - **원 글 열람 범위 유지**: 원 글은 그대로이고, 읽을 수 있는 사람에게 "아카이브로 옮겨짐" 표시만(링크·동의한 사람 없음, 공개 복사본이 지금 있을 때).
  * - 감사 기록을 남기지 않습니다(글쓴이 id와 글 id를 한 행에 남기지 않는다는 C-04 원칙). 분석은 옮길 곳 종류만, 사용자 키 없이.
+ * - **현직자 답변 이동(A-06, ADR 0043)**: 토픽의 **내 댓글(답변)**도 선배 노트 초안으로 옮길 수 있습니다(`commentId`, 토픽 공간만). 질문 글은 복사하지
+ *   않으므로(답변 본문만 고른 질문의 답으로) 질문한 사람의 동의가 필요 없습니다. 소속 표시 익명 원본(글·댓글)이면 이름 표시를 실명·표시명·익명·
+ *   **소속 표시 유지**(`affiliation`) 중에서 다시 고르고, 유지하면 원 글에 고정된 소속 표시 문자열을 그대로 복사합니다(다시 계산하지 않음 — 그사이
+ *   회원 수·소속이 바뀌어도 원 글과 같은 표시). 소속 표시 노트는 페르소나와 연결되지 않습니다. 댓글에서 옮긴 노트는 원 글의 "아카이브로 옮겨짐"
+ *   표시에도 넣지 않습니다(어느 답변이 옮겨졌는지 드러나지 않게).
  * 이 파일은 서버 로그를 남기지 않습니다(C-05).
  */
 import { z } from 'zod'
@@ -22,6 +27,7 @@ import {
   ARCHIVE_TRANSFER_TTL_MS,
   COUNTERPART_STATUS_LABELS,
   COURSE_QA_ANONYMOUS_LABELS,
+  SENIOR_NOTE_ALL_DISPLAY_MODES,
   SENIOR_NOTE_ANSWER_MAX,
   SENIOR_NOTE_DISPLAY_MODES,
   SENIOR_NOTE_DISPLAY_NAME_MAX,
@@ -224,7 +230,8 @@ async function expireIfDue(tx: DbExecutor, transfer: TransferRow, now: Date): Pr
  */
 export async function postArchiveInfo(db: DbExecutor, ctx: SpaceContext, post: PostRow, boardKind: string, now: Date): Promise<PostArchiveDto> {
   const rows = await db.select().from(archiveTransfers).where(eq(archiveTransfers.sourcePostId, post.id)).orderBy(desc(archiveTransfers.createdAt)).limit(50)
-  const done = rows.filter((r) => r.status === 'done')
+  // 댓글(답변)에서 옮긴 선배 노트(A-06)는 원 글 표시에 넣지 않습니다(어느 답변이 옮겨졌는지 드러나지 않게).
+  const done = rows.filter((r) => r.status === 'done' && !(r.target === 'senior_note' && r.sourceCommentId))
   let archived = false
   const qaIds = done.map((r) => r.courseQaItemId).filter((id): id is string => !!id)
   const noteIds = done.map((r) => r.seniorNoteId).filter((id): id is string => !!id)
@@ -277,8 +284,10 @@ export const createTransferSchema = z.object({
   target: z.enum(ARCHIVE_TRANSFER_TARGETS, { error: requiredOr('invalid') }),
   courseId: z.uuid({ error: 'invalid' }).optional(),
   projectId: z.uuid({ error: 'invalid' }).optional(),
+  /** A-06: 토픽의 내 댓글(답변)을 선배 노트로 옮길 때 그 댓글(senior_note만, 토픽 공간만). */
+  commentId: z.uuid({ error: 'invalid' }).optional(),
   includeAnswer: z.boolean({ error: 'invalid' }).default(false),
-  /** 막힘 Q&A의 내 이름(anonymous/display/real) 또는 선배 노트의 표시 방식(name/display/anonymous). */
+  /** 막힘 Q&A의 내 이름(anonymous/display/real) 또는 선배 노트의 표시 방식(name/display/anonymous, 소속 표시 익명 원본은 affiliation도). */
   displayMode: z.string({ error: 'invalid' }).optional(),
   displayName: z
     .string({ error: 'invalid' })
@@ -327,10 +336,24 @@ function parseArchiveMode(raw: string | undefined): ArchiveDisplayMode {
 }
 
 /**
+ * A-06: 선배 노트로 옮길 토픽의 내 댓글(답변). 선배 노트만(422 `commentId: not_applicable`), 토픽 공간만(422 `commentId: not_allowed`), 그 글의 댓글
+ * (422 `commentId: invalid`), 글·댓글 모두 게시 중(409 `source_not_open`), 내 댓글(403 `not_author`).
+ */
+async function commentSource(tx: DbExecutor, ctx: SpaceContext, actor: Actor, post: PostRow, target: ArchiveTransferTarget, commentId: string): Promise<CommentRow> {
+  if (target !== 'senior_note') throw invalid({ commentId: 'not_applicable' })
+  if (ctx.space.row.kind !== 'topic') throw invalid({ commentId: 'not_allowed' })
+  const comment = await findComment(tx, commentId.toLowerCase())
+  if (!comment || comment.postId !== post.id) throw invalid({ commentId: 'invalid' })
+  if (!isOpenItem(post.status) || !isOpenItem(comment.status)) throw conflict('source_not_open')
+  if (comment.authorId !== actor.userId) throw forbidden('not_author')
+  return comment
+}
+
+/**
  * POST /community/posts/:id/archive-transfers — 201 + 요청(요청한 사람 보기).
  * 401, 403 `not_author`·`hub_write_not_allowed`(막힘 Q&A·선배 노트: 과목 학교 인증)·`write_restricted`, 404(읽을 수 없음),
  * 409 `source_not_open`·`not_question_board`·`no_accepted_answer`·`transfer_pending`·`already_transferred`·`space_not_active`·
- * `checks_unconfirmed`(+warnings)·`limit_reached`(선배 노트), 422, 429.
+ * `checks_unconfirmed`(+warnings)·`limit_reached`(선배 노트), 422(+ A-06 `commentId`·`displayMode: label_unavailable`), 429.
  */
 export async function createArchiveTransfer(db: DbExecutor, actor: Actor, postId: unknown, rawInput: unknown, now = new Date()): Promise<ArchiveTransferDto> {
   const input = parseInput(createTransferSchema, rawInput)
@@ -344,15 +367,19 @@ export async function createArchiveTransfer(db: DbExecutor, actor: Actor, postId
     const [board] = await tx.select({ kind: boards.kind }).from(boards).where(eq(boards.id, post.boardId)).limit(1)
     const accepted = post.acceptedCommentId ? await findComment(tx, post.acceptedCommentId) : null
     const includeAnswer = input.target === 'course_qa' ? true : input.target === 'stuck_log' ? input.includeAnswer : false
-    const check = canStartTransfer({
-      target: input.target,
-      actorId: actor.userId,
-      boardKind: board?.kind ?? '',
-      post: { authorId: post.authorId, open: isOpenItem(post.status) },
-      accepted: accepted ? { authorId: accepted.authorId, open: isOpenItem(accepted.status) && accepted.postId === post.id } : null,
-      includeAnswer,
-    })
-    if (!check.ok) throw startError(check.reason)
+    // A-06: 토픽의 내 댓글(답변) → 선배 노트. 질문 글은 복사하지 않습니다.
+    const sourceComment = input.commentId !== undefined ? await commentSource(tx, ctx, actor, post, input.target, input.commentId) : null
+    if (!sourceComment) {
+      const check = canStartTransfer({
+        target: input.target,
+        actorId: actor.userId,
+        boardKind: board?.kind ?? '',
+        post: { authorId: post.authorId, open: isOpenItem(post.status) },
+        accepted: accepted ? { authorId: accepted.authorId, open: isOpenItem(accepted.status) && accepted.postId === post.id } : null,
+        includeAnswer,
+      })
+      if (!check.ok) throw startError(check.reason)
+    }
     const [pending] = await tx
       .select({ id: archiveTransfers.id, expiresAt: archiveTransfers.expiresAt, status: archiveTransfers.status })
       .from(archiveTransfers)
@@ -381,26 +408,48 @@ export async function createArchiveTransfer(db: DbExecutor, actor: Actor, postId
     const base = { target: input.target, spaceId: post.spaceId, sourcePostId: post.id, initiatorId: actor.userId, expiresAt: new Date(now.getTime() + ARCHIVE_TRANSFER_TTL_MS), createdAt: now, updatedAt: now }
 
     if (input.target === 'senior_note') {
-      // 작성자 한 사람의 글 → 선배 노트 초안. 요청이 곧 동의이므로 바로 끝납니다(스냅샷을 남기지 않음).
+      // 작성자 한 사람의 글(또는 토픽의 내 답변) → 선배 노트 초안. 요청이 곧 동의이므로 바로 끝납니다(스냅샷을 남기지 않음).
+      const source = sourceComment ?? post
       const course = await courseFor(tx, ctx, input.courseId)
       if (!input.answerKey) throw invalid({ answerKey: 'required' })
       if (input.noAnswersConfirmed !== true) throw invalid({ noAnswersConfirmed: 'confirm_required' })
       const mode = input.displayMode
       if (!mode) throw invalid({ displayMode: 'required' })
-      if (!(SENIOR_NOTE_DISPLAY_MODES as readonly string[]).includes(mode)) throw invalid({ displayMode: 'invalid' })
-      const body = post.body.replace(/\r\n?/g, '\n').trim()
+      // 소속 표시 유지는 소속 표시 익명(토픽) 원본만, 원 글에 표시가 있을 때만(표시 안 함으로 쓴 글은 익명을 고르면 같음).
+      const affiliated = source.nameMode === 'affiliated_anonymous'
+      const modes: readonly string[] = affiliated ? SENIOR_NOTE_ALL_DISPLAY_MODES : SENIOR_NOTE_DISPLAY_MODES
+      if (!modes.includes(mode)) throw invalid({ displayMode: 'invalid' })
+      if (mode === 'affiliation' && !source.affiliationLabel) throw invalid({ displayMode: 'label_unavailable' })
+      const body = source.body.replace(/\r\n?/g, '\n').trim()
       if (len(body) > SENIOR_NOTE_ANSWER_MAX) throw invalid({ source: 'too_long' })
       const note = await createSeniorNoteDraftFromTransfer(
         tx,
         actor,
         course,
-        { answerKey: input.answerKey, body, displayMode: mode as (typeof SENIOR_NOTE_DISPLAY_MODES)[number], displayName: input.displayName ?? null },
+        {
+          answerKey: input.answerKey,
+          body,
+          displayMode: mode as (typeof SENIOR_NOTE_ALL_DISPLAY_MODES)[number],
+          displayName: input.displayName ?? null,
+          // 원 글에 고정된 문자열을 그대로 복사합니다(다시 계산하지 않음). 소속 표시를 고를 때만 남깁니다(이름을 고른 복사본에는 소속 표시가 없음).
+          affiliationLabel: mode === 'affiliation' ? source.affiliationLabel : null,
+        },
         now,
       )
-      const hash = canonicalHash(archiveHashInput({ target: 'senior_note', courseId: course.id, snapshot: { ...snapshot, answerBody: null }, askerLabel: null }))
+      const copied: ArchiveSnapshot = sourceComment ? { questionTitle: '', questionBody: '', answerBody: sourceComment.body } : { ...snapshot, answerBody: null }
+      const hash = canonicalHash(archiveHashInput({ target: 'senior_note', courseId: course.id, snapshot: copied, askerLabel: null }))
       const [row] = await tx
         .insert(archiveTransfers)
-        .values({ ...base, status: 'done', courseId: course.id, contentHash: hash, snapshot: null, completedAt: now, seniorNoteId: note.id })
+        .values({
+          ...base,
+          status: 'done',
+          sourceCommentId: sourceComment?.id ?? null,
+          courseId: course.id,
+          contentHash: hash,
+          snapshot: null,
+          completedAt: now,
+          seniorNoteId: note.id,
+        })
         .returning()
       await tx.insert(archiveTransferConsents).values({ transferId: row!.id, userId: actor.userId, role: 'author', status: 'granted', contentHash: hash, createdAt: now, decidedAt: now })
       await emitAnalytics(tx, { name: 'archive_transfer_requested', actorId: actor.userId, unlinked: true, props: { target: 'senior_note' }, now })
@@ -717,12 +766,38 @@ async function toDto(db: DbExecutor, actor: Actor, t: TransferRow, consents: Con
 // ── 화면 선택지 ──────────────────────────────────────────────────────────
 
 /**
- * GET /community/posts/:id/archive-options — "아카이브로 옮기기" 대화 상자의 선택지(글쓴이만, 아니면 403 not_author). 읽을 수 없으면 404.
+ * GET /community/posts/:id/archive-options[?commentId=] — "아카이브로 옮기기" 대화 상자의 선택지(글쓴이만, 아니면 403 not_author). 읽을 수 없으면 404.
  * 옮길 곳마다 지금 가능한지·이유, 원 글 공간의 학교(과목 고르기용), 내가 owner/editor인 과제, 내 표시명·실명 유무, 글자 수.
+ * A-06: commentId를 주면 토픽의 내 답변을 선배 노트로 옮기는 선택지(그 댓글의 작성자만, 막힘 Q&A·막힘 로그는 `comment_source`)이고,
+ * 원본이 소속 표시 익명이면 `source.affiliationLabel`(원 글에 고정된 소속 표시 — "소속 표시 유지"를 고를 때 그대로 복사됨).
  */
-export async function getArchiveOptions(db: DbExecutor, actor: Actor, postId: unknown, now = new Date()): Promise<ArchiveOptionsDto> {
+export async function getArchiveOptions(db: DbExecutor, actor: Actor, postId: unknown, now = new Date(), commentId?: unknown): Promise<ArchiveOptionsDto> {
   const post = await findPost(db, postId)
   const ctx = await loadReadableSpace(db, actor, post.spaceId, false, now)
+  if (commentId !== undefined && commentId !== null && commentId !== '') {
+    if (!isUuid(commentId)) throw notFound()
+    if (ctx.space.row.kind !== 'topic') throw notFound()
+    const comment = await findComment(db, commentId.toLowerCase())
+    if (!comment || comment.postId !== post.id) throw notFound()
+    if (comment.authorId !== actor.userId) throw forbidden('not_author')
+    const open = isOpenItem(post.status) && isOpenItem(comment.status)
+    const me = await names(db, actor.userId)
+    return {
+      postId: post.id,
+      questionBoard: false,
+      hasAcceptedAnswer: false,
+      answerIsMine: true,
+      school: null,
+      targets: { course_qa: 'comment_source', stuck_log: 'comment_source', senior_note: open ? null : 'source_not_open' },
+      projects: [],
+      displayName: me.displayPersonaName,
+      hasRealName: !!me.realName,
+      lengths: { title: 0, body: len(comment.body), answer: 0 },
+      limits: { stuckSymptom: STUCK_SYMPTOM_MAX, logBody: LOG_BODY_MAX, solution: SOLUTION_METHOD_MAX, noteAnswer: SENIOR_NOTE_ANSWER_MAX },
+      timeBuckets: [...TIME_BUCKETS],
+      source: { kind: 'comment', commentId: comment.id, affiliated: comment.nameMode === 'affiliated_anonymous', affiliationLabel: comment.affiliationLabel },
+    }
+  }
   if (post.authorId !== actor.userId) throw forbidden('not_author')
   const [board] = await db.select({ kind: boards.kind }).from(boards).where(eq(boards.id, post.boardId)).limit(1)
   const accepted = post.acceptedCommentId ? await findComment(db, post.acceptedCommentId) : null
@@ -764,5 +839,6 @@ export async function getArchiveOptions(db: DbExecutor, actor: Actor, postId: un
     lengths: { title: len(post.title), body: len(post.body), answer: acceptedOpen ? len(accepted!.body) : 0 },
     limits: { stuckSymptom: STUCK_SYMPTOM_MAX, logBody: LOG_BODY_MAX, solution: SOLUTION_METHOD_MAX, noteAnswer: SENIOR_NOTE_ANSWER_MAX },
     timeBuckets: [...TIME_BUCKETS],
+    source: { kind: 'post', commentId: null, affiliated: post.nameMode === 'affiliated_anonymous', affiliationLabel: post.affiliationLabel },
   }
 }

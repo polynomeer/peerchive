@@ -105,6 +105,7 @@ import {
   roleClaims,
   searchDocuments,
   seniorNotes,
+  completionRetros,
   sessions,
   directoryEntries,
   noticeReads,
@@ -371,10 +372,38 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
       if (referenced.size) {
         await tx
           .update(seniorNotes)
-          .set({ answers: {}, displayNameSnapshot: null, termLabel: null, totalTimeBucket: null, status: 'withdrawn', withdrawnAt: now, updatedAt: now })
+          // A-06: 복사한 소속 표시도 비우고 방식은 익명으로(소속 표시 방식은 문자열이 있어야 함, check).
+          .set({
+            answers: {},
+            displayMode: 'anonymous',
+            displayNameSnapshot: null,
+            affiliationLabel: null,
+            termLabel: null,
+            totalTimeBucket: null,
+            status: 'withdrawn',
+            withdrawnAt: now,
+            updatedAt: now,
+          })
           .where(inArray(seniorNotes.id, [...referenced]))
       }
       c.add('senior_notes', noteIds.length)
+    }
+
+    // 4-1) 수료 회고(A-06, ADR 0043): 삭제(신고·조치가 가리키면 글·이름·기수를 비운 익명 철회 행으로 남김 — 고정 열 트리거가 비우기만 허용).
+    const retroIds = idsOf(await tx.select({ id: completionRetros.id }).from(completionRetros).where(eq(completionRetros.authorId, userId)))
+    if (retroIds.length) {
+      const fromReports = await tx.select({ id: reports.completionRetroId }).from(reports).where(inArray(reports.completionRetroId, retroIds))
+      const fromActions = await tx.select({ id: moderationActions.completionRetroId }).from(moderationActions).where(inArray(moderationActions.completionRetroId, retroIds))
+      const referenced = new Set([...fromReports, ...fromActions].map((r) => r.id).filter((id): id is string => typeof id === 'string'))
+      const deletable = retroIds.filter((id) => !referenced.has(id))
+      if (deletable.length) await tx.delete(completionRetros).where(inArray(completionRetros.id, deletable))
+      if (referenced.size) {
+        await tx
+          .update(completionRetros)
+          .set({ answers: {}, displayMode: 'anonymous', displayNameSnapshot: null, cohortLabel: null, cohortId: null, status: 'withdrawn', withdrawnAt: now, updatedAt: now })
+          .where(inArray(completionRetros.id, [...referenced]))
+      }
+      c.add('completion_retros', retroIds.length)
     }
 
     // 5) 남의 기록에 쓴 메모 글.

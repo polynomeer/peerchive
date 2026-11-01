@@ -49,6 +49,7 @@ export const REPORT_TARGET_LABELS: Record<ReportTargetType, string> = {
   persona: '공개 프로필',
   profile_post: '프로필 글',
   social_link: '소셜 링크',
+  completion_retro: '수료 회고',
 }
 
 export const REPORTER_STATUS_LABELS: Record<MyReportDto['status'], string> = {
@@ -77,6 +78,7 @@ export const ACTION_LABELS: Record<ModerationActionKind, string> = {
   hide_persona: '이 프로필만 숨기기(같은 사람의 다른 프로필은 그대로)',
   hide_profile_post: '프로필 글 숨기기',
   hide_social_link: '소셜 링크 숨기기',
+  hide_retro: '수료 회고 숨기기',
 }
 
 /** 당사자에게 보이는 조치 설명. */
@@ -98,6 +100,7 @@ export const NOTICE_TITLES: Record<Exclude<ModerationActionKind, 'none'>, string
   hide_persona: '운영 조치로 숨겨진 공개 프로필',
   hide_profile_post: '운영 조치로 숨겨진 프로필 글',
   hide_social_link: '운영 조치로 숨겨진 소셜 링크',
+  hide_retro: '운영 조치로 숨겨진 수료 회고',
 }
 
 export const APPEAL_STATUS_LABELS: Record<AppealStatus, string> = {

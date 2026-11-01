@@ -186,8 +186,12 @@ export const candidateStatus = pgEnum('candidate_status', [
 ])
 /** 동의 상태(@peerchive/domain ConsentStatus). revoked는 게시 후 동의 철회(T-12)용입니다. */
 export const consentStatus = pgEnum('consent_status', ['pending', 'granted', 'declined', 'revoked'])
-/** 선배 노트 작성자 표시(@peerchive/domain SENIOR_NOTE_DISPLAY_MODES): 계정 이름 / 직접 입력한 표시명 / 익명("익명 선배"). */
-export const seniorNoteDisplayMode = pgEnum('senior_note_display_mode', ['name', 'display', 'anonymous'])
+/**
+ * 선배 노트 작성자 표시(@peerchive/domain SENIOR_NOTE_DISPLAY_MODES): 계정 이름 / 직접 입력한 표시명 / 익명("익명 선배").
+ * affiliation(A-06, ADR 0043): 토픽(소속 표시 익명) 답변을 옮기며 "소속 표시 유지"를 고른 노트. 원 글에 고정된 소속 표시 문자열(affiliation_label)만 보이고
+ * 페르소나로 투영되지 않습니다. 옮기기로만 만들 수 있습니다. 같은 migration의 check는 `display_mode::text`로 비교합니다.
+ */
+export const seniorNoteDisplayMode = pgEnum('senior_note_display_mode', ['name', 'display', 'anonymous', 'affiliation'])
 /** 선배 노트 상태. hidden은 운영자 조치용(T-15, 지금은 API 없음). 공개 조회는 published만 봅니다. */
 export const seniorNoteStatus = pgEnum('senior_note_status', ['draft', 'published', 'withdrawn', 'hidden'])
 /** 선배 노트의 대략 총 소요 시간(supply-kit §2): ~10h / ~20h / ~40h / 40h+. */
@@ -221,6 +225,8 @@ export const reportTargetType = pgEnum('report_target_type', [
   'persona',
   'profile_post',
   'social_link',
+  // A-06(ADR 0043): 수료 회고(읽을 수 있는 사람이 신고).
+  'completion_retro',
 ])
 /** 신고 사유(T-15, REPORT_REASONS). 개인정보·저작권은 공개 사례에 보류를 겁니다. impersonation(표시명 사칭, S-07)은 프로필 신고에만. */
 export const reportReason = pgEnum('report_reason', ['personal_info', 'answer_sharing', 'copyright', 'harassment', 'false_claim', 'spam', 'other', 'impersonation'])
@@ -247,6 +253,8 @@ export const moderationActionKind = pgEnum('moderation_action_kind', [
   'hide_persona',
   'hide_profile_post',
   'hide_social_link',
+  // A-06(ADR 0043): 수료 회고 숨기기(published → hidden, 되돌리면 다시 published).
+  'hide_retro',
 ])
 /** 공개 사례 안에서 가릴 수 있는 항목(T-15, HIDDEN_ITEM_KINDS). */
 export const hiddenItemKind = pgEnum('hidden_item_kind', ['log', 'claim', 'artifact'])
@@ -329,6 +337,10 @@ export const topicCategory = pgEnum('topic_category', ['career', 'grad_school', 
  * 순으로 넓습니다. 작성자가 고른 값(requested)보다 좁게 표시하는 경우는 없습니다(check).
  */
 export const affiliationLabelScope = pgEnum('affiliation_label_scope', ['institution', 'institution_kind', 'none'])
+/** 수료 회고 작성자 표시(A-06, ADR 0043, @peerchive/domain COMPLETION_RETRO_DISPLAY_MODES): 계정 이름 / 표시명 페르소나 이름 / 익명("익명 수료생"). */
+export const completionRetroDisplayMode = pgEnum('completion_retro_display_mode', ['name', 'display', 'anonymous'])
+/** 수료 회고 상태(A-06). 쓰는 순간 published, 작성자 철회 withdrawn, 운영 조치 hidden. */
+export const completionRetroStatus = pgEnum('completion_retro_status', ['published', 'withdrawn', 'hidden'])
 /** 사용자 방 템플릿(A-01, ADR 0038). alumni = 동문회·OB 방(방별 프로필·신분 배지). */
 export const communitySpaceTemplate = pgEnum('community_space_template', ['general', 'alumni'])
 /** 동문회·OB 방 일정의 반복 규칙(A-02, ADR 0039, @peerchive/domain ROOM_EVENT_RECURRENCES). 회차는 저장하지 않고 규칙에서 계산합니다. */
@@ -2024,6 +2036,9 @@ export const consents = pgTable(
  *   작성자(author_id)는 공개 응답에 싣지 않고 운영자는 감사 기록으로만 압니다.
  * - 공개 조회는 status = 'published'만 읽습니다. 게시한 노트를 고치면 draft로 돌아가 다시 게시해야 합니다(점검을 다시 거침).
  * - 정답·답안·교수 개인 평가가 없다는 확인(no_answers_confirmed)은 만들 때 필수입니다.
+ * - affiliation_label(A-06, ADR 0043): 토픽 답변(소속 표시 익명)을 옮겨 만든 노트에 원 글의 **작성 시점에 고정된 소속 표시를 그대로 복사**한 문자열
+ *   (다시 계산하지 않음). display_mode = affiliation이면 이 문자열만 작성자 표시로 보이고 페르소나로 투영되지 않습니다. 다른 방식으로 바꿔도 값은 남아
+ *   (작성자가 다시 소속 표시로 돌아갈 수 있게) 공개 응답에는 affiliation 방식일 때만 실립니다.
  */
 export const seniorNotes = pgTable(
   'senior_notes',
@@ -2038,6 +2053,7 @@ export const seniorNotes = pgTable(
       .references(() => users.id),
     displayMode: seniorNoteDisplayMode('display_mode').notNull(),
     displayNameSnapshot: text('display_name_snapshot'),
+    affiliationLabel: text('affiliation_label'),
     termLabel: text('term_label'),
     totalTimeBucket: seniorNoteTimeBucket('total_time_bucket'),
     answers: jsonb('answers').$type<Record<string, string>>().notNull(),
@@ -2061,6 +2077,12 @@ export const seniorNotes = pgTable(
       sql`${t.displayNameSnapshot} is null or char_length(${t.displayNameSnapshot}) between 1 and 80`,
     ),
     check('senior_notes_term_label_check', sql`${t.termLabel} is null or char_length(${t.termLabel}) between 1 and 30`),
+    // A-06: 소속 표시 방식은 복사한 소속 표시가 있을 때만, 이름 사본은 없음(affiliation은 같은 migration에서 더한 값이라 text로 비교).
+    check(
+      'senior_notes_affiliation_label_check',
+      sql`(${t.affiliationLabel} is null or char_length(${t.affiliationLabel}) between 1 and 100)
+        and (${t.displayMode}::text <> 'affiliation' or (${t.affiliationLabel} is not null and ${t.displayNameSnapshot} is null))`,
+    ),
     check('senior_notes_published_check', sql`${t.status} <> 'published' or ${t.publishedAt} is not null`),
   ],
 )
@@ -2453,6 +2475,8 @@ export const moderationActions = pgTable(
     personaId: uuid('persona_id'),
     profilePostId: uuid('profile_post_id'),
     socialLinkId: uuid('social_link_id'),
+    /** 수료 회고 숨기기(hide_retro, A-06). */
+    completionRetroId: uuid('completion_retro_id').references((): AnyPgColumn => completionRetros.id),
     internalNote: text('internal_note').notNull(),
     publicReason: text('public_reason'),
     notifyOwner: boolean('notify_owner').notNull().default(false),
@@ -2481,6 +2505,7 @@ export const moderationActions = pgTable(
     index('moderation_actions_persona_idx').on(t.personaId),
     index('moderation_actions_profile_post_idx').on(t.profilePostId),
     index('moderation_actions_social_link_idx').on(t.socialLinkId),
+    index('moderation_actions_completion_retro_idx').on(t.completionRetroId),
     check('moderation_actions_outcome_check', sql`${t.outcome} in ('resolved', 'dismissed') and (${t.outcome} = 'resolved' or ${t.kind} = 'none')`),
     check('moderation_actions_internal_note_check', sql`char_length(${t.internalNote}) between 1 and 1000`),
     check('moderation_actions_public_reason_check', sql`${t.publicReason} is null or char_length(${t.publicReason}) between 1 and 300`),
@@ -2499,6 +2524,7 @@ export const moderationActions = pgTable(
     check('moderation_actions_persona_check', sql`${t.kind}::text <> 'hide_persona' or ${t.personaId} is not null`),
     check('moderation_actions_profile_post_check', sql`${t.kind}::text <> 'hide_profile_post' or ${t.profilePostId} is not null`),
     check('moderation_actions_social_link_check', sql`${t.kind}::text <> 'hide_social_link' or ${t.socialLinkId} is not null`),
+    check('moderation_actions_completion_retro_check', sql`${t.kind}::text <> 'hide_retro' or ${t.completionRetroId} is not null`),
     // C-06: 방 운영진 가리기·제재는 글 또는 댓글 하나를 가리키고 공간 id는 비웁니다(방장이 당사자가 되지 않게, ADR 0023).
     check(
       'moderation_actions_community_item_check',
@@ -2551,6 +2577,8 @@ export const reports = pgTable(
     personaId: uuid('persona_id'),
     profilePostId: uuid('profile_post_id'),
     socialLinkId: uuid('social_link_id'),
+    /** 신고한 수료 회고(A-06). 내용은 복사하지 않습니다. */
+    completionRetroId: uuid('completion_retro_id').references((): AnyPgColumn => completionRetros.id),
     reason: reportReason('reason').notNull(),
     details: text('details'),
     status: reportStatus('status').notNull().default('open'),
@@ -2578,6 +2606,7 @@ export const reports = pgTable(
     index('reports_status_created_idx').on(t.status, t.createdAt),
     index('reports_closed_at_idx').on(t.closedAt),
     index('reports_reporter_idx').on(t.reporterId, t.createdAt),
+    index('reports_completion_retro_idx').on(t.completionRetroId),
     check('reports_details_check', sql`${t.details} is null or char_length(${t.details}) between 1 and 1000`),
     check('reports_first_action_check', sql`${t.firstActionAt} is null or ${t.firstActionAt} >= ${t.createdAt}`),
     check('reports_closed_check', sql`(${t.status} in ('resolved', 'dismissed')) = (${t.closedAt} is not null and ${t.actionId} is not null)`),
@@ -2597,7 +2626,8 @@ export const reports = pgTable(
         or (${t.targetType}::text = 'course_qa' and ${t.courseQaItemId} is not null)
         or (${t.targetType}::text = 'persona' and ${t.personaId} is not null)
         or (${t.targetType}::text = 'profile_post' and ${t.profilePostId} is not null)
-        or (${t.targetType}::text = 'social_link' and ${t.socialLinkId} is not null)`,
+        or (${t.targetType}::text = 'social_link' and ${t.socialLinkId} is not null)
+        or (${t.targetType}::text = 'completion_retro' and ${t.completionRetroId} is not null)`,
     ),
     // 표시명 사칭은 프로필 신고에만(@peerchive/domain reasonApplicable).
     check('reports_impersonation_check', sql`${t.reason}::text <> 'impersonation' or ${t.targetType}::text in ('persona', 'profile')`),
@@ -3093,6 +3123,86 @@ export const certificateChecks = pgTable(
     check('certificate_checks_extension_check', sql`${t.fileExtension} in ('png', 'jpg', 'jpeg', 'webp', 'pdf')`),
     check('certificate_checks_byte_size_check', sql`${t.byteSize} between 1 and 10485760`),
     check('certificate_checks_sha256_check', sql`${t.sha256} is null or ${t.sha256} ~ '^[0-9a-f]{64}$'`),
+  ],
+)
+
+// ── 수료 회고 (A-06, PROOFU_EVOLUTION_PLAN §8.9.10 "가져오지 않는 것"·§8.9.11, SYSTEM_DESIGN §6.7.2 "수료 회고", ADR 0043) ─────────────
+//
+// 부트캠프·교육 프로그램·동아리 연합 수료생이 그 기관(과 기수)에 남기는 구조화된 회고입니다. 선배 노트 형식(질문별 답)이고 **별점·연봉·추천 점수 열이
+// 없습니다**(완료 기준 — 스키마 테스트가 열 이름을 확인). 커뮤니티 구역이 아니며(커뮤니티 테이블을 가리키지 않음) 페르소나로 투영하지 않습니다.
+// P2 `institutions` 플래그가 꺼지면 웹 경로는 404입니다.
+
+/**
+ * 수료 회고 한 편. 쓰는 순간 게시되고(published), 작성자가 철회(withdrawn)하거나 운영자가 숨깁니다(hidden, 신고 → hide_retro).
+ * - institution_id: 정본 기관(대학이 아닌 기관 — 대학이 아닌 기관은 병합하지 않음, ADR 0037). cohort_id: 작성자 소속의 기수(있으면).
+ *   author_id: 철회·운영 안내·탈퇴 정리에만 쓰고 응답에 싣지 않습니다.
+ * - 이름: display_mode(name/display/anonymous) + display_name_snapshot(쓰는 순간의 계정 이름·표시명 페르소나 이름, 익명이면 null).
+ * - **기관 표시는 쓰는 순간 고정**(A-05 규칙, ADR 0042): 익명 회고는 작성자가 고른 범위(label_scope_requested)와 그 순간의 (정본 기관, 수료생)·
+ *   (기관 종류, 수료생) 인증 회원 수로 정한 범위(label_scope_applied)·문자열(institution_label)을 남깁니다. 범위가 기관이 아니면 기관 목록에 나오지
+ *   않고(기관 이름이 익명을 깨뜨리지 않게) 문자열만 보입니다. 이름을 건 회고는 언제나 기관 범위입니다(check).
+ * - cohort_label: 이름을 건 회고에서 작성자가 고른 경우만(익명 회고는 기수를 보이지 않음, check). 쓰는 순간의 기수 글자.
+ * - answers: {learned, curriculum, beforeStart, advice}(@peerchive/domain COMPLETION_RETRO_QUESTIONS) 각 1000자, 2개 이상.
+ */
+export const completionRetros = pgTable(
+  'completion_retros',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    institutionId: uuid('institution_id')
+      .notNull()
+      .references(() => schools.id),
+    cohortId: uuid('cohort_id').references(() => institutionCohorts.id),
+    authorId: uuid('author_id')
+      .notNull()
+      .references(() => users.id),
+    displayMode: completionRetroDisplayMode('display_mode').notNull(),
+    displayNameSnapshot: text('display_name_snapshot'),
+    labelScopeRequested: affiliationLabelScope('label_scope_requested').notNull(),
+    labelScopeApplied: affiliationLabelScope('label_scope_applied').notNull(),
+    institutionLabel: text('institution_label'),
+    cohortLabel: text('cohort_label'),
+    answers: jsonb('answers').$type<Record<string, string>>().notNull(),
+    /** "강사·운영진 개인 평가, 별점·연봉·추천 점수, 다른 수강생의 개인정보가 없습니다" 확인(필수). */
+    guidelinesConfirmed: boolean('guidelines_confirmed').notNull(),
+    status: completionRetroStatus('status').notNull().default('published'),
+    publishedAt: timestamp('published_at', { withTimezone: true }).notNull(),
+    withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('completion_retros_institution_published_idx').on(t.institutionId, t.publishedAt.desc()).where(sql`${t.status} = 'published'`),
+    index('completion_retros_published_idx').on(t.publishedAt.desc()).where(sql`${t.status} = 'published'`),
+    index('completion_retros_author_idx').on(t.authorId),
+    index('completion_retros_cohort_idx').on(t.cohortId),
+    // 사람·기관마다 공개(또는 숨김) 회고는 하나. 철회하면 새로 쓸 수 있습니다.
+    uniqueIndex('completion_retros_author_institution_open_key').on(t.authorId, t.institutionId).where(sql`${t.status} in ('published', 'hidden')`),
+    check('completion_retros_answers_object_check', sql`jsonb_typeof(${t.answers}) = 'object'`),
+    check('completion_retros_confirmed_check', sql`${t.guidelinesConfirmed}`),
+    check(
+      'completion_retros_display_name_check',
+      sql`(${t.displayMode} = 'anonymous') = (${t.displayNameSnapshot} is null)
+        and (${t.displayNameSnapshot} is null or char_length(${t.displayNameSnapshot}) between 1 and 80)`,
+    ),
+    check(
+      'completion_retros_label_scope_check',
+      sql`${t.labelScopeApplied} = ${t.labelScopeRequested}
+        or (${t.labelScopeRequested} = 'institution' and ${t.labelScopeApplied} in ('institution_kind', 'none'))
+        or (${t.labelScopeRequested} = 'institution_kind' and ${t.labelScopeApplied} = 'none')`,
+    ),
+    check(
+      'completion_retros_named_scope_check',
+      sql`${t.displayMode} = 'anonymous' or (${t.labelScopeRequested} = 'institution' and ${t.labelScopeApplied} = 'institution')`,
+    ),
+    check(
+      'completion_retros_institution_label_check',
+      sql`(${t.labelScopeApplied} = 'none') = (${t.institutionLabel} is null)
+        and (${t.institutionLabel} is null or char_length(${t.institutionLabel}) between 1 and 100)`,
+    ),
+    check(
+      'completion_retros_cohort_label_check',
+      sql`${t.cohortLabel} is null or (${t.displayMode} <> 'anonymous' and char_length(${t.cohortLabel}) between 1 and 20)`,
+    ),
+    check('completion_retros_withdrawn_check', sql`${t.status} <> 'withdrawn' or ${t.withdrawnAt} is not null`),
   ],
 )
 
@@ -3822,6 +3932,7 @@ export const recruitmentApplications = pgTable(
  *   canonicalJson → SHA-256)에 묶입니다. 끝나거나(done) 취소되면(cancelled) snapshot을 null로 지웁니다(해시만 남김).
  * - 동의: archive_transfer_consents(사람마다 한 행). 모두 같은 해시로 동의하면 같은 트랜잭션에서 복사본을 만들고 done.
  * - 대상: course_qa → course_qa_item_id, stuck_log → stuck_log_id(+ solution_log_id), senior_note → senior_note_id(초안).
+ *   A-06(ADR 0043): senior_note는 토픽의 내 댓글(답변)도 원본이 될 수 있습니다(source_comment_id = 그 댓글, 질문 글은 복사하지 않음).
  * - 취소: cancel_reason(@peerchive/domain ARCHIVE_CANCEL_REASONS). 14일(expires_at)이 지나면 읽거나 쓸 때 expired로 닫습니다.
  * - 같은 글·대상의 진행 중 요청은 하나(부분 unique, 조건은 enum 리터럴 대신 닫힌 시각 열로).
  * - 이름 표시 페르소나(SYSTEM_DESIGN §6.7.1 persona_id)는 S-01에서 더합니다. 지금은 동의 행의 display_mode·display_label이 복사본 이름입니다.
@@ -3881,7 +3992,7 @@ export const archiveTransfers = pgTable(
       'archive_transfers_target_check',
       sql`(${t.target}::text = 'course_qa' and ${t.courseId} is not null and ${t.projectId} is null and ${t.sourceCommentId} is not null)
         or (${t.target}::text = 'stuck_log' and ${t.projectId} is not null and ${t.courseId} is null and ${t.timeBucket} is not null)
-        or (${t.target}::text = 'senior_note' and ${t.courseId} is not null and ${t.projectId} is null and ${t.sourceCommentId} is null)`,
+        or (${t.target}::text = 'senior_note' and ${t.courseId} is not null and ${t.projectId} is null)`,
     ),
     check(
       'archive_transfers_result_check',

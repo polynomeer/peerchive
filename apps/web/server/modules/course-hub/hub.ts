@@ -19,6 +19,7 @@ import {
   extractStuckItems,
   rankStuckItems,
   seniorNoteAuthorLabel,
+  isPersonaSeniorNoteMode,
   type CheckinTimeBucket,
   type HubSnapshot,
 } from '@peerchive/domain'
@@ -171,8 +172,10 @@ export async function noteSignalCounts(db: DbExecutor, noteIds: readonly string[
 export function toPublicSeniorNote(row: typeof seniorNotes.$inferSelect, signals: SignalCountsDto): PublicSeniorNoteDto {
   return {
     id: row.id,
-    author: seniorNoteAuthorLabel(row.displayMode, row.displayNameSnapshot),
-    anonymous: row.displayMode === 'anonymous',
+    // A-06: 소속 표시 노트는 복사한 소속 표시만(이름·페르소나 없음 — 익명과 같이 다룸). 원 글·옮기기와의 연결은 싣지 않습니다.
+    author: seniorNoteAuthorLabel(row.displayMode, row.displayNameSnapshot, row.affiliationLabel),
+    anonymous: !isPersonaSeniorNoteMode(row.displayMode),
+    affiliated: row.displayMode === 'affiliation',
     termLabel: row.termLabel,
     totalTimeBucket: row.totalTimeBucket,
     answers: row.answers as SeniorNoteAnswers,

@@ -424,6 +424,7 @@ describe.skipIf(!databaseUrl)('course hub (PostgreSQL)', () => {
           id: draft.id,
           author: '익명 선배',
           anonymous: true,
+          affiliated: false,
           termLabel: '2025년 2학기',
           totalTimeBucket: 'lt40h',
           answers: published.answers,

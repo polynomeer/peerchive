@@ -15,6 +15,7 @@
  * | sanction(C-06, 운영자가 community 모듈에서 발급) | — | 제재 revoked(쓰기 제한 풀림) |
  * | hide_recruitment·hide_application(C-07) | 모집 글 hidden_at(모집자 외 404·지원 받지 않음) / 지원 메시지 message_hidden_at(모집자에게 자리 표시) | 가림을 풂 |
  * | hide_qa(C-09) | 막힘 Q&A published → hidden | hidden → published(당사자가 그사이 철회했으면 그대로 withdrawn) |
+ * | hide_retro(A-06) | 수료 회고 published → hidden | hidden → published(작성자가 그사이 철회했으면 그대로 withdrawn) |
  * | hide_persona(S-07) | 그 페르소나의 profiles.hidden_at(실명·표시명 하나만 — 같은 사람의 다른 페르소나는 그대로) | hidden_at = null |
  * | hide_profile_post(S-07) | 프로필 글 published → hidden(활동은 같은 트랜잭션의 DB 트리거가 거둠) | hidden → published(트리거가 원천을 다시 확인해 되살림) |
  * | hide_social_link(S-07) | social_links.hidden_at(공개 DTO에서 빠짐) | hidden_at = null |
@@ -27,6 +28,7 @@ import {
   MODERATION_ACTION_TOPIC,
   and,
   caseStudies,
+  completionRetros,
   courseQaItems,
   eq,
   isNull,
@@ -85,6 +87,7 @@ function auditTarget(
     | 'personaId'
     | 'profilePostId'
     | 'socialLinkId'
+    | 'completionRetroId'
   >,
 ) {
   switch (action.targetType) {
@@ -116,6 +119,8 @@ function auditTarget(
       return { targetType: 'profile_post' as const, targetId: action.profilePostId }
     case 'social_link':
       return { targetType: 'social_link' as const, targetId: action.socialLinkId }
+    case 'completion_retro':
+      return { targetType: 'completion_retro' as const, targetId: action.completionRetroId }
   }
 }
 
@@ -173,6 +178,12 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
     const [qa] = await tx.select().from(courseQaItems).where(eq(courseQaItems.id, target.courseQaItemId)).limit(1).for('update')
     if (!qa) throw notFound()
     if (qa.status !== 'published') throw conflict('target_not_public')
+  }
+  if (input.kind === 'hide_retro') {
+    if (!target.completionRetroId) throw notFound()
+    const [retro] = await tx.select({ status: completionRetros.status }).from(completionRetros).where(eq(completionRetros.id, target.completionRetroId)).limit(1).for('update')
+    if (!retro) throw notFound()
+    if (retro.status !== 'published') throw conflict('target_not_public')
   }
   if (input.kind === 'hide_case_study') {
     const [cs] = await tx.select().from(caseStudies).where(eq(caseStudies.id, target.caseStudyId!)).limit(1).for('update')
@@ -235,6 +246,7 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
       personaId: target.personaId,
       profilePostId: target.profilePostId,
       socialLinkId: target.socialLinkId,
+      completionRetroId: target.completionRetroId,
       internalNote: input.internalNote,
       publicReason: input.publicReason,
       notifyOwner: input.notifyOwner,
@@ -270,6 +282,9 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
       break
     case 'hide_note':
       await tx.update(seniorNotes).set({ status: 'hidden', updatedAt: now }).where(eq(seniorNotes.id, target.seniorNoteId!))
+      break
+    case 'hide_retro':
+      await tx.update(completionRetros).set({ status: 'hidden', updatedAt: now }).where(eq(completionRetros.id, target.completionRetroId!))
       break
     case 'hide_case_study':
       await tx.update(caseStudies).set({ hiddenAt: now, updatedAt: now }).where(eq(caseStudies.id, target.caseStudyId!))
@@ -356,6 +371,13 @@ export async function undoModeration(
         .update(courseQaItems)
         .set({ status: 'published', updatedAt: now })
         .where(and(eq(courseQaItems.id, action.courseQaItemId!), eq(courseQaItems.status, 'hidden')))
+      break
+    // A-06: 그사이 작성자가 철회했거나 탈퇴 정리됐으면 그대로 둡니다.
+    case 'hide_retro':
+      await tx
+        .update(completionRetros)
+        .set({ status: 'published', updatedAt: now })
+        .where(and(eq(completionRetros.id, action.completionRetroId!), eq(completionRetros.status, 'hidden')))
       break
     case 'hide_case_study':
       await tx.update(caseStudies).set({ hiddenAt: null, updatedAt: now }).where(eq(caseStudies.id, action.caseStudyId!))

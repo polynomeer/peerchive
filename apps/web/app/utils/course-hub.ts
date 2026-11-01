@@ -15,6 +15,7 @@ export const SENIOR_NOTE_DISPLAY_LABELS: Record<SeniorNoteDisplayMode, string> =
   name: '계정 이름으로 표시',
   display: '직접 정한 표시명',
   anonymous: '익명("익명 선배")',
+  affiliation: '소속 표시 유지(토픽에서 옮긴 답변만)',
 }
 
 export const SENIOR_NOTE_STATUS_LABELS: Record<SeniorNoteStatus, string> = {

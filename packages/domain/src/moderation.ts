@@ -34,6 +34,8 @@ export const REPORT_TARGET_TYPES = [
   'persona',
   'profile_post',
   'social_link',
+  // A-06(ADR 0043): 수료 회고(읽을 수 있는 사람 — active 기관 인증이 있는 계정 — 이 게시 중인 회고를 신고).
+  'completion_retro',
 ] as const
 export type ReportTargetType = (typeof REPORT_TARGET_TYPES)[number]
 
@@ -78,6 +80,8 @@ export const MODERATION_ACTION_KINDS = [
   'hide_persona',
   'hide_profile_post',
   'hide_social_link',
+  // A-06(ADR 0043): 수료 회고 숨기기(published → hidden, 되돌리면 다시 published — 그사이 철회했으면 그대로).
+  'hide_retro',
 ] as const
 export type ModerationActionKind = (typeof MODERATION_ACTION_KINDS)[number]
 
@@ -121,6 +125,7 @@ export const ACTIONS_BY_TARGET: Readonly<Record<ReportTargetType, readonly Moder
   persona: ['none', 'hide_persona'],
   profile_post: ['none', 'hide_profile_post'],
   social_link: ['none', 'hide_social_link'],
+  completion_retro: ['none', 'hide_retro'],
 }
 
 export function isActionApplicable(target: ReportTargetType, action: ModerationActionKind): boolean {
@@ -175,6 +180,7 @@ export type ReportTargetIdentity =
   | { type: 'persona'; personaId: string }
   | { type: 'profile_post'; profilePostId: string }
   | { type: 'social_link'; socialLinkId: string }
+  | { type: 'completion_retro'; retroId: string }
 
 export function reportTargetKey(target: ReportTargetIdentity): string {
   switch (target.type) {
@@ -206,6 +212,8 @@ export function reportTargetKey(target: ReportTargetIdentity): string {
       return `profile_post:${target.profilePostId}`
     case 'social_link':
       return `social_link:${target.socialLinkId}`
+    case 'completion_retro':
+      return `completion_retro:${target.retroId}`
   }
 }
 

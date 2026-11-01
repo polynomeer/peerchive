@@ -189,6 +189,7 @@ const spaceMeta = (s: SpaceSummaryDto) =>
       <NuxtLink to="/community/notices">커뮤니티 알림<template v-if="mine?.unreadNotices"> (읽지 않음 {{ mine.unreadNotices }}개)</template></NuxtLink>
       · <NuxtLink to="/community/recruitments">모집·내 지원</NuxtLink>
       <template v-if="flags.topics"> · <NuxtLink to="/community/topics" data-testid="topics-link">학교를 넘나드는 토픽</NuxtLink></template>
+      <template v-if="flags.institutions"> · <NuxtLink to="/community/retros" data-testid="retros-link">수료 회고</NuxtLink></template>
     </p>
 
     <template v-if="!schools.length">

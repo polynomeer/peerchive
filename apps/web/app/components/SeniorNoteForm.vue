@@ -24,7 +24,8 @@ const affiliationLink = ref<string | null>(null)
 const saving = ref(false)
 const idBase = computed(() => (props.note ? `note-${props.note.id}` : 'note-new'))
 const filled = computed(() => SENIOR_NOTE_QUESTIONS.filter((q) => form.answers[q].trim()).length)
-const DISPLAY_MODES: SeniorNoteDisplayMode[] = ['anonymous', 'display', 'name']
+// A-06: 토픽 답변을 옮기며 소속 표시를 복사한 노트만 "소속 표시 유지"를 고를 수 있습니다.
+const DISPLAY_MODES = computed<SeniorNoteDisplayMode[]>(() => (props.note?.affiliationLabel ? ['affiliation', 'anonymous', 'display', 'name'] : ['anonymous', 'display', 'name']))
 const TIME_BUCKETS = Object.keys(SENIOR_NOTE_TIME_BUCKET_LABELS) as SeniorNoteTimeBucket[]
 
 function body() {
@@ -72,6 +73,9 @@ const fieldError = (key: string) => fieldMessage(errors.value[key])
           {{ SENIOR_NOTE_DISPLAY_LABELS[mode] }}
         </label>
       </div>
+      <p v-if="note?.affiliationLabel" class="hint" data-testid="note-affiliation-label">
+        소속 표시 유지: <strong>{{ note.affiliationLabel }}</strong>(토픽 원 글에 고정된 표시를 그대로 씁니다. 이 방식은 프로필에 이어지지 않습니다.)
+      </p>
       <p class="hint">익명이어도 운영자는 신고 처리를 위해 작성자를 알 수 있습니다. 학교 인증은 작성 자격 확인에만 쓰며 학번·학과·인증 메일은 공개되지 않습니다.</p>
     </fieldset>
     <div v-if="form.displayMode === 'display'" class="field">

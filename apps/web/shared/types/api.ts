@@ -1106,7 +1106,7 @@ export type PublicationCheckRule =
 export interface PublicationCheckDto {
   rule: PublicationCheckRule
   location: {
-    kind: 'title' | 'summary' | 'log' | 'claim' | 'milestone' | 'artifact' | 'senior_note' | 'case_study' | 'portfolio' | 'course_qa'
+    kind: 'title' | 'summary' | 'log' | 'claim' | 'milestone' | 'artifact' | 'senior_note' | 'case_study' | 'portfolio' | 'course_qa' | 'completion_retro'
     key?: string
     field: string
   }
@@ -1331,7 +1331,8 @@ export interface ConsentRequestDto {
 // ── 과목 허브·선배 노트·플랜 포크·유용성 신호·검색 (T-13, ADR 0013) ──────────
 // 공개 DTO는 게시된 release 스냅샷과 게시된 선배 노트에서만 만듭니다. 교수 실명·평가 필드는 없습니다.
 
-export type SeniorNoteDisplayMode = 'name' | 'display' | 'anonymous'
+/** affiliation(A-06): 토픽 답변을 옮기며 소속 표시를 유지한 노트(옮기기로만). */
+export type SeniorNoteDisplayMode = 'name' | 'display' | 'anonymous' | 'affiliation'
 export type SeniorNoteStatus = 'draft' | 'published' | 'withdrawn' | 'hidden'
 export type SeniorNoteTimeBucket = 'lt10h' | 'lt20h' | 'lt40h' | 'forty_plus'
 export type SeniorNoteQuestion = 'firstWeek' | 'timeSink' | 'differently' | 'wishKnew'
@@ -1380,7 +1381,10 @@ export interface CourseHubStuckDto {
 export interface PublicSeniorNoteDto {
   id: string
   author: string
+  /** 이름이 없는 노트(익명·소속 표시). */
   anonymous: boolean
+  /** 토픽 답변을 옮기며 소속 표시를 유지한 노트(A-06): author가 `○○대학교 · 졸업생` 같은 소속 표시입니다. */
+  affiliated: boolean
   termLabel: string | null
   totalTimeBucket: SeniorNoteTimeBucket | null
   answers: SeniorNoteAnswers
@@ -1459,6 +1463,8 @@ export interface SeniorNoteDto {
   displayName: string | null
   /** 공개 화면에 보일 이름. */
   publicLabel: string
+  /** 토픽 답변에서 복사한 소속 표시(A-06, 작성자 본인에게만 주는 DTO). 있으면 표시 방식으로 affiliation을 고를 수 있습니다. */
+  affiliationLabel: string | null
   termLabel: string | null
   totalTimeBucket: SeniorNoteTimeBucket | null
   answers: SeniorNoteAnswers
@@ -1913,6 +1919,8 @@ export type ReportTargetType =
   | 'persona'
   | 'profile_post'
   | 'social_link'
+  /** A-06: 수료 회고. */
+  | 'completion_retro'
 /** impersonation(표시명 사칭, S-07)은 프로필 신고에만. */
 export type ReportReason = 'personal_info' | 'answer_sharing' | 'copyright' | 'harassment' | 'false_claim' | 'spam' | 'other' | 'impersonation'
 export type ReportStatus = 'open' | 'in_review' | 'resolved' | 'dismissed'
@@ -1940,6 +1948,8 @@ export type ModerationActionKind =
   | 'hide_persona'
   | 'hide_profile_post'
   | 'hide_social_link'
+  /** A-06: 수료 회고 숨기기. */
+  | 'hide_retro'
 export type HiddenItemKind = 'log' | 'claim' | 'artifact'
 export type AppealStatus = 'open' | 'upheld' | 'reversed'
 
@@ -1964,6 +1974,8 @@ export type ReportTargetRef =
   | { activityId: string }
   /** 소셜 링크(S-07): 그 프로필의 handle과 공개 화면에 보이는 주소. */
   | { handle: string; url: string }
+  /** 수료 회고(A-06): 신고자가 읽을 수 있는 게시 중인 회고. */
+  | { retroId: string }
 
 export interface HiddenItemPlaceholderDto {
   kind: HiddenItemKind
@@ -2100,6 +2112,8 @@ export type OperatorTargetContentDto =
   | { kind: 'persona'; persona: OperatorPersonaDto }
   | { kind: 'profile_post'; persona: OperatorPersonaRefDto; post: { body: string; status: 'published' | 'deleted' | 'hidden'; createdAt: string } }
   | { kind: 'social_link'; persona: OperatorPersonaRefDto; link: { provider: SocialLinkProvider; url: string; verification: SocialLinkVerification; hidden: boolean } }
+  /** 수료 회고(A-06): 읽는 사람이 보는 것과 같은 회고 하나(작성자 id 없음). */
+  | { kind: 'completion_retro'; retro: CompletionRetroDto; status: CompletionRetroStatus }
   | { kind: 'unavailable'; message: string }
 
 /** 운영자 화면의 페르소나 이름표(S-07): 그 페르소나 자신의 값만. */
@@ -3138,7 +3152,8 @@ export interface ArchiveOptionsDto {
   hasAcceptedAnswer: boolean
   answerIsMine: boolean
   school: { id: string; name: string } | null
-  targets: Record<ArchiveTransferTarget, 'source_not_open' | 'not_author' | 'not_question_board' | 'no_accepted_answer' | null>
+  /** comment_source(A-06): 댓글(답변)은 선배 노트로만 옮깁니다. */
+  targets: Record<ArchiveTransferTarget, 'source_not_open' | 'not_author' | 'not_question_board' | 'no_accepted_answer' | 'comment_source' | null>
   projects: Array<{ id: string; title: string }>
   /** 막힘 Q&A 복사본에 고를 수 있는 표시명: 내 active 표시명 페르소나의 이름(없으면 null, 계정 이름 아님, ADR 0030). */
   displayName: string | null
@@ -3146,6 +3161,11 @@ export interface ArchiveOptionsDto {
   lengths: { title: number; body: number; answer: number }
   limits: { stuckSymptom: number; logBody: number; solution: number; noteAnswer: number }
   timeBuckets: string[]
+  /**
+   * 옮길 원본(A-06): 글 또는 토픽의 내 댓글(답변). affiliated면 원본이 소속 표시 익명이라 선배 노트 표시로 "소속 표시 유지"를 고를 수 있고,
+   * affiliationLabel은 원 글에 고정된 소속 표시(그대로 복사됨, 표시 안 함으로 쓴 글이면 null — 이때는 유지할 표시가 없음).
+   */
+  source: { kind: 'post' | 'comment'; commentId: string | null; affiliated: boolean; affiliationLabel: string | null }
 }
 
 export interface CommunityReactionDto {
@@ -3451,4 +3471,71 @@ export interface MySocialLinksDto {
   limit: number
   /** 링크한 페이지에 넣어야 하는 이 페르소나의 공개 프로필 주소(`<사이트>/u/<handle>`). */
   backLinkUrl: string
+}
+
+// ── 수료 회고 (A-06, ADR 0043) ───────────────────────────────────────────
+
+export type CompletionRetroQuestion = 'learned' | 'curriculum' | 'beforeStart' | 'advice'
+export type CompletionRetroAnswers = Partial<Record<CompletionRetroQuestion, string>>
+export type CompletionRetroDisplayMode = 'name' | 'display' | 'anonymous'
+export type CompletionRetroStatus = 'published' | 'withdrawn' | 'hidden'
+
+/** 읽는 사람에게 주는 수료 회고. 별점·연봉·추천 점수 필드가 없습니다. 작성자 id·소속 id·회원 수도 없습니다. */
+export interface CompletionRetroDto {
+  id: string
+  /** 계정 이름·표시명, 또는 "익명 수료생". */
+  author: string
+  anonymous: boolean
+  /** 쓰는 순간 고정한 기관 표시(`○○부트캠프 · 수료생`·`부트캠프 수료생`), 표시 안 함이면 null. */
+  institutionLabel: string | null
+  /** 기관 이름 범위로 고정된 회고만(넓혀진 익명 회고는 null). */
+  institution: { id: string; name: string; kind: InstitutionKind } | null
+  /** 이름을 건 회고에서 작성자가 고른 기수. */
+  cohortLabel: string | null
+  answers: CompletionRetroAnswers
+  publishedAt: string
+  mine: boolean
+  canReport: boolean
+  /** 내 회고이고 기관 표시가 넓혀졌는지(작성자 본인에게만). */
+  labelBroadened?: boolean
+}
+
+export interface CompletionRetroListDto {
+  /** 읽을 수 있는지(active 기관 인증 하나 이상 또는 운영자). false면 빈 목록. */
+  eligible: boolean
+  items: CompletionRetroDto[]
+  /** 기관 이름 범위의 회고가 있는 기관(필터용, 개수 없음). */
+  institutions: Array<{ id: string; name: string; kind: InstitutionKind; kindLabel: string }>
+  /** 다음 쪽(`before`에 넣음). 없으면 null. */
+  nextBefore: string | null
+}
+
+export interface MyCompletionRetroDto extends CompletionRetroDto {
+  displayMode: CompletionRetroDisplayMode
+  status: CompletionRetroStatus
+  withdrawnAt: string | null
+  /** 운영 조치로 숨겨졌으면 그 안내. */
+  moderation: ModerationNoticeDto | null
+}
+
+export interface CompletionRetroComposerDto {
+  /** 쓸 수 있는 내 소속(대학이 아닌 기관의 수료생). 없으면 []. */
+  options: Array<{
+    affiliationId: string
+    institution: { id: string; name: string; kind: InstitutionKind }
+    title: string
+    cohortLabel: string | null
+    /** 이 기관에 이미 공개(·숨김) 회고가 있음(철회하면 다시 씀). */
+    alreadyWritten: boolean
+    /** 익명으로 쓸 때 범위별 기관 표시 미리보기(회원 수 없음, 넓혀졌는지만). */
+    anonymousPreviews: Record<AffiliationLabelScope, { label: string | null; broadened: boolean }>
+  }>
+  questions: CompletionRetroQuestion[]
+  displayModes: CompletionRetroDisplayMode[]
+  scopes: AffiliationLabelScope[]
+  defaultScope: AffiliationLabelScope
+  accountName: string | null
+  displayPersonaName: string | null
+  guideline: string
+  broadenedNote: string
 }

@@ -8,6 +8,8 @@
  * - S-07(ADR 0036): 페르소나(`{handle}`, 실명·표시명 어느 쪽이든)·프로필 글(`{activityId}`)·소셜 링크(`{handle, url}`). 판정은 social 모듈의 공개 경로와
  *   같고(공개 상태 + 신고자에게 차단으로 숨겨지지 않음 + 글은 `posts` 공개 범위), 포인터는 **그 페르소나·글·링크 하나**뿐입니다 — 주인 사용자로 풀지
  *   않으므로 표시명 신고가 실명 프로필·실명 handle과 이어지지 않습니다. 이름표는 그 페르소나 자신의 handle입니다.
+ * - A-06(ADR 0043): 수료 회고(`{retroId}`). 공개 대상이 아니라 신고자가 읽을 수 있는(active 기관 인증) 게시 중인 회고만, institutions 플래그가
+ *   꺼지면 404. 당사자는 작성자, 이름표는 "수료 회고 · 고정된 기관 표시"(넓혀졌으면 넓힌 문자열 — 기관 이름을 새로 드러내지 않음).
  */
 import { z } from 'zod'
 import {
@@ -21,6 +23,7 @@ import {
 import {
   and,
   caseStudies,
+  completionRetros,
   courseQaItems,
   courses,
   eq,
@@ -57,6 +60,7 @@ import { loadCaseStudiesWithRelease } from '../portfolio/release-scope'
 import { isPubliclyVisible } from '../portfolio/view'
 import { isUuid } from '../projects/access'
 import { loadServedRelease } from '../publication/public-read'
+import { resolveReportableRetro } from '../institutions/completion-retros'
 import { resolvePublicPersona } from '../social/personas'
 import { reportableProfilePost } from '../social/profile-posts'
 import { isHiddenFrom } from '../social/relations'
@@ -87,6 +91,8 @@ export interface TargetPointer {
   personaId: string | null
   profilePostId: string | null
   socialLinkId: string | null
+  /** A-06: 수료 회고. */
+  completionRetroId: string | null
 }
 
 const empty = (targetType: ReportTargetType, identity: ReportTargetIdentity): TargetPointer => ({
@@ -110,6 +116,7 @@ const empty = (targetType: ReportTargetType, identity: ReportTargetIdentity): Ta
   personaId: null,
   profilePostId: null,
   socialLinkId: null,
+  completionRetroId: null,
 })
 
 const slug = z.string({ error: 'invalid' }).trim().toLowerCase().min(3, { error: 'invalid' }).max(60, { error: 'invalid' })
@@ -129,6 +136,7 @@ const refSchemas = {
   profile_post: z.object({ activityId: z.uuid({ error: 'invalid' }).transform((id) => id.toLowerCase()) }),
   social_link: z.object({ handle, url: z.string({ error: 'invalid' }).trim().min(1, { error: 'invalid' }).max(300, { error: 'invalid' }) }),
   course_qa: z.object({ qaId: z.uuid({ error: 'invalid' }).transform((id) => id.toLowerCase()) }),
+  completion_retro: z.object({ retroId: z.uuid({ error: 'invalid' }).transform((id) => id.toLowerCase()) }),
 } as const
 
 function parseRef<T extends keyof typeof refSchemas>(type: T, raw: unknown): z.output<(typeof refSchemas)[T]> {
@@ -274,6 +282,13 @@ export async function resolvePublicTarget(db: DbExecutor, type: ReportTargetType
       const { socialLinkId } = await reportableSocialLink(db, persona.id, ref.url)
       return { ...empty(type, { type, socialLinkId }), socialLinkId }
     }
+    // A-06: 신고자가 읽을 수 있는 게시 중인 수료 회고(플래그 꺼짐·읽을 수 없음 404).
+    case 'completion_retro': {
+      if (!actor) throw notFound()
+      const ref = parseRef('completion_retro', rawRef)
+      const retroId = await resolveReportableRetro(db, actor, ref.retroId)
+      return { ...empty(type, { type, retroId }), completionRetroId: retroId }
+    }
   }
 }
 
@@ -314,6 +329,7 @@ export async function affectedUserIds(
     | 'personaId'
     | 'profilePostId'
     | 'socialLinkId'
+    | 'completionRetroId'
   >,
 ): Promise<string[]> {
   switch (target.targetType) {
@@ -373,6 +389,11 @@ export async function affectedUserIds(
       const [row] = await db.select({ userId: socialLinks.userId }).from(socialLinks).where(eq(socialLinks.id, target.socialLinkId)).limit(1)
       return row ? [row.userId] : []
     }
+    case 'completion_retro': {
+      if (!target.completionRetroId) return []
+      const [row] = await db.select({ userId: completionRetros.authorId }).from(completionRetros).where(eq(completionRetros.id, target.completionRetroId)).limit(1)
+      return row ? [row.userId] : []
+    }
   }
 }
 
@@ -400,6 +421,11 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
     ? await db.select({ id: courseQaItems.id, title: courses.title }).from(courseQaItems).innerJoin(courses, eq(courses.id, courseQaItems.courseId)).where(inArray(courseQaItems.id, qaIds))
     : []
   const qaCourseBy = new Map(qaRows.map((r) => [r.id, r.title]))
+  const retroIds = [...new Set(targets.map((t) => t.completionRetroId).filter((id): id is string => !!id))]
+  const retroRows = retroIds.length
+    ? await db.select({ id: completionRetros.id, label: completionRetros.institutionLabel }).from(completionRetros).where(inArray(completionRetros.id, retroIds))
+    : []
+  const retroLabelBy = new Map(retroRows.map((r) => [r.id, r.label]))
   const personaHandleBy = await personaHandles(db, targets)
   const [pubRows, noteRows, caseRows] = await Promise.all([
     pubIds.length ? db.select({ id: publications.id, slug: publications.slug }).from(publications).where(inArray(publications.id, pubIds)) : [],
@@ -474,6 +500,11 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
         label = `소셜 링크${p ? ` · @${p.handle}` : ''}`
         break
       }
+      case 'completion_retro': {
+        const l = retroLabelBy.get(t.completionRetroId ?? '')
+        label = `수료 회고${l ? ` · ${l}` : ''}`
+        break
+      }
     }
     out.set(t.targetKey, label)
   }
@@ -520,6 +551,7 @@ export function pointerOf(
     | 'personaId'
     | 'profilePostId'
     | 'socialLinkId'
+    | 'completionRetroId'
   > & {
     noteVersion?: number | null
     caseStudyVersion?: number | null
@@ -532,6 +564,7 @@ export function pointerOf(
     personaId?: string | null
     profilePostId?: string | null
     socialLinkId?: string | null
+    completionRetroId?: string | null
   },
 ): TargetPointer {
   return {
@@ -555,6 +588,7 @@ export function pointerOf(
     personaId: row.personaId ?? null,
     profilePostId: row.profilePostId ?? null,
     socialLinkId: row.socialLinkId ?? null,
+    completionRetroId: row.completionRetroId ?? null,
   }
 }
 

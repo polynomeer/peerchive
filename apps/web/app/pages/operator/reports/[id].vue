@@ -226,6 +226,24 @@ async function loadAudit() {
             보이지 않고 지원을 받지 않으며, 지원 메시지는 모집자에게 "운영 조치로 가려진 메시지입니다"로 보입니다.
           </p>
         </template>
+        <template v-else-if="data.content.kind === 'completion_retro'">
+          <p data-testid="op-retro">
+            <strong>{{ data.content.retro.author }}</strong>
+            <template v-if="data.content.retro.institutionLabel"> · {{ data.content.retro.institutionLabel }}</template>
+            <template v-if="data.content.retro.cohortLabel"> · {{ data.content.retro.cohortLabel }}</template>
+            <span class="badge">수료 회고</span>
+            <span v-if="data.content.status === 'hidden'" class="badge">운영 조치로 숨김</span>
+          </p>
+          <dl>
+            <template v-for="q in COMPLETION_RETRO_QUESTIONS" :key="q">
+              <template v-if="data.content.retro.answers[q]">
+                <dt>{{ COMPLETION_RETRO_QUESTION_LABELS[q] }}</dt>
+                <dd class="pre">{{ data.content.retro.answers[q] }}</dd>
+              </template>
+            </template>
+          </dl>
+          <p class="hint">회고 하나만 보입니다. 숨기면 목록에서 빠지고 작성자에게 안내가 가며, 이의제기로 되돌리면 다시 보입니다.</p>
+        </template>
         <template v-else-if="data.content.kind === 'persona' || data.content.kind === 'profile_post' || data.content.kind === 'social_link'">
           <p data-testid="op-persona">
             <strong>{{ data.content.persona.displayName }}</strong> @{{ data.content.persona.handle }}

@@ -56,6 +56,7 @@ import {
   users,
   type DbExecutor,
 } from '@peerchive/db'
+import { loadRetroForOperator } from '../institutions/completion-retros'
 import { recordAudit } from '../audit/audit'
 import { communityItemStatuses, operatorCommunityItem, operatorRecruitmentItem, operatorSpaceContent } from '../community/reporting'
 import { requireOperator } from '../catalog/operators'
@@ -346,6 +347,12 @@ async function contentFor(db: DbExecutor, report: ReportRow, now: Date): Promise
     case 'profile_post':
     case 'social_link':
       return personaReportContent(db, report)
+    // A-06: 수료 회고 하나(지금 행, 숨긴 것도 내용 포함). 작성자 id는 없습니다(당사자 안내는 조치 경로가 author_id로 함).
+    case 'completion_retro': {
+      const loaded = report.completionRetroId ? await loadRetroForOperator(db, report.completionRetroId) : null
+      if (!loaded || loaded.status === 'withdrawn') return { content: unavailable('작성자가 회고를 철회했습니다.'), publicPath: null, servedNow: false }
+      return { content: { kind: 'completion_retro', retro: loaded.dto, status: loaded.status }, publicPath: null, servedNow: loaded.status === 'published' }
+    }
   }
 }
 

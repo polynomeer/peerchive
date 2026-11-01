@@ -5,17 +5,21 @@
  * - 복사본에 보일 이름을 다시 고릅니다. 원 글은 그대로 남고 열람 범위도 바뀌지 않습니다.
  * - 막힘 Q&A는 공개 전 점검 경고를 보여 주고 확인을 받습니다(답한 학생에게도 같은 경고가 보임).
  * 성공하면 요청 화면(/community/archive-transfers/:id)으로 갑니다.
+ * A-06: commentId를 주면 토픽의 내 답변(댓글)을 선배 노트 초안으로 옮깁니다(질문 글은 복사하지 않음). 소속 표시 익명 원본이면 "소속 표시 유지"를
+ * 고를 수 있고, 원 글에 고정된 소속 표시가 그대로 복사됩니다(프로필과 연결되지 않음).
  */
 import type { ArchiveOptionsDto, ArchiveTransferDto, ArchiveTransferTarget, CourseDto, PublicationCheckRule, SchoolDto } from '~~/shared/types/api'
 
-const props = defineProps<{ postId: string }>()
+const props = defineProps<{ postId: string; commentId?: string }>()
 const emit = defineEmits<{ close: [] }>()
 
 const options = ref<ArchiveOptionsDto | null>(null)
 const loadError = ref('')
 onMounted(async () => {
   try {
-    options.value = await $fetch<ArchiveOptionsDto>(`/api/v1/community/posts/${props.postId}/archive-options`)
+    options.value = await $fetch<ArchiveOptionsDto>(`/api/v1/community/posts/${props.postId}/archive-options`, {
+      query: props.commentId ? { commentId: props.commentId } : {},
+    })
     const first = (['course_qa', 'stuck_log', 'senior_note'] as const).find((t) => options.value!.targets[t] === null)
     if (first) form.target = first
     if (options.value.school) school.value = { id: options.value.school.id, name: options.value.school.name } as SchoolDto
@@ -29,6 +33,7 @@ const REASON_TEXT: Record<string, string> = {
   not_author: '내가 쓴 글만 옮길 수 있습니다.',
   not_question_board: '질문 게시판의 글만 옮길 수 있습니다.',
   no_accepted_answer: '먼저 답변 하나를 채택하세요.',
+  comment_source: '답변은 선배 노트로만 옮길 수 있습니다.',
 }
 
 const form = reactive({
@@ -39,7 +44,7 @@ const form = reactive({
   includeAnswer: false,
   notAnswerConfirmed: false,
   answerKey: 'wishKnew' as (typeof SENIOR_NOTE_QUESTIONS)[number],
-  noteDisplay: 'anonymous' as 'name' | 'display' | 'anonymous',
+  noteDisplay: 'anonymous' as 'name' | 'display' | 'anonymous' | 'affiliation',
   noteDisplayName: '',
   noAnswersConfirmed: false,
   confirmWarnings: false,
@@ -81,6 +86,7 @@ async function submit() {
   errors.value = []
   busy.value = true
   const body: Record<string, unknown> = { target: form.target }
+  if (props.commentId) body.commentId = props.commentId
   if (needsCourse.value && course.value) body.courseId = course.value.id
   if (form.target === 'course_qa') {
     body.displayMode = form.qaDisplay
@@ -227,17 +233,28 @@ async function submit() {
 
       <template v-else>
         <div class="field">
-          <label for="archive-answer-key">이 글을 넣을 질문</label>
+          <label for="archive-answer-key">{{ commentId ? '이 답변을 넣을 질문' : '이 글을 넣을 질문' }}</label>
           <select id="archive-answer-key" v-model="form.answerKey">
             <option v-for="q in SENIOR_NOTE_QUESTIONS" :key="q" :value="q">{{ SENIOR_NOTE_QUESTION_LABELS[q] }}</option>
           </select>
         </div>
         <fieldset>
           <legend>선배 노트 작성자 표시</legend>
+          <div v-if="options.source.affiliated" class="radio-row">
+            <input id="note-display-affiliation" v-model="form.noteDisplay" type="radio" name="note-display" value="affiliation" :disabled="!options.source.affiliationLabel" />
+            <label for="note-display-affiliation" data-testid="note-display-affiliation">
+              소속 표시 유지<template v-if="options.source.affiliationLabel">: {{ options.source.affiliationLabel }}</template>
+              <span v-else class="small muted"> — 원 글에 소속 표시가 없습니다(익명을 고르세요)</span>
+            </label>
+          </div>
           <div v-for="m in (['anonymous', 'display', 'name'] as const)" :key="m" class="radio-row">
             <input :id="`note-display-${m}`" v-model="form.noteDisplay" type="radio" name="note-display" :value="m" />
             <label :for="`note-display-${m}`">{{ SENIOR_NOTE_DISPLAY_LABELS[m] }}</label>
           </div>
+          <p v-if="options.source.affiliated" class="hint">
+            소속 표시 유지·익명은 프로필과 연결되지 않습니다. 계정 이름·표시명을 고르면 노트가 그 프로필 활동으로 보이고, 토픽 원 글을 읽은 사람은 같은 글임을
+            알아볼 수 있습니다(원 글과의 연결은 어디에도 싣지 않습니다).
+          </p>
           <div v-if="form.noteDisplay === 'display'" class="field">
             <label for="note-display-name">표시명</label>
             <input id="note-display-name" v-model="form.noteDisplayName" maxlength="40" />

@@ -112,7 +112,7 @@ export const ANALYTICS_PROP_SPECS: Readonly<Record<AnalyticsEventName, Readonly<
   publication_withdrawn: { cause: enumOf(['owner', 'consent_revoked', 'restricted']) },
   plan_forked: { milestones: count(100), references: count(1000) },
   usefulness_marked: { target: enumOf(['stuck_item', 'senior_note', 'course_qa']), kind: enumOf(['me_too', 'helped']) },
-  senior_note_published: { displayMode: enumOf(['name', 'display', 'anonymous']), answers: count(4) },
+  senior_note_published: { displayMode: enumOf(['name', 'display', 'anonymous', 'affiliation']), answers: count(4) },
   portfolio_shared: { featured: count(5), competencies: count(12), skills: count(20) },
   login_succeeded: { newUser: bool },
   // 학교 메일 인증 성공(C-01). 학교 id·도메인은 넣지 않습니다(작은 학교는 학교만으로 사람을 좁힐 수 있음). 재학/졸업생 구분만.

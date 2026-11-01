@@ -99,7 +99,8 @@ export async function handlePersonaActivityProject(db: DbExecutor, data: unknown
           .where(eq(seniorNotes.id, event.sourceId))
           .limit(1)
           .for('share')
-        if (!note || note.displayMode === 'anonymous') return 0
+        // 익명·소속 표시(A-06) 노트는 투영하지 않습니다(이벤트도 없지만 있더라도).
+        if (!note || (note.displayMode !== 'name' && note.displayMode !== 'display')) return 0
         const kind = note.displayMode === 'name' ? 'real' : 'display'
         const [persona] = await tx
           .select({ id: personas.id })

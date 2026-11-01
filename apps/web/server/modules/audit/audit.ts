@@ -157,6 +157,9 @@ export type AuditAction =
   | 'community.directory_withdraw'
   | 'course_qa.publish'
   | 'course_qa.withdraw'
+  // A-06(ADR 0043): 수료 회고 쓰기·철회. 회고 id와 방식·넓혀졌는지 같은 플래그만(기관·기수·글 없음). 익명 회고는 행위자 없이.
+  | 'completion_retro.create'
+  | 'completion_retro.withdraw'
   | 'ops_time.save'
   | 'ops_time.delete'
   | 'metrics.export'
@@ -225,6 +228,7 @@ export async function recordAudit(
       | 'profile_post'
       | 'invite_code'
       | 'certificate_check'
+      | 'completion_retro'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

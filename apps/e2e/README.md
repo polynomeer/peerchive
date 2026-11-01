@@ -73,6 +73,7 @@ docker compose -f ops/docker-compose.yml down
 | `alumni-directory.spec.ts` | A-03 | P2 alumni 플래그가 꺼진 기본 상태: 명부 API(쪽 보기·동의·철회)와 내보내기처럼 보이는 경로가 404, 공간 화면에 명부 링크 없음·명부 화면은 "찾을 수 없습니다"(켜진 상태는 web 통합 테스트) |
 | `lounge-media.spec.ts` | A-04 | P2 플래그 꺼짐(기본): 운영자가 공식 학교 페이지를 열고 인증 학생이 자유 게시판(라운지)에 글 → 미디어 API(붙이기·올리기·보기·지우기) 404, 글 응답에 `lounge` 없음, 글 화면에 이미지 영역 없음 → 졸업생 인증 이력(인증 뒤 메일 확인이 끝난 졸업생, DB로 준비)만 있는 사람은 공간·졸업생 게시판·글 모두 404(active 인증만 봄). 켜진 상태는 web 통합 테스트 |
 | `topics.spec.ts` | A-05 | P2 플래그 꺼짐(기본): 토픽 목록·운영자 토픽 만들기 API 404 → CLI와 같은 규칙으로 DB에 준비한 토픽의 상세·게시판(인증 학생·운영자 모두)·글쓰기 404 → 공식 페이지 자유 게시판에서 `nameMode: affiliated_anonymous` 422 `affiliated_not_allowed`·`affiliationScope` 422 → 커뮤니티 첫 화면에 토픽 링크 없음, `/community/topics` 404 "페이지를 찾을 수 없습니다". 켜진 상태(시나리오 Y·임계값·DB 불변식·S-02)는 web 통합 테스트 |
+| `topic-answer-retros.spec.ts` | A-06 | P2 플래그 꺼짐(기본): 수료 회고 목록·쓰기 화면·쓰기·내 회고 API 404 → DB에 준비한 토픽의 답변을 선배 노트로 옮기는 요청·선택지 404 → 공식 페이지(토픽 밖) 댓글을 옮기면 422 `commentId: not_allowed` → 선배 노트 직접 만들기의 `displayMode: affiliation` 422 → 커뮤니티 첫 화면에 회고 링크 없음, `/community/retros` 404. 켜진 상태(이름 표시 네 가지·소속 표시 복사·투영 0건·회고 임계값·평가 필드 없음·신고·탈퇴 정리·S-02 확장)는 web 통합 테스트 |
 | `g-retrospective.spec.ts` | G | 사후 작성 과제·마일스톤·로그 배지, 기억·파일 기준 날짜, 공개 화면·JSON까지 `사후 작성` |
 | `h-mobile-keyboard.spec.ts` | H | 파일 먼저 → 나중에 설명, 오프라인 저장 실패에도 입력 보존·"오류 — 재시도"·재시도 성공, 새로고침 뒤 입력 복원, 할 일·마일스톤 키보드 순서 변경(포커스 유지) |
 | `i-public-profile.spec.ts` | I | 익명 검토자가 `/u/<handle>`에서 문제·내 역할·근거 칩 → 공개 기록, HTML·JSON·OG·인쇄·README 카드에 이메일·체크인 메모·비공개 로그·내부 id 없음 |

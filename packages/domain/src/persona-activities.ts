@@ -54,7 +54,7 @@ export type PersonaActivitySourceFacts =
       discovery: 'listed' | 'unlisted'
       published: boolean
     }
-  | { type: 'senior_note'; displayMode: 'name' | 'display' | 'anonymous'; published: boolean }
+  | { type: 'senior_note'; displayMode: 'name' | 'display' | 'anonymous' | 'affiliation'; published: boolean }
   | { type: 'publication_release'; snapshot: { kind?: unknown; studyNameMode?: unknown }; published: boolean; consented: boolean }
   | { type: 'study_release'; snapshot: { kind?: unknown; studyNameMode?: unknown }; published: boolean; consented: boolean }
   | { type: 'profile_post'; ownPersonaId: string; published: boolean }
@@ -94,7 +94,8 @@ export function decidePersonaActivityProjection(source: PersonaActivitySourceFac
       return ok()
     }
     case 'senior_note': {
-      if (source.displayMode === 'anonymous') return refuse('anonymous')
+      // 익명·소속 표시(A-06) 노트는 투영 경로가 없습니다(DB 함수 persona_activity_source_ok도 name·display만).
+      if (source.displayMode !== 'name' && source.displayMode !== 'display') return refuse('anonymous')
       const kind: PersonaKind = source.displayMode === 'name' ? 'real' : 'display'
       if (kind !== persona.kind) return refuse('persona_mismatch')
       if (!source.published) return refuse('not_published')

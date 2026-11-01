@@ -91,10 +91,20 @@ export const SENIOR_NOTE_TERM_LABEL_MAX = 30
 /** 사용자·과목마다 노트 수 한도(초안 남발 방지). */
 export const SENIOR_NOTE_PER_COURSE_LIMIT = 3
 
-/** 표시 방식: 계정 이름(name) / 직접 입력한 표시명(display) / 익명(anonymous, "익명 선배"). */
+/** 직접 쓸 때 고르는 표시 방식: 계정 이름(name) / 직접 입력한 표시명(display) / 익명(anonymous, "익명 선배"). */
 export const SENIOR_NOTE_DISPLAY_MODES = ['name', 'display', 'anonymous'] as const
-export type SeniorNoteDisplayMode = (typeof SENIOR_NOTE_DISPLAY_MODES)[number]
+/**
+ * 모든 표시 방식(DB enum senior_note_display_mode와 같은 값). affiliation(A-06, ADR 0043)은 토픽(소속 표시 익명) 답변을 옮기며 "소속 표시 유지"를
+ * 고른 노트뿐입니다: 원 글에 고정된 소속 표시 문자열(복사본)만 보이고 페르소나로 투영되지 않습니다. 직접 만들기에서는 고를 수 없습니다.
+ */
+export const SENIOR_NOTE_ALL_DISPLAY_MODES = ['name', 'display', 'anonymous', 'affiliation'] as const
+export type SeniorNoteDisplayMode = (typeof SENIOR_NOTE_ALL_DISPLAY_MODES)[number]
 export const ANONYMOUS_SENIOR_LABEL = '익명 선배'
+
+/** 페르소나로 투영되는 표시 방식인지(name → 실명, display → 표시명). 익명·소속 표시는 투영 경로가 없습니다(S-05, A-06). */
+export function isPersonaSeniorNoteMode(mode: SeniorNoteDisplayMode): mode is 'name' | 'display' {
+  return mode === 'name' || mode === 'display'
+}
 
 /** 대략 총 소요 시간(supply-kit §2의 7번): ~10시간 / ~20시간 / ~40시간 / 40시간 이상. */
 export const SENIOR_NOTE_TIME_BUCKETS = ['lt10h', 'lt20h', 'lt40h', 'forty_plus'] as const
@@ -147,9 +157,13 @@ export function normalizeSeniorNoteAnswers(raw: unknown): SeniorNoteAnswersCheck
   return { ok: true, answers: ordered }
 }
 
-/** 공개 표시 이름. 익명은 항상 "익명 선배"(작성자 정보 없음). */
-export function seniorNoteAuthorLabel(mode: SeniorNoteDisplayMode, displayNameSnapshot: string | null): string {
+/**
+ * 공개 표시 이름. 익명은 항상 "익명 선배"(작성자 정보 없음). 소속 표시(affiliation, A-06)는 원 글에서 복사한 소속 표시(`○○대학교 · 졸업생`,
+ * `부트캠프 수료생`)이고, 없으면(넓혀져 표시 안 함이 된 원 글) 익명과 같습니다.
+ */
+export function seniorNoteAuthorLabel(mode: SeniorNoteDisplayMode, displayNameSnapshot: string | null, affiliationLabel: string | null = null): string {
   if (mode === 'anonymous') return ANONYMOUS_SENIOR_LABEL
+  if (mode === 'affiliation') return affiliationLabel?.trim() || ANONYMOUS_SENIOR_LABEL
   const name = displayNameSnapshot?.trim()
   return name ? name : ANONYMOUS_SENIOR_LABEL
 }
