@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 공개 프로필 인쇄 보기(T-14, PROOFU_EVOLUTION_PLAN §10.6 "기본 인쇄 보기", ADR 0008의 인쇄 방식). A4, 사이트 머리글 없음(layout 없음).
- * 브라우저의 인쇄 → "PDF로 저장"으로 PDF를 만듭니다(서버 PDF 생성 없음).
+ * 브라우저의 인쇄 → "PDF로 저장"으로 PDF를 만듭니다. 같은 공개 DTO로 서버가 만든 지원용 PDF(E-08, ADR 0052)는 "PDF 내려받기" 링크로 받습니다.
  * - 공개 프로필과 같은 공개 조회 API만 부릅니다(쿠키 없음). 그래서 인쇄물에도 공개 프로필에 없는 정보(이메일·내부 id·비공개 기록)가 없습니다.
  * - 링크는 종이에서도 따라갈 수 있게 주소를 함께 적습니다.
  * - 상대 페르소나(S-01)는 본인이 연결을 켰을 때만(`linkedPersona`) 주소를 적습니다. 꺼져 있으면 인쇄물에도 0건입니다.
@@ -37,6 +37,7 @@ const printPage = () => window.print()
     <nav class="report-toolbar no-print" aria-label="인쇄 도구">
       <NuxtLink :to="`/u/${handle}`">← 공개 프로필로 돌아가기</NuxtLink>
       <button v-if="profile" type="button" @click="printPage">인쇄 / PDF로 저장</button>
+      <a v-if="profile" :href="`/api/v1/public/profiles/${profile.handle}/portfolio.pdf`" download data-testid="portfolio-pdf">PDF 내려받기(서버 생성)</a>
     </nav>
     <main id="main" class="report">
       <template v-if="error || !profile">

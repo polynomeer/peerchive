@@ -135,6 +135,7 @@ const years = computed(() => {
         </p>
         <p class="actions small">
           <NuxtLink :to="`/u/${profile.handle}/print`">인쇄용 보기 / PDF로 저장</NuxtLink>
+          <a :href="`/api/v1/public/profiles/${profile.handle}/portfolio.pdf`" download data-testid="portfolio-pdf">PDF 내려받기</a>
           <a :href="`/api/v1/public/profiles/${profile.handle}/readme-card.md`">GitHub README 카드(마크다운)</a>
         </p>
         <p v-if="profile.schoolLabel" class="small muted">학교(본인 입력): {{ profile.schoolLabel }}</p>
