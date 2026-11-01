@@ -46,7 +46,7 @@ try {
     .map(([k, n]) => `${k}=${n}`)
     .join(' ')
   console.info(
-    `[reapply-deletions] ${dryRun ? 'dry-run ' : ''}source=${ledgerArg ? 'file' : 'database'} subjects=${result.subjects} matched=${result.matched} repurged=${result.repurged} imported=${result.imported} ms=${Math.round(performance.now() - started)}${kinds ? ` ${kinds}` : ''}`,
+    `[reapply-deletions] ${dryRun ? 'dry-run ' : ''}source=${ledgerArg ? 'file' : 'database'} subjects=${result.subjects} matched=${result.matched} repurged=${result.repurged} imported=${result.imported} certificateFiles=${result.retentionRepurged} ms=${Math.round(performance.now() - started)}${kinds ? ` ${kinds}` : ''}`,
   )
 } catch (error) {
   console.error(`[reapply-deletions] failed: ${(error as Error).message}`)

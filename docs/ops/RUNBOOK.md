@@ -180,6 +180,20 @@ select count(*) from persona_owner_lookups where char_length(reason) < 5;  -- 0�
 select metadata from audit_events where action = 'persona.owner_lookup' order by at desc limit 20;
 ```
 
+### GA: 졸업생·토픽·기관(P2) 개방 — 기능 플래그
+
+P2 기능은 코드가 있어도 **기본으로 꺼져 있고** 이 게이트(DELIVERY_PLAN §7 GA)를 통과한 뒤에 배포 설정으로 켭니다([ADR 0037](../adr/0037-institutions.md) §1). 꺼진 영역의 새 API는 404, 화면 진입점은 숨김입니다. 기존 기능(C-01 학교 메일 인증 등)은 플래그와 무관합니다.
+
+| 변수 | 영역 | 켜기 전 확인 |
+|---|---|---|
+| `PEERCHIVE_FEATURE_P2_INSTITUTIONS=on` | 기관 확장(I-01 초대 코드·기수 승인·수료증 확인, 이후 I-02) | GC 통과·§6.1 근거, 협력 기관 확보(제품 기획 §19 질문 13), **수료증 파일 삭제 절차 검토**(아래 §4.6·§8, worker `certificate-files`가 돌고 있는지 `/operator/metrics` 시스템 상태에서 확인), 수료증 확인 담당 운영자 지정, 기관 운영진 권한 범위 검토(I-02) |
+| `PEERCHIVE_FEATURE_P2_ALUMNI=on` | 졸업생 공간(A-01~A-04) | A-03 명부 회귀 테스트, 함께 열 동문 모임 확보 |
+| `PEERCHIVE_FEATURE_P2_TOPICS=on` | 토픽·소속 표시 익명(A-05·A-06) | A-05 임계값·S-02 확장 회귀 테스트 |
+| `PEERCHIVE_FEATURE_P2=on` | 위 셋 모두(영역 변수 `off`가 우선) | 위 모두 |
+
+- 값은 `on`·`1`·`true`·`yes`만 켜짐, 그 밖은 꺼짐. web은 요청마다 읽으므로 바꾼 뒤 web을 재시작합니다. 확인: `curl -s https://<사이트>/api/v1/features` → `{"alumni":false,"topics":false,"institutions":true}`.
+- 끄기(되돌리기): 변수를 지우고 재시작하면 새 경로가 다음 요청부터 404입니다. 이미 만든 소속은 그대로 active이고(다시 켜면 그대로 보임), 이미 올라온 수료증 파일은 worker가 계속 지웁니다.
+
 ## 3. 사고 대응
 
 공통: 처음 5분 안에 "막기"부터 합니다. 원인 조사는 막은 뒤에 합니다. 모든 조치는 감사 기록(`/operator/audit`)에 남고, 사고 기록(시각·범위·조치·후속)은 `<사고 기록 위치>`에 둡니다.
@@ -370,6 +384,56 @@ select metadata from audit_events where action = 'persona.owner_lookup' order by
 
 **계정 단위 조치.** API가 없습니다. 주인 확인 뒤에도 필요하면 운영 회의에서 결정하고, 계정 정지(`users.status = 'suspended'`, 세션 거부 — 두 프로필 모두 404)는 운영 DB 권한자가 기록을 남기고 실행합니다. 다른 프로필만 숨기려면 그 프로필에 대한 신고로 처리합니다(운영자가 직접 신고할 수 있음).
 
+### 4.6 기관·초대 코드·기수 승인·수료증 확인(I-01, ADR 0037)
+
+플래그 `PEERCHIVE_FEATURE_P2_INSTITUTIONS`가 꺼져 있어도 아래 준비(기관·코드 만들기)는 할 수 있지만 사용자는 코드를 쓸 수 없습니다(404).
+
+**기관 만들기.** 대학이 아닌 기관(부트캠프·교육 프로그램·동아리 연합)은 운영자만 만듭니다. 대학은 학생이 만드는 학교이고 학교 메일로만 인증합니다.
+
+```bash
+pnpm --filter @peerchive/db institution create bootcamp "피어 부트캠프"     # 출력의 id를 기록
+pnpm --filter @peerchive/db institution list [bootcamp|training_program|club_federation]
+```
+
+API는 `POST /api/v1/operator/institutions {name, kind}`. 같은 이름의 학교·기관이 있으면 거부합니다. 대학이 아닌 기관은 병합할 수 없으므로 잘못 만들었고 아직 소속·코드가 없으면 DB에서 지웁니다(`delete from schools where id = '<id>' and kind <> 'university' and not exists (select 1 from institution_affiliations where school_id = '<id>') and not exists (select 1 from institution_invite_codes where school_id = '<id>') and not exists (select 1 from institution_cohorts where school_id = '<id>')` — 감사 기록에 사유를 남김). 대학이 아닌 기관에는 공식 커뮤니티 페이지를 I-02 전까지 열지 않습니다(개설 요청이 와도 보류).
+
+**초대 코드 발급·철회(I-02 전까지 운영자).** 협력 기관 담당자와 기수·인원·기간을 정한 뒤 발급합니다.
+
+```bash
+# 웹과 같은 PEERCHIVE_AFFILIATION_PEPPER가 필요합니다(다르면 사용자 코드가 맞지 않음). 로컬 개발 DB에서는 NODE_ENV=development로 개발용 값을 씁니다.
+pnpm --filter @peerchive/db institution issue-code <institutionId> --max-uses=30 --days=14 --cohort=12기
+pnpm --filter @peerchive/db institution list-codes <institutionId>     # 유효·만료·소진·철회, 사용 수
+pnpm --filter @peerchive/db institution revoke-code <codeId>
+```
+
+- 코드 원문은 발급 출력에 **한 번만** 나옵니다(DB에는 HMAC만). 기관 담당자에게 개인 메시지로 전하고, 운영 채널·티켓에 원문을 남기지 않습니다. 잃어버리면 철회하고 새로 냅니다.
+- 사용 한도 1–1000, 기간 1–90일(기본 14). 유출이 의심되면 즉시 철회합니다. 철회해도 이미 그 코드로 인증한 소속은 그대로이므로, 잘못 들어온 계정은 §4.1의 소속 취소(`POST /api/v1/operator/affiliations/:id/revoke`)로 정리합니다(`GET /api/v1/operator/affiliations?schoolId=<기관 id>`).
+- 사용자 오류: "만료된/한도를 다 쓴/철회된 초대 코드" → 기관에 새 코드 요청. 시도 한도(사용자 10회·IP 30회/시간)를 넘으면 한 시간 뒤.
+
+**기수 승인 문의·사칭.** 기수 승인은 같은 기수에서 초대 코드·수료증으로 인증된 멤버 2명이 링크로 승인해야 됩니다. 기수 승인으로만 인증된 사람은 승인할 수 없습니다. 30일 안에 승인이 모이지 않으면 만료됩니다. 기수 승인으로 들어온 계정이 사칭으로 판정되면: 그 소속을 취소하고, 승인한 사람을 찾아(`select approver_user_id, approver_affiliation_id, created_at from cohort_approvals where affiliation_id = '<id>'`) 운영 회의에서 승인 자격 제한(그 사람 소속 취소 또는 경고)을 정합니다. 자동 연쇄 취소는 없습니다.
+
+**수료증 확인(운영자 확인 역할).**
+
+1. `/operator/certificates`(플래그가 켜져 있을 때 `/operator`에 링크). 대기 목록은 오래된 것부터입니다. 검사 전·격리된 파일은 열 수 없습니다.
+2. "파일 보기(60초)"는 그 운영자에게만 맞는 짧은 서명 URL을 새 창으로 엽니다(보기마다 감사 `certificate_check.view`). **화면 캡처·내려받기·옮겨 적기를 하지 않습니다.** 확인하는 것: 수료증의 이름이 계정 이름과 맞는지, 기관·(있으면) 기수가 맞는지, 위조 흔적.
+3. 승인 또는 거절(확인 대화상자). 결정 시각이 남고(처리 시간 지표), 결정 뒤에는 운영자도 파일을 볼 수 없습니다. 판단이 어려우면 결정하지 않고 운영 회의로 넘깁니다(30일 지나면 자동 만료·파일 삭제).
+4. 목표 처리 시간: `<시간>`(운영 회의에서 정함). 대기 목록이 쌓이면 §4.4 주간 루틴에서 봅니다.
+
+**수료증 파일 삭제 점검.** worker 주기 작업 `certificate-files`(10분마다, `PEERCHIVE_CRON_CERTIFICATE_FILES`)가 결정·취소·격리·미업로드(하루)·미결정(30일) 파일을 지우고 삭제 장부에 `entity_kind = certificate_file`, `source = retention` 행을 남깁니다(사용자 id 없음, 확인 id의 HMAC). 끄지 않습니다(GA 점검 항목). 점검 SQL:
+
+```sql
+-- 결정했는데 1시간 넘게 파일이 남은 수료증(0이어야 함 — 0이 아니면 worker·저장소 상태 확인, §3.5)
+select count(*) from certificate_checks where decided_at is not null and file_purged_at is null and decided_at < now() - interval '1 hour';
+-- 7일 한도를 넘긴 것(0이어야 함)
+select count(*) from certificate_checks where decided_at is not null and (file_purged_at is null or file_purged_at > decided_at + interval '7 days');
+-- 최근 삭제 기록(개수만)
+select date_trunc('day', purged_at) as day, count(*) from deletion_ledger where source = 'retention' and entity_kind = 'certificate_file' group by 1 order by 1 desc limit 14;
+-- 초대 코드 원문 열이 없는지(0행이어야 함)
+select column_name from information_schema.columns where table_name = 'institution_invite_codes' and column_name not in ('id','school_id','cohort_id','code_hash','issued_by','expires_at','max_uses','used_count','revoked_at','created_at');
+```
+
+백업을 복구한 뒤에는 `pnpm ops:reapply-deletions`가 계정 정리와 함께 `retention` 항목의 수료증 파일도 다시 지웁니다(계정은 건드리지 않음, 출력의 `certificateFiles=`).
+
 ## 5. 백업 일정과 보존
 
 | 대상 | 방법 | 주기 | 보존 |
@@ -421,10 +485,13 @@ RTO 목표 4시간 대비 로컬 연습은 수 초입니다. 운영 데이터 �
 | outbox(전달 완료) | 30일 | `outbox` 매일 |
 | 학교 메일 인증 코드 | 10분 유효(5번 틀리면 잠김), 쓰였거나 만료된 지 하루 뒤 삭제. 쓸 코드가 없어진 지 1시간 지난 요청은 expired(메일 해시 삭제) | `affiliation-codes` 매시 |
 | 학교 메일 인증(소속) | 메일 주소는 저장하지 않음(해시·도메인만). active는 해제·취소·탈퇴까지, 끝난 행은 해시 없이 이력만 | 탈퇴 정리 때 삭제 |
+| 기관 소속·기수 승인 기록(I-01) | 소속은 해제·취소·탈퇴까지, 승인을 다 받지 못한 기수 승인 요청은 30일 뒤 expired. 승인 기록은 탈퇴(승인자·요청자) 때 삭제 | `affiliation-codes` 매시, 탈퇴 정리 |
+| 초대 코드(I-01) | 원문 저장 안 함(HMAC만). 행은 기관 기록으로 남김(만료·철회 표시) | 없음 |
+| 수료증 파일(I-01) | 결정 뒤 10분 안(최대 7일) 삭제. 취소·대체·격리는 다음 주기, 올리지 않은 요청은 하루, 결정되지 않은 요청은 30일 뒤 삭제·만료. 원래 파일 이름·OCR·번호는 저장하지 않음. 확인 행(결과·결정 시각)은 소속과 함께 탈퇴까지 | `certificate-files` 10분마다(삭제 장부 `retention`), 탈퇴 정리 |
 | 탈퇴 계정 자료 | 요청 뒤 7일(유예) | `account-purge` 30분마다 |
 | 이름 표시 방식 변경 이력·커뮤니티 알림 | 이력은 공간이 있는 동안(행을 지우지 않음, 탈퇴 때 예약·취소한 사람만 비움), 알림은 받는 사람이 탈퇴할 때까지 | 탈퇴 정리 때. 예약 적용은 `name-mode-changes` 매분 |
 | 소셜 링크 | 사용자가 지우거나 탈퇴할 때까지. verified 링크는 `social-link-recheck`(매시, 링크마다 하루 한 번, 한 번에 100개)가 다시 확인해 되돌림 링크가 없으면(404·410 포함) lost, 가져오기 3번 연속 실패면 lost. 감사에는 주소를 남기지 않음 | 탈퇴 정리 때 삭제 |
-| 삭제 장부 | 무기한(개인정보 없음, 재적용에 필요) | 없음 |
+| 삭제 장부 | 무기한(개인정보 없음, 재적용에 필요). 탈퇴 정리는 사용자 id의 HMAC(`purge`·`reapply`), 수료증 파일은 확인 id의 HMAC(`retention`) | 없음 |
 | 분석 이벤트 | 파일럿 기간 `<기간>`, 수집 거부·탈퇴 때 삭제(사용자 키 없는 이벤트 — `actor_hash` null — 는 사람과 이어지지 않아 탈퇴 때 지우지 않음) | 수동(`<절차>`) |
 | 주간 운영 시간(`ops_time_entries`) | 파일럿 기간 + 1년(운영 비용 산정 근거, ADR 0027). 탈퇴한 운영자는 메모만 지우고 분은 남김(가명) | 수동: `delete from ops_time_entries where week < '<보존 시작 주>'`(운영 회의 결정 뒤) |
 | 지표 CSV 내보내기 | 파일럿 보고 위치 `<위치>`에 보고서 보존 기간 동안(집계만, 개인정보 없음) | 수동 |

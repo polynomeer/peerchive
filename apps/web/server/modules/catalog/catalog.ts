@@ -145,7 +145,8 @@ export async function searchSchools(db: DbExecutor, q: unknown): Promise<SchoolD
   const rows = await db
     .select({ id: schools.id, name: schools.name })
     .from(schools)
-    .where(and(isNull(schools.mergedInto), or(matches(schools.nameKey, key), aliasMatch)))
+    // 대학이 아닌 기관(I-01, ADR 0037)은 학교·과목 검색에 나오지 않습니다(기관 검색은 GET /institutions).
+    .where(and(isNull(schools.mergedInto), eq(schools.kind, 'university'), or(matches(schools.nameKey, key), aliasMatch)))
     .orderBy(sql`(${schools.nameKey} = ${key}) desc`, desc(score), asc(schools.name), asc(schools.id))
     .limit(CATALOG_SEARCH_LIMIT)
   return rows.map(toSchoolDto)
@@ -253,6 +254,8 @@ export async function createCourse(
   const code = codeKey(input.code)
   return db.transaction(async (tx) => {
     const school = await loadCanonicalSchool(tx, schoolId)
+    // 과목은 대학에만 둡니다(I-01, SYSTEM_DESIGN §6.7.2 "과목·과목 허브는 kind = university에서만").
+    if (school.kind !== 'university') throw invalid({ schoolId: 'not_university' })
     // 같은 학교의 과목 만들기를 직렬화합니다(학교 병합으로 같은 이름이 모일 수 있어 DB unique 대신 확인).
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`catalog-course:${school.id}`}))`)
     const score = sql<number>`similarity(${courses.titleKey}, ${key})`

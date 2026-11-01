@@ -26,6 +26,7 @@ export const OPS_TASK_NAMES = [
   'account-purge',
   'name-mode-changes',
   'social-link-recheck',
+  'certificate-files',
 ] as const
 export type OpsTaskName = (typeof OPS_TASK_NAMES)[number]
 
@@ -46,6 +47,8 @@ export const DEFAULT_CRONS: Record<OpsTaskName, string> = {
   'name-mode-changes': '* * * * *',
   // 소셜 링크 재확인(S-06): 매시 verified 링크 중 24시간 지난 것 최대 100개. 링크마다 대략 하루 한 번입니다.
   'social-link-recheck': '37 * * * *',
+  // 수료증 파일 삭제(I-01, ADR 0037): 결정·취소된 수료증 파일을 10분 안에 지우고 삭제 장부(source retention)에 남깁니다(최대 보존 7일 안).
+  'certificate-files': '*/10 * * * *',
 }
 
 export const OPS_TIMEZONE = 'Asia/Seoul'

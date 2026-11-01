@@ -22,6 +22,7 @@ import {
   AFFILIATION_RATE_LIMITS,
   AFFILIATION_STANDINGS,
   AFFILIATION_STATUSES,
+  COHORT_APPROVALS_REQUIRED,
   affiliationBadgeLabel,
   canChangeStanding,
   decideCodeAttempt,
@@ -33,6 +34,8 @@ import {
 import {
   affiliationCodes,
   and,
+  certificateChecks,
+  cohortApprovals,
   desc,
   eq,
   inArray,
@@ -87,13 +90,15 @@ export function generateAffiliationCode(): string {
 
 const requiredOr = (code: string) => (issue: { input?: unknown }) => (issue.input === undefined ? 'required' : code)
 
-/** 소속 행 + 정본 학교 이름(병합 전 행이어도 정본으로). */
-async function loadRows(db: DbExecutor, where: ReturnType<typeof and>) {
+/** 소속 행 + 정본 학교 이름(병합 전 행이어도 정본으로) + 기관 종류·기수 이름(I-01). */
+export async function loadRows(db: DbExecutor, where: ReturnType<typeof and>) {
   return db
     .select({
       row: institutionAffiliations,
       schoolId: sql<string>`coalesce(${schools.mergedInto}, ${schools.id})`,
       schoolName: sql<string>`coalesce((select c.name from schools c where c.id = ${schools.mergedInto}), ${schools.name})`,
+      kind: schools.kind,
+      cohortLabel: sql<string | null>`(select ic.label from institution_cohorts ic where ic.id = ${institutionAffiliations.cohortId})`,
     })
     .from(institutionAffiliations)
     .innerJoin(schools, eq(schools.id, institutionAffiliations.schoolId))
@@ -111,22 +116,55 @@ async function latestCode(db: DbExecutor, affiliationId: string, lock = false): 
   return (lock ? await query.for('update') : await query)[0]
 }
 
-async function toDto(db: DbExecutor, row: AffiliationRow, school?: { id: string; name: string }): Promise<AffiliationDto> {
-  let s: { id: string; name: string }
+interface LoadedSchool {
+  id: string
+  name: string
+  kind: AffiliationDto['institutionKind']
+  cohortLabel: string | null
+}
+
+export async function toDto(db: DbExecutor, row: AffiliationRow, school?: LoadedSchool): Promise<AffiliationDto> {
+  let s: LoadedSchool
   if (school) s = school
   else {
     const [loaded] = await loadRows(db, and(eq(institutionAffiliations.id, row.id)))
-    s = { id: loaded!.schoolId, name: loaded!.schoolName }
+    s = { id: loaded!.schoolId, name: loaded!.schoolName, kind: loaded!.kind, cohortLabel: loaded!.cohortLabel }
   }
   let code: AffiliationDto['code'] = null
-  if (row.status === 'pending') {
+  if (row.status === 'pending' && row.method === 'email') {
     const c = await latestCode(db, row.id)
     if (c && !c.usedAt) code = { expiresAt: c.expiresAt.toISOString(), attemptsLeft: Math.max(0, AFFILIATION_CODE_MAX_ATTEMPTS - c.attempts) }
   }
+  let cohortApprovalCount: AffiliationDto['cohortApprovals'] = null
+  if (row.method === 'cohort_approval') {
+    const [n] = await db.select({ n: sql<number>`count(*)::int` }).from(cohortApprovals).where(eq(cohortApprovals.affiliationId, row.id))
+    cohortApprovalCount = { count: n?.n ?? 0, required: COHORT_APPROVALS_REQUIRED }
+  }
+  let certificate: AffiliationDto['certificate'] = null
+  if (row.method === 'certificate_check') {
+    const [c] = await db
+      .select({ uploadedAt: certificateChecks.uploadedAt, scanStatus: certificateChecks.scanStatus, result: certificateChecks.result, decidedAt: certificateChecks.decidedAt })
+      .from(certificateChecks)
+      .where(eq(certificateChecks.affiliationId, row.id))
+      .limit(1)
+    if (c) {
+      certificate = {
+        uploaded: c.uploadedAt !== null,
+        scanStatus: c.scanStatus,
+        result: (c.result as 'approved' | 'rejected' | null) ?? null,
+        decidedAt: c.decidedAt?.toISOString() ?? null,
+      }
+    }
+  }
   return {
     id: row.id,
-    school: s,
+    school: { id: s.id, name: s.name },
     emailDomain: row.emailDomain,
+    method: row.method,
+    institutionKind: s.kind,
+    cohortLabel: s.cohortLabel,
+    cohortApprovals: cohortApprovalCount,
+    certificate,
     standing: row.standing,
     departmentLabel: row.departmentLabel,
     status: row.status,
@@ -276,7 +314,7 @@ export async function requestAffiliation(db: DbExecutor, actor: Actor, rawInput:
       }).catch(() => {})
     }
   }
-  return toDto(db, created, { id: school.id, name: school.name })
+  return toDto(db, created, { id: school.id, name: school.name, kind: school.kind, cohortLabel: null })
 }
 
 // ── 코드 확인 ────────────────────────────────────────────────────────────
@@ -386,7 +424,7 @@ export async function verifyAffiliation(db: DbExecutor, actor: Actor, affiliatio
 /** GET /me/affiliations — 내 소속(만료된 요청은 빼고 최근 순) + 배지 설정 + 허브 작성 정책. */
 export async function listMyAffiliations(db: DbExecutor, actor: Actor): Promise<AffiliationListDto> {
   const rows = await loadRows(db, and(eq(institutionAffiliations.userId, actor.userId), ne(institutionAffiliations.status, 'expired')))
-  const items = await Promise.all(rows.map((r) => toDto(db, r.row, { id: r.schoolId, name: r.schoolName })))
+  const items = await Promise.all(rows.map((r) => toDto(db, r.row, { id: r.schoolId, name: r.schoolName, kind: r.kind, cohortLabel: r.cohortLabel })))
   const [profile] = await db.select({ show: profiles.showAffiliationBadge }).from(profiles).where(eq(profiles.userId, actor.userId)).limit(1)
   return { items, showBadge: profile?.show ?? false, hubRequiresAffiliation: hubWritePolicy().requireAffiliation }
 }
@@ -540,7 +578,9 @@ export async function publicAffiliationBadges(db: DbExecutor, userId: string, sh
   for (const r of [...rows].reverse()) {
     if (seen.has(r.schoolId)) continue
     seen.add(r.schoolId)
-    badges.push({ label: affiliationBadgeLabel(r.schoolName, r.row.standing), alumni: r.row.standing === 'alumni' })
+    // 대학이 아닌 기관(I-01)은 졸업생 대신 수료생으로 씁니다.
+    const label = r.kind === 'university' ? affiliationBadgeLabel(r.schoolName, r.row.standing) : `${r.schoolName} 인증${r.row.standing === 'alumni' ? ' · 수료생' : ''}`
+    badges.push({ label, alumni: r.row.standing === 'alumni' })
   }
   return badges
 }

@@ -6,8 +6,17 @@
  * - 인증하면 그 학교 과목 허브에 선배 노트를 쓸 수 있습니다. 졸업해 메일이 없어져도 인증은 유지되고, 졸업생으로 바꿀 수 있습니다.
  * - 공개 프로필 배지("○○대학교 인증", 졸업생 표시)는 켤 때만 보입니다.
  * `?school=<id>&schoolName=<이름>&return=<경로>`로 오면 학교를 미리 고르고, 인증 뒤 돌아갈 링크를 보여 줍니다.
+ * I-01(ADR 0037): P2 플래그 institutions가 켜져 있을 때만 "부트캠프·교육기관 인증"(초대 코드·기수 승인·수료증 확인) 섹션을 보여 줍니다.
  */
-import type { AffiliationDto, AffiliationListDto, AffiliationStanding, MeDto, SchoolDto } from '~~/shared/types/api'
+import type {
+  AffiliationDto,
+  AffiliationListDto,
+  AffiliationStanding,
+  CertificateRequestDto,
+  InstitutionDto,
+  MeDto,
+  SchoolDto,
+} from '~~/shared/types/api'
 
 definePageMeta({ middleware: 'auth' })
 useHead({ title: '학교 인증 — Peerchive' })
@@ -17,6 +26,8 @@ const { me } = useAuth()
 const returnTo = computed(() => safeReturnPath(route.query.return))
 
 const { data: list, refresh } = await useAsyncData('my-affiliations', () => useRequestFetch()<AffiliationListDto>('/api/v1/me/affiliations'))
+const { flags, ensure: ensureFeatures } = useFeatures()
+await ensureFeatures()
 const items = computed(() => list.value?.items ?? [])
 const hasActive = computed(() => items.value.some((i) => i.status === 'active'))
 
@@ -175,6 +186,94 @@ async function saveBadge() {
 }
 
 const expired = (item: AffiliationDto) => !item.code || new Date(item.code.expiresAt).getTime() <= Date.now()
+
+// ── 부트캠프·교육기관 인증(I-01, 플래그 institutions) ──
+type InstitutionMethodChoice = 'invite_code' | 'cohort_approval' | 'certificate_check'
+const instMethod = ref<InstitutionMethodChoice>('invite_code')
+const inst = reactive({ code: '', standing: 'student' as AffiliationStanding, cohortLabel: '' })
+const instErrors = ref<Record<string, string>>({})
+const institution = ref<InstitutionDto | null>(null)
+const institutionQuery = ref('')
+const institutionResults = ref<InstitutionDto[]>([])
+const institutionSearched = ref(false)
+const certificateFile = ref<File | null>(null)
+let instTimer: ReturnType<typeof setTimeout> | undefined
+function scheduleInstitutionSearch() {
+  clearTimeout(instTimer)
+  instTimer = setTimeout(() => void searchInstitutions(), 250)
+}
+async function searchInstitutions() {
+  try {
+    institutionResults.value = institutionQuery.value.trim()
+      ? await $fetch<InstitutionDto[]>('/api/v1/institutions', { query: { q: institutionQuery.value } })
+      : []
+    institutionSearched.value = true
+  } catch {
+    notice.value = { kind: 'error', text: '기관을 검색하지 못했습니다. 다시 시도하세요.' }
+  }
+}
+function chooseInstitution(value: InstitutionDto | null) {
+  institution.value = value
+  institutionResults.value = []
+  institutionQuery.value = ''
+  institutionSearched.value = false
+}
+function onCertificateFile(event: Event) {
+  certificateFile.value = (event.target as HTMLInputElement).files?.[0] ?? null
+}
+const siteOrigin = useRequestURL().origin
+const approvalLink = (item: AffiliationDto) => `${siteOrigin}/affiliations/approve/${item.id}`
+
+async function submitInstitution() {
+  busy.value = 'institution'
+  notice.value = null
+  instErrors.value = {}
+  try {
+    if (instMethod.value === 'invite_code') {
+      const created = await $fetch<AffiliationDto>('/api/v1/me/affiliations/invite-code', { method: 'POST', body: { code: inst.code, standing: inst.standing } })
+      notice.value = { kind: 'ok', text: `${created.school.name} 인증을 마쳤습니다.` }
+      inst.code = ''
+    } else if (instMethod.value === 'cohort_approval') {
+      if (!institution.value) return
+      await $fetch<AffiliationDto>('/api/v1/me/affiliations/cohort-approval', {
+        method: 'POST',
+        body: { institutionId: institution.value.id, cohortLabel: inst.cohortLabel, standing: inst.standing },
+      })
+      notice.value = { kind: 'ok', text: '기수 승인을 요청했습니다. 아래 승인 링크를 같은 기수 멤버 2명에게 직접 보내세요.' }
+    } else {
+      if (!institution.value || !certificateFile.value) return
+      const file = certificateFile.value
+      const created = await $fetch<CertificateRequestDto>('/api/v1/me/affiliations/certificate', {
+        method: 'POST',
+        body: {
+          institutionId: institution.value.id,
+          standing: inst.standing,
+          cohortLabel: inst.cohortLabel || null,
+          declaredType: file.type,
+          fileName: file.name,
+          byteSize: file.size,
+        },
+      })
+      await $fetch(created.uploadUrl, { method: 'PUT', body: file, headers: { 'content-type': 'application/octet-stream' } })
+      notice.value = { kind: 'ok', text: '수료증을 올렸습니다. 운영자가 확인하면 결과가 여기에 보입니다. 파일은 결정 뒤 바로 지웁니다.' }
+      certificateFile.value = null
+    }
+    await refresh()
+  } catch (error) {
+    const e = apiError(error)
+    instErrors.value = e.fields
+    notice.value = { kind: 'error', text: e.code === 'validation_failed' ? '입력한 내용을 확인하세요.' : affiliationErrorMessage(e.code) }
+  } finally {
+    busy.value = null
+  }
+}
+const instReady = computed(() =>
+  instMethod.value === 'invite_code'
+    ? !!inst.code.trim()
+    : instMethod.value === 'cohort_approval'
+      ? !!institution.value && !!inst.cohortLabel.trim()
+      : !!institution.value && !!certificateFile.value,
+)
 </script>
 
 <template>
@@ -194,17 +293,35 @@ const expired = (item: AffiliationDto) => !item.code || new Date(item.code.expir
         <li v-for="item in items" :key="item.id" class="hub-card">
           <p>
             <strong>{{ item.school.name }}</strong>
-            <span class="badge">{{ AFFILIATION_STATUS_LABELS[item.status] }}</span>
-            <span class="badge">{{ AFFILIATION_STANDING_LABELS[item.standing] }}</span>
+            <span class="badge">{{ affiliationStatusLabel(item) }}</span>
+            <span class="badge">{{ standingLabelFor(item.institutionKind, item.standing) }}</span>
+            <span v-if="item.method !== 'email'" class="badge">{{ AFFILIATION_METHOD_LABELS[item.method] }}</span>
           </p>
           <p class="small muted">
-            메일 도메인 {{ item.emailDomain }} (나만 봄)
+            <template v-if="item.emailDomain">메일 도메인 {{ item.emailDomain }} (나만 봄)</template>
+            <template v-else>{{ INSTITUTION_KIND_LABELS[item.institutionKind] }}</template>
+            <template v-if="item.cohortLabel"> · 기수 {{ item.cohortLabel }}</template>
             <template v-if="item.verifiedAt"> · 인증 {{ seoulDay(item.verifiedAt) }}</template>
             <template v-if="item.departmentLabel"> · 학과(비공개): {{ item.departmentLabel }}</template>
             <template v-if="item.status === 'revoked' && item.revokedAt"> · {{ affiliationRevokedLabel(item) }} {{ seoulDay(item.revokedAt) }}</template>
           </p>
 
-          <form v-if="item.status === 'pending'" class="stack" novalidate @submit.prevent="verify(item)">
+          <div v-if="item.status === 'pending' && item.method === 'cohort_approval'" class="stack">
+            <p class="small">
+              승인 {{ item.cohortApprovals?.count ?? 0 }} / {{ item.cohortApprovals?.required ?? 2 }}. 같은 기수에서 초대 코드·수료증으로 인증한 멤버에게 아래 링크를 직접 보내세요.
+              기수 승인으로 인증된 멤버의 승인은 세지 않습니다. 30일 안에 승인을 다 받지 못하면 만료됩니다.
+            </p>
+            <p class="small"><code>{{ approvalLink(item) }}</code></p>
+            <p class="actions"><button type="button" class="secondary" :disabled="busy === item.id" @click="remove(item)">요청 취소</button></p>
+          </div>
+          <div v-else-if="item.status === 'pending' && item.method === 'certificate_check'" class="stack">
+            <p class="small">
+              <template v-if="!item.certificate?.uploaded">파일을 아직 받지 못했습니다. 요청을 취소하고 다시 올리세요.</template>
+              <template v-else>{{ SCAN_STATUS_LABELS[item.certificate.scanStatus] }} · 운영자 확인을 기다립니다. 파일은 결정 뒤 바로 지웁니다.</template>
+            </p>
+            <p class="actions"><button type="button" class="secondary" :disabled="busy === item.id" @click="remove(item)">요청 취소</button></p>
+          </div>
+          <form v-else-if="item.status === 'pending'" class="stack" novalidate @submit.prevent="verify(item)">
             <div class="field">
               <label :for="`code-${item.id}`">인증 코드 (6자리)</label>
               <input
@@ -232,9 +349,10 @@ const expired = (item: AffiliationDto) => !item.code || new Date(item.code.expir
             <div class="field">
               <label :for="`standing-${item.id}`">재학 상태</label>
               <select v-if="item.standing === 'student'" :id="`standing-${item.id}`" v-model="editFor(item).standing">
-                <option value="student">재학생</option>
-                <option value="alumni">졸업생</option>
+                <option value="student">{{ standingLabelFor(item.institutionKind, 'student') }}</option>
+                <option value="alumni">{{ standingLabelFor(item.institutionKind, 'alumni') }}</option>
               </select>
+              <p v-else-if="item.institutionKind !== 'university'" :id="`standing-${item.id}`" class="small">수료생</p>
               <p v-else :id="`standing-${item.id}`" class="small">졸업생 (재학생으로 바꾸려면 해제 뒤 재학 중인 메일로 다시 인증하세요)</p>
             </div>
             <div class="field">
@@ -310,6 +428,74 @@ const expired = (item: AffiliationDto) => !item.code || new Date(item.code.expir
         </div>
         <p class="actions">
           <button type="submit" :disabled="!school || !form.email.trim() || busy === 'request'">인증 코드 받기</button>
+        </p>
+      </form>
+    </section>
+
+    <section v-if="flags.institutions" aria-labelledby="institution-affiliation">
+      <h2 id="institution-affiliation">부트캠프·교육기관 인증</h2>
+      <p class="hint">
+        대학이 아닌 기관은 학교 메일 대신 초대 코드, 같은 기수 멤버 2명의 승인, 수료증 확인 중 하나로 인증합니다. 수료증 파일은 운영자만 짧게 보고,
+        결정 뒤 바로 지웁니다(삭제 기록만 남음).
+      </p>
+      <form class="stack" novalidate @submit.prevent="submitInstitution">
+        <fieldset>
+          <legend>인증 방법</legend>
+          <div class="inline-options">
+            <label class="check"><input v-model="instMethod" type="radio" name="institution-method" value="invite_code" /> 초대 코드</label>
+            <label class="check"><input v-model="instMethod" type="radio" name="institution-method" value="cohort_approval" /> 기수 승인</label>
+            <label class="check"><input v-model="instMethod" type="radio" name="institution-method" value="certificate_check" /> 수료증 확인</label>
+          </div>
+        </fieldset>
+        <div v-if="instMethod === 'invite_code'" class="field">
+          <label for="institution-code">초대 코드</label>
+          <input id="institution-code" v-model="inst.code" autocomplete="off" maxlength="20" placeholder="XXXX-XXXX-XXXX" :aria-invalid="!!instErrors.code" />
+          <p v-if="instErrors.code" class="field-error">{{ affiliationErrorMessage(instErrors.code) }}</p>
+        </div>
+        <fieldset v-else>
+          <legend>기관</legend>
+          <p v-if="institution" class="actions">
+            <strong>{{ institution.name }}</strong> <span class="badge">{{ INSTITUTION_KIND_LABELS[institution.kind] }}</span>
+            <button type="button" class="link-button" @click="chooseInstitution(null)">다른 기관 고르기</button>
+          </p>
+          <template v-else>
+            <div class="field">
+              <label for="institution-q">기관 검색</label>
+              <input id="institution-q" v-model="institutionQuery" type="search" autocomplete="off" @input="scheduleInstitutionSearch" @keydown.enter.prevent="searchInstitutions" />
+            </div>
+            <p class="visually-hidden" role="status">{{ institutionSearched ? `기관 ${institutionResults.length}개` : '' }}</p>
+            <ul v-if="institutionResults.length" class="plain">
+              <li v-for="i in institutionResults" :key="i.id">
+                <button type="button" class="secondary" @click="chooseInstitution(i)">{{ i.name }} ({{ INSTITUTION_KIND_LABELS[i.kind] }})</button>
+              </li>
+            </ul>
+            <p v-else-if="institutionSearched && institutionQuery.trim()" class="muted small">찾는 기관이 없습니다. 기관은 운영자가 등록합니다.</p>
+          </template>
+        </fieldset>
+        <div v-if="instMethod !== 'invite_code'" class="field">
+          <label for="institution-cohort">기수{{ instMethod === 'certificate_check' ? ' (선택)' : '' }}</label>
+          <input id="institution-cohort" v-model="inst.cohortLabel" :maxlength="COHORT_LABEL_MAX" placeholder="예: 12기" :aria-invalid="!!instErrors.cohortLabel" />
+          <p v-if="instErrors.cohortLabel" class="field-error">{{ fieldMessage(instErrors.cohortLabel) }}</p>
+        </div>
+        <div v-if="instMethod === 'certificate_check'" class="field">
+          <label for="institution-certificate">수료증 파일 (PNG·JPEG·WebP·PDF, 10MB까지)</label>
+          <input id="institution-certificate" type="file" :accept="CERTIFICATE_MEDIA_TYPES.join(',')" @change="onCertificateFile" />
+          <p class="hint">위치 정보 등 사진 메타데이터는 지우고, 파일 이름은 저장하지 않습니다.</p>
+          <p v-if="instErrors.declaredType || instErrors.fileName || instErrors.byteSize" class="field-error">
+            PNG·JPEG·WebP·PDF 파일(10MB까지)만 올릴 수 있습니다.
+          </p>
+        </div>
+        <fieldset>
+          <legend>상태</legend>
+          <div class="inline-options">
+            <label class="check"><input v-model="inst.standing" type="radio" name="institution-standing" value="student" /> 수강생</label>
+            <label class="check"><input v-model="inst.standing" type="radio" name="institution-standing" value="alumni" /> 수료생</label>
+          </div>
+        </fieldset>
+        <p class="actions">
+          <button type="submit" :disabled="!instReady || busy === 'institution'">
+            {{ instMethod === 'invite_code' ? '코드로 인증하기' : instMethod === 'cohort_approval' ? '기수 승인 요청하기' : '수료증 올리기' }}
+          </button>
         </p>
       </form>
     </section>

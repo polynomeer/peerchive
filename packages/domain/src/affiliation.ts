@@ -16,9 +16,11 @@
 /** courses.ts의 normalizeLabel과 같은 규칙(NFC, 공백 하나로, 앞뒤 공백 제거). 이 파일을 단독으로 불러 쓰려고 여기 둡니다. */
 const normalizeLabel = (value: string): string => value.normalize('NFC').replace(/\s+/g, ' ').trim()
 
-export const INSTITUTION_KINDS = ['university'] as const
+/** 기관 종류(SYSTEM_DESIGN §6.7.2). C-01은 university만, I-01(ADR 0037)에서 나머지를 더했습니다. 과목·과목 허브는 university에서만 씁니다. */
+export const INSTITUTION_KINDS = ['university', 'bootcamp', 'training_program', 'club_federation'] as const
 export type InstitutionKind = (typeof INSTITUTION_KINDS)[number]
-export const AFFILIATION_METHODS = ['email'] as const
+/** 인증 수단. email은 C-01, 나머지(초대 코드·기수 승인·수료증 확인)는 I-01(ADR 0037)이며 대학이 아닌 기관에서만 씁니다. */
+export const AFFILIATION_METHODS = ['email', 'invite_code', 'cohort_approval', 'certificate_check'] as const
 export type AffiliationMethod = (typeof AFFILIATION_METHODS)[number]
 export const AFFILIATION_STANDINGS = ['student', 'alumni'] as const
 export type AffiliationStanding = (typeof AFFILIATION_STANDINGS)[number]

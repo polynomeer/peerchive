@@ -8,6 +8,7 @@ import { WORKER_HEARTBEAT_NAME, type DbExecutor } from '@peerchive/db'
 import type { ObjectStorage } from '@peerchive/files'
 import { CLEANUP_TASKS, beat, runRecordedTask } from './cleanup'
 import { OPS_TASK_NAMES, OPS_TIMEZONE, type OpsConfig, type OpsTaskName } from './config'
+import { purgeCertificateFiles } from './certificates'
 import { applyDueNameModeChanges } from './name-modes'
 import { purgeDueAccounts } from './purge'
 import { recheckSocialLinks } from '../social-links'
@@ -34,6 +35,8 @@ export function opsTaskRunner(db: DbExecutor, storage: ObjectStorage, config: Op
   if (task === 'name-mode-changes') return applyDueNameModeChanges(db, { now, analyticsPepper: config.analyticsPepper, limit: 100 })
   // 소셜 링크 재확인(S-06): 링크 수집기(SSRF 방어)로만 접속합니다.
   if (task === 'social-link-recheck') return recheckSocialLinks(db, { siteOrigin: config.siteOrigin, analyticsPepper: config.analyticsPepper }, { now })
+  // 수료증 파일 삭제(I-01): 삭제 장부 pepper가 필요해 일반 정리 작업과 따로 둡니다. P2 플래그와 무관하게 돕니다.
+  if (task === 'certificate-files') return purgeCertificateFiles(db, { storage, deletionPepper: config.deletionPepper, batchSize: config.batchSize }, now)
   return CLEANUP_TASKS[task](db, { storage, batchSize: config.batchSize }, now)
 }
 

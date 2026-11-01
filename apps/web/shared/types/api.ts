@@ -1738,13 +1738,27 @@ export interface PublicPortfolioProfileDto extends PortfolioViewDto {
 
 export type AffiliationStanding = 'student' | 'alumni'
 export type AffiliationStatus = 'pending' | 'active' | 'revoked' | 'expired'
-export type AffiliationRevokedReason = 'user_removed' | 'operator' | 'merged_duplicate'
+export type AffiliationRevokedReason = 'user_removed' | 'operator' | 'merged_duplicate' | 'certificate_rejected'
+/** 기관 종류·인증 수단(I-01, ADR 0037). */
+export type InstitutionKind = 'university' | 'bootcamp' | 'training_program' | 'club_federation'
+export type AffiliationMethod = 'email' | 'invite_code' | 'cohort_approval' | 'certificate_check'
 
-/** 내 학교 인증(본인에게만). 메일 주소는 저장하지 않으므로 없고, 도메인만 있습니다. */
+/** 내 학교·기관 인증(본인에게만). 메일 주소는 저장하지 않으므로 없고, 도메인만 있습니다. */
 export interface AffiliationDto {
   id: string
   school: SchoolDto
-  emailDomain: string
+  /** 메일 도메인. 메일이 아닌 수단(I-01)이면 null. */
+  emailDomain: string | null
+  /** 인증 수단(I-01). C-01 학교 메일은 email. */
+  method: AffiliationMethod
+  /** 기관 종류(I-01). 학교는 university. */
+  institutionKind: InstitutionKind
+  /** 기수 이름(I-01, 대학은 null). */
+  cohortLabel: string | null
+  /** 기수 승인 요청이면 받은 승인 수·필요 수(I-01). */
+  cohortApprovals: { count: number; required: number } | null
+  /** 수료증 확인 요청이면 파일·검사·결정 상태(I-01). 결과 외 다른 내용은 없습니다. */
+  certificate: { uploaded: boolean; scanStatus: ScanStatus; result: 'approved' | 'rejected' | null; decidedAt: string | null } | null
   standing: AffiliationStanding
   /** 자기 신고 학과(공개하지 않음). */
   departmentLabel: string | null
@@ -1772,10 +1786,89 @@ export interface OperatorAffiliationDto {
   id: string
   userId: string
   school: SchoolDto
-  emailDomain: string
+  emailDomain: string | null
   status: AffiliationStatus
   verifiedAt: string | null
   revokedAt: string | null
+}
+
+// ── 기관 일반화·인증 수단 (I-01, ADR 0037) ───────────────────────────────
+
+/** GET /api/v1/features — P2 기능 플래그(영역별). */
+export interface FeatureFlagsDto {
+  alumni: boolean
+  topics: boolean
+  institutions: boolean
+}
+
+/** 대학이 아닌 기관(검색·운영자 생성 결과). */
+export interface InstitutionDto {
+  id: string
+  name: string
+  kind: InstitutionKind
+}
+
+/** 초대 코드(운영자). 원문은 발급 응답의 `code`에만 한 번 있습니다. */
+export interface InviteCodeDto {
+  id: string
+  institution: InstitutionDto
+  cohortLabel: string | null
+  expiresAt: string
+  maxUses: number
+  usedCount: number
+  revokedAt: string | null
+  createdAt: string
+}
+
+/** POST /operator/institutions/:id/invite-codes — 원문 코드는 이 응답에만. */
+export interface IssuedInviteCodeDto extends InviteCodeDto {
+  code: string
+}
+
+/** GET /affiliations/:id/cohort-approval — 승인할 수 있는 멤버에게만 보이는 기수 승인 요청. */
+export interface CohortApprovalRequestDto {
+  id: string
+  institution: InstitutionDto
+  cohortLabel: string
+  /** 요청한 사람의 계정 이름(같은 기수 멤버가 알아보도록). */
+  requesterName: string
+  approvals: number
+  required: number
+  /** 내가 이미 승인했는지. */
+  approvedByMe: boolean
+  status: AffiliationStatus
+  createdAt: string
+}
+
+/** POST /me/affiliations/certificate — 수료증 요청과 파일을 올릴 주소(PUT). */
+export interface CertificateRequestDto {
+  affiliation: AffiliationDto
+  uploadUrl: string
+}
+
+/** 운영자 수료증 확인 목록. 파일 이름·내용은 없습니다. */
+export interface OperatorCertificateCheckDto {
+  id: string
+  affiliationId: string
+  user: { id: string; displayName: string }
+  institution: InstitutionDto
+  cohortLabel: string | null
+  standing: AffiliationStanding
+  scanStatus: ScanStatus
+  mediaType: string | null
+  uploadedAt: string | null
+  /** 지금 서명 URL을 받아 볼 수 있는지(결정 전·검사 통과·파일 있음). */
+  viewable: boolean
+  result: 'approved' | 'rejected' | null
+  decidedAt: string | null
+  filePurgedAt: string | null
+  createdAt: string
+}
+
+/** POST /operator/certificate-checks/:id/file-url — 짧은(60초) 서명 URL. */
+export interface CertificateFileUrlDto {
+  url: string
+  expiresAt: string
 }
 
 export interface SchoolEmailDomainDto {

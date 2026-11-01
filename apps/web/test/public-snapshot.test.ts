@@ -230,6 +230,7 @@ function source(overrides: Partial<SnapshotSource> = {}): SnapshotSource {
     mergedInto: null,
     mergedAt: null,
     createdBy: A,
+    kind: 'university',
     createdAt: T,
   }
   const course: typeof courses.$inferSelect = {

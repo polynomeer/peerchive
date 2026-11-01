@@ -59,13 +59,22 @@ export type ScanOutcome =
 /** 검사 자체가 실패한 사유(격리 사유와 구분). */
 export type ScanFailureReason = 'scan_error' | 'object_missing' | 'integrity_mismatch' | 'metadata_strip_failed'
 
-class ScanFailure extends Error {
+export class ScanFailure extends Error {
   constructor(readonly reason: ScanFailureReason, cause?: unknown) {
     super(`scan failed: ${reason}`, { cause })
   }
 }
 
-type Verdict = { pass: true; mediaType: string } | { pass: false; reason: QuarantineReason; signature?: string }
+export type Verdict = { pass: true; mediaType: string } | { pass: false; reason: QuarantineReason; signature?: string }
+
+/** 판별 → 선언 형식·확장자 대조 → 내장 콘텐츠 점검 → 악성코드 검사. 수료증 검사(certificate-scan.ts)도 같은 판정을 씁니다. */
+export async function judgeContent(
+  content: Buffer,
+  version: { declaredType: string; fileName: string },
+  scanner: MalwareScanner,
+): Promise<Verdict> {
+  return judge(content, version, scanner)
+}
 
 async function judge(
   content: Buffer,

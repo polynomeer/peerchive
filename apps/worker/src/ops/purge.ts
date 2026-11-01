@@ -3,7 +3,7 @@
  *
  * 탈퇴 요청(T-02)은 계정을 deleted로 바꾸고 세션을 끊기만 합니다. 유예 기간(기본 7일)이 지나면 이 작업이 한 트랜잭션에서 정리합니다.
  *
- * 지우는 것(그 사람만의 자료): 프로필(실명·표시명 페르소나·연결 플래그 포함, S-01, 페르소나의 소셜 링크 S-06), 세션, 로그인 수단, 그 주소의 매직링크 토큰, 외부 연동(디스코드 id), 학교 메일 인증·인증 코드(C-01),
+ * 지우는 것(그 사람만의 자료): 프로필(실명·표시명 페르소나·연결 플래그 포함, S-01, 페르소나의 소셜 링크 S-06), 세션, 로그인 수단, 그 주소의 매직링크 토큰, 외부 연동(디스코드 id), 학교 메일 인증·인증 코드(C-01), 기수 승인·수료증 확인과 파일(I-01),
  * 커뮤니티 멤버십·그 사람이 만들거나 쓴 공간 초대·공식 페이지 개설 요청(C-02, 방장이었으면 먼저 승계: 가장 오래된 admin → 멤버, 없으면 방 보관),
  * 받은 커뮤니티 알림과 선택 실명(C-03; 이름 표시 방식 변경 이력 행은 공간의 기록이라 남기고 예약·취소한 사람만 null), 커뮤니티 글·댓글의 제목·본문
  * (C-04; 행·스레드 익명 번호는 남기고 "작성자가 삭제한 글"로)과 공감, 그 사람에게 내려진 커뮤니티 이용 제한 행(C-06; 짝인 운영 조치 행은 운영 기록으로 남음)·
@@ -38,7 +38,9 @@ import {
   authAccounts,
   caseSentences,
   caseStudies,
+  certificateChecks,
   claimEvidence,
+  cohortApprovals,
   communityAuthorLookups,
   communityComments,
   communityNotices,
@@ -210,6 +212,33 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
     c.add('integrations', (await tx.delete(integrations).where(eq(integrations.userId, userId)).returning({ id: integrations.id })).length)
     // 학교 메일 인증(C-01): 코드 → 소속 순서(외래 키). 이력(학교·도메인·인증 시각)도 그 사람만의 자료라 남기지 않습니다.
     const affiliationIds = idsOf(await tx.select({ id: institutionAffiliations.id }).from(institutionAffiliations).where(eq(institutionAffiliations.userId, userId)))
+    // 기관 인증 수단(I-01, ADR 0037): 그 사람이 남긴 기수 승인(남의 요청에 한 것 포함 — 이미 인증된 상대의 소속은 그대로)과 그 사람 요청이 받은 승인,
+    // 수료증 확인 행과 남은 파일(파일은 커밋 직전에 지움). 기수·초대 코드 행은 기관의 기록이라 남깁니다(만든 사람 칸은 가명 처리된 users).
+    c.add(
+      'cohort_approvals',
+      (
+        await tx
+          .delete(cohortApprovals)
+          .where(
+            or(
+              eq(cohortApprovals.approverUserId, userId),
+              affiliationIds.length ? inArray(cohortApprovals.affiliationId, affiliationIds) : sql`false`,
+              affiliationIds.length ? inArray(cohortApprovals.approverAffiliationId, affiliationIds) : sql`false`,
+            ),
+          )
+          .returning({ id: cohortApprovals.affiliationId })
+      ).length,
+    )
+    const certificates = await tx.delete(certificateChecks).where(eq(certificateChecks.userId, userId)).returning({ key: certificateChecks.objectKey })
+    c.add('certificate_checks', certificates.length)
+    let certificateObjects = 0
+    for (const { key } of certificates) {
+      if (key && isObjectKey(key)) {
+        objectKeys.add(key)
+        certificateObjects++
+      }
+    }
+    c.add('certificate_files', certificateObjects)
     if (affiliationIds.length) {
       c.add('affiliation_codes', (await tx.delete(affiliationCodes).where(inArray(affiliationCodes.affiliationId, affiliationIds)).returning({ id: affiliationCodes.id })).length)
       c.add(
@@ -358,7 +387,7 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
         .where(eq(users.id, userId))
       c.add('account', 1)
     }
-    c.add('artifact_objects', objectKeys.size)
+    c.add('artifact_objects', objectKeys.size - certificateObjects)
 
     // 8) 장부(개수만)·감사.
     const kinds = Object.keys(c.counts).sort()

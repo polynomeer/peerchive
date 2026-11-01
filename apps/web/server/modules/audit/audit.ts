@@ -92,6 +92,13 @@ export type AuditAction =
   | 'affiliation.revoke'
   | 'school_email_domain.add'
   | 'school_email_domain.remove'
+  /** I-01(ADR 0037): metadata는 id·종류·수단·플래그만(코드 원문·기수 이름·파일 정보 없음). */
+  | 'institution.create'
+  | 'invite_code.issue'
+  | 'invite_code.revoke'
+  | 'cohort_approval.approve'
+  | 'certificate_check.view'
+  | 'certificate_check.decide'
   | 'community.board_create'
   | 'community.board_update'
   | 'community.capacity_decide'
@@ -201,6 +208,8 @@ export async function recordAudit(
       | 'metrics'
       | 'social_link'
       | 'profile_post'
+      | 'invite_code'
+      | 'certificate_check'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

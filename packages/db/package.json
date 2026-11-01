@@ -14,7 +14,8 @@
     "generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate",
     "grant-operator": "node --disable-warning=ExperimentalWarning scripts/grant-operator.ts",
-    "school-email-domain": "node --disable-warning=ExperimentalWarning scripts/school-email-domain.ts"
+    "school-email-domain": "node --disable-warning=ExperimentalWarning scripts/school-email-domain.ts",
+    "institution": "node --disable-warning=ExperimentalWarning scripts/institution.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.45.3",

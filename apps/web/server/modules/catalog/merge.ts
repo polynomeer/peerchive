@@ -94,6 +94,8 @@ export async function mergeSchool(db: DbExecutor, actor: Actor, sourceId: unknow
     const load = async (id: string) => (await tx.select().from(schools).where(eq(schools.id, id)).limit(1).for('update'))[0]
     const { source, target } = await lockPair(load, sourceId.toLowerCase(), input.into)
     throwMergeError(checkMerge(source, target))
+    // 대학이 아닌 기관(I-01, ADR 0037)은 병합하지 않습니다(기수·초대 코드·수료증을 옮기는 규칙이 없음).
+    if (source.kind !== 'university' || target.kind !== 'university') throw conflict('not_university')
 
     const moved = await tx.update(courses).set({ schoolId: target.id }).where(eq(courses.schoolId, source.id)).returning({ id: courses.id })
     // 학교 메일 인증: 같은 사용자가 두 학교 모두에 진행 중 인증이 있으면 하나만 남깁니다(사용자·학교당 진행 중 하나 — 부분 unique).

@@ -1,8 +1,9 @@
 /**
  * C-01 학교 메일 인증·학과 자기 신고 통합 테스트(실제 PostgreSQL). DATABASE_URL이 없으면 건너뜁니다.
+ * I-01(ADR 0037): 같은 테스트를 P2 기관 플래그를 끈 상태와 켠 상태에서 한 번씩 돌립니다(학교 메일 인증 회귀 0건).
  * 각 테스트는 rollback 트랜잭션 안에서 자기가 만든 학교(무작위 이름·도메인)와 사용자만 봅니다. 메일은 메모리 transport로 받습니다.
  */
-import { afterAll, afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   affiliationCodes,
   analyticsEvents,
@@ -35,6 +36,7 @@ import { createMemoryTransport, type MailTransport } from '../server/modules/ide
 import { getMe, upsertProfile } from '../server/modules/identity/profiles'
 import { getPublicPortfolioProfile } from '../server/modules/portfolio/public-profile'
 import { hashSubject } from '@peerchive/db'
+import { setFeatureEnvForTesting } from '../server/modules/features'
 import { closeTestDb, createUser, databaseUrl, expectServiceError, minutes, withRollback } from './helpers'
 
 const T0 = new Date('2026-11-02T09:00:00Z')
@@ -88,9 +90,13 @@ async function request(
 
 const wrongCode = (code: string) => (code === '000000' ? '111111' : '000000')
 
-describe.skipIf(!databaseUrl)('school affiliation (PostgreSQL)', () => {
+for (const p2 of ['off', 'on'] as const) describe.skipIf(!databaseUrl)(`school affiliation (PostgreSQL, P2 institutions ${p2})`, () => {
   afterAll(closeTestDb)
-  afterEach(() => setAffiliationEnvForTesting(null))
+  beforeEach(() => setFeatureEnvForTesting({ PEERCHIVE_FEATURE_P2_INSTITUTIONS: p2 }))
+  afterEach(() => {
+    setAffiliationEnvForTesting(null)
+    setFeatureEnvForTesting(null)
+  })
 
   it('lets only operators manage school email domains (normalized, no shared suffixes, one school per domain, audited)', async () => {
     await withRollback(async (tx) => {

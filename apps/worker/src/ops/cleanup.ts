@@ -11,6 +11,7 @@ import {
   and,
   artifactVersions,
   auditEvents,
+  certificateChecks,
   discordPinRequests,
   eq,
   institutionAffiliations,
@@ -52,6 +53,8 @@ export const RETENTION = {
   affiliationPendingGraceMs: HOUR_MS,
   /** 쓰였거나 만료된 학교 메일 인증 코드는 하루 뒤 지웁니다. */
   affiliationCodeRetentionMs: DAY_MS,
+  /** 기수 승인 요청(I-01)은 30일 안에 승인을 다 받지 못하면 expired로 바꿉니다(@peerchive/domain COHORT_APPROVAL_TTL_MS). */
+  cohortApprovalPendingMs: 30 * DAY_MS,
 } as const
 
 /** 한 번의 실행에서 최대 배치 수(그 뒤는 다음 주기). */
@@ -147,6 +150,8 @@ export async function cleanupOrphanQuarantine(db: DbExecutor, deps: CleanupDeps,
     const referenced = new Set<string>([
       ...(await db.select({ key: artifactVersions.objectKey }).from(artifactVersions).where(inArray(artifactVersions.objectKey, chunk))).map((r) => r.key),
       ...(await db.select({ key: uploadIntents.quarantineKey }).from(uploadIntents).where(inArray(uploadIntents.quarantineKey, chunk))).map((r) => r.key),
+      // 수료증 파일(I-01)은 검사 뒤에도 격리 키에 둡니다. 지우는 것은 `certificate-files` 작업(삭제 장부 기록)뿐입니다.
+      ...(await db.select({ key: certificateChecks.objectKey }).from(certificateChecks).where(inArray(certificateChecks.objectKey, chunk))).map((r) => r.key!),
     ])
     for (const key of chunk) if (!referenced.has(key)) orphans.push(key)
   }
@@ -224,6 +229,8 @@ export const cleanupOutbox = (db: DbExecutor, deps: CleanupDeps, now: Date) =>
 /**
  * 학교 메일 인증(C-01, ADR 0018): 쓸 수 있는 코드가 없어진 지 1시간 지난 pending 요청을 expired로 바꾸고(메일 해시 삭제 — 주소 HMAC을 오래 두지 않음),
  * 쓰였거나 만료된 지 하루 지난 코드 행을 지웁니다. active·revoked 행은 건드리지 않습니다.
+ * 메일이 아닌 수단(I-01, ADR 0037)의 pending은 코드가 없으므로 여기서 만료시키지 않습니다. 기수 승인 요청만 30일 뒤 expired로 바꾸고,
+ * 수료증 요청은 `certificate-files` 작업이 파일과 함께 정리합니다.
  */
 export async function cleanupAffiliationCodes(db: DbExecutor, deps: CleanupDeps, now: Date): Promise<TaskOutcome> {
   const graceCutoff = new Date(now.getTime() - RETENTION.affiliationPendingGraceMs).toISOString()
@@ -233,8 +240,20 @@ export async function cleanupAffiliationCodes(db: DbExecutor, deps: CleanupDeps,
     .where(
       and(
         eq(institutionAffiliations.status, 'pending'),
+        eq(institutionAffiliations.method, 'email'),
         sql`not exists (select 1 from affiliation_codes c where c.affiliation_id = ${institutionAffiliations.id}
           and c.used_at is null and c.attempts < 5 and c.expires_at > ${graceCutoff}::timestamptz)`,
+      ),
+    )
+    .returning({ id: institutionAffiliations.id })
+  const cohortExpired = await db
+    .update(institutionAffiliations)
+    .set({ status: 'expired', updatedAt: now })
+    .where(
+      and(
+        eq(institutionAffiliations.status, 'pending'),
+        eq(institutionAffiliations.method, 'cohort_approval'),
+        lt(institutionAffiliations.createdAt, new Date(now.getTime() - RETENTION.cohortApprovalPendingMs)),
       ),
     )
     .returning({ id: institutionAffiliations.id })
@@ -245,12 +264,12 @@ export async function cleanupAffiliationCodes(db: DbExecutor, deps: CleanupDeps,
     sql`(used_at < ${cutoff}::timestamptz or expires_at < ${cutoff}::timestamptz)`,
     deps.batchSize,
   )
-  return { affected: expired.length + codes.affected, batches: codes.batches + 1 }
+  return { affected: expired.length + cohortExpired.length + codes.affected, batches: codes.batches + 1 }
 }
 
 export type CleanupTask = (db: DbExecutor, deps: CleanupDeps, now: Date) => Promise<TaskOutcome>
 
-export const CLEANUP_TASKS: Record<Exclude<OpsTaskName, 'account-purge' | 'name-mode-changes' | 'social-link-recheck'>, CleanupTask> = {
+export const CLEANUP_TASKS: Record<Exclude<OpsTaskName, 'account-purge' | 'name-mode-changes' | 'social-link-recheck' | 'certificate-files'>, CleanupTask> = {
   'upload-intents': cleanupUploadIntents,
   'orphan-quarantine': cleanupOrphanQuarantine,
   'rate-limit-buckets': cleanupRateLimitBuckets,

@@ -8,9 +8,14 @@
  * 파일에서 읽은 장부 항목 중 대상 DB에 없는 것은 대상 장부에 넣어, 복구된 DB의 장부도 최신이 되게 합니다.
  *
  * 장부 파일 형식: 한 줄에 JSON 하나 `{"subjectHash","entityKind","count","requestedAt","purgedAt","source"}`(ops/backup.sh와 같은 형식).
+ *
+ * source `retention`(I-01, ADR 0037)은 계정이 아니라 보존 기간이 끝난 개별 자료입니다. 지금은 수료증 파일(entity_kind `certificate_file`,
+ * subject_hash = HMAC(삭제 pepper, 수료증 확인 id))뿐이며, 재적용은 같은 HMAC의 확인 행을 찾아 남은 파일만 다시 지웁니다(계정 정리 대상 아님).
  */
 import { readFile } from 'node:fs/promises'
-import { asc, deletionLedger, gt, hashSubject, sql, users, type DbExecutor } from '@peerchive/db'
+import { and, asc, certificateChecks, deletionLedger, eq, gt, hashSubject, isNotNull, sql, users, type DbExecutor } from '@peerchive/db'
+import { isObjectKey } from '@peerchive/files'
+import { CERTIFICATE_LEDGER_KIND } from './certificates'
 import { type PurgeCounts, type PurgeDeps, purgeAccount } from './purge'
 
 export interface LedgerEntry {
@@ -19,7 +24,7 @@ export interface LedgerEntry {
   count: number
   requestedAt: string | null
   purgedAt: string
-  source: 'purge' | 'reapply'
+  source: 'purge' | 'reapply' | 'retention'
 }
 
 const HASH = /^[0-9a-f]{64}$/
@@ -36,7 +41,7 @@ export function parseLedgerEntry(value: unknown): LedgerEntry | null {
   const purgedAt = date(v.purgedAt)
   if (!purgedAt) return null
   if (v.requestedAt !== null && v.requestedAt !== undefined && !date(v.requestedAt)) return null
-  if (v.source !== 'purge' && v.source !== 'reapply') return null
+  if (v.source !== 'purge' && v.source !== 'reapply' && v.source !== 'retention') return null
   return { subjectHash: v.subjectHash, entityKind: v.entityKind, count: v.count as number, requestedAt: date(v.requestedAt), purgedAt, source: v.source }
 }
 
@@ -85,6 +90,8 @@ export interface ReapplyResult {
   imported: number
   /** 다시 지운 종류별 개수 합. */
   counts: PurgeCounts
+  /** 다시 지운 수료증 파일 수(source retention, I-01). */
+  retentionRepurged: number
 }
 
 /**
@@ -98,7 +105,9 @@ export async function reapplyDeletions(
 ): Promise<ReapplyResult> {
   const now = options.now ?? new Date()
   const entries = options.entries ?? (await exportLedger(db))
-  const subjects = new Set(entries.map((e) => e.subjectHash))
+  // 계정 정리 대상은 purge·reapply 항목뿐입니다(retention 항목은 개별 자료).
+  const subjects = new Set(entries.filter((e) => e.source !== 'retention').map((e) => e.subjectHash))
+  const retentionSubjects = new Set(entries.filter((e) => e.source === 'retention' && e.entityKind === CERTIFICATE_LEDGER_KIND).map((e) => e.subjectHash))
   let imported = 0
   if (options.entries && !options.dryRun) imported = await importLedger(db, options.entries)
 
@@ -122,7 +131,25 @@ export async function reapplyDeletions(
       for (const [kind, n] of Object.entries(result)) counts[kind] = (counts[kind] ?? 0) + n
     }
   }
-  return { subjects: subjects.size, matched: matchedIds.length, repurged, imported, counts }
+  const retentionRepurged = retentionSubjects.size ? await reapplyCertificateFiles(db, deps, retentionSubjects, now, options.dryRun ?? false) : 0
+  return { subjects: subjects.size, matched: matchedIds.length, repurged, imported, counts, retentionRepurged }
+}
+
+/** 장부에 삭제로 기록됐는데 복구된 DB에 파일이 남은 수료증 확인 행의 파일을 다시 지웁니다(새 장부 행은 만들지 않음 — 이미 있음). */
+async function reapplyCertificateFiles(db: DbExecutor, deps: PurgeDeps, subjects: ReadonlySet<string>, now: Date, dryRun: boolean): Promise<number> {
+  const rows = await db.select({ id: certificateChecks.id, key: certificateChecks.objectKey }).from(certificateChecks).where(isNotNull(certificateChecks.objectKey))
+  let n = 0
+  for (const row of rows) {
+    if (!subjects.has(hashSubject(deps.deletionPepper, row.id))) continue
+    n++
+    if (dryRun) continue
+    if (row.key && isObjectKey(row.key)) await deps.storage.delete(row.key)
+    await db
+      .update(certificateChecks)
+      .set({ objectKey: null, filePurgedAt: now })
+      .where(and(eq(certificateChecks.id, row.id), isNotNull(certificateChecks.objectKey)))
+  }
+  return n
 }
 
 /** 대상 장부에 없는 항목만 넣습니다(같은 대상·종류·정리 시각·출처면 같은 항목). */

@@ -50,6 +50,9 @@
  * S-02(0027 migration): 페르소나 활동(persona_activities, persona_id NOT NULL, 투영 검사 트리거), 커뮤니티 글·댓글의 작성 시점 페르소나
  * (community_posts·community_comments.persona_id, 익명이면 항상 null), social DB 역할(peerchive_social, 커뮤니티 테이블 권한 없음). 결정은 ADR 0029.
  * S-06(0030 migration): 소셜 링크(social_links: 페르소나별, 사용자당 같은 주소 하나, 되돌림 링크 확인 상태·연속 실패 수). 결정은 ADR 0034.
+ * I-01(0033 migration): 기관 일반화(schools.kind, institution_kind·affiliation_method 값 추가), 기수(institution_cohorts), 초대 코드
+ * (institution_invite_codes, HMAC만), 기수 승인(cohort_approvals), 수료증 확인(certificate_checks, 결정 뒤 파일 삭제), 소속의 cohort_id·
+ * 메일 아닌 수단(email_domain null 허용), 삭제 장부 source `retention`. 결정은 ADR 0037.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -295,10 +298,10 @@ export const analyticsEventName = pgEnum('analytics_event_name', [
   'feed_item_opened',
   'social_link_verified',
 ])
-/** 기관 종류(C-01). 지금은 대학만. P2에서 bootcamp 등을 더합니다(SYSTEM_DESIGN §6.7.2 이관 원칙, ADR 0018). */
-export const institutionKind = pgEnum('institution_kind', ['university'])
-/** 소속 인증 수단(C-01). 지금은 학교 메일만. P2에서 invite_code·cohort_approval·certificate_check를 더합니다. */
-export const affiliationMethod = pgEnum('affiliation_method', ['email'])
+/** 기관 종류(C-01은 university만, I-01에서 나머지, SYSTEM_DESIGN §6.7.2, ADR 0018·0037). */
+export const institutionKind = pgEnum('institution_kind', ['university', 'bootcamp', 'training_program', 'club_federation'])
+/** 소속 인증 수단(C-01은 email만, I-01에서 초대 코드·기수 승인·수료증 확인, ADR 0037). 새 수단은 대학이 아닌 기관에서만 씁니다. */
+export const affiliationMethod = pgEnum('affiliation_method', ['email', 'invite_code', 'cohort_approval', 'certificate_check'])
 /** 재학생/졸업생(자기 선언). 재학생 → 졸업생으로만 바꿀 수 있습니다. */
 export const affiliationStanding = pgEnum('affiliation_standing', ['student', 'alumni'])
 /** pending(코드 대기) → active(인증) / expired(만료·시도 초과·새 요청으로 대체) / revoked(본인 해제·운영자 취소). */
@@ -640,6 +643,7 @@ export const operators = pgTable('operators', {
  * name_key는 @peerchive/domain의 labelKey(공백·대소문자·구두점 무시)이며 pg_trgm 유사도 검색에 씁니다.
  * 정본(merged_into가 null)끼리는 name_key가 겹치지 않습니다.
  * 학교 메일 인증(C-01)은 school_email_domains·institution_affiliations가 이 행을 가리킵니다(ADR 0018). 공식 페이지(§8.9.3)는 아직 없습니다.
+ * I-01(ADR 0037): 이 표가 기관(Institution)입니다. kind가 university가 아닌 행(부트캠프 등)은 운영자만 만들고, 과목·학교 검색에는 나오지 않습니다.
  */
 export const schools = pgTable(
   'schools',
@@ -653,9 +657,12 @@ export const schools = pgTable(
     mergedInto: uuid('merged_into').references((): AnyPgColumn => schools.id),
     mergedAt: timestamp('merged_at', { withTimezone: true }),
     createdBy: uuid('created_by').references(() => users.id),
+    /** 기관 종류(I-01). 학생이 만드는 학교는 언제나 university. */
+    kind: institutionKind('kind').notNull().default('university'),
     createdAt: createdAt(),
   },
   (t) => [
+    index('schools_kind_idx').on(t.kind),
     uniqueIndex('schools_name_key_canonical_key').on(t.nameKey).where(sql`${t.mergedInto} is null`),
     index('schools_name_key_trgm_idx').using('gin', t.nameKey.op('gin_trgm_ops')),
     index('schools_merged_into_idx').on(t.mergedInto),
@@ -2704,7 +2711,10 @@ export const deletionLedger = pgTable(
     /** 탈퇴 요청 시각(분 단위로 자름). */
     requestedAt: timestamp('requested_at', { withTimezone: true }),
     purgedAt: timestamp('purged_at', { withTimezone: true }).notNull().defaultNow(),
-    /** purge: 유예 기간 뒤 정리 / reapply: 복구 뒤 재적용. */
+    /**
+     * purge: 유예 기간 뒤 정리 / reapply: 복구 뒤 재적용 / retention: 보존 기간이 끝난 개별 자료(I-01 수료증 파일 — subject_hash는 사용자 id가
+     * 아니라 수료증 확인 id의 HMAC이고, 재적용은 계정이 아니라 그 파일만 다시 지움).
+     */
     source: text('source').notNull().default('purge'),
   },
   (t) => [
@@ -2712,7 +2722,7 @@ export const deletionLedger = pgTable(
     check('deletion_ledger_subject_hash_check', sql`${t.subjectHash} ~ '^[0-9a-f]{64}$'`),
     check('deletion_ledger_entity_kind_check', sql`${t.entityKind} ~ '^[a-z_]{1,40}$'`),
     check('deletion_ledger_count_check', sql`${t.count} >= 0`),
-    check('deletion_ledger_source_check', sql`${t.source} in ('purge', 'reapply')`),
+    check('deletion_ledger_source_check', sql`${t.source} in ('purge', 'reapply', 'retention')`),
   ],
 )
 
@@ -2850,10 +2860,12 @@ export const institutionAffiliations = pgTable(
       .notNull()
       .references(() => schools.id),
     method: affiliationMethod('method').notNull().default('email'),
-    /** 정규화한 학교 메일 주소의 HMAC(hex 64). pending·active일 때만 있고 해제·취소·만료되면 null. */
+    /** 정규화한 학교 메일 주소의 HMAC(hex 64). 메일 인증(method email)의 pending·active일 때만 있고 해제·취소·만료되면 null. */
     emailHash: text('email_hash'),
-    /** 메일 도메인(소문자 ASCII). 본인·운영자에게만 보입니다. */
-    emailDomain: text('email_domain').notNull(),
+    /** 메일 도메인(소문자 ASCII). 본인·운영자에게만 보입니다. 메일이 아닌 수단(I-01)이면 null. */
+    emailDomain: text('email_domain'),
+    /** 기수(I-01). 기수 승인은 필수, 초대 코드는 코드의 기수, 수료증은 선택. 대학은 쓰지 않습니다. */
+    cohortId: uuid('cohort_id').references((): AnyPgColumn => institutionCohorts.id),
     standing: affiliationStanding('standing').notNull(),
     /** 자기 신고 학과(선택, 정규화, 40자). 공개하지 않습니다. */
     departmentLabel: text('department_label'),
@@ -2870,16 +2882,27 @@ export const institutionAffiliations = pgTable(
     uniqueIndex('institution_affiliations_user_school_open_key').on(t.userId, t.schoolId).where(sql`${t.status} in ('pending', 'active')`),
     index('institution_affiliations_user_id_idx').on(t.userId),
     index('institution_affiliations_school_id_idx').on(t.schoolId),
+    index('institution_affiliations_cohort_id_idx').on(t.cohortId),
     check('institution_affiliations_email_hash_check', sql`${t.emailHash} is null or ${t.emailHash} ~ '^[0-9a-f]{64}$'`),
-    check('institution_affiliations_open_hash_check', sql`${t.status} not in ('pending', 'active') or ${t.emailHash} is not null`),
+    // enum 값은 같은 migration에서 더했으므로 text로 비교합니다(ALTER TYPE … ADD VALUE는 같은 트랜잭션에서 쓸 수 없음).
+    check(
+      'institution_affiliations_open_hash_check',
+      sql`${t.method}::text <> 'email' or ${t.status} not in ('pending', 'active') or ${t.emailHash} is not null`,
+    ),
+    check('institution_affiliations_email_method_check', sql`${t.method}::text = 'email' or ${t.emailHash} is null`),
+    check('institution_affiliations_email_domain_required_check', sql`${t.method}::text <> 'email' or ${t.emailDomain} is not null`),
+    check('institution_affiliations_cohort_required_check', sql`${t.method}::text <> 'cohort_approval' or ${t.cohortId} is not null`),
     check('institution_affiliations_active_verified_check', sql`${t.status} <> 'active' or ${t.verifiedAt} is not null`),
     check('institution_affiliations_revoked_check', sql`${t.status} <> 'revoked' or (${t.revokedAt} is not null and ${t.revokedReason} is not null)`),
     check(
       'institution_affiliations_department_label_check',
       sql`${t.departmentLabel} is null or char_length(${t.departmentLabel}) between 1 and 40`,
     ),
-    check('institution_affiliations_email_domain_check', sql`char_length(${t.emailDomain}) between 3 and 253`),
-    check('institution_affiliations_revoked_reason_check', sql`${t.revokedReason} is null or ${t.revokedReason} in ('user_removed', 'operator', 'merged_duplicate')`),
+    check('institution_affiliations_email_domain_check', sql`${t.emailDomain} is null or char_length(${t.emailDomain}) between 3 and 253`),
+    check(
+      'institution_affiliations_revoked_reason_check',
+      sql`${t.revokedReason} is null or ${t.revokedReason} in ('user_removed', 'operator', 'merged_duplicate', 'certificate_rejected')`,
+    ),
   ],
 )
 
@@ -2904,6 +2927,145 @@ export const affiliationCodes = pgTable(
     index('affiliation_codes_affiliation_id_idx').on(t.affiliationId),
     check('affiliation_codes_code_hash_check', sql`${t.codeHash} ~ '^[0-9a-f]{64}$'`),
     check('affiliation_codes_attempts_check', sql`${t.attempts} between 0 and 5`),
+  ],
+)
+
+// ── 기관 일반화·인증 수단 (I-01, PROOFU_EVOLUTION_PLAN §8.9.11, SYSTEM_DESIGN §6.7.2·§8.4, ADR 0037) ─────────────
+//
+// 대학이 아닌 기관(schools.kind)의 인증 수단: 초대 코드·기수 승인·수료증 확인. P2 기능 플래그(PEERCHIVE_FEATURE_P2_INSTITUTIONS)가 꺼져 있으면
+// 웹의 새 경로는 404입니다. 수료증 파일 삭제(worker `certificate-files`)는 플래그와 무관하게 돕니다.
+
+/**
+ * 기수(부트캠프·교육 프로그램·동아리 기수, 예: `12기`). 대학에서는 쓰지 않습니다(학번 미수집 원칙). label_key는 같은 기수 판정용
+ * (소문자·공백 제거, @peerchive/domain normalizeCohortLabel). 기관의 정본 행을 가리킵니다(대학이 아닌 기관은 병합하지 않음).
+ */
+export const institutionCohorts = pgTable(
+  'institution_cohorts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    schoolId: uuid('school_id')
+      .notNull()
+      .references(() => schools.id),
+    label: text('label').notNull(),
+    labelKey: text('label_key').notNull(),
+    /** 처음 만든 사람(기수 승인·수료증 요청을 낸 사용자 또는 코드를 발급한 운영자). CLI면 null. */
+    createdBy: uuid('created_by').references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('institution_cohorts_school_label_key').on(t.schoolId, t.labelKey),
+    check('institution_cohorts_label_check', sql`char_length(${t.label}) between 1 and 20`),
+    check('institution_cohorts_label_key_check', sql`char_length(${t.labelKey}) between 1 and 20`),
+  ],
+)
+
+/**
+ * 기관 초대 코드. **원문은 저장하지 않습니다**: HMAC-SHA256(PEERCHIVE_AFFILIATION_PEPPER, `invite-code:v1:` + 정규 코드)만 두고, 원문은 발급
+ * 응답(API·CLI)에 한 번만 보입니다. 만료·사용 한도·철회. 사용하면 그 기관(과 기수)의 active 소속(method invite_code)이 생깁니다.
+ */
+export const institutionInviteCodes = pgTable(
+  'institution_invite_codes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    schoolId: uuid('school_id')
+      .notNull()
+      .references(() => schools.id),
+    cohortId: uuid('cohort_id').references(() => institutionCohorts.id),
+    codeHash: text('code_hash').notNull(),
+    /** 발급한 운영자(I-02부터 기관 운영진). CLI면 null. */
+    issuedBy: uuid('issued_by').references(() => users.id),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    maxUses: integer('max_uses').notNull(),
+    usedCount: integer('used_count').notNull().default(0),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('institution_invite_codes_code_hash_key').on(t.codeHash),
+    index('institution_invite_codes_school_id_idx').on(t.schoolId),
+    check('institution_invite_codes_code_hash_check', sql`${t.codeHash} ~ '^[0-9a-f]{64}$'`),
+    check('institution_invite_codes_max_uses_check', sql`${t.maxUses} between 1 and 1000`),
+    check('institution_invite_codes_used_count_check', sql`${t.usedCount} >= 0 and ${t.usedCount} <= ${t.maxUses}`),
+  ],
+)
+
+/**
+ * 기수 승인(SYSTEM_DESIGN §6.7.2 CohortApproval). 같은 기수에서 **기수 승인이 아닌 수단으로 인증된** 멤버의 승인 한 건.
+ * 한 요청에 한 사람은 한 번만(기본 키). 승인할 때의 승인자 소속 행(approver_affiliation_id)을 남겨 나중에 그 인증이 사칭으로 판정되면 찾을 수 있게 합니다.
+ */
+export const cohortApprovals = pgTable(
+  'cohort_approvals',
+  {
+    affiliationId: uuid('affiliation_id')
+      .notNull()
+      .references(() => institutionAffiliations.id),
+    approverUserId: uuid('approver_user_id')
+      .notNull()
+      .references(() => users.id),
+    approverAffiliationId: uuid('approver_affiliation_id')
+      .notNull()
+      .references(() => institutionAffiliations.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.affiliationId, t.approverUserId] }),
+    index('cohort_approvals_approver_user_id_idx').on(t.approverUserId),
+    index('cohort_approvals_approver_affiliation_id_idx').on(t.approverAffiliationId),
+  ],
+)
+
+/**
+ * 수료증 확인(SYSTEM_DESIGN §6.7.2 CertificateCheck). 소속 요청(method certificate_check) 하나에 하나.
+ *
+ * - 파일은 격리 키(`quarantine/<uuid>`)에만 둡니다. 검사(형식 판별·내장 콘텐츠·악성코드)를 통과하면 메타데이터를 지운 내용으로 같은 격리 키를
+ *   바꿔 씁니다(clean 키로 옮기지 않음). 원래 파일 이름·OCR 텍스트·수료증 번호는 저장하지 않습니다(확장자만).
+ * - 운영자는 결정 전·검사 통과일 때만 60초 서명 URL로 봅니다. 결정(approved/rejected) 시각을 남기고(A-07 처리 시간), worker가 결정 뒤
+ *   파일을 지운 다음 object_key를 비우고 file_purged_at과 삭제 장부(source retention)를 남깁니다.
+ */
+export const certificateChecks = pgTable(
+  'certificate_checks',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    affiliationId: uuid('affiliation_id')
+      .notNull()
+      .references(() => institutionAffiliations.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    /** 격리 키. 파일을 지우면 null. */
+    objectKey: text('object_key'),
+    declaredType: text('declared_type').notNull(),
+    /** 선언 형식에 맞는 확장자(검사의 확장자 대조용). 원래 파일 이름은 저장하지 않습니다. */
+    fileExtension: text('file_extension').notNull(),
+    byteSize: bigint('byte_size', { mode: 'number' }).notNull(),
+    sha256: text('sha256'),
+    uploadedAt: timestamp('uploaded_at', { withTimezone: true }),
+    scanStatus: scanStatus('scan_status').notNull().default('pending'),
+    scanReason: text('scan_reason'),
+    scanEngine: text('scan_engine'),
+    scanAttempts: integer('scan_attempts').notNull().default(0),
+    scannedAt: timestamp('scanned_at', { withTimezone: true }),
+    /** 판별한 형식(검사 통과 뒤). */
+    mediaType: text('media_type'),
+    /** approved / rejected. */
+    result: text('result'),
+    reviewedBy: uuid('reviewed_by').references(() => users.id),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    filePurgedAt: timestamp('file_purged_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('certificate_checks_affiliation_id_key').on(t.affiliationId),
+    uniqueIndex('certificate_checks_object_key_key').on(t.objectKey),
+    index('certificate_checks_user_id_idx').on(t.userId),
+    index('certificate_checks_open_idx').on(t.createdAt).where(sql`${t.filePurgedAt} is null`),
+    check('certificate_checks_result_check', sql`${t.result} is null or ${t.result} in ('approved', 'rejected')`),
+    check('certificate_checks_decided_check', sql`(${t.result} is null) = (${t.decidedAt} is null)`),
+    check('certificate_checks_purged_check', sql`${t.filePurgedAt} is null or ${t.objectKey} is null`),
+    check('certificate_checks_object_key_check', sql`${t.objectKey} is null or ${t.objectKey} ~ '^quarantine/[0-9a-f-]{36}$'`),
+    check('certificate_checks_extension_check', sql`${t.fileExtension} in ('png', 'jpg', 'jpeg', 'webp', 'pdf')`),
+    check('certificate_checks_byte_size_check', sql`${t.byteSize} between 1 and 10485760`),
+    check('certificate_checks_sha256_check', sql`${t.sha256} is null or ${t.sha256} ~ '^[0-9a-f]{64}$'`),
   ],
 )
 
