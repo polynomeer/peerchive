@@ -10,6 +10,12 @@ const sending = ref(false)
 const sent = ref(false)
 const error = ref<string | null>(route.query.error === 'link' ? '로그인 링크가 만료되었거나 이미 사용되었습니다. 다시 요청하세요.' : null)
 const fieldError = ref<string | undefined>()
+// 하이드레이션 전에는 v-model이 아직 붙지 않아, 그때 입력한 주소가 하이드레이션 때 지워지고 빈 값으로 제출될 수 있습니다.
+// 화면이 준비될 때까지 버튼을 막습니다.
+const ready = ref(false)
+onMounted(() => {
+  ready.value = true
+})
 
 async function submit() {
   sending.value = true
@@ -59,7 +65,7 @@ async function submit() {
         <p v-if="fieldError" id="email-error" class="field-error">{{ fieldError }}</p>
       </div>
       <div class="actions">
-        <button type="submit" :disabled="sending">{{ sending ? '보내는 중…' : '로그인 링크 받기' }}</button>
+        <button type="submit" :disabled="sending || !ready">{{ sending ? '보내는 중…' : '로그인 링크 받기' }}</button>
       </div>
     </form>
   </div>

@@ -27,8 +27,11 @@ export async function login(page: Page, email: string, profile?: { handle: strin
   await resetLoginIpRateLimit()
   const before = mailCount(email)
   await page.goto('/login')
+  // 하이드레이션 전에 입력하면 값이 지워지므로, 버튼이 켜질 때(onMounted)까지 기다린 뒤 입력합니다.
+  const submit = page.getByRole('button', { name: '로그인 링크 받기' })
+  await expect(submit).toBeEnabled()
   await page.getByLabel('이메일').fill(email)
-  await page.getByRole('button', { name: '로그인 링크 받기' }).click()
+  await submit.click()
   await expect(page.getByRole('status').filter({ hasText: '메일을 확인하세요' })).toBeVisible()
   const link = await waitForMagicLink(email, before)
   expect(new URL(link).pathname).toBe('/auth/verify')
