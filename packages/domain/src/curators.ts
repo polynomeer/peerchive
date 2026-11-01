@@ -15,8 +15,11 @@ export const ASSIGNMENT_TYPE_SUMMARY_MAX = 1000
 /** 병합 제안 이유·신고 의견 메모 최대 길이(글자). */
 export const CURATOR_NOTE_MAX = 300
 
-/** 큐레이터가 1차 검토할 수 있는 신고 대상: 과목 허브에 걸린 공개 항목(선배 노트·막힘 Q&A·그 과목의 공개 사례와 그 안의 항목). */
-export const CURATOR_REVIEW_TARGETS = ['senior_note', 'course_qa', 'publication', 'publication_item'] as const satisfies readonly ReportTargetType[]
+/**
+ * 큐레이터가 1차 검토할 수 있는 신고 대상: 과목 허브에 걸린 공개 항목(선배 노트·막힘 Q&A·그 과목의 공개 사례와 그 안의 항목)과
+ * E-04(ADR 0049) 막힘 Q&A 스레드의 글(그 공개 사례의 지금 release 과목).
+ */
+export const CURATOR_REVIEW_TARGETS = ['senior_note', 'course_qa', 'publication', 'publication_item', 'stuck_qa_post'] as const satisfies readonly ReportTargetType[]
 export type CuratorReviewTarget = (typeof CURATOR_REVIEW_TARGETS)[number]
 
 export const CURATOR_RECOMMENDATIONS = ['dismiss', 'hide'] as const

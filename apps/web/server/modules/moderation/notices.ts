@@ -32,6 +32,7 @@ import {
   seniorNotes,
   socialLinks,
   sql,
+  stuckQaPosts,
   type DbExecutor,
   type SQL,
 } from '@peerchive/db'
@@ -134,6 +135,15 @@ async function toNotices(db: DbExecutor, actions: readonly ActionRow[], viewerId
     db,
     visible.filter((a) => a.roomItemKind && a.roomItemId).map((a) => ({ kind: a.roomItemKind!, id: a.roomItemId! })),
   )
+  const stuckQaIds = visible.map((a) => a.stuckQaPostId).filter((id): id is string => !!id)
+  const stuckQaPathBy = new Map(
+    stuckQaIds.length
+      ? (await db.select({ id: stuckQaPosts.id, threadId: stuckQaPosts.threadId }).from(stuckQaPosts).where(inArray(stuckQaPosts.id, stuckQaIds))).map((r) => [
+          r.id,
+          `/stuck-qa/threads/${r.threadId}`,
+        ])
+      : [],
+  )
   const out: ModerationNoticeDto[] = []
   for (const a of visible) {
     const affected = await affectedUserIds(db, pointerOf(a))
@@ -154,6 +164,8 @@ async function toNotices(db: DbExecutor, actions: readonly ActionRow[], viewerId
     // A-06: 수료 회고는 내 회고 목록(철회·이의제기).
     else if (a.completionRetroId) ownerPath = '/community/retros'
     else if (a.roomItemKind && a.roomItemId) ownerPath = roomItemBy.get(`${a.roomItemKind}:${a.roomItemId}`)?.ownerPath ?? '/community'
+    // E-04: 막힘 Q&A 글은 그 스레드 화면(질문을 숨겼으면 404 — 내 글 지우기·이의제기는 안내 목록에서).
+    else if (a.stuckQaPostId) ownerPath = stuckQaPathBy.get(a.stuckQaPostId) ?? null
     const snapshot = a.releaseId ? snapshotBy.get(a.releaseId) : undefined
     out.push({
       actionId: a.id,
@@ -192,6 +204,7 @@ function affectedSql(userId: string): SQL {
     or (${moderationActions.profilePostId} is not null and exists (select 1 from ${profilePosts} pp where pp.id = ${moderationActions.profilePostId} and pp.user_id = ${userId}))
     or (${moderationActions.socialLinkId} is not null and exists (select 1 from ${socialLinks} sl where sl.id = ${moderationActions.socialLinkId} and sl.user_id = ${userId}))
     or (${moderationActions.completionRetroId} is not null and exists (select 1 from ${completionRetros} cr where cr.id = ${moderationActions.completionRetroId} and cr.author_id = ${userId}))
+    or (${moderationActions.stuckQaPostId} is not null and exists (select 1 from ${stuckQaPosts} sq where sq.id = ${moderationActions.stuckQaPostId} and sq.author_id = ${userId}))
     or (${moderationActions.roomItemId} is not null and (
       (${moderationActions.roomItemKind}::text = 'directory_entry' and exists (select 1 from directory_entries de where de.id = ${moderationActions.roomItemId} and de.user_id = ${userId}))
       or (${moderationActions.roomItemKind}::text = 'room_profile' and exists (select 1 from room_profiles rp where rp.id = ${moderationActions.roomItemId} and rp.user_id = ${userId}))

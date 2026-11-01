@@ -6,6 +6,7 @@
  * - Open Graph는 스냅샷의 제목·요약만 씁니다. 파일럿 동안 기본 noindex(서버 설정으로 바꿈).
  * - T-13: 과목 허브 링크, 계획 포크 수와 "이 계획 포크하기"(로그인 여부는 화면이 뜬 뒤 클라이언트에서만 확인).
  * - T-15: 운영 조치로 가린 항목은 원래 자리에 "운영 조치로 가려진 항목"으로, 신고(사례 전체 또는 기록·선언·파일 하나, 로그인 후).
+ * - E-04: 막힘 Q&A 플래그가 켜져 있으면 🧱 막힘 기록마다 질문 스레드 화면으로 가는 링크(플래그는 화면이 뜬 뒤 클라이언트에서만 확인).
  */
 import type { PlanForkResultDto, PublicPublicationDto } from '~~/shared/types/api'
 import type { ReportChoice } from '~/utils/moderation'
@@ -91,6 +92,15 @@ const reportTargets = computed<ReportChoice[]>(() => {
   ]
 })
 
+// E-04: 막힘 Q&A(기본 꺼짐 플래그). 스냅샷의 🧱 막힘 기록만.
+const { flags, ensure: ensureFeatures } = useFeatures()
+onMounted(() => void ensureFeatures())
+const stuckLogs = computed(() =>
+  (data.value?.snapshot.logs ?? [])
+    .filter((l) => l.tag === 'stuck')
+    .map((l) => ({ key: l.key, text: clip(String((l.payload as Record<string, unknown>).symptom ?? '') || l.body, 60) })),
+)
+
 const fileUrl = (versionId: string) =>
   `/api/v1/public/publications/${encodeURIComponent(slug.value)}/artifacts/${encodeURIComponent(versionId)}`
 </script>
@@ -121,6 +131,15 @@ const fileUrl = (versionId: string) =>
         :title-level="1"
         id-prefix="public"
       />
+      <section v-if="flags.stuckQa && stuckLogs.length" aria-labelledby="stuck-qa-title" data-testid="case-stuck-qa">
+        <h2 id="stuck-qa-title">막힘 Q&A</h2>
+        <p class="small">막힘 로그를 쓴 사람이 질문을 허용하면 학교 인증 계정이 익명으로 묻고 답할 수 있습니다.</p>
+        <ul class="plain">
+          <li v-for="l in stuckLogs" :key="l.key">
+            <NuxtLink :to="`/stuck-qa/cards/${data.slug}/${encodeURIComponent(l.key)}`">🧱 {{ l.text }}</NuxtLink>
+          </li>
+        </ul>
+      </section>
       <section class="fork-box" aria-labelledby="fork-title">
         <h2 id="fork-title">이 계획으로 시작하기</h2>
         <p class="small">

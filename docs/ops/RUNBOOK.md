@@ -191,9 +191,11 @@ P2 기능은 코드가 있어도 **기본으로 꺼져 있고** 이 게이트(DE
 | `PEERCHIVE_FEATURE_P2_TOPICS=on` | 토픽·소속 표시 익명(A-05 학교를 넘나드는 토픽·작성 시점 소속 표시·임계값, A-06 현직자 답변 → 선배 노트) | **A-06 이동 회귀 테스트**(`topic-answer-retros.integration.test.ts`: 이름 표시 네 가지, 소속 표시 유지는 원 글 문자열 복사·바꾸기 금지·투영 0건, 실명·표시명은 복사본 노트만 투영·원 글 연결 없음)와 **S-02 확장**(속성 테스트가 토픽 답변을 네 방식으로 옮긴 세계까지, [ADR 0043](../adr/0043-topic-answer-transfer-retros.md)) 통과, **A-05 임계값 회귀 테스트**(`topics.integration.test.ts`: 시나리오 Y — 30명 부트캠프 → `부트캠프 수료생`, 60명 대학 졸업생 → `○○대 · 졸업생`, 표시 안 함 → 없음, 이후 회원 증가·소속 해제에도 표시 그대로, 학과·기수 미표시, 넓혀졌는지는 작성자에게만, 세는 회원 = 정본 기관·같은 신분의 인증된 active 소속 + active 계정, 범주(기관 유형·신분)도 50명 미만이면 표시 안 함) 통과, **S-02 확장 회귀 테스트**(`identity-boundary.integration.test.ts` 속성 테스트에 토픽·소속 표시 익명 글·댓글 포함, 투영 0건, [ADR 0042](../adr/0042-topics-affiliation-labels.md)) 통과, 임계값 값 확인(`PEERCHIVE_AFFILIATION_LABEL_THRESHOLD`, 기본 50·5 미만 불가), 첫 토픽(취준 등) 운영자 준비, **A-07**: 소속·기수 사칭 처리 기준(§4.7) 공지, 소속 표시 익명 토픽 글 신고의 운영자 상세에 작성자 없음(`p2-ops.integration.test.ts`) 확인 |
 | `PEERCHIVE_FEATURE_P2=on` | 위 셋 모두(영역 변수 `off`가 우선) | 위 모두 |
 | `PEERCHIVE_FEATURE_HUB_STAGED_OPENING=on` | P1 과목 허브 단계적 개방(E-02, [ADR 0047](../adr/0047-hub-staged-opening.md)). **P2 묶음 변수로 켜지지 않음** | `/operator/hub-opening`에서 켰을 때 준비 중이 될 과목 수 확인(이미 사례·노트가 있는 허브가 닫히는지), 기준 `PEERCHIVE_HUB_OPEN_THRESHOLD`(1~100, 기본 3) 결정(pilot 근거), 회귀 테스트 `course-hub-opening.integration.test.ts`(준비 중 응답에 내용 목록 없음·기준 도달 시 열림·병합 합산·숨김/철회/엠바고 제외·알림 한 번·선배 노트 요청·운영자 집계만) 통과 |
+| `PEERCHIVE_FEATURE_STUCK_QA=on` | P1 막힘 Q&A 스레드(E-04, [ADR 0049](../adr/0049-stuck-qa-threads.md)). **P2 묶음 변수로 켜지지 않음** | 신고 처리 담당이 §4.9(숨김·작성자 확인·답 판매 기준)를 읽었는지, 학교 인증 정책 `PEERCHIVE_HUB_REQUIRE_AFFILIATION=1`, 회귀 테스트 `stuck-qa.integration.test.ts`(허용 게이트·철회 시 404·익명 번호·DTO에 사람 id·도움됐어요 개수 없음·후배 기여 선택·신고·숨김·작성자 확인) 통과 |
 
-- 값은 `on`·`1`·`true`·`yes`만 켜짐, 그 밖은 꺼짐. web은 요청마다 읽으므로 바꾼 뒤 web을 재시작합니다. 확인: `curl -s https://<사이트>/api/v1/features` → `{"alumni":false,"topics":false,"institutions":true,"hubStagedOpening":false}`.
+- 값은 `on`·`1`·`true`·`yes`만 켜짐, 그 밖은 꺼짐. web은 요청마다 읽으므로 바꾼 뒤 web을 재시작합니다. 확인: `curl -s https://<사이트>/api/v1/features` → `{"alumni":false,"topics":false,"institutions":true,"hubStagedOpening":false,"stuckQa":false}`.
 - 단계적 개방(E-02)을 끄면 다음 요청부터 모든 허브가 열리고 본인 화면 API는 404입니다. 알림 신청 행은 남고(다시 켜면 이어짐), 허브를 여닫는 수동 조작은 없습니다(기준값만 바꿈).
+- 막힘 Q&A(E-04)를 끄면 다음 요청부터 카드·스레드·글 API와 새 신고가 404이고 사례 페이지의 링크가 사라지며 포트폴리오 답변 수는 0입니다. 행은 남고(다시 켜면 그대로), 이미 받은 신고의 처리·작성자 확인·탈퇴 정리는 플래그와 무관하게 돕니다.
 - 끄기(되돌리기): 변수를 지우고 재시작하면 새 경로가 다음 요청부터 404입니다. 이미 만든 소속은 그대로 active이고(다시 켜면 그대로 보임), 이미 올라온 수료증 파일은 worker가 계속 지웁니다.
 - `alumni`를 끄면 이미 만든 동문회·OB 방은 일반 방처럼 보입니다(방별 프로필 API 404, 글의 방별 이름·배지 없음). 방별 프로필 행은 지우지 않으므로 다시 켜면 그대로 보입니다. 나가기·탈퇴·익명 전환에 따른 방별 프로필 삭제는 플래그와 무관하게 돕니다(삭제 장부 종류 `room_profiles`·`room_profile_cohort_changes`·`room_profile_cohort_actors`).
 - A-02 모임 도구도 같습니다: 끄면 일정·투표·앨범·공지 읽음 API가 404, 글에 읽음 수가 없고, 행·사진 파일은 그대로 남아 다시 켜면 보입니다. 나가기·내보내기에 따른 참석 응답·공지 읽음·투표 표 삭제와 탈퇴 정리(삭제 장부 종류 `room_event_rsvps`·`notice_reads`·`room_poll_votes`·`room_album_photos`·`room_gathering_actors`)는 플래그와 무관하게 돕니다. 공지 읽음은 누가 읽었는지 보는 화면·API가 없습니다(운영자 포함, [ADR 0039](../adr/0039-alumni-events.md)).
@@ -492,6 +494,17 @@ select column_name from information_schema.columns where table_name = 'instituti
 - 포트폴리오 표시: 큐레이터 본인이 홈 "큐레이터 과목"에서 켭니다(기본 꺼짐). 운영자는 바꾸지 않습니다.
 - 탈퇴 정리: 지정 행은 지우고(삭제 장부 `course_curators`), 병합 제안·신고 의견·요약의 그 사람 칸만 비웁니다(`curator_actor_refs`).
 
+### 4.9 막힘 Q&A 스레드(E-04, ADR 0049)
+
+기본 꺼짐(`PEERCHIVE_FEATURE_STUCK_QA`, 위 "GA: … 기능 플래그" 표). 공개된 🧱 막힘 카드에 그 로그를 쓴 학생이 "질문 받기"를 켜면 그 과목 학교 인증 계정이 익명으로 묻고 답합니다(`/stuck-qa/cards/<slug>/<키>`, `/stuck-qa/threads/<id>`). 공개 철회·제한·엠바고·로그 가리기(hide_item)면 요청마다 404이므로 운영자가 따로 닫을 일은 없습니다.
+
+- **신고 처리**(대기열의 "막힘 Q&A 글"): 상세에는 글의 표시(`질문자`·`익명N`·`작성자`)·본문·질문 미리보기만 보입니다. 조치는 `hide_stuck_qa_post` 하나(그 글만, **질문을 숨기면 스레드 전체가 안 보임**). 기준: 진행 중인 과제를 대신 풀어 주는 글·정답 코드·답 판매·거래 제안은 숨김(사유 `answer_sharing`), 원리·접근 설명·참고 자료는 유지. 당사자 사유(public_reason)를 적고 알림을 켜면 글쓴이에게 안내되고 이의제기를 받습니다.
+- **작성자 확인**: 신고 상세의 "작성자 확인(감사 기록)" 버튼만 씁니다. 그 글을 가리키는 신고가 있어야 하고(아니면 404), 누를 때마다 감사 `stuck_qa.author_lookup`(글 id·신고 id)이 남습니다. 결과(내부 id·handle·계정 상태)는 화면에만 있고 신고 메모·이의 답변·외부 채널에 옮기지 않습니다. 같은 사람이 반복해서 답을 팔면 계정 조치 검토를 §4.4 에스컬레이션으로 올립니다.
+- **큐레이터**: 그 과목 큐레이터의 1차 검토 목록에도 보입니다(표시·본문만, 작성자 없음). 처리는 운영자만.
+- "도움됐어요"는 순서에만 쓰이고 개수는 운영 화면에도 없습니다. 개수를 보여 달라는 요청은 받지 않습니다(§8.5 "개인 점수 없음").
+- 점검: `select count(*) filter (where status = 'published') as live, count(*) filter (where status = 'hidden') as hidden from stuck_qa_posts;` — 숨김 비율이 늘면 제품 기획 §19 "막힘 Q&A 익명" 재검토(표시명 기본) 안건으로 올립니다.
+- 탈퇴 정리: 글은 본문을 비운 `withdrawn`(번호 유지), 도움됐어요 행 삭제, 그 사람이 켠 질문 받기는 끔(삭제 장부 `stuck_qa_posts`·`stuck_qa_helpful`·`stuck_qa_cards`).
+
 ## 5. 백업 일정과 보존
 
 | 대상 | 방법 | 주기 | 보존 |
@@ -556,6 +569,7 @@ RTO 목표 4시간 대비 로컬 연습은 수 초입니다. 운영 데이터 �
 | 이번 학기 과목 등록(E-01) | 본인이 지우거나 탈퇴할 때까지(본인만 봄, 감사·분석 기록 없음). 학기가 끝나면 등록마다 한 번 화면 안 알림 시각을 채우고 본인이 닫음(메일 없음). 허브에는 5명 이상 익명 수만 | 본인 삭제 즉시, `course-term-prompts` 매시(알림), `account-purge`(삭제 장부 `course_registrations`) |
 | 과목 허브 알림 신청·선배 노트 요청 닫음(E-02) | 본인이 취소하거나 탈퇴할 때까지(본인만 봄, 감사·분석 기록 없음, 신청 수는 어디에도 내보내지 않음). 허브가 열렸는지는 저장하지 않고 요청마다 계산, 열림 알림 시각은 홈이 읽을 때 한 번 채움 | 본인 취소 즉시, `account-purge`(삭제 장부 `course_hub_notices`) |
 | 학생 큐레이터 지정·제안·의견·과제 유형 요약(E-03) | 지정은 해제·탈퇴까지(해제 행은 기록으로 남음, 탈퇴 때 삭제). 병합 제안·신고 의견은 운영 기록으로 남기고 탈퇴 때 큐레이터 칸만 비움. 과제 유형 요약은 과목의 것(비우면 삭제, 이전 글은 보관하지 않음, 탈퇴 때 고친 사람 칸만 비움) | `account-purge`(삭제 장부 `course_curators`·`curator_actor_refs`) |
+| 막힘 Q&A 스레드(E-04) | 글은 작성자가 지우거나 탈퇴할 때까지(지우면 본문을 비우고 번호·자리는 남김), 질문 받기는 로그 작성자가 끄거나 탈퇴할 때까지, 도움됐어요는 누른 사람이 거두거나 탈퇴할 때까지. 공개가 내려가도 행은 남고 읽기는 404 | 본인 지우기 즉시, `account-purge`(삭제 장부 `stuck_qa_posts`·`stuck_qa_helpful`·`stuck_qa_cards`) |
 | 탈퇴 계정 자료 | 요청 뒤 7일(유예) | `account-purge` 30분마다 |
 | 이름 표시 방식 변경 이력·커뮤니티 알림 | 이력은 공간이 있는 동안(행을 지우지 않음, 탈퇴 때 예약·취소한 사람만 비움), 알림은 받는 사람이 탈퇴할 때까지 | 탈퇴 정리 때. 예약 적용은 `name-mode-changes` 매분 |
 | 소셜 링크 | 사용자가 지우거나 탈퇴할 때까지. verified 링크는 `social-link-recheck`(매시, 링크마다 하루 한 번, 한 번에 100개)가 다시 확인해 되돌림 링크가 없으면(404·410 포함) lost, 가져오기 3번 연속 실패면 lost. 감사에는 주소를 남기지 않음 | 탈퇴 정리 때 삭제 |

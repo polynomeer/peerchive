@@ -3,6 +3,7 @@
  *
  * 범위: 그 과목(정본) 허브에 걸린 공개 항목의 **처리 전**(open·in_review) 신고 — 선배 노트·막힘 Q&A·그 과목 공개 사례와 그 안의 항목
  * (@peerchive/domain CURATOR_REVIEW_TARGETS). 과목은 노트·Q&A의 과목, 공개 사례는 신고 때 release의 과목으로 정합니다.
+ * E-04(ADR 0049): 막힘 Q&A 스레드의 글도 범위입니다(과목은 그 카드 공개의 지금 release 과목). 글의 표시(`질문자`·`익명N`·`작성자`)와 본문만 봅니다.
  * - 목록 `GET /curator/courses/:id/reports`: 대상별 묶음. 실리는 것: 대상 종류·이름표·**사유별 개수**·지금 공개 중인 내용(공개 화면과 같은 DTO,
  *   공개 중이 아니면 "볼 수 없음")·공개 경로·내 의견. **신고자 id·이름·신고 설명(details)·신고 시각·담당 운영자·보류·조치 이력은 싣지 않습니다.**
  *   작성자도 공개 화면에 보이는 이름표 말고는 없습니다(작성자 확인은 운영자만).
@@ -16,6 +17,7 @@ import { CURATOR_NOTE_MAX, CURATOR_RECOMMENDATIONS, CURATOR_REVIEW_TARGETS, type
 import { and, courseQaItems, curatorReportRecommendations, eq, reports, seniorNotes, sql, type DbExecutor } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
 import { publicQaPath, toPublicCourseQa } from '../course-hub/course-qa'
+import { isStuckQaPostVisible, moderationStuckQaPost, stuckQaThreadPath } from '../course-hub/stuck-qa'
 import { toPublicSeniorNote } from '../course-hub/hub'
 import { publicNotePath } from '../course-hub/search'
 import { type Actor, notFound, rateLimited } from '../errors'
@@ -53,7 +55,12 @@ async function openCourseReports(db: DbExecutor, canonicalCourseId: string, only
     left join senior_notes n on n.id = r.senior_note_id
     left join course_qa_items q on q.id = r.course_qa_item_id
     left join publication_candidates pc on pc.id = r.release_id
-    join courses c on c.id = coalesce(n.course_id, q.course_id, pc.course_id)
+    left join stuck_qa_posts sp on sp.id = r.stuck_qa_post_id
+    left join stuck_qa_threads st on st.id = sp.thread_id
+    left join stuck_qa_cards sc on sc.id = st.card_id
+    left join publications sqp on sqp.id = sc.publication_id
+    left join publication_candidates sqc on sqc.id = sqp.current_release_id
+    join courses c on c.id = coalesce(n.course_id, q.course_id, pc.course_id, sqc.course_id)
     where r.status::text in ('open', 'in_review') and r.target_type::text in (${targetList})
       and coalesce(c.merged_into, c.id) = ${canonicalCourseId}
       ${onlyReportId ? sql`and r.target_key = (select target_key from reports where id = ${onlyReportId})` : sql``}
@@ -91,6 +98,13 @@ async function contentFor(db: DbExecutor, report: ReportRow, now: Date): Promise
         content: { kind: 'publication', title: served.snapshot.title, summary: served.snapshot.summary, itemKind: report.itemKind ?? null },
         publicPath: `/p/${pub!.slug}`,
       }
+    }
+    case 'stuck_qa_post': {
+      const id = report.stuckQaPostId!
+      const post = (await isStuckQaPostVisible(db, id, now)) ? await moderationStuckQaPost(db, id) : null
+      if (!post) return unavailable('지금 공개 중이 아닙니다(지웠거나 운영자가 이미 가렸거나 사례가 내려갔습니다).')
+      const [row] = await db.execute<{ thread_id: string }>(sql`select thread_id from stuck_qa_posts where id = ${id}`)
+      return { content: { kind: 'stuck_qa_post', post }, publicPath: row ? stuckQaThreadPath(row.thread_id) : null }
     }
   }
 }

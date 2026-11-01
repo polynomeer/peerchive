@@ -196,6 +196,7 @@ const reasonsText = (g: CuratorReportGroupDto) =>
             </template>
             <p v-else-if="g.content.kind === 'course_qa'" class="small pre">{{ g.content.qa.questionTitle }} — {{ g.content.qa.answerBody }}</p>
             <p v-else-if="g.content.kind === 'publication'" class="small">{{ g.content.title }} — {{ g.content.summary }}</p>
+            <p v-else-if="g.content.kind === 'stuck_qa_post'" class="small pre">{{ g.content.post.label }}: {{ g.content.post.body }}</p>
             <p v-else class="small muted">{{ g.content.message }}</p>
             <p v-if="g.publicPath" class="small"><NuxtLink :to="g.publicPath">공개 화면에서 보기</NuxtLink></p>
             <p v-if="g.myRecommendation" class="small">내 의견: {{ g.myRecommendation.recommendation === 'hide' ? '가리기 권장' : '기각 권장' }}</p>

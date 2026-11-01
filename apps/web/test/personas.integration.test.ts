@@ -228,7 +228,7 @@ describe.skipIf(!databaseUrl)('S-01 personas (PostgreSQL)', () => {
       const realView = await getPublicPortfolioProfile(tx, f.real.handle, T0)
       const displayView = await getPublicPortfolioProfile(tx, f.display.handle, T0)
       expect(realView.headline).toBe('실명 판 둘째')
-      expect(displayView).toMatchObject({ headline: '표시명 판 한 줄', skillsDeclared: ['그림'], featured: [], timeline: [], juniorContribution: { planForks: 0, seniorNotes: 0, curatedCourses: [] } })
+      expect(displayView).toMatchObject({ headline: '표시명 판 한 줄', skillsDeclared: ['그림'], featured: [], timeline: [], juniorContribution: { planForks: 0, seniorNotes: 0, curatedCourses: [], stuckQaAnswers: 0 } })
       expect(JSON.stringify(displayView)).not.toContain('실명 판')
       expect(JSON.stringify(realView)).not.toContain('표시명 판')
     })

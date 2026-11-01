@@ -39,6 +39,8 @@ export const REPORT_TARGET_TYPES = [
   // A-07(ADR 0045): 동문회·OB 방의 항목(명부 항목·일정·투표·앨범 사진·방별 프로필). 그 방 active 멤버가 지금 보는 것만 신고하고,
   // 대상은 항목 종류(ROOM_ITEM_KINDS) + 항목 id 하나입니다(주인 사용자 id는 신고·조치 행에 두지 않음).
   'room_item',
+  // E-04(ADR 0049): 막힘 Q&A 스레드의 글 하나(질문·답변). 지금 보이는 스레드의 게시 중인 글만(stuckQa 플래그 꺼짐 404). 질문을 숨기면 스레드가 닫힙니다.
+  'stuck_qa_post',
 ] as const
 export type ReportTargetType = (typeof REPORT_TARGET_TYPES)[number]
 
@@ -114,6 +116,8 @@ export const MODERATION_ACTION_KINDS = [
   'hide_retro',
   // A-07(ADR 0045): 방 항목 하나 숨기기(그 행의 hidden_at — 방 멤버 화면에서 빠짐, 되돌리면 다시 보임).
   'hide_room_item',
+  // E-04(ADR 0049): 막힘 Q&A 글 하나 숨기기(published → hidden, 질문이면 스레드 전체가 안 보임, 되돌리면 다시 published).
+  'hide_stuck_qa_post',
 ] as const
 export type ModerationActionKind = (typeof MODERATION_ACTION_KINDS)[number]
 
@@ -159,6 +163,7 @@ export const ACTIONS_BY_TARGET: Readonly<Record<ReportTargetType, readonly Moder
   social_link: ['none', 'hide_social_link'],
   completion_retro: ['none', 'hide_retro'],
   room_item: ['none', 'hide_room_item'],
+  stuck_qa_post: ['none', 'hide_stuck_qa_post'],
 }
 
 export function isActionApplicable(target: ReportTargetType, action: ModerationActionKind): boolean {
@@ -215,6 +220,7 @@ export type ReportTargetIdentity =
   | { type: 'social_link'; socialLinkId: string }
   | { type: 'completion_retro'; retroId: string }
   | { type: 'room_item'; kind: RoomItemKind; itemId: string }
+  | { type: 'stuck_qa_post'; postId: string }
 
 export function reportTargetKey(target: ReportTargetIdentity): string {
   switch (target.type) {
@@ -250,6 +256,8 @@ export function reportTargetKey(target: ReportTargetIdentity): string {
       return `completion_retro:${target.retroId}`
     case 'room_item':
       return `room_item:${target.kind}:${target.itemId}`
+    case 'stuck_qa_post':
+      return `stuck_qa_post:${target.postId}`
   }
 }
 

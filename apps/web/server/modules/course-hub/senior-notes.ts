@@ -175,7 +175,7 @@ async function toDto(db: DbExecutor, row: NoteRow): Promise<SeniorNoteDto> {
 }
 
 /** 작성 자격 판정(만들기·게시·화면 안내 공통). 과목은 정본·과목 학교는 병합을 따라간 정본입니다. */
-async function writeDecision(tx: DbExecutor, actor: Actor, course: { id: string; mergedInto: string | null; schoolId: string }) {
+export async function writeDecision(tx: DbExecutor, actor: Actor, course: { id: string; mergedInto: string | null; schoolId: string }) {
   const [user] = await tx.select({ status: users.status }).from(users).where(eq(users.id, actor.userId)).limit(1)
   const [school] = await tx
     .select({ id: sql<string>`coalesce(${schools.mergedInto}, ${schools.id})` })

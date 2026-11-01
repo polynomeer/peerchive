@@ -73,6 +73,7 @@ export const REPORT_TARGET_LABELS: Record<ReportTargetType, string> = {
   social_link: '소셜 링크',
   completion_retro: '수료 회고',
   room_item: '동문 방 항목',
+  stuck_qa_post: '막힘 Q&A 글',
 }
 
 export const REPORTER_STATUS_LABELS: Record<MyReportDto['status'], string> = {
@@ -103,6 +104,7 @@ export const ACTION_LABELS: Record<ModerationActionKind, string> = {
   hide_social_link: '소셜 링크 숨기기',
   hide_retro: '수료 회고 숨기기',
   hide_room_item: '방 항목 숨기기(그 항목 하나만)',
+  hide_stuck_qa_post: '막힘 Q&A 글 숨기기(질문이면 스레드 전체)',
 }
 
 /** 당사자에게 보이는 조치 설명. */
@@ -126,6 +128,7 @@ export const NOTICE_TITLES: Record<Exclude<ModerationActionKind, 'none'>, string
   hide_social_link: '운영 조치로 숨겨진 소셜 링크',
   hide_retro: '운영 조치로 숨겨진 수료 회고',
   hide_room_item: '운영 조치로 숨겨진 동문 방 항목',
+  hide_stuck_qa_post: '운영 조치로 숨겨진 막힘 Q&A 글',
 }
 
 export const APPEAL_STATUS_LABELS: Record<AppealStatus, string> = {

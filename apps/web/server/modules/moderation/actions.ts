@@ -20,6 +20,7 @@
  * | hide_profile_post(S-07) | 프로필 글 published → hidden(활동은 같은 트랜잭션의 DB 트리거가 거둠) | hidden → published(트리거가 원천을 다시 확인해 되살림) |
  * | hide_social_link(S-07) | social_links.hidden_at(공개 DTO에서 빠짐) | hidden_at = null |
  * | hide_room_item(A-07) | 방 항목(명부 항목·일정·투표·앨범 사진·방별 프로필) 하나의 hidden_at(방 멤버 화면·서명 URL에서 빠짐) | hidden_at = null(행이 지워졌으면 그대로) |
+ * | hide_stuck_qa_post(E-04) | 막힘 Q&A 글 published → hidden(질문이면 스레드 전체가 안 보임) | hidden → published(작성자가 그사이 지웠으면 그대로) |
  *
  * 공개 읽기는 이 상태를 요청마다 읽으므로 커밋 즉시 효력이 있습니다(worker 무관). outbox `moderation.action`은 worker가 검색 문서 같은 남은 사본을
  * 맞추는 데만 씁니다. 삭제 조치는 없습니다(차단 ≠ 삭제).
@@ -58,6 +59,7 @@ import {
   unhideRoomItemInTx,
 } from '../community/reporting'
 import { conflict, notFound } from '../errors'
+import { hideStuckQaPostInTx, unhideStuckQaPostInTx } from '../course-hub/stuck-qa'
 import { lockPublication } from '../publication/candidates'
 import { liftRestrictionInTx, restrictInTx } from '../publication/releases'
 import type { TargetPointer } from './targets'
@@ -92,6 +94,7 @@ function auditTarget(
     | 'socialLinkId'
     | 'completionRetroId'
     | 'roomItemId'
+    | 'stuckQaPostId'
   >,
 ) {
   switch (action.targetType) {
@@ -128,6 +131,9 @@ function auditTarget(
     // A-07: 항목 id만(종류는 metadata의 itemKind). 주인 사용자는 없습니다.
     case 'room_item':
       return { targetType: 'room_item' as const, targetId: action.roomItemId }
+    // E-04: 글 id만(작성자·번호 없음).
+    case 'stuck_qa_post':
+      return { targetType: 'stuck_qa_post' as const, targetId: action.stuckQaPostId }
   }
 }
 
@@ -207,6 +213,8 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
   // A-07: 행 잠금·상태 확인은 조치 행을 만든 뒤 hideRoomItemInTx가 합니다(없음 404, 이미 숨김 409 — 같은 트랜잭션이라 함께 되돌아감).
   if (input.kind === 'hide_room_item' && (!target.roomItemKind || !target.roomItemId)) throw notFound()
   if (input.kind === 'hide_application' && !target.communityApplicationId) throw notFound()
+  // E-04: 행 잠금·상태 확인은 조치 행을 만든 뒤 hideStuckQaPostInTx가 합니다(같은 트랜잭션).
+  if (input.kind === 'hide_stuck_qa_post' && !target.stuckQaPostId) throw notFound()
   if (input.kind === 'hide_profile') {
     const [profile] = await tx.select().from(profiles).where(eq(profiles.userId, target.profileUserId!)).limit(1).for('update')
     if (!profile) throw notFound()
@@ -258,6 +266,7 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
       completionRetroId: target.completionRetroId,
       roomItemKind: target.roomItemKind,
       roomItemId: target.roomItemId,
+      stuckQaPostId: target.stuckQaPostId,
       internalNote: input.internalNote,
       publicReason: input.publicReason,
       notifyOwner: input.notifyOwner,
@@ -330,6 +339,9 @@ export async function applyModeration(tx: DbExecutor, operatorId: string, target
       break
     case 'hide_room_item':
       await hideRoomItemInTx(tx, target.roomItemKind!, target.roomItemId!, now)
+      break
+    case 'hide_stuck_qa_post':
+      await hideStuckQaPostInTx(tx, target.stuckQaPostId!, now)
       break
   }
   await emit(tx, action!.id, 'applied', now)
@@ -437,6 +449,9 @@ export async function undoModeration(
       break
     case 'hide_room_item':
       await unhideRoomItemInTx(tx, action.roomItemKind!, action.roomItemId!)
+      break
+    case 'hide_stuck_qa_post':
+      await unhideStuckQaPostInTx(tx, action.stuckQaPostId!, now)
       break
   }
   await tx

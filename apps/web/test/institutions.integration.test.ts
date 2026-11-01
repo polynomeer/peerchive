@@ -92,9 +92,9 @@ describe.skipIf(!databaseUrl)('institutions and verification methods (PostgreSQL
 
   it('flag off (default): every new P2 service is 404 and the feature endpoint says off', async () => {
     setFeatureEnvForTesting({})
-    expect(featureFlags()).toEqual({ alumni: false, topics: false, institutions: false, hubStagedOpening: false })
+    expect(featureFlags()).toEqual({ alumni: false, topics: false, institutions: false, hubStagedOpening: false, stuckQa: false })
     setFeatureEnvForTesting({ PEERCHIVE_FEATURE_P2: 'on', PEERCHIVE_FEATURE_P2_TOPICS: 'off' })
-    expect(featureFlags()).toEqual({ alumni: true, topics: false, institutions: true, hubStagedOpening: false })
+    expect(featureFlags()).toEqual({ alumni: true, topics: false, institutions: true, hubStagedOpening: false, stuckQa: false })
     await withRollback(async (tx) => {
       const op = await operator(tx)
       const inst = await bootcamp(tx, op)

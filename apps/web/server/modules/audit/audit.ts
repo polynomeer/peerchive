@@ -169,6 +169,9 @@ export type AuditAction =
   | 'community.directory_withdraw'
   | 'course_qa.publish'
   | 'course_qa.withdraw'
+  // E-04(ADR 0049): 막힘 Q&A 질문 허용 켜고 끄기(카드 id·참거짓)와 운영자의 작성자 확인(글 id·신고 id). 글 본문·번호·작성자는 넣지 않습니다.
+  | 'stuck_qa.questions_toggle'
+  | 'stuck_qa.author_lookup'
   // A-06(ADR 0043): 수료 회고 쓰기·철회. 회고 id와 방식·넓혀졌는지 같은 플래그만(기관·기수·글 없음). 익명 회고는 행위자 없이.
   | 'completion_retro.create'
   | 'completion_retro.withdraw'
@@ -245,6 +248,8 @@ export async function recordAudit(
       | 'concept_tag_proposal'
       | 'completion_retro'
       | 'room_item'
+      | 'stuck_qa_card'
+      | 'stuck_qa_post'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

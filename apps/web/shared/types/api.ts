@@ -1807,7 +1807,7 @@ export interface PublicPortfolioProfileDto extends PortfolioViewDto {
   /**
    * 후배 기여: 개수만, 순위 없음. curatedCourses(E-03, ADR 0048)는 지금 큐레이터인 과목 중 본인이 포트폴리오 표시를 켠 것만(기본 꺼짐, 실명 프로필만).
    */
-  juniorContribution: { planForks: number; seniorNotes: number; curatedCourses: CuratedCourseLabelDto[] }
+  juniorContribution: { planForks: number; seniorNotes: number; curatedCourses: CuratedCourseLabelDto[]; stuckQaAnswers: number }
   timeline: PublicTimelineItemDto[]
   /** 학교 인증 배지(C-01). 본인이 켰을 때만, active 인증의 학교 이름 + 졸업생 여부. 학과·메일·도메인 없음. */
   affiliationBadges: PublicAffiliationBadgeDto[]
@@ -1898,6 +1898,8 @@ export interface FeatureFlagsDto {
   institutions: boolean
   /** E-02 과목 허브 단계적 개방(P1 영역, 기본 꺼짐). */
   hubStagedOpening: boolean
+  /** E-04 막힘 Q&A 스레드(P1 영역, 기본 꺼짐). */
+  stuckQa: boolean
 }
 
 /** 대학이 아닌 기관(검색·운영자 생성 결과). */
@@ -2063,6 +2065,8 @@ export type ReportTargetType =
   | 'completion_retro'
   /** A-07: 동문회·OB 방 항목(명부 항목·일정·투표·앨범 사진·방별 프로필). */
   | 'room_item'
+  /** E-04: 막힘 Q&A 스레드의 글 하나(질문·답변). */
+  | 'stuck_qa_post'
 /** A-07: 신고할 수 있는 방 항목 종류(@peerchive/domain ROOM_ITEM_KINDS). */
 export type RoomItemKind = 'directory_entry' | 'event' | 'poll' | 'album_photo' | 'room_profile'
 /** impersonation(표시명 사칭, S-07)은 프로필 신고에만. affiliation_impersonation(소속·기수 사칭, A-07)은 커뮤니티 글·댓글·수료 회고·명부 항목·방별 프로필에만. */
@@ -2105,6 +2109,8 @@ export type ModerationActionKind =
   | 'hide_retro'
   /** A-07: 방 항목 하나 숨기기. */
   | 'hide_room_item'
+  /** E-04: 막힘 Q&A 글 하나 숨기기. */
+  | 'hide_stuck_qa_post'
 export type HiddenItemKind = 'log' | 'claim' | 'artifact'
 export type AppealStatus = 'open' | 'upheld' | 'reversed'
 
@@ -2133,6 +2139,8 @@ export type ReportTargetRef =
   | { retroId: string }
   /** 방 항목(A-07): 그 방 active 멤버가 지금 보는 숨기지 않은 항목. */
   | { spaceSlug: string; kind: RoomItemKind; itemId: string }
+  /** 막힘 Q&A 글(E-04): 지금 보이는 스레드의 게시 중인 질문·답변. */
+  | { stuckQaPostId: string }
 
 export interface HiddenItemPlaceholderDto {
   kind: HiddenItemKind
@@ -2275,6 +2283,8 @@ export type OperatorTargetContentDto =
   | { kind: 'completion_retro'; retro: CompletionRetroDto; status: CompletionRetroStatus }
   /** 방 항목(A-07): 그 항목 하나. 만든 사람·올린 사람의 id·이름은 싣지 않습니다(명부·방별 프로필은 방 멤버에게 보이는 이름만). */
   | { kind: 'room_item'; roomItem: OperatorRoomItemDto }
+  /** 막힘 Q&A 글(E-04): 스레드에 보이는 표시와 본문(숨긴 것도 내용 포함). 작성자는 싣지 않습니다(작성자 확인은 신고에 묶인 별도 요청). */
+  | { kind: 'stuck_qa_post'; post: StuckQaModerationPostDto }
   | { kind: 'unavailable'; message: string }
 
 /** A-07: 운영자 신고 상세의 방 항목. 방 이름·지금 이름 표시 방식과 항목 값만. */
@@ -3881,6 +3891,8 @@ export type CuratorReportContentDto =
   | { kind: 'senior_note'; note: PublicSeniorNoteDto }
   | { kind: 'course_qa'; qa: PublicCourseQaDto }
   | { kind: 'publication'; title: string; summary: string; itemKind: 'log' | 'claim' | 'artifact' | null }
+  /** E-04: 지금 보이는 막힘 Q&A 글(공개 화면과 같은 표시·본문). */
+  | { kind: 'stuck_qa_post'; post: StuckQaModerationPostDto }
   | { kind: 'unavailable'; message: string }
 
 /**
@@ -3890,7 +3902,7 @@ export type CuratorReportContentDto =
 export interface CuratorReportGroupDto {
   /** 묶음의 가장 오래된 처리 전 신고(의견을 붙이는 곳). */
   reportId: string
-  targetType: 'senior_note' | 'course_qa' | 'publication' | 'publication_item'
+  targetType: 'senior_note' | 'course_qa' | 'publication' | 'publication_item' | 'stuck_qa_post'
   targetLabel: string
   reasons: Partial<Record<ReportReason, number>>
   content: CuratorReportContentDto
@@ -3907,4 +3919,92 @@ export interface OperatorCuratorRecommendationDto {
   curator: { userId: string; displayName: string } | null
   createdAt: string
   updatedAt: string
+}
+
+// ── 막힘 Q&A 스레드 (E-04, ADR 0049) ─────────────────────────────────────
+
+/** 글의 표시: `질문자`(스레드를 연 사람) / `작성자`(막힘 로그를 쓴 사람) / `익명N`. 이름·사람 id는 없습니다. */
+export type StuckQaRole = 'asker' | 'log_author' | 'anonymous'
+export type StuckQaPostStatus = 'published' | 'withdrawn' | 'hidden'
+
+/** 보는 사람 자신에 관한 값(로그인했을 때만). */
+export interface StuckQaViewerDto {
+  /** 이 막힘 로그를 쓴 사람인지(질문 허용을 켜고 끌 수 있음, 쓰면 `작성자`). */
+  isLogAuthor: boolean
+  /** 지금 질문·답변을 쓸 수 있는지(허용 + 과목 학교 인증, C-01). */
+  canWrite: boolean
+  /** 인증이 없어서 못 쓰면 'school_affiliation'(화면이 인증 페이지로 안내). */
+  requirement: 'school_affiliation' | null
+}
+
+/** 카드 목록의 스레드 하나. "도움됐어요" 개수는 싣지 않습니다(정렬에만 씀). */
+export interface StuckQaThreadSummaryDto {
+  id: string
+  question: string
+  answerCount: number
+  createdAt: string
+  lastPostAt: string
+}
+
+/** GET /api/v1/stuck-qa/cards/:slug/:itemKey — 막힘 카드 하나의 질문 허용·스레드(카드 안 정렬: 도움됐어요 합 → 최근 글). */
+export interface StuckQaCardDto {
+  slug: string
+  itemKey: string
+  symptom: string
+  courseId: string | null
+  questionsAllowed: boolean
+  threads: StuckQaThreadSummaryDto[]
+  viewer: StuckQaViewerDto | null
+}
+
+export interface StuckQaPostDto {
+  id: string
+  kind: 'question' | 'answer'
+  role: StuckQaRole
+  label: string
+  /** 게시 중일 때만. 지운 글·숨긴 글은 null(자리 표시). */
+  body: string | null
+  status: StuckQaPostStatus
+  createdAt: string
+  /** 보는 사람 자신의 글인지(그 사람의 응답에만 true). */
+  mine: boolean
+  /** 보는 사람이 "도움됐어요"를 눌렀는지. 개수는 없습니다. */
+  helpedByMe: boolean
+  /** 내 답변이면 포트폴리오 "후배 기여"에 넣는지(남의 글은 null). */
+  countAsContribution: boolean | null
+}
+
+/** GET /api/v1/stuck-qa/threads/:id — 질문 먼저, 답변은 도움됐어요 많은 순 → 먼저 쓴 순. */
+export interface StuckQaThreadDto {
+  id: string
+  slug: string
+  itemKey: string
+  symptom: string
+  /** 질문 허용이 켜져 있어 새 답변을 받는지. */
+  open: boolean
+  posts: StuckQaPostDto[]
+  viewer: StuckQaViewerDto | null
+}
+
+/** 운영자·큐레이터가 보는 막힘 Q&A 글(표시·본문·상태, 작성자 없음). */
+export interface StuckQaModerationPostDto {
+  /** 글 id(공개 스레드 화면에도 보이는 값). */
+  id: string
+  kind: 'question' | 'answer'
+  label: string
+  body: string
+  status: StuckQaPostStatus
+  /** 스레드 질문 미리보기(답변을 신고했을 때 맥락). */
+  question: string
+  slug: string
+  createdAt: string
+}
+
+/** POST /api/v1/operator/stuck-qa/posts/:id/author-lookup {reportId} — 신고에 묶인 작성자 확인(감사 기록, 이 응답에만 작성자). */
+export interface StuckQaAuthorLookupDto {
+  postId: string
+  reportId: string
+  author: { userId: string; handle: string | null; status: 'active' | 'suspended' | 'deleted' } | null
+  /** 막힘 로그 작성자로 쓴 글인지. */
+  byLogAuthor: boolean
 }

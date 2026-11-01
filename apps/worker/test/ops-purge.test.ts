@@ -48,6 +48,7 @@ import {
   deletionLedger,
   endorsements,
   eq,
+  ne,
   or,
   hashSubject,
   institutionAffiliations,
@@ -89,6 +90,11 @@ import {
   courses,
   courseRegistrations,
   courseHubNotices,
+  stuckQaAliases,
+  stuckQaCards,
+  stuckQaHelpful,
+  stuckQaPosts,
+  stuckQaThreads,
   conceptTags,
   courseCurators,
   conceptTagMergeProposals,
@@ -790,6 +796,41 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect(await count(tx, curatorReportRecommendations, eq(curatorReportRecommendations.reportId, report!.id))).toBe(1)
       expect(await count(tx, curatorReportRecommendations, eq(curatorReportRecommendations.curatorId, U.id))).toBe(0)
       expect((await tx.select().from(courseTypeSummaries).where(eq(courseTypeSummaries.courseId, course!.id)))[0]).toMatchObject({ updatedBy: null, body: '팀 구현 과제 3개' })
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('blanks the purged user\'s stuck Q&A posts, drops their helpful marks and closes cards they opened, keeping aliases (E-04)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴답변자', 'deleted')
+      const M = await user(tx, '남는작성자')
+      const p = await project(tx, M.id, '막힘 과제')
+      const { publication } = await publish(tx, p.id, M.id, [M.id])
+      const [mine] = await tx.insert(stuckQaCards).values({ publicationId: publication.id, itemKey: 'l_u', authorId: U.id, questionsAllowed: true }).returning()
+      const [other] = await tx.insert(stuckQaCards).values({ publicationId: publication.id, itemKey: 'l_m', authorId: M.id, questionsAllowed: true }).returning()
+      const [thread] = await tx.insert(stuckQaThreads).values({ cardId: other!.id, askerId: M.id }).returning()
+      await tx.insert(stuckQaAliases).values([
+        { threadId: thread!.id, userId: M.id, aliasNo: 0 },
+        { threadId: thread!.id, userId: U.id, aliasNo: 1 },
+      ])
+      const [question] = await tx.insert(stuckQaPosts).values({ threadId: thread!.id, authorId: M.id, kind: 'question', aliasNo: 0, body: '질문' }).returning()
+      const [answer] = await tx.insert(stuckQaPosts).values({ threadId: thread!.id, authorId: U.id, kind: 'answer', aliasNo: 1, body: '탈퇴자 답변', countAsContribution: true }).returning()
+      await tx.insert(stuckQaPosts).values({ threadId: thread!.id, authorId: U.id, kind: 'answer', aliasNo: 1, body: '숨긴 답변', status: 'hidden' })
+      const [mAnswer] = await tx.insert(stuckQaPosts).values({ threadId: thread!.id, authorId: M.id, kind: 'answer', aliasNo: 0, body: '남는 답변' }).returning()
+      await tx.insert(stuckQaHelpful).values([
+        { postId: mAnswer!.id, userId: U.id },
+        { postId: answer!.id, userId: M.id },
+      ])
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ stuck_qa_posts: 2, stuck_qa_helpful: 1, stuck_qa_cards: 1 })
+      expect((await tx.select().from(stuckQaPosts).where(eq(stuckQaPosts.id, answer!.id)))[0]).toMatchObject({ status: 'withdrawn', body: '', countAsContribution: false, aliasNo: 1 })
+      expect(await count(tx, stuckQaPosts, and(eq(stuckQaPosts.authorId, U.id), ne(stuckQaPosts.status, 'withdrawn')))).toBe(0)
+      expect((await tx.select().from(stuckQaPosts).where(eq(stuckQaPosts.id, question!.id)))[0]).toMatchObject({ status: 'published', body: '질문' })
+      expect(await count(tx, stuckQaHelpful, eq(stuckQaHelpful.userId, U.id))).toBe(0)
+      expect(await count(tx, stuckQaHelpful, eq(stuckQaHelpful.userId, M.id))).toBe(1)
+      expect((await tx.select().from(stuckQaCards).where(eq(stuckQaCards.id, mine!.id)))[0]).toMatchObject({ authorId: null, questionsAllowed: false })
+      expect((await tx.select().from(stuckQaCards).where(eq(stuckQaCards.id, other!.id)))[0]).toMatchObject({ authorId: M.id, questionsAllowed: true })
+      expect(await count(tx, stuckQaAliases, eq(stuckQaAliases.threadId, thread!.id))).toBe(2)
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })

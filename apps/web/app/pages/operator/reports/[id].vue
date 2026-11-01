@@ -6,6 +6,7 @@
  * - 기각, 제한 해제(restricted → draft), 이의 결정(유지·되돌림), 감사 기록 보기.
  * - 커뮤니티 글·댓글(C-06): 신고 누적 임시 숨김이면 "기각·조치 없음 = 복원, 가리기 = 확정" 안내, 사유를 기록하는 작성자 확인과 이용 제한 발급.
  * - 페르소나·프로필 글·소셜 링크(S-07): 신고된 페르소나 자신만, 사유를 기록하는 주인 확인(OperatorPersonaLookup).
+ * - 막힘 Q&A 글(E-04): 글 하나와 표시만, 신고에 묶인 작성자 확인(OperatorStuckQaLookup, 감사 기록).
  */
 import type {
   ModerationActionKind,
@@ -264,6 +265,20 @@ async function loadAudit() {
             동문 방 항목 하나만 보입니다. 일정·투표·사진을 만든·올린 사람은 운영자에게도 보이지 않고, 명부·방별 프로필은 방 멤버에게 보이는 이름만 보입니다.
             숨기면 방 멤버 화면에서 빠지고 당사자에게 안내가 가며, 이의제기로 되돌리면 다시 보입니다. 사진 주소는 5분 동안 나에게만 맞습니다.
           </p>
+        </template>
+        <template v-else-if="data.content.kind === 'stuck_qa_post'">
+          <p data-testid="op-stuck-qa">
+            <strong>{{ data.content.post.label }}</strong>
+            <span class="badge">{{ data.content.post.kind === 'question' ? '막힘 Q&A 질문' : '막힘 Q&A 답변' }}</span>
+            <span v-if="data.content.post.status === 'hidden'" class="badge">운영 조치로 숨김</span>
+          </p>
+          <p v-if="data.content.post.kind === 'answer'" class="small muted">질문: {{ data.content.post.question }}</p>
+          <p class="pre">{{ data.content.post.body }}</p>
+          <p class="hint">
+            /p/{{ data.content.post.slug }}의 막힘 카드 스레드 글 하나만 보입니다. 스레드에서는 모두 익명(질문자·익명N·작성자)이고, 작성자는 이 신고에 묶인 확인으로만
+            볼 수 있습니다. 질문을 숨기면 스레드 전체가 보이지 않습니다.
+          </p>
+          <OperatorStuckQaLookup :post-id="data.content.post.id" :report-id="data.report.id" />
         </template>
         <template v-else-if="data.content.kind === 'persona' || data.content.kind === 'profile_post' || data.content.kind === 'social_link'">
           <p data-testid="op-persona">

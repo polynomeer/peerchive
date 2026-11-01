@@ -12,6 +12,8 @@
  *   꺼지면 404. 당사자는 작성자, 이름표는 "수료 회고 · 고정된 기관 표시"(넓혀졌으면 넓힌 문자열 — 기관 이름을 새로 드러내지 않음).
  * - A-07(ADR 0045): 동문회·OB 방 항목(`{spaceSlug, kind, itemId}`). 그 방 active 멤버가 지금 보는 숨기지 않은 항목만(alumni 플래그 꺼짐 404).
  *   포인터는 종류 + 항목 id, 당사자는 그 항목의 주인(명부·방별 프로필의 사람, 일정·투표를 만든 사람, 사진을 올린 사람), 이름표는 "종류 · 방 이름".
+ * - E-04(ADR 0049): 막힘 Q&A 글(`{stuckQaPostId}`). 지금 보이는 스레드의 게시 중인 질문·답변만(stuckQa 플래그 꺼짐 404, 누구나 로그인하면 신고).
+ *   포인터는 글 id, 당사자는 그 글을 쓴 사람, 이름표는 "막힘 Q&A 질문·답변 · /p/slug"(작성자·번호 없음).
  */
 import { z } from 'zod'
 import {
@@ -68,6 +70,7 @@ import { isPubliclyVisible } from '../portfolio/view'
 import { isUuid } from '../projects/access'
 import { loadServedRelease } from '../publication/public-read'
 import { resolveReportableRetro } from '../institutions/completion-retros'
+import { resolveReportableStuckQaPost, stuckQaPostAuthorIds, stuckQaPostLabels } from '../course-hub/stuck-qa'
 import { resolvePublicPersona } from '../social/personas'
 import { reportableProfilePost } from '../social/profile-posts'
 import { isHiddenFrom } from '../social/relations'
@@ -103,6 +106,8 @@ export interface TargetPointer {
   /** A-07: 방 항목(종류 + 항목 id, 주인 사용자 없음). */
   roomItemKind: RoomItemKind | null
   roomItemId: string | null
+  /** E-04: 막힘 Q&A 글. */
+  stuckQaPostId: string | null
 }
 
 const empty = (targetType: ReportTargetType, identity: ReportTargetIdentity): TargetPointer => ({
@@ -129,6 +134,7 @@ const empty = (targetType: ReportTargetType, identity: ReportTargetIdentity): Ta
   completionRetroId: null,
   roomItemKind: null,
   roomItemId: null,
+  stuckQaPostId: null,
 })
 
 const slug = z.string({ error: 'invalid' }).trim().toLowerCase().min(3, { error: 'invalid' }).max(60, { error: 'invalid' })
@@ -307,6 +313,11 @@ export async function resolvePublicTarget(db: DbExecutor, type: ReportTargetType
       const { kind, itemId } = await resolveReportableRoomItem(db, actor, rawRef, now)
       return { ...empty(type, { type, kind, itemId }), roomItemKind: kind, roomItemId: itemId }
     }
+    // E-04: 지금 보이는 스레드의 게시 중인 막힘 Q&A 글.
+    case 'stuck_qa_post': {
+      const postId = await resolveReportableStuckQaPost(db, rawRef, now)
+      return { ...empty(type, { type, postId }), stuckQaPostId: postId }
+    }
   }
 }
 
@@ -350,6 +361,7 @@ export async function affectedUserIds(
     | 'completionRetroId'
     | 'roomItemKind'
     | 'roomItemId'
+    | 'stuckQaPostId'
   >,
 ): Promise<string[]> {
   switch (target.targetType) {
@@ -416,6 +428,9 @@ export async function affectedUserIds(
     }
     case 'room_item':
       return roomItemOwnerIds(db, target.roomItemKind, target.roomItemId)
+    // E-04: 그 글을 쓴 사람.
+    case 'stuck_qa_post':
+      return stuckQaPostAuthorIds(db, target.stuckQaPostId)
   }
 }
 
@@ -453,6 +468,7 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
     targets.filter((t) => t.roomItemKind && t.roomItemId).map((t) => ({ kind: t.roomItemKind!, id: t.roomItemId! })),
   )
   const personaHandleBy = await personaHandles(db, targets)
+  const stuckQaBy = await stuckQaPostLabels(db, [...new Set(targets.map((t) => t.stuckQaPostId).filter((id): id is string => !!id))])
   const [pubRows, noteRows, caseRows] = await Promise.all([
     pubIds.length ? db.select({ id: publications.id, slug: publications.slug }).from(publications).where(inArray(publications.id, pubIds)) : [],
     noteIds.length
@@ -534,6 +550,9 @@ export async function targetLabels(db: DbExecutor, targets: readonly TargetPoint
       case 'room_item':
         label = roomItemBy.get(`${t.roomItemKind}:${t.roomItemId}`)?.label ?? '방 항목'
         break
+      case 'stuck_qa_post':
+        label = stuckQaBy.get(t.stuckQaPostId ?? '') ?? '막힘 Q&A 글'
+        break
     }
     out.set(t.targetKey, label)
   }
@@ -583,6 +602,7 @@ export function pointerOf(
     | 'completionRetroId'
     | 'roomItemKind'
     | 'roomItemId'
+    | 'stuckQaPostId'
   > & {
     noteVersion?: number | null
     caseStudyVersion?: number | null
@@ -598,6 +618,7 @@ export function pointerOf(
     completionRetroId?: string | null
     roomItemKind?: RoomItemKind | null
     roomItemId?: string | null
+    stuckQaPostId?: string | null
   },
 ): TargetPointer {
   return {
@@ -624,6 +645,7 @@ export function pointerOf(
     completionRetroId: row.completionRetroId ?? null,
     roomItemKind: row.roomItemKind ?? null,
     roomItemId: row.roomItemId ?? null,
+    stuckQaPostId: row.stuckQaPostId ?? null,
   }
 }
 

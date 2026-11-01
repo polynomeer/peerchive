@@ -12,6 +12,7 @@
  * | PEERCHIVE_FEATURE_P2_TOPICS | off | 토픽·소속 표시 익명(A-05·A-06) |
  * | PEERCHIVE_FEATURE_P2_INSTITUTIONS | off | 기관 확장(초대 코드·기수 승인·수료증 확인 I-01, 기관 페이지 I-02) |
  * | PEERCHIVE_FEATURE_HUB_STAGED_OPENING | off | 과목 허브 단계적 개방(E-02, P1 영역 — `PEERCHIVE_FEATURE_P2`를 따르지 않음) |
+ * | PEERCHIVE_FEATURE_STUCK_QA | off | 막힘 Q&A 스레드(E-04, P1 영역 — `PEERCHIVE_FEATURE_P2`를 따르지 않음) |
  *
  * P1 영역(§4.4 "pilot 근거가 필요한 개방은 기본 꺼짐 플래그 뒤")은 자기 변수만 봅니다. P2 묶음 스위치로 켜지지 않습니다.
  * 켬: `on`·`1`·`true`·`yes`, 끔: `off`·`0`·`false`·`no`·빈 값(대소문자 무시). 그 밖의 값은 꺼짐으로 봅니다(잘못 쓴 값으로 열리지 않게).
@@ -23,7 +24,7 @@
 /** P2 묶음 스위치(PEERCHIVE_FEATURE_P2)를 따르는 영역. */
 export const P2_FEATURE_AREAS = ['alumni', 'topics', 'institutions'] as const
 /** P1 보완 백로그(DELIVERY_PLAN §4.4)의 개방 플래그. 자기 변수만 봅니다. */
-export const P1_FEATURE_AREAS = ['hubStagedOpening'] as const
+export const P1_FEATURE_AREAS = ['hubStagedOpening', 'stuckQa'] as const
 export const FEATURE_AREAS = [...P2_FEATURE_AREAS, ...P1_FEATURE_AREAS] as const
 export type FeatureArea = (typeof FEATURE_AREAS)[number]
 export type FeatureFlags = Readonly<Record<FeatureArea, boolean>>
@@ -34,10 +35,11 @@ export const FEATURE_AREA_ENV: Readonly<Record<FeatureArea, string>> = {
   topics: 'PEERCHIVE_FEATURE_P2_TOPICS',
   institutions: 'PEERCHIVE_FEATURE_P2_INSTITUTIONS',
   hubStagedOpening: 'PEERCHIVE_FEATURE_HUB_STAGED_OPENING',
+  stuckQa: 'PEERCHIVE_FEATURE_STUCK_QA',
 }
 
 /** 모두 꺼진 값(기본). */
-export const FEATURES_OFF: FeatureFlags = { alumni: false, topics: false, institutions: false, hubStagedOpening: false }
+export const FEATURES_OFF: FeatureFlags = { alumni: false, topics: false, institutions: false, hubStagedOpening: false, stuckQa: false }
 
 /** 플래그 값 해석: true(켬) / false(끔) / null(없음 — 상위 값을 따름). 알 수 없는 값은 false. */
 export function parseFlagValue(raw: string | undefined): boolean | null {

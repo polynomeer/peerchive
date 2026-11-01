@@ -231,6 +231,8 @@ export const reportTargetType = pgEnum('report_target_type', [
   'completion_retro',
   // A-07(ADR 0045): 동문회·OB 방 항목(명부 항목·일정·투표·앨범 사진·방별 프로필) — 종류는 room_item_kind.
   'room_item',
+  // E-04(ADR 0049): 막힘 Q&A 스레드의 글 하나(질문·답변).
+  'stuck_qa_post',
 ])
 /** A-07(ADR 0045, @peerchive/domain ROOM_ITEM_KINDS): 신고·숨길 수 있는 동문회·OB 방 항목 종류. */
 export const roomItemKind = pgEnum('room_item_kind', ['directory_entry', 'event', 'poll', 'album_photo', 'room_profile'])
@@ -276,6 +278,8 @@ export const moderationActionKind = pgEnum('moderation_action_kind', [
   'hide_retro',
   // A-07(ADR 0045): 방 항목 하나의 hidden_at.
   'hide_room_item',
+  // E-04(ADR 0049): 막힘 Q&A 글 하나 published → hidden(질문이면 스레드가 안 보임).
+  'hide_stuck_qa_post',
 ])
 /** 공개 사례 안에서 가릴 수 있는 항목(T-15, HIDDEN_ITEM_KINDS). */
 export const hiddenItemKind = pgEnum('hidden_item_kind', ['log', 'claim', 'artifact'])
@@ -434,6 +438,10 @@ export const courseHubNoticeKind = pgEnum('course_hub_notice_kind', ['open_notif
 export const conceptTagProposalStatus = pgEnum('concept_tag_proposal_status', ['pending', 'approved', 'rejected'])
 /** 학생 큐레이터(E-03)의 1차 신고 검토 의견: 기각 권장 / 가리기 권장. 처리는 운영자만 합니다. */
 export const curatorRecommendation = pgEnum('curator_recommendation', ['dismiss', 'hide'])
+/** 막힘 Q&A 스레드(E-04)의 글 종류: 스레드를 여는 질문 / 답변(질문자의 덧붙임 포함). @peerchive/domain STUCK_QA_POST_KINDS. */
+export const stuckQaPostKind = pgEnum('stuck_qa_post_kind', ['question', 'answer'])
+/** 막힘 Q&A 글 상태(E-04): 게시 / 작성자가 지움(탈퇴 정리 포함, 본문을 비움) / 운영 조치 hide_stuck_qa_post. */
+export const stuckQaPostStatus = pgEnum('stuck_qa_post_status', ['published', 'withdrawn', 'hidden'])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -2483,6 +2491,137 @@ export const curatorReportRecommendations = pgTable(
   ],
 )
 
+// ── 막힘 Q&A 스레드 (E-04, PROOFU_EVOLUTION_PLAN §8.5, DELIVERY_PLAN §4.4, ADR 0049) ─────────────
+
+/**
+ * 막힘 카드의 질문 허용(E-04). (공개, 스냅샷 로그 키)마다 하나 — 키는 공개마다 안정되므로 새 버전을 게시해도 같은 카드입니다.
+ * - author_id: 켤 때 지금 release의 refs.logs[키].authorId(그 막힘 로그를 쓴 사람). 공개 응답에 싣지 않습니다. 읽기·쓰기는 요청마다 지금 release의
+ *   refs로 로그 작성자를 다시 정하며(`작성자` 표시·허용 권한), 이 열은 기록용입니다.
+ * - questions_allowed: 켜져 있을 때만 새 질문·답변을 받습니다. 끄면 기존 스레드는 읽기만 됩니다.
+ * - **공개가 철회·제한·대체되어 그 카드가 지금 release에 없거나, 엠바고 중이거나, 로그가 운영 조치로 가려지면** 스레드는 읽기·쓰기 모두 404입니다
+ *   (요청마다 loadServedRelease로 판정, 행을 지우거나 고치지 않음). 다시 게시되면 같은 카드로 돌아옵니다.
+ * 과목 허브 구역의 테이블입니다(커뮤니티 테이블을 가리키지 않음, C-05).
+ */
+export const stuckQaCards = pgTable(
+  'stuck_qa_cards',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    publicationId: uuid('publication_id')
+      .notNull()
+      .references(() => publications.id),
+    itemKey: text('item_key').notNull(),
+    authorId: uuid('author_id').references(() => users.id),
+    questionsAllowed: boolean('questions_allowed').notNull().default(false),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    unique('stuck_qa_cards_publication_item_key').on(t.publicationId, t.itemKey),
+    check('stuck_qa_cards_item_key_check', sql`char_length(${t.itemKey}) between 1 and 40`),
+  ],
+)
+
+/**
+ * 질문 스레드(E-04). 질문 글(stuck_qa_posts kind = question) 하나로 열립니다. asker_id는 공개 응답에 싣지 않습니다(운영자 작성자 확인·탈퇴 정리용).
+ * last_post_at: 마지막 게시 글 시각(카드 안 정렬의 두 번째 기준).
+ */
+export const stuckQaThreads = pgTable(
+  'stuck_qa_threads',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    cardId: uuid('card_id')
+      .notNull()
+      .references(() => stuckQaCards.id),
+    askerId: uuid('asker_id').references(() => users.id),
+    createdAt: createdAt(),
+    lastPostAt: timestamp('last_post_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('stuck_qa_threads_card_idx').on(t.cardId, t.lastPostAt.desc())],
+)
+
+/**
+ * 스레드 익명 번호(E-04). 스레드·사람마다 번호 하나: 질문한 사람 0(`질문자`), 다른 사람은 그 스레드에 처음 쓴 순서대로 1, 2, …(`익명N`).
+ * 막힘 로그 작성자는 행이 없습니다(항상 `작성자`). 지워도 번호를 다시 쓰지 않고(행을 지우지 않음), 스레드 사이에 번호를 공유하지 않습니다.
+ * 이 행의 id·user_id는 어떤 응답에도 나가지 않습니다. 탈퇴 정리도 행을 남깁니다(스레드의 다른 번호가 바뀌지 않게).
+ */
+export const stuckQaAliases = pgTable(
+  'stuck_qa_aliases',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    threadId: uuid('thread_id')
+      .notNull()
+      .references(() => stuckQaThreads.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    aliasNo: integer('alias_no').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('stuck_qa_aliases_thread_user_key').on(t.threadId, t.userId),
+    uniqueIndex('stuck_qa_aliases_thread_alias_key').on(t.threadId, t.aliasNo),
+    check('stuck_qa_aliases_alias_no_check', sql`${t.aliasNo} >= 0`),
+  ],
+)
+
+/**
+ * 질문·답변 글(E-04). 공개 응답은 표시(`질문자`·`익명N`·`작성자`)와 본문뿐이고 author_id는 싣지 않습니다(운영자는 신고에 묶인 작성자 확인으로만 앎).
+ * - by_log_author: 쓸 때 막힘 로그 작성자였는지(그러면 alias_no 없음, 항상 `작성자`). 아니면 alias_no(stuck_qa_aliases와 같은 값).
+ * - count_as_contribution: 답변자가 고른 포트폴리오 "후배 기여" 포함 여부(답변만, 기본 false — 익명 답변이 실명 프로필과 이어지지 않게).
+ * - 상태: published / withdrawn(작성자가 지움·탈퇴 정리, 본문 '') / hidden(운영 조치). 질문 글이 published가 아니면 스레드 전체가 보이지 않습니다.
+ */
+export const stuckQaPosts = pgTable(
+  'stuck_qa_posts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    threadId: uuid('thread_id')
+      .notNull()
+      .references(() => stuckQaThreads.id),
+    authorId: uuid('author_id').references(() => users.id),
+    kind: stuckQaPostKind('kind').notNull(),
+    byLogAuthor: boolean('by_log_author').notNull().default(false),
+    aliasNo: integer('alias_no'),
+    body: text('body').notNull(),
+    countAsContribution: boolean('count_as_contribution').notNull().default(false),
+    status: stuckQaPostStatus('status').notNull().default('published'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('stuck_qa_posts_thread_idx').on(t.threadId, t.createdAt),
+    index('stuck_qa_posts_author_idx').on(t.authorId),
+    // 스레드마다 질문은 하나.
+    uniqueIndex('stuck_qa_posts_question_key').on(t.threadId).where(sql`${t.kind} = 'question'`),
+    check('stuck_qa_posts_alias_check', sql`(${t.byLogAuthor} and ${t.aliasNo} is null) or (not ${t.byLogAuthor} and ${t.aliasNo} is not null and ${t.aliasNo} >= 0)`),
+    check(
+      'stuck_qa_posts_body_check',
+      sql`(${t.status}::text = 'withdrawn' and ${t.body} = '') or (${t.status}::text <> 'withdrawn' and char_length(${t.body}) between 1 and 2000)`,
+    ),
+    check('stuck_qa_posts_withdrawn_check', sql`(${t.status}::text = 'withdrawn') = (${t.withdrawnAt} is not null)`),
+    check('stuck_qa_posts_contribution_check', sql`${t.kind}::text = 'answer' or not ${t.countAsContribution}`),
+  ],
+)
+
+/**
+ * "도움됐어요"(E-04). 답변·사람마다 하나. **정렬에만** 씁니다: 개수·누가 눌렀는지는 어떤 응답에도 싣지 않고 작성자별로 합산하지 않습니다.
+ * 탈퇴 정리 때 그 사람의 행을 지웁니다.
+ */
+export const stuckQaHelpful = pgTable(
+  'stuck_qa_helpful',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    postId: uuid('post_id')
+      .notNull()
+      .references(() => stuckQaPosts.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('stuck_qa_helpful_post_user_key').on(t.postId, t.userId), index('stuck_qa_helpful_user_idx').on(t.userId)],
+)
+
 // ── 포트폴리오 (§6.5 CaseStudy·CaseSentence·PortfolioEdition·PortfolioItem·CompetencyEvidence, §11, T-14, ADR 0014) ─────
 
 /**
@@ -2706,6 +2845,8 @@ export const moderationActions = pgTable(
      */
     roomItemKind: roomItemKind('room_item_kind'),
     roomItemId: uuid('room_item_id'),
+    /** E-04(ADR 0049): 막힘 Q&A 글 숨기기(hide_stuck_qa_post). */
+    stuckQaPostId: uuid('stuck_qa_post_id').references((): AnyPgColumn => stuckQaPosts.id),
     internalNote: text('internal_note').notNull(),
     publicReason: text('public_reason'),
     notifyOwner: boolean('notify_owner').notNull().default(false),
@@ -2736,6 +2877,7 @@ export const moderationActions = pgTable(
     index('moderation_actions_social_link_idx').on(t.socialLinkId),
     index('moderation_actions_completion_retro_idx').on(t.completionRetroId),
     index('moderation_actions_room_item_idx').on(t.roomItemId),
+    index('moderation_actions_stuck_qa_post_idx').on(t.stuckQaPostId),
     check('moderation_actions_outcome_check', sql`${t.outcome} in ('resolved', 'dismissed') and (${t.outcome} = 'resolved' or ${t.kind} = 'none')`),
     check('moderation_actions_internal_note_check', sql`char_length(${t.internalNote}) between 1 and 1000`),
     check('moderation_actions_public_reason_check', sql`${t.publicReason} is null or char_length(${t.publicReason}) between 1 and 300`),
@@ -2756,6 +2898,7 @@ export const moderationActions = pgTable(
     check('moderation_actions_social_link_check', sql`${t.kind}::text <> 'hide_social_link' or ${t.socialLinkId} is not null`),
     check('moderation_actions_completion_retro_check', sql`${t.kind}::text <> 'hide_retro' or ${t.completionRetroId} is not null`),
     check('moderation_actions_room_item_check', sql`${t.kind}::text <> 'hide_room_item' or (${t.roomItemKind} is not null and ${t.roomItemId} is not null)`),
+    check('moderation_actions_stuck_qa_post_check', sql`${t.kind}::text <> 'hide_stuck_qa_post' or ${t.stuckQaPostId} is not null`),
     // C-06: 방 운영진 가리기·제재는 글 또는 댓글 하나를 가리키고 공간 id는 비웁니다(방장이 당사자가 되지 않게, ADR 0023).
     check(
       'moderation_actions_community_item_check',
@@ -2813,6 +2956,8 @@ export const reports = pgTable(
     /** 신고한 방 항목(A-07, ADR 0045). 종류 + 그 행의 id, 외래 키 없음(행이 지워져도 신고 기록은 남음), 내용 복사 없음, 주인 사용자 id 없음. */
     roomItemKind: roomItemKind('room_item_kind'),
     roomItemId: uuid('room_item_id'),
+    /** 신고한 막힘 Q&A 글(E-04, ADR 0049). 내용은 복사하지 않습니다(운영자는 지금 행을 봄). */
+    stuckQaPostId: uuid('stuck_qa_post_id').references((): AnyPgColumn => stuckQaPosts.id),
     reason: reportReason('reason').notNull(),
     details: text('details'),
     status: reportStatus('status').notNull().default('open'),
@@ -2842,6 +2987,7 @@ export const reports = pgTable(
     index('reports_reporter_idx').on(t.reporterId, t.createdAt),
     index('reports_completion_retro_idx').on(t.completionRetroId),
     index('reports_room_item_idx').on(t.roomItemId),
+    index('reports_stuck_qa_post_idx').on(t.stuckQaPostId),
     check('reports_details_check', sql`${t.details} is null or char_length(${t.details}) between 1 and 1000`),
     check('reports_first_action_check', sql`${t.firstActionAt} is null or ${t.firstActionAt} >= ${t.createdAt}`),
     check('reports_closed_check', sql`(${t.status} in ('resolved', 'dismissed')) = (${t.closedAt} is not null and ${t.actionId} is not null)`),
@@ -2863,7 +3009,8 @@ export const reports = pgTable(
         or (${t.targetType}::text = 'profile_post' and ${t.profilePostId} is not null)
         or (${t.targetType}::text = 'social_link' and ${t.socialLinkId} is not null)
         or (${t.targetType}::text = 'completion_retro' and ${t.completionRetroId} is not null)
-        or (${t.targetType}::text = 'room_item' and ${t.roomItemKind} is not null and ${t.roomItemId} is not null)`,
+        or (${t.targetType}::text = 'room_item' and ${t.roomItemKind} is not null and ${t.roomItemId} is not null)
+        or (${t.targetType}::text = 'stuck_qa_post' and ${t.stuckQaPostId} is not null)`,
     ),
     // 표시명 사칭은 프로필 신고에만(@peerchive/domain reasonApplicable).
     check('reports_impersonation_check', sql`${t.reason}::text <> 'impersonation' or ${t.targetType}::text in ('persona', 'profile')`),

@@ -485,7 +485,7 @@ describe.skipIf(!databaseUrl)('case studies, editions and public profile (Postgr
       })
       await tx.insert(seniorNotes).values([note('name', 'published'), note('anonymous', 'published'), note('name', 'draft')])
       const profile = await getPublicPortfolioProfile(tx, f.ownerHandle, at(23))
-      expect(profile.juniorContribution).toEqual({ planForks: 1, seniorNotes: 1, curatedCourses: [] })
+      expect(profile.juniorContribution).toEqual({ planForks: 1, seniorNotes: 1, curatedCourses: [], stuckQaAnswers: 0 })
       expect(profile.contactText).toBe('연락을 받지 않습니다.')
       expect(profile.edition).toBeNull()
       expect(profile.featured).toEqual([])

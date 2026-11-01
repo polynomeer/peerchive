@@ -15,8 +15,8 @@ describe('student curator eligibility (E-03)', () => {
     expect(curatorEligibility({ ...OK, userActive: false, finishedCourse: false })).toEqual({ ok: false, error: 'inactive' })
   })
 
-  it('reviews only reports on course hub items (notes, Q&A, public cases)', () => {
-    expect([...CURATOR_REVIEW_TARGETS]).toEqual(['senior_note', 'course_qa', 'publication', 'publication_item'])
+  it('reviews only reports on course hub items (notes, Q&A, public cases, E-04 stuck Q&A posts)', () => {
+    expect([...CURATOR_REVIEW_TARGETS]).toEqual(['senior_note', 'course_qa', 'publication', 'publication_item', 'stuck_qa_post'])
     expect(isCuratorReviewTarget('course_qa')).toBe(true)
     for (const t of ['case_study', 'profile', 'persona', 'community_post', 'room_item']) expect(isCuratorReviewTarget(t)).toBe(false)
   })

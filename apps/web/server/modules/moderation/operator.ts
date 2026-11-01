@@ -64,6 +64,7 @@ import { requireOperator } from '../catalog/operators'
 import { curatorRecommendationsFor, reportIdsWithRecommendation } from '../curators/recommendations'
 import { publicNotePath } from '../course-hub/search'
 import { publicQaPath, toPublicCourseQa } from '../course-hub/course-qa'
+import { isStuckQaPostVisible, moderationStuckQaPost, stuckQaThreadPath } from '../course-hub/stuck-qa'
 import { toPublicSeniorNote } from '../course-hub/hub'
 import { type Actor, conflict, invalid, notFound } from '../errors'
 import { toPublicProfileDto } from '../identity/profiles'
@@ -362,6 +363,14 @@ async function contentFor(db: DbExecutor, report: ReportRow, now: Date, operator
       const roomItem = report.roomItemKind && report.roomItemId ? await operatorRoomItem(db, report.roomItemKind, report.roomItemId, operatorId, now) : null
       if (!roomItem) return { content: unavailable('항목을 찾을 수 없습니다(철회·나가기·삭제).'), publicPath: null, servedNow: false }
       return { content: { kind: 'room_item', roomItem }, publicPath: null, servedNow: !roomItem.hidden }
+    }
+    // E-04: 막힘 Q&A 글 하나(지금 행, 숨긴 것도 내용 포함). 작성자는 싣지 않습니다(신고에 묶인 작성자 확인으로만).
+    case 'stuck_qa_post': {
+      const post = report.stuckQaPostId ? await moderationStuckQaPost(db, report.stuckQaPostId) : null
+      if (!post || post.status === 'withdrawn') return { content: unavailable('작성자가 글을 지웠습니다.'), publicPath: null, servedNow: false }
+      const visible = await isStuckQaPostVisible(db, report.stuckQaPostId!, now)
+      const [row] = await db.execute<{ thread_id: string }>(sql`select thread_id from stuck_qa_posts where id = ${report.stuckQaPostId}`)
+      return { content: { kind: 'stuck_qa_post', post }, publicPath: visible && row ? stuckQaThreadPath(row.thread_id) : null, servedNow: visible }
     }
   }
 }

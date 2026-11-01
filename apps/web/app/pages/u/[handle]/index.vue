@@ -159,6 +159,9 @@ const years = computed(() => {
           학생 큐레이터:
           <template v-for="(c, i) in profile.juniorContribution.curatedCourses" :key="i"><template v-if="i"> · </template>{{ c.schoolName }} {{ c.courseTitle }}</template>
         </p>
+        <p v-if="profile.juniorContribution.stuckQaAnswers" data-testid="stuck-qa-answers">
+          막힘 Q&A에 남긴 답변 {{ profile.juniorContribution.stuckQaAnswers }}개(본인이 고른 것만)
+        </p>
         <p class="hint">개수만 보여 주며 순위를 매기지 않습니다.</p>
       </section>
 

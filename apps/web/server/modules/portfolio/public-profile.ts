@@ -9,6 +9,7 @@
  *   본인이 연결을 확인하고(reveal_self) 게시한 케이스가 있을 때만 나옵니다.
  * - 후배 기여: 위 공개들의 계획을 포크한 서로 다른 사람 수(본인 제외), 계정 이름으로 게시한 선배 노트 수. 개수만, 순위 없음.
  *   익명·표시명 선배 노트는 실명 프로필과 연결하지 않으려고 세지 않습니다. 학생 큐레이터(E-03, ADR 0048)인 과목은 본인이 표시를 켠 것만 과목·학교 이름으로.
+ *   막힘 Q&A 답변(E-04, ADR 0049)은 답변자가 답변마다 켠 것 중 지금 보이는 것의 개수만.
  * 연락: 이메일을 싣지 않고 연락 정책 안내 문구만(연락 요청 기능은 P2).
  *
  * 페르소나(S-01, ADR 0028): handle은 실명·표시명 페르소나 어느 쪽이든 됩니다. 프로필 필드·지금 판은 그 페르소나의 것입니다.
@@ -37,6 +38,7 @@ import {
 import { toPublicProfileDto } from '../identity/profile-input'
 import { publicAffiliationBadges } from '../affiliation/affiliations'
 import { publicCuratedCourses } from '../curators/portfolio'
+import { publicStuckQaAnswerCount } from '../course-hub/stuck-qa-portfolio'
 import { linkedPersonaFor, resolvePublicPersona } from '../social/personas'
 import { publicFollowCounts } from '../social/follows'
 import { publicSocialLinks } from '../social/social-links'
@@ -111,7 +113,13 @@ export async function getPublicPortfolioProfile(db: DbExecutor, rawHandle: unkno
     headline: view.headline ?? base.headline,
     edition: current ? { version: current.edition.version, createdAt: current.edition.createdAt.toISOString() } : null,
     // E-03: 큐레이터 과목은 본인이 켠 것만(기본 꺼짐), 실명 프로필만.
-    juniorContribution: { planForks: forks, seniorNotes: notes, curatedCourses: isReal ? await publicCuratedCourses(db, userId) : [] },
+    // E-04: 막힘 Q&A 답변은 답변자가 "후배 기여에 넣기"를 켠 지금 보이는 것의 개수만(기본 꺼짐, 실명 프로필만).
+    juniorContribution: {
+      planForks: forks,
+      seniorNotes: notes,
+      curatedCourses: isReal ? await publicCuratedCourses(db, userId) : [],
+      stuckQaAnswers: isReal ? await publicStuckQaAnswerCount(db, userId, now) : 0,
+    },
     timeline: timeline.map(({ sort: _sort, ...item }) => item),
     // 학교 인증 배지(C-01): 본인이 켰을 때만. 학과·메일·도메인은 싣지 않습니다.
     affiliationBadges: await publicAffiliationBadges(db, userId, profile.showAffiliationBadge),
