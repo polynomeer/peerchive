@@ -6,7 +6,8 @@
  *   응답하지 않아도 완료됩니다.
  * - 관리(만들기·수정·상태 변경·순서 변경·삭제·완료·로그 전환)는 active owner/editor. reviewer/viewer는 읽기만 하며,
  *   관리자라는 사실만으로는 아무 권한도 생기지 않습니다(§8).
- * - 순서(position)는 프로젝트 안의 상태별 목록마다 1부터 빈틈없이 이어집니다. 상태를 바꾸면 새 상태 목록의 맨 뒤로 갑니다.
+ * - 순서(position)는 프로젝트 안의 상태별 목록마다 1부터 빈틈없이 이어집니다. 상태를 바꾸면 새 상태 목록의 맨 뒤로 갑니다
+ *   (보드 보기(E-09)는 상태 변경과 함께 새 목록의 자리를 지정할 수 있습니다 — `insertTaskAt`).
  * - 한 할 일은 빌드 로그로 한 번만 전환할 수 있습니다. 전환한 할 일은 지우지 않습니다(로그의 출처로 남김).
  */
 import { type Membership, type ProjectRef, type Viewer, canReadProjectWorkspace } from './permissions'
@@ -84,4 +85,83 @@ export function checkTaskConvert(task: { status: TaskStatus; logEntryId: string 
 /** 삭제 가능 여부: 빌드 로그로 전환한 할 일은 그 로그의 출처이므로 지우지 않습니다. */
 export function canDeleteTask(task: { logEntryId: string | null }): boolean {
   return task.logEntryId === null
+}
+
+// ── 보드 보기(E-09) ───────────────────────────────────────────────────────
+
+/** 상태 열마다 지금 순서대로 놓인 할 일 id. */
+export type TaskColumns = Readonly<Record<TaskStatus, readonly string[]>>
+
+/** 보드에서 옮길 자리: 열(상태)과, 옮기는 할 일을 뺀 그 열 목록에서의 0부터 센 자리. */
+export interface TaskMoveTarget {
+  status: TaskStatus
+  index: number
+}
+
+/**
+ * 보드 이동을 API 요청 하나로 바꾼 결과. 드래그·키보드·버튼이 모두 이 함수를 거쳐 같은 요청을 냅니다.
+ * - `reorder`: 같은 열 안 이동 → 그 열 전체 순열(`PUT /projects/:id/tasks/order`, 리스트 ▲▼와 같은 요청)
+ * - `status`: 다른 열로 이동 → 상태 변경 + 새 열의 1부터 센 자리(`PATCH /tasks/:id` 또는 완료면 `/complete`)
+ * - `none`: 제자리(요청 없음)
+ */
+export type TaskMovePlan =
+  | { kind: 'none' }
+  | { kind: 'reorder'; status: TaskStatus; taskIds: string[] }
+  | { kind: 'status'; status: TaskStatus; position: number }
+
+/** 할 일이 지금 있는 열과 그 열에서의 자리. 없으면 null. */
+export function locateTask(columns: TaskColumns, taskId: string): TaskMoveTarget | null {
+  for (const status of TASK_STATUSES) {
+    const index = columns[status].indexOf(taskId)
+    if (index >= 0) return { status, index }
+  }
+  return null
+}
+
+/** ids에서 taskId를 빼고 position(1부터, 범위를 넘으면 맨 끝)에 끼운 순서. 서버의 상태 변경 자리 지정도 같은 규칙입니다. */
+export function insertTaskAt(ids: readonly string[], taskId: string, position: number): string[] {
+  const rest = ids.filter((id) => id !== taskId)
+  const at = Math.min(Math.max(Math.trunc(position) - 1, 0), rest.length)
+  return [...rest.slice(0, at), taskId, ...rest.slice(at)]
+}
+
+export function planTaskMove(columns: TaskColumns, taskId: string, target: TaskMoveTarget): TaskMovePlan {
+  const from = locateTask(columns, taskId)
+  if (!from) return { kind: 'none' }
+  const targetLength = columns[target.status].filter((id) => id !== taskId).length
+  const index = Math.min(Math.max(Math.trunc(target.index), 0), targetLength)
+  if (from.status !== target.status) return { kind: 'status', status: target.status, position: index + 1 }
+  if (index === from.index) return { kind: 'none' }
+  return { kind: 'reorder', status: target.status, taskIds: insertTaskAt(columns[target.status], taskId, index + 1) }
+}
+
+export type BoardDirection = 'left' | 'right' | 'up' | 'down'
+
+/**
+ * 키보드(Shift + 방향키)·카드 메뉴(왼쪽 열로·오른쪽 열로·위로·아래로)의 한 칸 이동 자리.
+ * 옆 열로는 같은 줄(그 열이 짧으면 맨 끝)로 가고, 끝에 닿아 움직일 수 없으면 null입니다.
+ */
+export function boardStep(columns: TaskColumns, taskId: string, direction: BoardDirection): TaskMoveTarget | null {
+  const from = locateTask(columns, taskId)
+  if (!from) return null
+  const col = TASK_STATUSES.indexOf(from.status)
+  if (direction === 'up') return from.index > 0 ? { status: from.status, index: from.index - 1 } : null
+  if (direction === 'down') return from.index < columns[from.status].length - 1 ? { status: from.status, index: from.index + 1 } : null
+  const next = TASK_STATUSES[col + (direction === 'left' ? -1 : 1)]
+  if (!next) return null
+  return { status: next, index: Math.min(from.index, columns[next].length) }
+}
+
+/**
+ * 드래그를 놓은 자리: 놓은 열과, 그 열에서 바로 뒤에 올 카드(beforeId, 없으면 맨 끝).
+ * 옮기는 카드 자신 앞에 놓으면 제자리입니다.
+ */
+export function dropTarget(columns: TaskColumns, taskId: string, status: TaskStatus, beforeId: string | null): TaskMoveTarget {
+  const rest = columns[status].filter((id) => id !== taskId)
+  if (beforeId === taskId) {
+    const from = locateTask(columns, taskId)
+    if (from?.status === status) return { status, index: from.index }
+  }
+  const at = beforeId ? rest.indexOf(beforeId) : -1
+  return { status, index: at >= 0 ? at : rest.length }
 }

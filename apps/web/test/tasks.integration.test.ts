@@ -180,6 +180,69 @@ describe.skipIf(!databaseUrl)('tasks, completion → log conversion and retro mo
     })
   })
 
+  it('board (E-09): cross-column moves place the task at a position in one request, with the same permissions and validation', async () => {
+    await withRollback(async (tx) => {
+      const { owner, project, members } = await teamWith(tx, ['editor', 'viewer'])
+      const [editor, viewer] = members
+      const actor = { userId: editor!.id }
+      const [a, b, c] = [
+        await createTask(tx, actor, project.id, { title: 'A' }, T0),
+        await createTask(tx, actor, project.id, { title: 'B' }, T0),
+        await createTask(tx, actor, project.id, { title: 'C' }, T0),
+      ]
+      const d = await createTask(tx, actor, project.id, { title: 'D', status: 'doing' }, T0)
+      const e = await createTask(tx, actor, project.id, { title: 'E', status: 'doing' }, T0)
+      const board = async () => (await listTasks(tx, actor, project.id, {})).map((t) => `${t.status}:${t.position}:${t.title}`)
+
+      // B를 진행 중 1번째(D 앞)로: 원래 열은 당기고 새 열은 그 자리에 끼웁니다.
+      const moved = await updateTask(tx, actor, b!.id, { expectedVersion: 1, status: 'doing', position: 1 }, at(1))
+      expect(moved).toMatchObject({ status: 'doing', position: 1, version: 2 })
+      expect(await board()).toEqual(['todo:1:A', 'todo:2:C', 'doing:1:B', 'doing:2:D', 'doing:3:E'])
+
+      // 가운데 자리, 그리고 목록 길이 + 1을 넘는 자리는 맨 뒤.
+      await updateTask(tx, actor, c!.id, { expectedVersion: 1, status: 'doing', position: 3 }, at(2))
+      expect(await board()).toEqual(['todo:1:A', 'doing:1:B', 'doing:2:D', 'doing:3:C', 'doing:4:E'])
+      await updateTask(tx, actor, d!.id, { expectedVersion: 1, status: 'todo', position: 99 }, at(3))
+      expect(await board()).toEqual(['todo:1:A', 'todo:2:D', 'doing:1:B', 'doing:2:C', 'doing:3:E'])
+
+      // 완료로 옮기기(/complete + position): 프롬프트는 리스트와 같고, 완료 목록의 그 자리에 놓입니다.
+      const first = await completeTask(tx, actor, e!.id, { expectedVersion: 1, position: 1 }, at(4))
+      expect(first.prompt).toEqual({ askStuck: true, askDecision: true })
+      const second = await completeTask(tx, actor, a!.id, { expectedVersion: 1, position: 1 }, at(5))
+      expect(second.task).toMatchObject({ status: 'done', position: 1, completedBy: editor!.id })
+      expect(await board()).toEqual(['todo:1:D', 'doing:1:B', 'doing:2:C', 'done:1:A', 'done:2:E'])
+      // 이미 완료한 할 일의 재전송은 자리도 바꾸지 않습니다.
+      const again = await completeTask(tx, actor, e!.id, { expectedVersion: 1, position: 1 }, at(6))
+      expect(again.task).toMatchObject({ position: 2, version: 2 })
+
+      // 완료에서 되돌리며 자리 지정(완료 정보 비움).
+      const reopened = await updateTask(tx, actor, a!.id, { expectedVersion: 2, status: 'doing', position: 2 }, at(7))
+      expect(reopened).toMatchObject({ status: 'doing', position: 2, completedAt: null, completedBy: null })
+      expect(await board()).toEqual(['todo:1:D', 'doing:1:B', 'doing:2:A', 'doing:3:C', 'done:1:E'])
+
+      // 검증: 상태가 바뀌지 않는 position은 422(같은 열 안은 순서 변경 API), 잘못된 값 422, 낡은 version 409.
+      const fields = async (input: Record<string, unknown>) => (await expectServiceError(updateTask(tx, actor, b!.id, input), 'VALIDATION')).fields
+      expect(await fields({ expectedVersion: 2, position: 1 })).toEqual({ position: 'status_required' })
+      expect(await fields({ expectedVersion: 2, status: 'doing', position: 1 })).toEqual({ position: 'status_required' })
+      expect(await fields({ expectedVersion: 2, status: 'todo', position: 0 })).toEqual({ position: 'invalid' })
+      expect(await fields({ expectedVersion: 2, status: 'todo', position: 1.5 })).toEqual({ position: 'invalid' })
+      expect(await fields({ expectedVersion: 2, status: 'todo', position: '1' })).toEqual({ position: 'invalid' })
+      expect((await expectServiceError(completeTask(tx, actor, b!.id, { expectedVersion: 2, position: -1 }), 'VALIDATION')).fields).toEqual({ position: 'invalid' })
+      await expectServiceError(updateTask(tx, actor, b!.id, { expectedVersion: 1, status: 'todo', position: 1 }), 'CONFLICT', 'version_conflict')
+
+      // 권한: 리스트와 같습니다(viewer 403, 비멤버 404). 아무것도 바뀌지 않습니다.
+      await expectServiceError(updateTask(tx, { userId: viewer!.id }, b!.id, { expectedVersion: 2, status: 'todo', position: 1 }), 'FORBIDDEN')
+      await expectServiceError(completeTask(tx, { userId: viewer!.id }, b!.id, { expectedVersion: 2, position: 1 }), 'FORBIDDEN')
+      const outsider = await createUser(tx, { displayName: '외부인' })
+      await expectServiceError(updateTask(tx, { userId: outsider.id }, b!.id, { expectedVersion: 2, status: 'todo', position: 1 }), 'NOT_FOUND')
+      expect(await board()).toEqual(['todo:1:D', 'doing:1:B', 'doing:2:A', 'doing:3:C', 'done:1:E'])
+
+      // 같은 열 안 이동은 기존 순서 변경(전체 순열)을 그대로 씁니다. owner도 같은 규칙.
+      const reordered = await reorderTasks(tx, { userId: owner.id }, project.id, { status: 'doing', taskIds: [c!.id, b!.id, a!.id] })
+      expect(reordered.map((t) => `${t.status}:${t.position}:${t.title}`)).toEqual(['todo:1:D', 'doing:1:C', 'doing:2:B', 'doing:3:A', 'done:1:E'])
+    })
+  })
+
   it('completes with a prompt; completing without converting is fine; delete is allowed only for unconverted tasks', async () => {
     await withRollback(async (tx) => {
       const { owner, project, members } = await teamWith(tx, ['editor'])

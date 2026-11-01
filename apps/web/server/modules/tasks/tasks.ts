@@ -5,6 +5,9 @@
  *   합니다(쓰기는 403). 읽을 수 없는 프로젝트·할 일은 404(§8).
  * - 순서(position)는 (프로젝트, 상태) 목록마다 1부터 빈틈없이 이어집니다. 상태를 바꾸면 새 상태 목록의 맨 뒤로 가고
  *   원래 목록은 당깁니다. 순서 변경은 한 상태 목록 전체의 순열만 받습니다(아니면 422 `mismatch`/`duplicate`).
+ * - 보드 보기(E-09, ADR 0053)는 열 사이 이동을 상태 변경(`PATCH`·`/complete`)에 선택 `position`(새 상태 목록의 1부터 센 자리,
+ *   목록 길이 + 1을 넘으면 맨 뒤)을 붙여 한 트랜잭션으로 보냅니다. 상태가 바뀌지 않는 요청의 `position`은 422
+ *   `{position: 'status_required'}`(같은 열 안 이동은 순서 변경 API로). 권한·version·한도 판정은 자리 없는 상태 변경과 같습니다.
  *   모든 쓰기는 프로젝트 행을 잠가 직렬화합니다(순서·한도·담당자 멤버십 확인이 멤버 변경과 엇갈리지 않음).
  * - 수정·완료는 expectedVersion으로 낙관적 동시성을 확인합니다(낡으면 409 `version_conflict` + currentVersion).
  *   같은 상태 안의 순서 변경은 version을 올리지 않습니다.
@@ -31,6 +34,7 @@ import {
   canManageTasks,
   checkTaskConvert,
   checkTaskOrder,
+  insertTaskAt,
   opensTask,
   statusChange,
 } from '@peerchive/domain'
@@ -80,6 +84,12 @@ const expectedVersion = z
   .number({ error: requiredOr('invalid') })
   .int({ error: 'invalid' })
   .min(1, { error: 'invalid' })
+/** 상태 변경과 함께 새 상태 목록에 놓을 자리(1부터, E-09 보드). 목록 길이 + 1을 넘으면 맨 뒤입니다. */
+const positionSchema = z
+  .number({ error: 'invalid' })
+  .int({ error: 'invalid' })
+  .min(1, { error: 'invalid' })
+  .max(TASK_LIMIT, { error: 'invalid' })
 
 export const createTaskSchema = z.object({
   title,
@@ -98,9 +108,10 @@ export const updateTaskSchema = z.object({
   assigneeId: assigneeId.optional(),
   dueAt: dueAt.optional(),
   status: status.optional(),
+  position: positionSchema.optional(),
 })
 
-export const completeTaskSchema = z.object({ expectedVersion })
+export const completeTaskSchema = z.object({ expectedVersion, position: positionSchema.optional() })
 
 export const reorderTasksSchema = z.object({
   status,
@@ -265,6 +276,23 @@ async function compact(db: DbExecutor, projectId: string, target: TaskStatus): P
   )
 }
 
+/**
+ * 방금 target 목록의 맨 뒤로 옮긴 할 일을 position(1부터, 범위 밖이면 맨 뒤)으로 옮깁니다(E-09 보드의 열 사이 이동).
+ * 프로젝트 행을 잠근 트랜잭션 안에서만 부릅니다.
+ */
+async function placeInColumn(db: DbExecutor, projectId: string, target: TaskStatus, taskId: string, position: number | undefined): Promise<void> {
+  if (position === undefined) return
+  const rows = await db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(and(eq(tasks.projectId, projectId), eq(tasks.status, target)))
+    .orderBy(asc(tasks.position))
+  const current = rows.map((row) => row.id)
+  const ordered = insertTaskAt(current, taskId, position)
+  if (ordered.every((id, index) => id === current[index])) return
+  await renumber(db, projectId, target, ordered)
+}
+
 /** 상태 변경에 따라 바꿀 열(위치·완료 정보). same이면 빈 객체. 원래 목록의 빈틈은 호출자가 compact로 당깁니다. */
 async function statusColumns(db: DbExecutor, actor: Actor, task: TaskRow, to: TaskStatus, now: Date) {
   const change = statusChange(task.status, to)
@@ -335,7 +363,7 @@ export async function createTask(
 
 /**
  * 제목·메모·담당자·마감일·상태 수정. expectedVersion이 다르면 409 version_conflict(+currentVersion).
- * 상태를 바꾸면 새 상태 목록의 맨 뒤로 갑니다. 여기서 완료로 바꿔도 되지만 프롬프트는 /complete만 돌려줍니다.
+ * 상태를 바꾸면 새 상태 목록의 맨 뒤(`position`이 있으면 그 자리)로 갑니다. 여기서 완료로 바꿔도 되지만 프롬프트는 /complete만 돌려줍니다.
  */
 export async function updateTask(
   db: DbExecutor,
@@ -349,11 +377,14 @@ export async function updateTask(
     const { project, membership, task } = await loadReadableTask(tx, actor, taskId, { lock: true })
     assertCanManage(actor, project, membership)
     const input = { ...parsed, ...(parsed.assigneeId !== undefined && { assigneeId: (await resolveAssignee(tx, actor, project, parsed.assigneeId)) ?? null }) }
+    if (input.position !== undefined && (input.status === undefined || input.status === task.status)) {
+      throw invalid({ position: 'status_required' })
+    }
     if (task.version !== input.expectedVersion) throw conflict('version_conflict', { currentVersion: task.version })
     if (input.assigneeId !== undefined && input.assigneeId !== task.assigneeId) {
       await checkAssignee(tx, project.id, input.assigneeId)
     }
-    const { expectedVersion, status: nextStatus, ...changes } = input
+    const { expectedVersion, status: nextStatus, position: targetPosition, ...changes } = input
     const moved = nextStatus ? await statusColumns(tx, actor, task, nextStatus, now) : {}
     const [updated] = await tx
       .update(tasks)
@@ -361,7 +392,10 @@ export async function updateTask(
       .where(and(eq(tasks.id, task.id), eq(tasks.version, expectedVersion)))
       .returning({ status: tasks.status, version: tasks.version })
     if (!updated) throw conflict('version_conflict', { currentVersion: task.version })
-    if (updated.status !== task.status) await compact(tx, project.id, task.status)
+    if (updated.status !== task.status) {
+      await compact(tx, project.id, task.status)
+      await placeInColumn(tx, project.id, updated.status, task.id, targetPosition)
+    }
     await recordAudit(tx, {
       actorId: actor.userId,
       action: 'task.update',
@@ -421,7 +455,8 @@ export async function reorderTasks(
 
 /**
  * 완료(200). 응답의 prompt로 화면이 막힘·결정을 한 번 묻습니다(이미 로그로 전환한 할 일이면 null).
- * 이미 완료한 할 일이면 아무것도 바꾸지 않고 지금 상태를 돌려줍니다(재전송에 안전).
+ * 이미 완료한 할 일이면 아무것도 바꾸지 않고 지금 상태를 돌려줍니다(재전송에 안전, `position`도 무시).
+ * `position`(E-09 보드)이 있으면 완료 목록의 그 자리에, 없으면 맨 뒤에 놓습니다.
  */
 export async function completeTask(
   db: DbExecutor,
@@ -444,6 +479,7 @@ export async function completeTask(
       .set({ ...moved, version: sql`${tasks.version} + 1`, updatedAt: now })
       .where(eq(tasks.id, task.id))
     await compact(tx, project.id, task.status)
+    await placeInColumn(tx, project.id, 'done', task.id, input.position)
     await recordAudit(tx, {
       actorId: actor.userId,
       action: 'task.complete',

@@ -7,7 +7,7 @@
  * 실패는 soft assertion으로 모아 화면별로 보여 줍니다.
  */
 import type { Page } from '@playwright/test'
-import { addClaim, createProject, featureCaseStudy, progressLog, rand } from '../support/api'
+import { addClaim, addTask, createProject, featureCaseStudy, progressLog, rand } from '../support/api'
 import { expect, expectNoHorizontalScroll, test } from '../support/fixtures'
 import { publishCase } from '../support/scenarios'
 
@@ -83,5 +83,10 @@ test('접근성·레이아웃 smoke: 주요 화면', async ({ newUser, anon }) =
   for (const path of ['/projects', `/projects/${project.id}`, `/projects/${pub.projectId}/publish`, '/consents', '/portfolio', '/onboarding', '/settings/affiliations', '/settings/personas', '/settings/visibility', '/settings/follows', '/community', '/community/notices']) {
     await checkPage(owner.page, path)
   }
+  // E-09 보드 보기(이 기기에 기억)도 같은 기준: 보드만 가로로 스크롤하고 페이지는 넘치지 않습니다.
+  for (const t of ['자료 조사', '와이어프레임', '발표 연습']) await addTask(owner.api, project.id, `${t} ${rand()}`)
+  await owner.page.evaluate(() => localStorage.setItem('peerchive:tasks-view', 'board'))
+  await checkPage(owner.page, `/projects/${project.id}`)
+  await expect(owner.page.getByRole('region', { name: '할 일 보드 (상태별 열)' })).toBeVisible()
   await expectNoHorizontalScroll(owner.page)
 })

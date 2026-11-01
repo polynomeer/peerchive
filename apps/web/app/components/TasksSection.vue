@@ -7,7 +7,12 @@
  * - 완료로 바꾸면 `/complete`를 부르고, 응답에 프롬프트가 있으면 그 할 일 아래에 "막힌 적 있었나요? 결정할 게 있었나요?"를
  *   한 번 띄웁니다(TaskPrompt). 남기지 않고 닫아도 완료는 그대로입니다. 남기면 빌드 로그 타임라인을 다시 불러옵니다.
  * - 빠른 추가는 제목만으로 됩니다(담당자·마감일은 선택). 관리 버튼과 폼은 owner/editor에게만 보입니다.
+ * - 보드 보기(E-09, ADR 0053): 리스트 ↔ 보드 전환(이 기기에 기억, localStorage). 보드의 드래그·키보드·버튼 이동은
+ *   `planTaskMove`로 같은 요청 하나가 됩니다: 같은 열은 위의 순서 변경, 다른 열은 상태 변경 + `position`, 완료 열은 `/complete`
+ *   (프롬프트 그대로). 열 사이 이동 뒤에는 다른 할 일의 순서도 바뀌므로 목록을 다시 불러옵니다.
+ * - 성공 안내는 늘 DOM에 있는 role=status에, 오류는 role=alert에 둡니다(보드 이동 결과를 화면 낭독기가 읽음).
  */
+import { type TaskColumns, type TaskMoveTarget, planTaskMove } from '@peerchive/domain'
 import type { MemberDto, TaskCompleteDto, TaskConvertDto, TaskDto, TaskStatus } from '~~/shared/types/api'
 
 const props = defineProps<{ projectId: string; canWrite: boolean; members: MemberDto[]; retro?: boolean }>()
@@ -41,7 +46,7 @@ function replace(task: TaskDto) {
   items.value = exists ? items.value.map((item) => (item.id === task.id ? task : item)) : [...items.value, task]
 }
 
-function focusTask(taskId: string, control: 'status' | 'up' | 'down' | 'title') {
+function focusTask(taskId: string, control: 'status' | 'up' | 'down' | 'title' | 'card') {
   void nextTick(() => document.getElementById(`task-${taskId}-${control}`)?.focus())
 }
 
@@ -110,12 +115,12 @@ function onConverted(result: TaskConvertDto) {
   promptTaskId.value = null
   say('ok', `‘${result.task.title}’을(를) ${LOG_TAG_LABELS[result.log.tag]} 로그로 남겼습니다.`)
   logsChanged.notify()
-  focusTask(result.task.id, 'status')
+  focusTask(result.task.id, view.value === 'board' ? 'card' : 'status')
 }
 
 function dismissPrompt(task: TaskDto) {
   promptTaskId.value = null
-  focusTask(task.id, 'status')
+  focusTask(task.id, view.value === 'board' ? 'card' : 'status')
 }
 
 // ── 순서 변경 ──
@@ -149,6 +154,85 @@ async function move(task: TaskDto, index: number, delta: -1 | 1) {
   focusTask(task.id, (delta === -1) !== edge ? 'up' : 'down')
 }
 
+// ── 보기 전환(E-09) ──
+type TaskView = 'list' | 'board'
+const VIEW_KEY = 'peerchive:tasks-view'
+const view = ref<TaskView>('list')
+function setView(next: TaskView) {
+  view.value = next
+  try {
+    localStorage.setItem(VIEW_KEY, next)
+  } catch {
+    // 저장할 수 없으면 이번 화면에서만 바꿉니다.
+  }
+}
+onMounted(() => {
+  try {
+    if (localStorage.getItem(VIEW_KEY) === 'board') view.value = 'board'
+  } catch {
+    view.value = 'list'
+  }
+})
+
+// ── 보드 이동(E-09) ──
+const columns = computed<TaskColumns>(() => ({
+  todo: groups.value.todo.map((t) => t.id),
+  doing: groups.value.doing.map((t) => t.id),
+  done: groups.value.done.map((t) => t.id),
+}))
+const promptTask = computed(() => items.value.find((t) => t.id === promptTaskId.value) ?? null)
+
+async function moveOnBoard(taskId: string, target: TaskMoveTarget) {
+  const task = items.value.find((t) => t.id === taskId)
+  if (!task || busy.value || !props.canWrite) return
+  const plan = planTaskMove(columns.value, taskId, target)
+  if (plan.kind === 'none') return
+  busy.value = true
+  let refocus = true
+  try {
+    if (plan.kind === 'reorder') {
+      items.value = await $fetch<TaskDto[]>(`/api/v1/projects/${props.projectId}/tasks/order`, {
+        method: 'PUT',
+        body: { status: plan.status, taskIds: plan.taskIds },
+      })
+    } else if (plan.status === 'done') {
+      const result = await $fetch<TaskCompleteDto>(`/api/v1/tasks/${task.id}/complete`, {
+        method: 'POST',
+        body: { expectedVersion: task.version, position: plan.position },
+      })
+      replace(result.task)
+      promptTaskId.value = result.prompt ? result.task.id : null
+      // 프롬프트가 열리면 포커스는 프롬프트 질문으로 갑니다(TaskPrompt).
+      refocus = !result.prompt
+      await refresh()
+    } else {
+      const updated = await $fetch<TaskDto>(`/api/v1/tasks/${task.id}`, {
+        method: 'PATCH',
+        body: { expectedVersion: task.version, status: plan.status, position: plan.position },
+      })
+      replace(updated)
+      if (promptTaskId.value === task.id) promptTaskId.value = null
+      await refresh()
+    }
+    const moved = items.value.find((t) => t.id === task.id)
+    const status = moved?.status ?? plan.status
+    const place = moved ? groups.value[status].findIndex((t) => t.id === task.id) + 1 : 0
+    say('ok', `‘${task.title}’을(를) ${TASK_STATUS_LABELS[status]} 열 ${place}번째로 옮겼습니다.${status === 'done' && plan.kind === 'status' ? ' 완료했습니다.' : ''}`)
+  } catch (e) {
+    const error = apiError(e)
+    say(
+      'error',
+      error.status === 422 && plan.kind === 'reorder'
+        ? '그 사이 목록이 바뀌었습니다. 최신 목록을 확인한 뒤 다시 시도하세요.'
+        : taskErrorMessage(error.code, '옮기지 못했습니다. 다시 시도하세요.'),
+    )
+    await refresh()
+  } finally {
+    busy.value = false
+  }
+  if (refocus) focusTask(task.id, 'card')
+}
+
 // ── 삭제 ──
 async function remove(task: TaskDto) {
   if (!confirm(`‘${task.title}’을(를) 삭제할까요?`)) return
@@ -173,7 +257,9 @@ onMounted(refresh)
       담당자·마감·상태를 가진 가벼운 할 일 목록입니다. 완료할 때 막힘이나 결정이 있었는지 한 번 묻고, 원하면 빌드 로그로 남깁니다.
     </p>
 
-    <p v-if="notice" :class="['notice', notice.kind]" :role="notice.kind === 'error' ? 'alert' : 'status'">{{ notice.text }}</p>
+    <!-- 성공 안내 영역은 늘 DOM에 두어(비어 있으면 숨김) 바뀔 때마다 화면 낭독기가 읽게 합니다. -->
+    <p :class="notice?.kind === 'ok' ? 'notice ok' : 'visually-hidden'" role="status">{{ notice?.kind === 'ok' ? notice.text : '' }}</p>
+    <p v-if="notice?.kind === 'error'" class="notice error" role="alert">{{ notice.text }}</p>
     <p v-if="loadError" class="notice error" role="alert">
       할 일을 불러오지 못했습니다. <button type="button" class="link-button" @click="refresh">다시 시도</button>
     </p>
@@ -212,36 +298,57 @@ onMounted(refresh)
 
     <p v-if="loaded && items.length === 0 && !loadError" class="muted">아직 할 일이 없습니다.</p>
 
-    <template v-for="status in TASK_STATUS_ORDER" :key="status">
-      <div v-if="groups[status].length" class="task-group">
-        <h3 :id="`tasks-${status}-heading`">{{ TASK_STATUS_LABELS[status] }} <span class="muted">({{ groups[status].length }})</span></h3>
-        <ol class="plain task-list" :aria-labelledby="`tasks-${status}-heading`">
-          <li v-for="(task, index) in groups[status]" :key="task.id">
-            <TaskItem
-              :task="task"
-              :index="index"
-              :total="groups[status].length"
-              :can-write="canWrite"
-              :members="members"
-              :busy="busy"
-              @move="move(task, index, $event)"
-              @status="changeStatus(task, $event)"
-              @remove="remove(task)"
-              @updated="replace"
-              @reload="refresh"
-            />
-            <TaskPrompt
-              v-if="canWrite && promptTaskId === task.id"
-              :task="task"
-              :project-id="projectId"
-              :members="members"
-              :retro="retro"
-              @converted="onConverted"
-              @dismiss="dismissPrompt(task)"
-            />
-          </li>
-        </ol>
-      </div>
+    <div v-if="items.length" class="actions task-view-toggle" role="group" aria-label="할 일 보기 방식">
+      <button type="button" class="secondary small" :aria-pressed="view === 'list' ? 'true' : 'false'" @click="setView('list')">리스트 보기</button>
+      <button type="button" class="secondary small" :aria-pressed="view === 'board' ? 'true' : 'false'" @click="setView('board')">보드 보기</button>
+    </div>
+
+    <template v-if="view === 'board' && items.length">
+      <TaskBoard :groups="groups" :can-write="canWrite" :members="members" :busy="busy" @move="moveOnBoard" />
+      <TaskPrompt
+        v-if="canWrite && promptTask"
+        :key="promptTask.id"
+        :task="promptTask"
+        :project-id="projectId"
+        :members="members"
+        :retro="retro"
+        @converted="onConverted"
+        @dismiss="promptTask && dismissPrompt(promptTask)"
+      />
+    </template>
+
+    <template v-else>
+      <template v-for="status in TASK_STATUS_ORDER" :key="status">
+        <div v-if="groups[status].length" class="task-group">
+          <h3 :id="`tasks-${status}-heading`">{{ TASK_STATUS_LABELS[status] }} <span class="muted">({{ groups[status].length }})</span></h3>
+          <ol class="plain task-list" :aria-labelledby="`tasks-${status}-heading`">
+            <li v-for="(task, index) in groups[status]" :key="task.id">
+              <TaskItem
+                :task="task"
+                :index="index"
+                :total="groups[status].length"
+                :can-write="canWrite"
+                :members="members"
+                :busy="busy"
+                @move="move(task, index, $event)"
+                @status="changeStatus(task, $event)"
+                @remove="remove(task)"
+                @updated="replace"
+                @reload="refresh"
+              />
+              <TaskPrompt
+                v-if="canWrite && promptTaskId === task.id"
+                :task="task"
+                :project-id="projectId"
+                :members="members"
+                :retro="retro"
+                @converted="onConverted"
+                @dismiss="dismissPrompt(task)"
+              />
+            </li>
+          </ol>
+        </div>
+      </template>
     </template>
   </section>
 </template>
