@@ -3,7 +3,7 @@
  * 커뮤니티 첫 화면(C-02, PROOFU_EVOLUTION_PLAN §8.9, ADR 0019). 로그인 전용·검색엔진 비노출(noindex).
  * - 내 공간: 내가 멤버인 방 + 내 학교 인증으로 들어가는 공식 페이지(`공식` 배지는 운영자가 연 공간에만).
  * - 찾기: 내 학교 공식 페이지와 목록에 노출된 방(학교 연결 방은 그 학교 인증 계정만).
- * - 방 만들기: 학교 인증이 하나라도 있어야 합니다. 이름 표시 방식(실명·표시명·익명)은 만들 때 정하고, 방장이 7일 뒤 적용으로 바꿀 수 있습니다(C-03).
+ * - 방 만들기: 학교 인증이 하나라도 있어야 합니다. P2 alumni 플래그가 켜져 있으면 방 종류(일반·동문회·OB, A-01)를 고릅니다. 이름 표시 방식(실명·표시명·익명)은 만들 때 정하고, 방장이 7일 뒤 적용으로 바꿀 수 있습니다(C-03).
  * - 알림(C-03): 읽지 않은 수와 `/community/notices` 링크. 실명(선택): 실명 방의 글에만 보이는 이름.
  * - 공식 페이지 개설 요청: 학교 인증 계정이 요청하고, 운영자가 검토해 엽니다(요청 수는 운영자만 봄).
  */
@@ -16,6 +16,7 @@ import type {
   SpaceDetailDto,
   SpaceDiscovery,
   SpaceSummaryDto,
+  SpaceTemplate,
 } from '~~/shared/types/api'
 
 definePageMeta({ middleware: 'auth' })
@@ -23,6 +24,9 @@ definePageMeta({ middleware: 'auth' })
 useCommunityPage()
 
 const { me, refresh: refreshMe } = useAuth()
+// P2 기능 플래그(ADR 0037): 동문회·OB 템플릿(A-01)은 alumni가 켜져 있을 때만 고를 수 있습니다.
+const { flags, ensure: ensureFeatures } = useFeatures()
+await ensureFeatures()
 const fetcher = useRequestFetch()
 const { data: mine, refresh: refreshMine } = await useAsyncData('community-mine', () => fetcher<MySpacesDto>('/api/v1/community/spaces/mine'))
 const { data: requests, refresh: refreshRequests } = await useAsyncData('community-official-requests', () =>
@@ -72,6 +76,7 @@ const room = reactive({
   discovery: 'listed' as SpaceDiscovery,
   joinPolicy: 'open' as JoinPolicy,
   capacity: USER_ROOM_DEFAULT_CAPACITY,
+  template: 'general' as SpaceTemplate,
 })
 watch(
   () => room.nameMode,
@@ -95,6 +100,7 @@ async function createRoom() {
         discovery: room.discovery,
         joinPolicy: room.joinPolicy,
         capacity: Number(room.capacity),
+        ...(flags.value.alumni && room.template === 'alumni' && { template: 'alumni' }),
       },
     })
     await navigateTo(`/community/s/${created.slug}`)
@@ -260,12 +266,25 @@ const spaceMeta = (s: SpaceSummaryDto) =>
           </select>
           <p id="room-school-hint" class="hint">학교를 연결하면 그 학교 메일로 인증한 계정만 들어옵니다.</p>
         </div>
+        <fieldset v-if="flags.alumni" data-testid="room-template">
+          <legend>방 종류</legend>
+          <div class="field">
+            <label><input v-model="room.template" type="radio" name="room-template" value="general" /> {{ SPACE_TEMPLATE_LABELS.general }}</label>
+          </div>
+          <div class="field">
+            <label><input v-model="room.template" type="radio" name="room-template" value="alumni" /> {{ SPACE_TEMPLATE_LABELS.alumni }}</label>
+            <p class="hint">멤버마다 이 방에서만 쓰는 프로필(이름·현역/OB/졸업생 배지·기수·소개)을 둡니다. 방 밖·공개 프로필·검색에는 나오지 않습니다.</p>
+          </div>
+        </fieldset>
         <fieldset>
           <legend>이름 표시 방식</legend>
           <div v-for="mode in (['real', 'display', 'anonymous'] as const)" :key="mode" class="field">
             <label><input v-model="room.nameMode" type="radio" name="room-name-mode" :value="mode" /> {{ NAME_MODE_LABELS[mode] }}</label>
             <p class="hint">{{ NAME_MODE_HINTS[mode] }}</p>
           </div>
+          <p v-if="flags.alumni && room.template === 'alumni' && room.nameMode === 'anonymous'" class="notice" role="status">
+            익명은 동문 네트워킹에는 권장하지 않습니다. 익명 방에는 방별 프로필·배지가 없습니다.
+          </p>
           <p class="hint">만든 뒤에는 방장이 바꿀 수 있습니다. 바꾸면 멤버에게 알리고 7일 뒤부터 쓰는 글에만 적용되며, 이전 글은 그대로입니다.</p>
         </fieldset>
         <div class="field">

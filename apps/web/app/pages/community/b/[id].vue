@@ -160,6 +160,7 @@ async function submit() {
             </p>
             <p class="small muted">
               <span>{{ p.author.label ?? '' }}</span>
+              <RoomBadges :tag="p.author.roomProfile" />
               <span v-if="p.author.schoolVerified"> · 학교 인증</span>
               <span v-if="p.author.mine"> · 내 글</span>
               · {{ communityTimeText(p) }}<template v-if="p.edited"> · 수정됨</template> · 댓글 {{ p.commentCount }} · 공감 {{ p.reactionCount }}

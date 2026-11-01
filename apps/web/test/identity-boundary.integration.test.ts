@@ -13,7 +13,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { createApp, createRouter, toWebHandler } from 'h3'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { NAME_MODE_CHANGE_DELAY_MS } from '@peerchive/domain'
 import {
   PERSONA_ACTIVITY_PROJECT_TOPIC,
@@ -38,7 +38,10 @@ import { joinSpace } from '../server/modules/community/memberships'
 import { scheduleNameModeChange } from '../server/modules/community/name-modes'
 import { createOfficialPage } from '../server/modules/community/official'
 import { createComment, createPost } from '../server/modules/community/posts'
+import { putMyRoomProfile } from '../server/modules/community/room-profiles'
 import { createRoom } from '../server/modules/community/spaces'
+import { searchPublic } from '../server/modules/course-hub/search'
+import { setFeatureEnvForTesting } from '../server/modules/features'
 import { getPublicProfile, updateRealName, upsertProfile } from '../server/modules/identity/profiles'
 import { createPublicProfileHandler, createReadmeCardHandler } from '../server/modules/portfolio/public-http'
 import { listPersonaActivities, projectPersonaActivity } from '../server/modules/social/activities'
@@ -318,6 +321,8 @@ describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
       const [role] = (await tx.execute(sql`select rolcanlogin, rolsuper from pg_roles where rolname = ${SOCIAL_ROLE}`)) as unknown as Array<{ rolcanlogin: boolean; rolsuper: boolean }>
       expect(role).toEqual({ rolcanlogin: false, rolsuper: false })
       expect(COMMUNITY_TABLES.length).toBeGreaterThanOrEqual(19)
+      // A-01: 방별 프로필·기수 이력은 커뮤니티 구역(스키마 머리말로 읽음)이라 이 검사·소스 lint가 자동으로 덮습니다.
+      expect(COMMUNITY_TABLES.map((t) => t.sqlName)).toEqual(expect.arrayContaining(['room_profiles', 'room_profile_cohort_changes']))
       for (const t of COMMUNITY_TABLES) {
         const [p] = (await tx.execute(
           sql`select has_table_privilege(${SOCIAL_ROLE}, ${`public.${t.sqlName}`}, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') as tbl,
@@ -355,7 +360,7 @@ describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
       const [persona] = await tx.select().from(personas).where(eq(personas.userId, user.id))
       const expected = await getPublicProfile(tx, persona!.handle)
 
-      for (const table of ['community_posts', 'community_comments', 'thread_aliases', 'archive_transfers', 'archive_transfer_consents', 'community_reactions', 'community_spaces']) {
+      for (const table of ['community_posts', 'community_comments', 'thread_aliases', 'archive_transfers', 'archive_transfer_consents', 'community_reactions', 'community_spaces', 'room_profiles', 'room_profile_cohort_changes']) {
         const code = await failsWith(tx, async (inner) => {
           await inner.execute(sql.raw(`set local role ${SOCIAL_ROLE}`))
           await inner.execute(sql.raw(`select 1 from public.${table} limit 1`))
@@ -363,7 +368,7 @@ describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
         expect(code, table).toBe('42501') // insufficient_privilege
       }
       // S-05: social 읽기 도우미(withSocialRole) 안에서 커뮤니티 테이블을 읽으면 실패합니다(코드 실수의 두 번째 겹).
-      for (const table of ['community_posts', 'community_spaces', 'space_memberships', 'senior_notes', 'publication_candidates'])
+      for (const table of ['community_posts', 'community_spaces', 'space_memberships', 'room_profiles', 'senior_notes', 'publication_candidates'])
         expect(await failsWith(tx, (inner) => withSocialRole(inner, (r) => r.execute(sql.raw(`select 1 from public.${table} limit 1`)))), table).toBe('42501')
       // 계정의 이메일·실명 열도 거부.
       expect(
@@ -585,11 +590,29 @@ async function buildWorld(tx: DbExecutor, seed: number) {
   const officialBoard = official.boards.find((b) => b.kind !== 'notice')!
   spaces.push({ slug: official.slug, boardId: officialBoard.id, official: true, mode: 'anonymous' })
   const roomCount = r.int(2, 4)
+  // A-01(ADR 0038): 방 템플릿·방별 프로필은 별도 난수(같은 시드의 기존 세계를 바꾸지 않음). 방별 이름·기수·소개는 고유 표식이라 공개 출력에서 찾습니다.
+  const ar = rng(seed ^ 0xa01)
+  const roomProfileValues: string[] = []
   for (let i = 0; i < roomCount; i++) {
     const mode = r.pick(['real', 'display', 'anonymous'] as const)
     const owner = r.pick(people)
-    const room = await createRoom(tx, { userId: owner.userId }, { name: `방${i} ${tag}`, nameMode: mode, joinPolicy: 'open', discovery: r.pick(['listed', 'unlisted'] as const) }, T0)
+    const alumni = ar.chance(0.6)
+    const room = await createRoom(
+      tx,
+      { userId: owner.userId },
+      { name: `방${i} ${tag}`, nameMode: mode, joinPolicy: 'open', discovery: r.pick(['listed', 'unlisted'] as const), ...(alumni && { template: 'alumni' }) },
+      T0,
+    )
     for (const p of people) if (p !== owner) await joinSpace(tx, { userId: p.userId }, room.slug, T0)
+    if (alumni && mode !== 'anonymous') {
+      for (const [j, p] of people.entries()) {
+        if (!ar.chance(0.8)) continue
+        const mark = `${seed.toString(36)}${i}${j}${crypto.randomUUID().slice(0, 4)}`
+        const values = { ...(mode === 'display' && { displayName: `RPN${mark}` }), badges: [ar.pick(['current', 'ob'] as const), 'alumni'], cohortLabel: `C${mark}`, bio: `RPB${mark}` }
+        const saved = await putMyRoomProfile(tx, { userId: p.userId }, room.slug, values, T0)
+        roomProfileValues.push(...[values.displayName, values.cohortLabel, values.bio, saved.mine!.id].filter((v): v is string => !!v))
+      }
+    }
     spaces.push({ slug: room.slug, boardId: room.boards[0]!.id, official: false, mode, ...(mode === 'anonymous' && r.chance(0.7) && { convertTo: r.pick(['real', 'display'] as const) }) })
   }
 
@@ -679,7 +702,7 @@ async function buildWorld(tx: DbExecutor, seed: number) {
     expect(items.find((i) => i.id === (e.payload as { sourceId: string }).sourceId)?.mode, `seed ${seed} event for anonymous post`).not.toBe('anonymous')
     await handlePersonaActivityProject(tx, e.payload)
   }
-  return { people, items, now: new Date(clock + HOUR) }
+  return { people, items, roomProfileValues, now: new Date(clock + HOUR) }
 }
 
 /** 활동 목록 전부(cursor를 따라감). */
@@ -697,13 +720,16 @@ async function allActivity(tx: DbExecutor, actor: { userId: string } | null, han
 
 describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a persona (PostgreSQL)', () => {
   afterAll(closeTestDb)
+  // A-01: 동문회·OB 방(방별 프로필)을 세계에 넣으려면 P2 alumni 플래그가 켜져 있어야 합니다.
+  beforeEach(() => setFeatureEnvForTesting({ PEERCHIVE_FEATURE_P2_ALUMNI: 'on' }))
+  afterEach(() => setFeatureEnvForTesting(null))
 
   it(`for ${WORLDS} seeded random worlds, every persona's public JSON, README card, old profile DTO, activity list (raw and API for every viewer), follow lists, every person's feed and suggestions carry 0 anonymous post ids, bodies, body hashes or timestamps`, async () => {
-    const totals = { worlds: 0, personas: 0, anonymous: 0, projected: 0, follows: 0, feedItems: 0 }
+    const totals = { worlds: 0, personas: 0, anonymous: 0, projected: 0, follows: 0, feedItems: 0, roomProfileValues: 0 }
     for (let w = 0; w < WORLDS; w++) {
       const seed = BASE_SEED + w
       await withRollback(async (tx) => {
-        const { people, items, now } = await buildWorld(tx, seed)
+        const { people, items, roomProfileValues, now } = await buildWorld(tx, seed)
         // S-04: 무작위 팔로우(실명·표시명 주체 모두)와 전체 공개 팔로우 목록. 목록은 새 공개 출력이라 같은 검사에 넣습니다.
         const r = rng(seed ^ 0x5f04)
         const all = people.flatMap((p) => [p.real, p.display].filter((x): x is NonNullable<typeof x> => !!x).map((persona) => ({ owner: p, persona })))
@@ -725,6 +751,9 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
           i.createdAt.toISOString(),
           String(i.createdAt.getTime()),
         ])
+        // A-01: 방별 프로필의 이름·기수·소개·id도 방 밖의 모든 공개·소셜 출력에 0건이어야 합니다.
+        forbidden.push(...roomProfileValues)
+        totals.roomProfileValues += roomProfileValues.length
         const postRows = await tx
           .select({ id: communityPosts.id, personaId: communityPosts.personaId, nameMode: communityPosts.nameMode, discovery: communitySpaces.discovery })
           .from(communityPosts)
@@ -785,6 +814,12 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
           for (const q of people) expect(suggestions.filter((s) => handlesOf(q).includes(s.handle)).length, `seed ${seed} two personas of one person`).toBeLessThanOrEqual(1)
           totals.feedItems += feed.items.length
         }
+        // A-01: 공개 검색(색인·API)에도 방별 프로필 값이 없습니다.
+        for (const value of roomProfileValues.slice(0, 6)) {
+          expect((await searchPublic(tx, { q: value }, now)).results, `seed ${seed} search ${value}`).toEqual([])
+          const [hit] = (await tx.execute(sql`select count(*)::int as n from search_documents where strpos(search_text || title || snippet, ${value}) > 0`)) as unknown as Array<{ n: number }>
+          expect(hit!.n, `seed ${seed} search_documents ${value}`).toBe(0)
+        }
         // DB 전체로도: 이 세계의 익명 글은 어떤 페르소나 활동에도 없고, 익명 글·댓글의 persona_id는 모두 null.
         const anonIds = anonymous.map((i) => i.id)
         if (anonIds.length) {
@@ -806,5 +841,6 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
     expect(totals.follows).toBeGreaterThan(WORLDS)
     expect(totals.personas).toBeGreaterThan(WORLDS)
     expect(totals.feedItems).toBeGreaterThan(0)
+    expect(totals.roomProfileValues).toBeGreaterThan(WORLDS)
   })
 })

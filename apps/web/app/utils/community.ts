@@ -34,6 +34,11 @@ import {
   ARCHIVE_CANCEL_REASON_LABELS,
   ARCHIVED_MARKER_TEXT,
   COURSE_QA_ANONYMOUS_LABELS,
+  ROOM_BADGE_LABELS,
+  ROOM_COHORT_LABEL_MAX,
+  ROOM_PROFILE_BIO_MAX,
+  ROOM_PROFILE_NAME_MAX,
+  SPACE_TEMPLATE_LABELS,
 } from '@peerchive/domain'
 import type { CommunityItemStatus, SpaceStatus } from '~~/shared/types/api'
 import { formatDateTime } from './build-log'
@@ -71,6 +76,11 @@ export {
   ARCHIVE_CANCEL_REASON_LABELS,
   ARCHIVED_MARKER_TEXT,
   COURSE_QA_ANONYMOUS_LABELS,
+  ROOM_BADGE_LABELS,
+  ROOM_COHORT_LABEL_MAX,
+  ROOM_PROFILE_BIO_MAX,
+  ROOM_PROFILE_NAME_MAX,
+  SPACE_TEMPLATE_LABELS,
 }
 
 /** 글·댓글 상태(운영 화면). */
@@ -109,6 +119,7 @@ export const COMMUNITY_ERROR_MESSAGES: Record<string, string> = {
   space_full: '정원이 찼습니다.',
   not_joinable: '공식 페이지는 가입하지 않고 학교 인증으로 들어갑니다.',
   space_not_active: '보관되었거나 제한된 공간이라 바꿀 수 없습니다.',
+  room_profiles_unavailable: '익명 방에는 방별 프로필이 없습니다.',
   not_member: '이 공간의 멤버가 아닙니다.',
   not_pending: '이미 처리된 요청입니다.',
   not_active_member: '현재 멤버가 아닙니다.',

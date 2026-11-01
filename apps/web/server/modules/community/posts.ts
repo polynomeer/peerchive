@@ -23,6 +23,8 @@
  *   어디에도 쓰지 않습니다.
  * - **페르소나 활동(S-05, ADR 0035)**: 실명·표시명이고 작성 시점 페르소나가 있는 listed 공간 글을 쓰면 같은 트랜잭션에 `persona_activity.project`
  *   outbox 행을 남깁니다(worker가 투영). 익명 글은 이벤트를 만들지 않습니다. 지우기·숨김·unlisted 전환의 거두기는 DB 트리거가 같은 트랜잭션에서 합니다.
+ * - **동문회·OB 방(A-01, ADR 0038)**: P2 alumni 플래그가 켜진 alumni 방의 실명·표시명 글·댓글에는 작성자의 방별 배지·기수(roomProfile)가 붙고,
+ *   표시명 글의 이름은 방별 이름(있으면)입니다. 익명 글·지운 글에는 없고, 방 밖(활동 카드·공개 프로필)에는 이 값이 가지 않습니다.
  * - 감사 기록을 남기지 않습니다: 작성자 id와 글 id를 한 행에 남기면 익명 글의 작성자를 찾는 길(C-06의 사유 기록 경로 밖)이 생기기 때문입니다.
  *   분석 이벤트는 허용 목록(게시판 종류·방식·답글 여부·대상 종류)만, 익명 글·댓글은 사용자 키 없이(unlinked) 남깁니다.
  */
@@ -91,6 +93,7 @@ import { parseInput } from '../validation'
 import { type SpaceContext, loadReadableSpace, membershipFacts, writeRestricted } from './access'
 import { cancelTransfersForAnswerChangeInTx, cancelTransfersForSourceInTx, postArchiveInfo } from './archive-transfers'
 import { activeDisplayPersona, displayPersonaNames, displayPersonaRequiredError, loadScheduledChange } from './name-modes'
+import { type RoomAuthorProfile, roomAuthorProfiles } from './room-profiles'
 import type {
   BoardPostsDto,
   CommunityAuthorDto,
@@ -193,6 +196,8 @@ interface ThreadContext {
   /** 표시명 글·댓글에 고정한 persona_id → 지금 표시명(kind = display 행만). */
   displayNames: Map<string, string>
   aliases: Map<string, Map<string, number>>
+  /** 동문회·OB 방(A-01)의 방별 이름·배지(작성자 id → 값). 다른 방·플래그가 꺼졌으면 비어 있음. */
+  roomProfiles: Map<string, RoomAuthorProfile>
   bucket: (mode: NameMode) => boolean
 }
 
@@ -242,21 +247,30 @@ async function loadAliases(db: DbExecutor, postIds: string[]): Promise<Map<strin
 }
 
 async function threadContext(db: DbExecutor, ctx: SpaceContext, items: ReadonlyArray<AuthoredItem>, postIds: string[], now: Date): Promise<ThreadContext> {
-  const [authors, aliases, displayNames] = await Promise.all([
+  const [authors, aliases, displayNames, roomProfiles] = await Promise.all([
     loadAuthors(db, ctx, items),
     loadAliases(db, postIds),
     displayPersonaNames(db, items.filter((i) => i.nameMode === 'display').map((i) => i.personaId)),
+    // 익명 글·댓글의 작성자는 방별 프로필을 찾지도 않습니다.
+    roomAuthorProfiles(db, ctx.space, items.filter((i) => i.nameMode !== 'anonymous').map((i) => i.authorId), now),
   ])
   // 공식 페이지는 멤버 수를 세지 않습니다(학교 인증 구성원 전체). 사용자 방은 loadSpaceContext가 센 active 멤버 수.
-  return { ctx, now, authors, displayNames, aliases, bucket: (mode) => shouldBucketTimes({ kind: ctx.space.row.kind, activeMembers: ctx.facts.activeMembers }, mode) }
+  return { ctx, now, authors, displayNames, aliases, roomProfiles, bucket: (mode) => shouldBucketTimes({ kind: ctx.space.row.kind, activeMembers: ctx.facts.activeMembers }, mode) }
 }
 
 function authorOf(tc: ThreadContext, postId: string, item: AuthoredItem & { status: CommunityItemStatus }): CommunityAuthorDto {
   const base = tc.authors.get(item.authorId) ?? { userId: item.authorId, status: 'deleted' as const, purged: true, realName: null }
   // 표시명 이름은 이 글에 고정한 표시명 페르소나에서만(없으면 null → `표시명 없음`).
-  const displayPersonaName = item.nameMode === 'display' && item.personaId ? (tc.displayNames.get(item.personaId) ?? null) : null
+  // 동문회·OB 방(A-01, ADR 0038): 표시명 글은 방별 이름이 있으면 그 이름(없으면 고정한 표시명 페르소나 이름), 실명 글은 실명 그대로.
+  // 방식은 글에 고정한 값(ADR 0020)만 보고, 익명 글에는 방별 프로필을 쓰지 않습니다.
+  const room = item.nameMode === 'anonymous' ? undefined : tc.roomProfiles.get(item.authorId)
+  const displayPersonaName =
+    item.nameMode === 'display' ? (room?.displayName ?? (item.personaId ? (tc.displayNames.get(item.personaId) ?? null) : null)) : null
   const display = resolveAuthorDisplay(item.nameMode, { ...base, displayPersonaName }, { userId: tc.ctx.viewer.userId })
-  return threadAuthorView(display, tc.aliases.get(postId)?.get(item.authorId), isOpenItem(item.status))
+  const view: CommunityAuthorDto = threadAuthorView(display, tc.aliases.get(postId)?.get(item.authorId), isOpenItem(item.status))
+  // 배지는 게시 중인 실명·표시명 글에만(지운·가린 글, 탈퇴한 작성자에는 없음).
+  if (room && view.label !== null && (view.kind === 'real' || view.kind === 'display')) view.roomProfile = room.tag
+  return view
 }
 
 function timesOf(tc: ThreadContext, item: { nameMode: NameMode; createdAt: Date; editedAt: Date | null }) {

@@ -142,6 +142,7 @@ async function addComment() {
         <h1 id="post-title">{{ post.title ?? post.placeholder }}</h1>
         <p class="small post-meta">
           <strong class="post-author">{{ post.author.label ?? '' }}</strong>
+          <RoomBadges :tag="post.author.roomProfile" />
           <span v-if="post.author.schoolVerified"> · 학교 인증</span>
           <span v-if="post.author.mine" class="badge">내 글</span>
           <span class="muted"> · {{ NAME_MODE_LABELS[post.nameMode] }} · {{ communityTimeText(post) }}<template v-if="post.edited"> · 수정됨</template></span>

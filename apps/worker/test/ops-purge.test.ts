@@ -32,6 +32,8 @@ import {
   recruitmentApplications,
   recruitments,
   reports,
+  roomProfileCohortChanges,
+  roomProfiles,
   threadAliases,
   consents,
   createDb,
@@ -569,6 +571,40 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect(history.find((h) => h.id === cancelled!.id)).toMatchObject({ requestedBy: M.id, cancelledBy: null, status: 'cancelled' })
       const [row] = await tx.select().from(users).where(eq(users.id, U.id))
       expect(row).toMatchObject({ realName: null, displayName: DELETED_DISPLAY_NAME })
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('deletes the purged user\'s room profiles and cohort history about them, and blanks them as the editor of others\' cohort history (A-01)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴동문', 'deleted')
+      const M = await user(tx, '남는동문')
+      const [room] = await tx
+        .insert(communitySpaces)
+        .values({ kind: 'user_room', template: 'alumni', name: '동문 방', slug: id().replace(/-/g, '').slice(0, 10), currentNameMode: 'display', createdBy: M.id })
+        .returning()
+      await tx.insert(spaceMemberships).values([
+        { spaceId: room!.id, userId: M.id, role: 'owner', status: 'active', joinedAt: new Date(NOW.getTime() - 30 * DAY) },
+        { spaceId: room!.id, userId: U.id, role: 'admin', status: 'active', joinedAt: new Date(NOW.getTime() - 20 * DAY) },
+      ])
+      await tx.insert(roomProfiles).values([
+        { spaceId: room!.id, userId: U.id, displayName: '12기 탈퇴', badges: ['ob'], cohortLabel: '12기', bio: '소개' },
+        { spaceId: room!.id, userId: M.id, displayName: '11기 남음', badges: ['alumni'], cohortLabel: '11기' },
+      ])
+      await tx.insert(roomProfileCohortChanges).values([
+        { spaceId: room!.id, subjectUserId: U.id, changedBy: U.id, fromLabel: null, toLabel: '12기' },
+        { spaceId: room!.id, subjectUserId: M.id, changedBy: U.id, fromLabel: '10기', toLabel: '11기' },
+      ])
+
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ room_profiles: 1, room_profile_cohort_changes: 1, room_profile_cohort_actors: 1 })
+      expect(await count(tx, roomProfiles, eq(roomProfiles.userId, U.id))).toBe(0)
+      expect(await count(tx, roomProfileCohortChanges, eq(roomProfileCohortChanges.subjectUserId, U.id))).toBe(0)
+      const kept = await tx.select().from(roomProfileCohortChanges).where(eq(roomProfileCohortChanges.subjectUserId, M.id))
+      expect(kept).toEqual([expect.objectContaining({ changedBy: null, fromLabel: '10기', toLabel: '11기' })])
+      expect(await count(tx, roomProfiles, eq(roomProfiles.userId, M.id))).toBe(1)
+      const ledger = await tx.select().from(deletionLedger).where(eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, U.id)))
+      expect(ledger.map((l) => l.entityKind)).toEqual(expect.arrayContaining(['room_profiles', 'room_profile_cohort_changes']))
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })

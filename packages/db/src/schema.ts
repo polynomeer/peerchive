@@ -310,6 +310,8 @@ export const affiliationStatus = pgEnum('affiliation_status', ['pending', 'activ
 export const communitySpaceKind = pgEnum('community_space_kind', ['official_school', 'official_department', 'user_room', 'study_room'])
 /** 공간의 이름 표시 방식(실명·표시명·익명). 공식 페이지는 anonymous 고정. 바꾸기는 C-03(7일 예약). */
 export const communityNameMode = pgEnum('community_name_mode', ['real', 'display', 'anonymous'])
+/** 사용자 방 템플릿(A-01, ADR 0038). alumni = 동문회·OB 방(방별 프로필·신분 배지). */
+export const communitySpaceTemplate = pgEnum('community_space_template', ['general', 'alumni'])
 /** 찾기: 목록에 노출 / 링크·초대로만. */
 export const spaceDiscovery = pgEnum('space_discovery', ['listed', 'unlisted'])
 /** 가입 방식: 자유 / 방장 승인 / 초대 전용. */
@@ -3104,6 +3106,8 @@ export const communitySpaces = pgTable(
     description: text('description'),
     slug: text('slug').notNull(),
     currentNameMode: communityNameMode('current_name_mode').notNull(),
+    /** 사용자 방 템플릿(A-01, ADR 0038). alumni는 user_room만(check). P2 alumni 플래그가 꺼져 있으면 general처럼 동작합니다. */
+    template: communitySpaceTemplate('template').notNull().default('general'),
     discovery: spaceDiscovery('discovery').notNull().default('listed'),
     joinPolicy: spaceJoinPolicy('join_policy').notNull().default('open'),
     capacity: integer('capacity').notNull().default(300),
@@ -3140,6 +3144,7 @@ export const communitySpaces = pgTable(
     check('community_spaces_department_label_check', sql`${t.departmentLabel} is null or char_length(${t.departmentLabel}) between 1 and 40`),
     check('community_spaces_archived_check', sql`${t.status} <> 'archived' or ${t.archivedAt} is not null`),
     check('community_spaces_restricted_check', sql`${t.status} <> 'restricted' or ${t.restrictedAt} is not null`),
+    check('community_spaces_template_check', sql`${t.template}::text = 'general' or ${t.kind}::text = 'user_room'`),
   ],
 )
 
@@ -3862,4 +3867,68 @@ export const studyRecords = pgTable(
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex('study_records_space_id_key').on(t.spaceId), uniqueIndex('study_records_project_id_key').on(t.projectId)],
+)
+
+// A-01: 동문회·OB 방의 방별 프로필(ADR 0038). 커뮤니티 구역이므로 C-05·S-02 경계 검사와 social DB 역할 권한 검사가 자동으로 덮습니다
+// (social 역할에는 권한을 주지 않음). 공개 프로필·검색·피드·PersonaActivity는 이 테이블을 읽지 않습니다.
+
+/**
+ * 방별 프로필(A-01, SYSTEM_DESIGN §6.7.2 RoomProfile, PROOFU_EVOLUTION_PLAN §8.9.9).
+ * - (space, user) 하나. alumni 템플릿 방의 active 멤버만 만들고, 방 멤버에게만 보입니다.
+ * - display_name: display 방의 방별 이름. real 방은 실명으로 고정이라 쓰지 않습니다(남아 있어도 real 방에서는 읽지 않음).
+ * - badges: 자기 신고 배지(current·ob·alumni, 현역·OB는 함께 못 씀). 기수 배지는 cohort_label에서 나옵니다. 인증 표시는 저장하지 않습니다.
+ * - 사진(avatar_version_id)은 이번 범위에 없습니다(ADR 0038 — 파일 검사·EXIF 제거·짧은 서명 URL을 붙여 A-02 앨범과 함께).
+ * - 방을 나가거나 내보내지거나 탈퇴하면 행을 지웁니다. 방이 익명으로 바뀌면 worker가 지웁니다.
+ */
+export const roomProfiles = pgTable(
+  'room_profiles',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    spaceId: uuid('space_id')
+      .notNull()
+      .references(() => communitySpaces.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    displayName: text('display_name'),
+    badges: text('badges').array().notNull().default(sql`'{}'::text[]`),
+    cohortLabel: text('cohort_label'),
+    bio: text('bio'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('room_profiles_space_user_key').on(t.spaceId, t.userId),
+    index('room_profiles_user_id_idx').on(t.userId),
+    check('room_profiles_display_name_check', sql`${t.displayName} is null or char_length(${t.displayName}) between 1 and 30`),
+    check('room_profiles_cohort_label_check', sql`${t.cohortLabel} is null or char_length(${t.cohortLabel}) between 1 and 20`),
+    check('room_profiles_bio_check', sql`${t.bio} is null or char_length(${t.bio}) between 1 and 200`),
+    check('room_profiles_badges_check', sql`${t.badges} <@ array['current', 'ob', 'alumni']::text[] and not (${t.badges} @> array['current', 'ob']::text[])`),
+  ],
+)
+
+/**
+ * 기수 변경 이력(A-01). 본인·방장·운영진의 모든 기수 변경을 남깁니다(이전·이후 값, 바꾼 사람, 시각). 방장·운영진과 본인만 봅니다.
+ * 대상(subject)이 방을 나가거나 탈퇴하면 그 사람의 이력도 지웁니다(기수는 그 사람의 자기 신고 정보). 바꾼 사람이 탈퇴하면 changed_by만 비웁니다.
+ */
+export const roomProfileCohortChanges = pgTable(
+  'room_profile_cohort_changes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    spaceId: uuid('space_id')
+      .notNull()
+      .references(() => communitySpaces.id),
+    subjectUserId: uuid('subject_user_id')
+      .notNull()
+      .references(() => users.id),
+    changedBy: uuid('changed_by').references(() => users.id),
+    fromLabel: text('from_label'),
+    toLabel: text('to_label'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('room_profile_cohort_changes_subject_idx').on(t.spaceId, t.subjectUserId, t.createdAt),
+    index('room_profile_cohort_changes_changed_by_idx').on(t.changedBy),
+    check('room_profile_cohort_changes_changed_check', sql`${t.fromLabel} is distinct from ${t.toLabel}`),
+  ],
 )

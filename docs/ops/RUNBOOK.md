@@ -187,12 +187,13 @@ P2 기능은 코드가 있어도 **기본으로 꺼져 있고** 이 게이트(DE
 | 변수 | 영역 | 켜기 전 확인 |
 |---|---|---|
 | `PEERCHIVE_FEATURE_P2_INSTITUTIONS=on` | 기관 확장(I-01 초대 코드·기수 승인·수료증 확인, 이후 I-02) | GC 통과·§6.1 근거, 협력 기관 확보(제품 기획 §19 질문 13), **수료증 파일 삭제 절차 검토**(아래 §4.6·§8, worker `certificate-files`가 돌고 있는지 `/operator/metrics` 시스템 상태에서 확인), 수료증 확인 담당 운영자 지정, 기관 운영진 권한 범위 검토(I-02) |
-| `PEERCHIVE_FEATURE_P2_ALUMNI=on` | 졸업생 공간(A-01~A-04) | A-03 명부 회귀 테스트, 함께 열 동문 모임 확보 |
+| `PEERCHIVE_FEATURE_P2_ALUMNI=on` | 졸업생 공간(A-01 동문회·OB 방·방별 프로필, 이후 A-02~A-04) | A-03 명부 회귀 테스트, 함께 열 동문 모임 확보, 방별 프로필 경계(S-02 속성 테스트에 alumni 방 포함, [ADR 0038](../adr/0038-alumni-rooms.md)) 통과 확인 |
 | `PEERCHIVE_FEATURE_P2_TOPICS=on` | 토픽·소속 표시 익명(A-05·A-06) | A-05 임계값·S-02 확장 회귀 테스트 |
 | `PEERCHIVE_FEATURE_P2=on` | 위 셋 모두(영역 변수 `off`가 우선) | 위 모두 |
 
 - 값은 `on`·`1`·`true`·`yes`만 켜짐, 그 밖은 꺼짐. web은 요청마다 읽으므로 바꾼 뒤 web을 재시작합니다. 확인: `curl -s https://<사이트>/api/v1/features` → `{"alumni":false,"topics":false,"institutions":true}`.
 - 끄기(되돌리기): 변수를 지우고 재시작하면 새 경로가 다음 요청부터 404입니다. 이미 만든 소속은 그대로 active이고(다시 켜면 그대로 보임), 이미 올라온 수료증 파일은 worker가 계속 지웁니다.
+- `alumni`를 끄면 이미 만든 동문회·OB 방은 일반 방처럼 보입니다(방별 프로필 API 404, 글의 방별 이름·배지 없음). 방별 프로필 행은 지우지 않으므로 다시 켜면 그대로 보입니다. 나가기·탈퇴·익명 전환에 따른 방별 프로필 삭제는 플래그와 무관하게 돕니다(삭제 장부 종류 `room_profiles`·`room_profile_cohort_changes`·`room_profile_cohort_actors`).
 
 ## 3. 사고 대응
 

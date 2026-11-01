@@ -5,6 +5,7 @@
  *   공식 페이지는 가입이 없습니다(409 `not_joinable`, 자격은 학교 인증). 내보내지거나 거절된 사람은 스스로 다시 들어올 수 없습니다(403 `removed`).
  * - 승인·거절·내보내기: owner·admin(admin은 moderator·member만 내보냄). 거절과 내보내기는 removed(새 초대로만 다시 들어옴).
  * - 역할 변경: owner만. role owner를 주면 소유권 이전(이전 owner는 admin).
+ * - 방별 프로필(A-01, ADR 0038): 나가기·내보내기는 같은 트랜잭션에서 그 사람의 방별 프로필·기수 이력을 지웁니다.
  * - 나가기: owner가 나가면 가장 오래된 admin → 가장 오래된 다른 active 멤버에게 넘기고, 아무도 없으면 방을 보관(archived)합니다.
  *   탈퇴 정리(worker purge)도 같은 규칙(chooseOwnerSuccessor)을 씁니다.
  * - 멤버 목록은 owner·admin만 봅니다(이름·핸들·역할·가입 시각). 공식 페이지에는 멤버 목록이 없습니다.
@@ -29,6 +30,7 @@ import { type Actor, ServiceError, conflict, forbidden, notFound } from '../erro
 import { isUuid } from '../projects/access'
 import { parseInput } from '../validation'
 import { type MembershipRow, type SpaceContext, findMembership, loadReadableSpace, loadSpaceContext, membershipFacts } from './access'
+import { deleteRoomProfileInTx } from './room-profiles'
 import { archiveSpaceInTx, assertCanManage, toSpaceSummary } from './spaces'
 import { syncStudyRecordInTx } from './study-records'
 import type { JoinResultDto, SpaceMemberDto, SpaceMembersDto } from '../../../shared/types/api'
@@ -148,6 +150,8 @@ export async function leaveSpace(
       throw notFound()
     }
     await tx.update(spaceMemberships).set({ status: 'left', role: 'member', endedAt: now, updatedAt: now }).where(eq(spaceMemberships.id, m.id))
+    // 방별 프로필(A-01): 나가면 그 방의 프로필·기수 이력을 지웁니다(플래그와 무관하게 — 남은 데이터를 두지 않음).
+    await deleteRoomProfileInTx(tx, ctx.space.row.id, actor.userId)
     let succession: 'transferred' | 'archived' | null = null
     if (m.status === 'active' && m.role === 'owner') {
       const result = await succeedOwner(tx, ctx.space.row.id, actor.userId, now)
@@ -262,6 +266,7 @@ export async function removeMember(db: DbExecutor, actor: Actor, ref: unknown, u
     if (target.status !== 'active') throw conflict('not_active_member')
     if (!canRemoveSpaceMember(ctx.membership!.role, target.role)) throw forbidden()
     await tx.update(spaceMemberships).set({ status: 'removed', role: 'member', endedAt: now, updatedAt: now }).where(eq(spaceMemberships.id, target.id))
+    await deleteRoomProfileInTx(tx, ctx.space.row.id, target.userId)
     await syncStudyRecordInTx(tx, ctx.space.row.id, now)
     await recordAudit(tx, { actorId: actor.userId, action: 'community.member_remove', targetType: 'community_space', targetId: ctx.space.row.id, metadata: { role: target.role } })
   })

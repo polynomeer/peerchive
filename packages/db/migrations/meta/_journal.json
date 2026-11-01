@@ -239,6 +239,13 @@
       "when": 1793536523745,
       "tag": "0033_institutions",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1793539966046,
+      "tag": "0034_alumni_rooms",
+      "breakpoints": true
     }
   ]
 }

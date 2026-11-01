@@ -26,6 +26,8 @@ import {
   nameModeChanges,
   pepperKeyId,
   projects,
+  roomProfileCohortChanges,
+  roomProfiles,
   sql,
   studyRecords,
   users,
@@ -67,6 +69,11 @@ export async function applyNameModeChange(db: DbExecutor, changeId: string, opti
       .update(projects)
       .set({ studyNameMode: change.toMode, updatedAt: now })
       .where(inArray(projects.id, tx.select({ id: studyRecords.projectId }).from(studyRecords).where(eq(studyRecords.spaceId, change.spaceId))))
+    // 동문회·OB 방(A-01, ADR 0038): 익명 방에는 방별 프로필이 없습니다. 익명으로 바뀌면 프로필과 기수 이력을 지웁니다(되돌려도 살아나지 않음).
+    if (change.toMode === 'anonymous') {
+      await tx.delete(roomProfileCohortChanges).where(eq(roomProfileCohortChanges.spaceId, change.spaceId))
+      await tx.delete(roomProfiles).where(eq(roomProfiles.spaceId, change.spaceId))
+    }
     const payload = sanitizeNoticePayload('name_mode_applied', { fromMode: change.fromMode, toMode: change.toMode, effectiveAt: change.effectiveAt.toISOString() })
     if (!payload) throw new Error('name_mode_applied payload not allowed')
     const inserted = await tx.execute<{ id: string }>(sql`

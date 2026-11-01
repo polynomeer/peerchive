@@ -2347,6 +2347,8 @@ export interface CommunityMetricsSpaceOptionDto {
 
 export type SpaceKind = 'official_school' | 'official_department' | 'user_room' | 'study_room'
 export type NameMode = 'real' | 'display' | 'anonymous'
+/** 사용자 방 템플릿(A-01, ADR 0038). P2 alumni 플래그가 꺼져 있으면 응답은 항상 general입니다. */
+export type SpaceTemplate = 'general' | 'alumni'
 export type SpaceDiscovery = 'listed' | 'unlisted'
 export type JoinPolicy = 'open' | 'approval' | 'invite'
 export type SpaceStatus = 'active' | 'archived' | 'restricted'
@@ -2366,6 +2368,7 @@ export interface SpaceSummaryDto {
   school: { id: string; name: string } | null
   departmentLabel: string | null
   nameMode: NameMode
+  template: SpaceTemplate
   discovery: SpaceDiscovery
   joinPolicy: JoinPolicy
   status: SpaceStatus
@@ -2648,11 +2651,58 @@ export type CommunityTimeBucket = 'today' | 'this_week' | 'earlier'
  */
 export interface CommunityAuthorDto {
   kind: 'real' | 'display' | 'anonymous' | 'withdrawn'
-  /** 지우거나 가린 표시명·실명 글은 null. */
+  /** 지우거나 가린 표시명·실명 글은 null. 동문회·OB 방(A-01)의 표시명 글은 방별 이름(있으면). */
   label: string | null
   schoolVerified: boolean
   /** 내 글인지(내 응답에만 true). */
   mine: boolean
+  /** 동문회·OB 방(A-01, ADR 0038)의 게시 중인 실명·표시명 글·댓글에만: 작성자의 방별 배지·기수. 익명·지운 글·다른 방에는 없음. */
+  roomProfile?: RoomProfileTagDto | null
+}
+
+// ── 동문회·OB 방: 방별 프로필·신분 배지 (A-01, ADR 0038) ─────────────────
+
+export type RoomBadge = 'current' | 'ob' | 'alumni' | 'cohort'
+export type RoomStoredBadge = 'current' | 'ob' | 'alumni'
+
+/** 이름 옆에 붙는 배지. alumniVerified는 학교 연결 방에서 그 학교 active 졸업생 인증이 있을 때만(자기 신고 아님). */
+export interface RoomProfileTagDto {
+  badges: RoomBadge[]
+  cohortLabel: string | null
+  alumniVerified: boolean
+}
+
+export interface RoomProfileDto extends RoomProfileTagDto {
+  /** 방 안에서만 쓰는 프로필 id(사람 id·핸들이 아님). */
+  id: string
+  /** real 방은 실명(없으면 `실명 미입력`), display 방은 방별 이름. */
+  name: string
+  bio: string | null
+  /** 내 프로필인지. */
+  mine: boolean
+  updatedAt: string
+}
+
+export interface RoomProfilesDto {
+  /** 지금 효력이 있는 이름 표시 방식(real이면 이름은 실명 고정). */
+  nameMode: 'real' | 'display'
+  /** 다른 멤버의 기수를 고칠 수 있는지(방장·운영진). */
+  canEditCohort: boolean
+  /** 쓸 수 있는지(보관·제한된 방은 읽기만). */
+  writable: boolean
+  mine: (RoomProfileDto & { displayName: string | null; storedBadges: RoomStoredBadge[] }) | null
+  profiles: RoomProfileDto[]
+}
+
+export interface RoomProfileCohortChangeDto {
+  id: string
+  fromLabel: string | null
+  toLabel: string | null
+  /** 바꾼 사람: 본인·방장·운영진(subject 아님)·탈퇴 등으로 알 수 없음. */
+  changedBy: 'subject' | 'manager' | 'unknown'
+  /** 바꾼 사람의 이 방 프로필 이름(없으면 null). */
+  changedByName: string | null
+  createdAt: string
 }
 
 interface CommunityTimesDto {

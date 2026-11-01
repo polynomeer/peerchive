@@ -20,11 +20,13 @@ import {
   ROOM_BOARD_KINDS,
   SPACE_DESCRIPTION_MAX,
   SPACE_DISCOVERIES,
+  SPACE_TEMPLATES,
   type BoardTemplate,
   type NameMode,
   type SpaceKind,
   type SpaceMembershipStatus,
   type SpaceRole,
+  type SpaceTemplate,
   canCreateRoom,
   canJoinSpace,
   canManageSpace,
@@ -59,9 +61,11 @@ import {
 import { emitAnalytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
 import { type Actor, ServiceError, conflict, forbidden, invalid, notFound, rateLimited, sqlState } from '../errors'
+import { requireFeature } from '../features'
 import { hitRateLimit } from '../security/rate-limit'
 import { loadScheduledChange, nameModeNow } from './name-modes'
 import { unreadNoticeCount } from './notices'
+import { effectiveTemplate } from './room-profiles'
 import { isUuid } from '../projects/access'
 import { parseInput } from '../validation'
 import {
@@ -117,6 +121,7 @@ export function toSpaceSummary(
     school: space.schoolId && space.schoolName ? { id: space.schoolId, name: space.schoolName } : null,
     departmentLabel: space.row.departmentLabel,
     nameMode: space.row.currentNameMode,
+    template: effectiveTemplate(space.row),
     discovery: space.row.discovery,
     joinPolicy: space.row.joinPolicy,
     status: space.row.status,
@@ -332,6 +337,8 @@ export const createRoomSchema = z.object({
   discovery: z.enum(SPACE_DISCOVERIES, { error: 'invalid' }).optional(),
   joinPolicy: z.enum(JOIN_POLICIES, { error: 'invalid' }).optional(),
   capacity: z.unknown().optional(),
+  /** A-01(ADR 0038): alumni는 P2 alumni 플래그가 켜져 있을 때만(꺼져 있으면 404). 기본 general. */
+  template: z.enum(SPACE_TEMPLATES, { error: 'invalid' }).optional(),
 })
 
 export interface NewSpaceInput {
@@ -342,6 +349,8 @@ export interface NewSpaceInput {
   name: string
   description: string | null
   nameMode: NameMode
+  /** 사용자 방 템플릿(A-01). 기본 general. */
+  template?: SpaceTemplate
   discovery: 'listed' | 'unlisted'
   joinPolicy: 'open' | 'approval' | 'invite'
   capacity: number
@@ -369,6 +378,7 @@ export async function insertSpace(tx: DbExecutor, input: NewSpaceInput, now: Dat
             description: input.description,
             slug: generateSpaceSlug(),
             currentNameMode: input.nameMode,
+            template: input.template ?? 'general',
             discovery: input.discovery,
             joinPolicy: input.joinPolicy,
             capacity: input.capacity,
@@ -436,6 +446,8 @@ function capacityOrThrow(raw: unknown): { capacity: number; requested: number | 
  */
 export async function createRoom(db: DbExecutor, actor: Actor, rawInput: unknown, now = new Date()): Promise<SpaceDetailDto> {
   const input = parseInput(createRoomSchema, rawInput)
+  // 동문회·OB 템플릿(A-01)은 플래그가 꺼져 있으면 그런 값이 없는 것처럼 404입니다.
+  if (input.template === 'alumni') requireFeature('alumni')
   const name = nameOrThrow(input.name, true)
   const { capacity, requested } = capacityOrThrow(input.capacity)
   const viewer = await loadViewer(db, actor, null, now)
@@ -453,6 +465,7 @@ export async function createRoom(db: DbExecutor, actor: Actor, rawInput: unknown
         name,
         description: input.description,
         nameMode: input.nameMode,
+        template: input.template ?? 'general',
         discovery: input.discovery ?? 'listed',
         joinPolicy: input.joinPolicy ?? defaultJoinPolicy(input.nameMode),
         capacity,
@@ -467,7 +480,7 @@ export async function createRoom(db: DbExecutor, actor: Actor, rawInput: unknown
       action: 'community.space_create',
       targetType: 'community_space',
       targetId: row.id,
-      metadata: { kind: row.kind, schoolLinked: schoolId !== null, nameMode: row.currentNameMode, joinPolicy: row.joinPolicy, capacityRequested: requested },
+      metadata: { kind: row.kind, schoolLinked: schoolId !== null, nameMode: row.currentNameMode, joinPolicy: row.joinPolicy, capacityRequested: requested, template: row.template },
     })
     await emitAnalytics(tx, { name: 'space_created', actorId: actor.userId, props: { kind: 'user_room' }, now })
     return row

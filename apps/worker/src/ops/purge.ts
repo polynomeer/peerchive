@@ -106,6 +106,8 @@ import {
   searchDocuments,
   seniorNotes,
   sessions,
+  roomProfileCohortChanges,
+  roomProfiles,
   spaceInvitations,
   spaceMemberships,
   sql,
@@ -513,6 +515,17 @@ async function purgeCommunity(tx: DbExecutor, userId: string, c: Counter, now: D
   const requested = await tx.update(nameModeChanges).set({ requestedBy: null }).where(eq(nameModeChanges.requestedBy, userId)).returning({ id: nameModeChanges.id })
   const cancelled = await tx.update(nameModeChanges).set({ cancelledBy: null }).where(eq(nameModeChanges.cancelledBy, userId)).returning({ id: nameModeChanges.id })
   c.add('name_mode_change_actors', requested.length + cancelled.length)
+  // 동문회·OB 방(A-01, ADR 0038): 방별 프로필과 그 사람에 대한 기수 이력(그 사람의 자기 신고 정보)은 지우고,
+  // 그 사람이 방장·운영진으로서 바꾼 남의 기수 이력은 남기되 바꾼 사람 칸만 비웁니다(이름 표시 방식 변경 이력과 같은 규칙).
+  c.add('room_profiles', (await tx.delete(roomProfiles).where(eq(roomProfiles.userId, userId)).returning({ id: roomProfiles.id })).length)
+  c.add(
+    'room_profile_cohort_changes',
+    (await tx.delete(roomProfileCohortChanges).where(eq(roomProfileCohortChanges.subjectUserId, userId)).returning({ id: roomProfileCohortChanges.id })).length,
+  )
+  c.add(
+    'room_profile_cohort_actors',
+    (await tx.update(roomProfileCohortChanges).set({ changedBy: null }).where(eq(roomProfileCohortChanges.changedBy, userId)).returning({ id: roomProfileCohortChanges.id })).length,
+  )
   // 글·댓글(C-04, ADR 0022): 행은 남기고(스레드 익명 번호·답글·운영 기록이 이어지게) 제목·본문을 비워 "작성자가 삭제한 글"로 바꿉니다.
   // 표시명·실명 글의 작성자는 읽을 때 "탈퇴한 사용자", 익명 글은 그대로 스레드 번호(탈퇴 여부를 드러내지 않음). 스레드 익명 번호 행은 남깁니다
   // (가명 처리된 users 행을 가리킴, 다른 참여자의 번호가 바뀌지 않게). 그 사람의 공감과 지운 글·댓글에 달린 공감은 지웁니다.
