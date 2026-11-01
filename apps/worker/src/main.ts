@@ -18,7 +18,7 @@ import { registerModerationQueue } from './moderation-derived'
 import { registerPersonaActivityQueue } from './persona-activities'
 import { registerPortfolioDerived } from './portfolio-derived'
 import { registerPublicationQueues } from './publication-events'
-import { registerCertificateScanQueue, registerScanQueue } from './scan-worker'
+import { registerAlbumPhotoScanQueue, registerCertificateScanQueue, registerScanQueue } from './scan-worker'
 import { registerSocialLinkQueue } from './social-links'
 import { loadOpsConfig } from './ops/config'
 import { registerOpsSchedules, startHeartbeat } from './ops/schedules'
@@ -43,6 +43,7 @@ await boss.start()
 await registerScanQueue(boss, db, { storage: config.storage, scanner: config.scanner }, config.scanConcurrency)
 // 수료증 파일 검사(I-01): 같은 판정, 파일은 격리 키에 그대로 둡니다.
 await registerCertificateScanQueue(boss, db, { storage: config.storage, scanner: config.scanner })
+await registerAlbumPhotoScanQueue(boss, db, { storage: config.storage, scanner: config.scanner })
 // 과목 허브 파생 데이터(검색 색인·유용성 신호, T-13)를 게시·철회 이벤트에 등록한 뒤 큐를 엽니다.
 registerCourseHubDerived()
 // 철회·대체된 release에 고정된 케이스 스터디를 이용 불가로 표시(T-14).

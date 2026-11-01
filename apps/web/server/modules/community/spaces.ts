@@ -41,6 +41,7 @@ import {
   effectiveWriteRole,
   isOfficialKind,
   previewIncludesDescription,
+  ALUMNI_ROOM_DEFAULT_BOARDS,
 } from '@peerchive/domain'
 import {
   and,
@@ -466,6 +467,8 @@ export async function createRoom(db: DbExecutor, actor: Actor, rawInput: unknown
         description: input.description,
         nameMode: input.nameMode,
         template: input.template ?? 'general',
+        // 동문회·OB 방(A-02, ADR 0039): 기본 게시판에 운영진 공지(읽음 수)를 더합니다.
+        ...(input.template === 'alumni' && { boards: ALUMNI_ROOM_DEFAULT_BOARDS }),
         discovery: input.discovery ?? 'listed',
         joinPolicy: input.joinPolicy ?? defaultJoinPolicy(input.nameMode),
         capacity,

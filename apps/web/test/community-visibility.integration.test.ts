@@ -134,6 +134,8 @@ const TABLE_ALLOWED = [
   /^worker\/src\/ops\/purge\.ts$/,
   /^worker\/src\/ops\/name-modes\.ts$/,
   /^worker\/src\/apply-name-modes\.ts$/,
+  // A-02(ADR 0039): 앨범 사진의 끝나지 않은 올리기·통과하지 못한 사진 정리와 격리 파일 정리의 주인 확인(키·상태·시각만, 내용·설명·올린 사람 없음).
+  /^worker\/src\/ops\/album-photos\.ts$/,
 ]
 
 /** 커뮤니티 모듈을 import해도 되는 파일과, 그 파일이 import할 수 있는 커뮤니티 모듈 파일. */

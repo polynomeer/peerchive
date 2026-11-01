@@ -12,6 +12,7 @@ import {
   artifactVersions,
   artifacts,
   auditEvents,
+  communitySpaces,
   createDb,
   discordChannelBindings,
   discordCodes,
@@ -24,6 +25,7 @@ import {
   outboxEvents,
   projects,
   rateLimitBuckets,
+  roomAlbumPhotos,
   schools,
   sessions,
   sql,
@@ -45,6 +47,7 @@ import {
   cleanupPinRequests,
   cleanupRateLimitBuckets,
   cleanupSessions,
+  cleanupStaleAlbumPhotos,
   cleanupUploadIntents,
   runRecordedTask,
 } from '../src/ops/cleanup'
@@ -166,6 +169,30 @@ describe.skipIf(!url)('ops cleanup tasks (PostgreSQL)', () => {
       expect(await cleanupOrphanQuarantine(tx, deps(), NOW)).toMatchObject({ affected: 1, objects: 1 })
       expect(await storage.head(orphan)).toBeNull()
       for (const key of [fresh, held, pending]) expect(await storage.head(key)).not.toBeNull()
+    })
+  })
+
+  it('album photos (A-02): unfinished uploads and quarantined/failed photos older than a day go with their files; others stay and the orphan sweep keeps their keys', async () => {
+    await rollback(async (tx) => {
+      const { userId } = await userAndProject(tx)
+      const [space] = await tx
+        .insert(communitySpaces)
+        .values({ kind: 'user_room', template: 'alumni', name: '앨범 방', slug: id().replace(/-/g, '').slice(0, 10), currentNameMode: 'display', createdBy: userId })
+        .returning()
+      const photo = async (key: ObjectKey, values: Partial<typeof roomAlbumPhotos.$inferInsert>) => {
+        await putObject(key, ago(2 * DAY))
+        await tx.insert(roomAlbumPhotos).values({ spaceId: space!.id, uploaderId: userId, objectKey: key, declaredType: 'image/png', fileExtension: 'png', byteSize: 1, ...values })
+      }
+      const [unfinished, quarantined, clean, freshPending] = [newQuarantineKey(), newQuarantineKey(), newQuarantineKey(), newQuarantineKey()]
+      await photo(unfinished, { createdAt: ago(2 * DAY) })
+      await photo(quarantined, { createdAt: ago(3 * DAY), uploadedAt: ago(3 * DAY), scanStatus: 'quarantined', scannedAt: ago(2 * DAY) })
+      await photo(clean, { createdAt: ago(3 * DAY), uploadedAt: ago(3 * DAY), scanStatus: 'clean', metadataStripped: true, mediaType: 'image/png', scannedAt: ago(3 * DAY) })
+      await photo(freshPending, { createdAt: ago(HOUR) })
+      expect(await cleanupOrphanQuarantine(tx, deps(), NOW)).toMatchObject({ affected: 0 })
+      expect(await cleanupStaleAlbumPhotos(tx, deps(10), NOW)).toMatchObject({ affected: 2, objects: 2 })
+      for (const key of [unfinished, quarantined]) expect(await storage.head(key)).toBeNull()
+      for (const key of [clean, freshPending]) expect(await storage.head(key)).not.toBeNull()
+      expect((await tx.select().from(roomAlbumPhotos).where(eq(roomAlbumPhotos.spaceId, space!.id))).map((r) => r.objectKey).sort()).toEqual([clean, freshPending].sort())
     })
   })
 

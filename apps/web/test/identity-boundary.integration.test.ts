@@ -38,6 +38,8 @@ import { joinSpace } from '../server/modules/community/memberships'
 import { scheduleNameModeChange } from '../server/modules/community/name-modes'
 import { createOfficialPage } from '../server/modules/community/official'
 import { createComment, createPost } from '../server/modules/community/posts'
+import { createRoomEvent, respondToEvent } from '../server/modules/community/room-events'
+import { createRoomPoll, voteOnPoll } from '../server/modules/community/room-polls'
 import { putMyRoomProfile } from '../server/modules/community/room-profiles'
 import { createRoom } from '../server/modules/community/spaces'
 import { searchPublic } from '../server/modules/course-hub/search'
@@ -323,6 +325,10 @@ describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
       expect(COMMUNITY_TABLES.length).toBeGreaterThanOrEqual(19)
       // A-01: 방별 프로필·기수 이력은 커뮤니티 구역(스키마 머리말로 읽음)이라 이 검사·소스 lint가 자동으로 덮습니다.
       expect(COMMUNITY_TABLES.map((t) => t.sqlName)).toEqual(expect.arrayContaining(['room_profiles', 'room_profile_cohort_changes']))
+      // A-02: 일정·응답·공지 읽음·투표·앨범도 커뮤니티 구역입니다.
+      expect(COMMUNITY_TABLES.map((t) => t.sqlName)).toEqual(
+        expect.arrayContaining(['room_events', 'room_event_rsvps', 'notice_reads', 'room_polls', 'room_poll_votes', 'room_album_photos']),
+      )
       for (const t of COMMUNITY_TABLES) {
         const [p] = (await tx.execute(
           sql`select has_table_privilege(${SOCIAL_ROLE}, ${`public.${t.sqlName}`}, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') as tbl,
@@ -360,7 +366,7 @@ describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
       const [persona] = await tx.select().from(personas).where(eq(personas.userId, user.id))
       const expected = await getPublicProfile(tx, persona!.handle)
 
-      for (const table of ['community_posts', 'community_comments', 'thread_aliases', 'archive_transfers', 'archive_transfer_consents', 'community_reactions', 'community_spaces', 'room_profiles', 'room_profile_cohort_changes']) {
+      for (const table of ['community_posts', 'community_comments', 'thread_aliases', 'archive_transfers', 'archive_transfer_consents', 'community_reactions', 'community_spaces', 'room_profiles', 'room_profile_cohort_changes', 'room_events', 'room_event_rsvps', 'notice_reads', 'room_polls', 'room_poll_votes', 'room_album_photos']) {
         const code = await failsWith(tx, async (inner) => {
           await inner.execute(sql.raw(`set local role ${SOCIAL_ROLE}`))
           await inner.execute(sql.raw(`select 1 from public.${table} limit 1`))
@@ -613,6 +619,19 @@ async function buildWorld(tx: DbExecutor, seed: number) {
         roomProfileValues.push(...[values.displayName, values.cohortLabel, values.bio, saved.mine!.id].filter((v): v is string => !!v))
       }
     }
+    // A-02(ADR 0039): 일정·투표의 제목·장소·질문·선택지와 id, 그리고 응답·표(별도 난수 — 기존 세계는 그대로). 익명 방 포함, 방 밖 출력에 0건이어야 합니다.
+    if (alumni) {
+      const g = rng(seed ^ 0xa02 ^ (i + 1))
+      const mark = `${seed.toString(36)}g${i}${crypto.randomUUID().slice(0, 4)}`
+      const ownerActor = { userId: owner.userId }
+      const ev = await createRoomEvent(tx, ownerActor, room.slug, { title: `EVT${mark}`, locationText: `LOC${mark}`, startsAt: new Date(T0.getTime() + 72 * HOUR).toISOString() }, T0)
+      const poll = await createRoomPoll(tx, ownerActor, room.slug, { question: `POLQ${mark}`, options: [`OPA${mark}`, `OPB${mark}`], closesAt: new Date(T0.getTime() + 48 * HOUR).toISOString() }, T0)
+      for (const p of people) {
+        if (g.chance(0.6)) await respondToEvent(tx, { userId: p.userId }, room.slug, ev.id, { date: ev.occurrences[0]!.date, response: g.pick(['going', 'not_going', 'maybe'] as const) }, T0)
+        if (g.chance(0.6)) await voteOnPoll(tx, { userId: p.userId }, room.slug, poll.id, { optionIndex: g.int(0, 1) }, T0)
+      }
+      roomProfileValues.push(`EVT${mark}`, `LOC${mark}`, `POLQ${mark}`, `OPA${mark}`, `OPB${mark}`, ev.id, poll.id)
+    }
     spaces.push({ slug: room.slug, boardId: room.boards[0]!.id, official: false, mode, ...(mode === 'anonymous' && r.chance(0.7) && { convertTo: r.pick(['real', 'display'] as const) }) })
   }
 
@@ -751,7 +770,7 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
           i.createdAt.toISOString(),
           String(i.createdAt.getTime()),
         ])
-        // A-01: 방별 프로필의 이름·기수·소개·id도 방 밖의 모든 공개·소셜 출력에 0건이어야 합니다.
+        // A-01: 방별 프로필의 이름·기수·소개·id도 방 밖의 모든 공개·소셜 출력에 0건이어야 합니다(A-02: 일정·투표의 값과 id도 같은 목록).
         forbidden.push(...roomProfileValues)
         totals.roomProfileValues += roomProfileValues.length
         const postRows = await tx

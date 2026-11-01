@@ -2705,6 +2705,121 @@ export interface RoomProfileCohortChangeDto {
   createdAt: string
 }
 
+// ── 동문회·OB 방 모임 도구: 일정·참석·공지 읽음·투표·앨범 (A-02, ADR 0039) ─────────────
+
+export type RoomEventRecurrence = 'none' | 'weekly' | 'monthly'
+export type RoomEventStatus = 'scheduled' | 'cancelled'
+export type RsvpResponse = 'going' | 'not_going' | 'maybe'
+
+export interface RoomEventOccurrenceDto {
+  /** 회차를 가리키는 서울 날짜(YYYY-MM-DD). */
+  date: string
+  startsAt: string
+  endsAt: string | null
+  /** 응답 수(참석·불참·미정). */
+  counts: Record<RsvpResponse, number>
+  /** 내 응답(없으면 null). */
+  myResponse: RsvpResponse | null
+  /** 지금 응답(새로·바꾸기)할 수 있는지: 예정된 일정이고 회차 시작 전. */
+  canRespond: boolean
+}
+
+export interface RoomEventDto {
+  id: string
+  title: string
+  description: string | null
+  locationText: string | null
+  startsAt: string
+  endsAt: string | null
+  recurrence: RoomEventRecurrence
+  /** 반복이 끝나는 서울 날짜(포함). 반복이 아니면 null. */
+  repeatUntil: string | null
+  status: RoomEventStatus
+  /** 모든 회차가 끝났는지. */
+  ended: boolean
+  /** 다가오는 회차(최대 4개). 모두 끝났으면 마지막 회차 하나. */
+  occurrences: RoomEventOccurrenceDto[]
+  createdAt: string
+}
+
+export interface RoomEventsDto {
+  /** 일정을 만들고 고칠 수 있는지(방장·운영진, 방이 active). */
+  canManage: boolean
+  /** 응답할 수 있는 방인지(보관·제한된 방은 읽기만). */
+  writable: boolean
+  /** 익명 방이면 응답자 이름 없이 수만 보입니다. */
+  namesHidden: boolean
+  events: RoomEventDto[]
+}
+
+export interface RoomEventRespondentsDto {
+  eventId: string
+  date: string
+  /** 익명 방이면 true(names는 빈 배열, 수만). */
+  namesHidden: boolean
+  groups: Record<RsvpResponse, { count: number; names: string[] }>
+}
+
+/** 공지 읽음(alumni 방의 공지 게시판 글). 누가 읽었는지는 어디에도 없습니다. */
+export interface NoticeReadsDto {
+  count: number
+  readByMe: boolean
+}
+
+export interface RoomPollOptionDto {
+  index: number
+  label: string
+  /** 이 선택지의 표 수(집계만). */
+  count: number
+}
+
+export interface RoomPollDto {
+  id: string
+  question: string
+  options: RoomPollOptionDto[]
+  totalVotes: number
+  closesAt: string
+  open: boolean
+  /** 내가 고른 선택지(투표하지 않았으면 null). 다른 사람의 선택은 누구에게도 없습니다. */
+  myVote: number | null
+  canVote: boolean
+  canClose: boolean
+  createdAt: string
+}
+
+export interface RoomPollsDto {
+  canManage: boolean
+  writable: boolean
+  polls: RoomPollDto[]
+}
+
+export interface AlbumPhotoDto {
+  id: string
+  caption: string | null
+  /** 내가 올린 사진인지(올린 사람 이름은 싣지 않음). */
+  mine: boolean
+  /** 검사 상태(검사 대기·격리·실패는 올린 본인에게만 보임). */
+  scanStatus: ScanStatus
+  /** 검사를 통과한 사진의 짧은 서명 URL(이 사람에게만 맞음). 그 밖은 null. */
+  url: string | null
+  urlExpiresAt: string | null
+  canDelete: boolean
+  createdAt: string
+}
+
+export interface AlbumDto {
+  canManage: boolean
+  writable: boolean
+  limits: { maxBytes: number; roomPhotos: number; memberPhotos: number; types: string[] }
+  photos: AlbumPhotoDto[]
+}
+
+export interface AlbumUploadDto {
+  photo: AlbumPhotoDto
+  /** PUT으로 파일 내용을 보낼 주소(15분 안에). */
+  uploadUrl: string
+}
+
 interface CommunityTimesDto {
   /** 정확한 시각. 소규모(멤버 10명 미만) 사용자 방의 익명 글·댓글은 null이고 createdBucket만 있습니다. */
   createdAt: string | null
@@ -2816,6 +2931,8 @@ export interface CommunityPostDto extends CommunityPostSummaryDto {
   canAccept: boolean
   /** 아카이브로 옮기기(C-09). */
   archive: PostArchiveDto
+  /** alumni 방 공지 게시판 글의 읽음 수(A-02). 그 밖의 글에는 없습니다. */
+  noticeReads?: NoticeReadsDto
   comments: CommunityCommentDto[]
 }
 

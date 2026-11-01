@@ -53,6 +53,9 @@
  * I-01(0033 migration): 기관 일반화(schools.kind, institution_kind·affiliation_method 값 추가), 기수(institution_cohorts), 초대 코드
  * (institution_invite_codes, HMAC만), 기수 승인(cohort_approvals), 수료증 확인(certificate_checks, 결정 뒤 파일 삭제), 소속의 cohort_id·
  * 메일 아닌 수단(email_domain null 허용), 삭제 장부 source `retention`. 결정은 ADR 0037.
+ * A-01(0034 migration): 사용자 방 템플릿(community_spaces.template)·방별 프로필(room_profiles)·기수 이력. 결정은 ADR 0038.
+ * A-02(0035 migration): 동문회·OB 방의 일정(room_events)·회차별 참석 응답(room_event_rsvps)·공지 읽음 표시(notice_reads)·
+ * 투표(room_polls·room_poll_votes)·앨범 사진(room_album_photos, 격리 키 + 검사·메타데이터 제거). 결정은 ADR 0039.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -312,6 +315,12 @@ export const communitySpaceKind = pgEnum('community_space_kind', ['official_scho
 export const communityNameMode = pgEnum('community_name_mode', ['real', 'display', 'anonymous'])
 /** 사용자 방 템플릿(A-01, ADR 0038). alumni = 동문회·OB 방(방별 프로필·신분 배지). */
 export const communitySpaceTemplate = pgEnum('community_space_template', ['general', 'alumni'])
+/** 동문회·OB 방 일정의 반복 규칙(A-02, ADR 0039, @peerchive/domain ROOM_EVENT_RECURRENCES). 회차는 저장하지 않고 규칙에서 계산합니다. */
+export const roomEventRecurrence = pgEnum('room_event_recurrence', ['none', 'weekly', 'monthly'])
+/** 일정 상태(A-02). 취소한 일정은 남기되 응답을 받지 않습니다. */
+export const roomEventStatus = pgEnum('room_event_status', ['scheduled', 'cancelled'])
+/** 참석 응답(A-02, @peerchive/domain RSVP_RESPONSES): 참석 / 불참 / 미정. */
+export const rsvpResponse = pgEnum('rsvp_response', ['going', 'not_going', 'maybe'])
 /** 찾기: 목록에 노출 / 링크·초대로만. */
 export const spaceDiscovery = pgEnum('space_discovery', ['listed', 'unlisted'])
 /** 가입 방식: 자유 / 방장 승인 / 초대 전용. */
@@ -3930,5 +3939,190 @@ export const roomProfileCohortChanges = pgTable(
     index('room_profile_cohort_changes_subject_idx').on(t.spaceId, t.subjectUserId, t.createdAt),
     index('room_profile_cohort_changes_changed_by_idx').on(t.changedBy),
     check('room_profile_cohort_changes_changed_check', sql`${t.fromLabel} is distinct from ${t.toLabel}`),
+  ],
+)
+
+// A-02: 동문회·OB 방의 일정·참석 응답·공지 읽음·투표·앨범(ADR 0039). 커뮤니티 구역이므로 C-05·S-02 경계 검사와 social DB 역할 권한 검사가
+// 자동으로 덮습니다(social 역할에는 권한을 주지 않음). 공개 프로필·검색·피드·PersonaActivity는 이 테이블을 읽지 않습니다.
+
+/**
+ * 일정(A-02, SYSTEM_DESIGN §6.7.2 Event). alumni 방의 방장·운영진이 만듭니다.
+ * - 반복은 단순 규칙(none·weekly·monthly) + 끝나는 서울 날짜(repeat_until, 포함)만. 회차는 저장하지 않고 @peerchive/domain eventOccurrences로
+ *   계산하며, 회차는 시작 시각의 서울 날짜로 가리킵니다. 시각·반복 규칙은 만든 뒤 바꾸지 않습니다(응답이 가리키는 회차가 바뀌지 않게).
+ * - created_by는 만든 사람(탈퇴 정리에서 null). 취소하면 status cancelled + cancelled_at, 응답은 남기되 더 받지 않습니다.
+ */
+export const roomEvents = pgTable(
+  'room_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    spaceId: uuid('space_id')
+      .notNull()
+      .references(() => communitySpaces.id),
+    title: text('title').notNull(),
+    description: text('description'),
+    locationText: text('location_text'),
+    startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+    endsAt: timestamp('ends_at', { withTimezone: true }),
+    recurrence: roomEventRecurrence('recurrence').notNull().default('none'),
+    repeatUntil: date('repeat_until'),
+    status: roomEventStatus('status').notNull().default('scheduled'),
+    createdBy: uuid('created_by').references(() => users.id),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('room_events_space_starts_idx').on(t.spaceId, t.startsAt),
+    index('room_events_created_by_idx').on(t.createdBy),
+    check('room_events_title_check', sql`char_length(${t.title}) between 1 and 80`),
+    check('room_events_description_check', sql`${t.description} is null or char_length(${t.description}) between 1 and 1000`),
+    check('room_events_location_check', sql`${t.locationText} is null or char_length(${t.locationText}) between 1 and 100`),
+    check('room_events_ends_check', sql`${t.endsAt} is null or (${t.endsAt} > ${t.startsAt} and ${t.endsAt} <= ${t.startsAt} + interval '7 days')`),
+    check('room_events_repeat_check', sql`(${t.recurrence}::text = 'none') = (${t.repeatUntil} is null)`),
+    check('room_events_cancelled_check', sql`(${t.status}::text = 'cancelled') = (${t.cancelledAt} is not null)`),
+  ],
+)
+
+/**
+ * 회차별 참석 응답(A-02, SYSTEM_DESIGN §6.7.2 EventRsvp). (일정, 회차 날짜, 사람) 하나 — 같은 회차에 두 번 응답하면 바꾸기입니다.
+ * 회차 날짜가 규칙에 있는지는 서비스가 확인합니다. 응답자 목록은 그 방 active 멤버에게만(방별 프로필 이름, 익명 방은 개수만).
+ * 방을 나가거나 내보내지거나 탈퇴하면 그 사람의 응답을 지웁니다.
+ */
+export const roomEventRsvps = pgTable(
+  'room_event_rsvps',
+  {
+    eventId: uuid('event_id')
+      .notNull()
+      .references(() => roomEvents.id),
+    occurrenceDate: date('occurrence_date').notNull(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    response: rsvpResponse('response').notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [primaryKey({ name: 'room_event_rsvps_pkey', columns: [t.eventId, t.occurrenceDate, t.userId] }), index('room_event_rsvps_user_id_idx').on(t.userId)],
+)
+
+/**
+ * 공지 읽음 표시(A-02, SYSTEM_DESIGN §6.7.2 NoticeRead). alumni 방의 공지 게시판 글에만, (글, 사람) 하나(멱등).
+ * API는 **읽음 수와 내가 읽었는지만** 돌려주고 누가 읽었는지는 어디에도(방장·운영진·운영자 화면 포함) 내보내지 않습니다.
+ * space_id는 나가기 정리용 복사(글의 공간). 방을 나가거나 내보내지거나 탈퇴하면 그 사람의 행을 지웁니다(읽음 수도 줄어듦).
+ */
+export const noticeReads = pgTable(
+  'notice_reads',
+  {
+    postId: uuid('post_id')
+      .notNull()
+      .references(() => communityPosts.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    spaceId: uuid('space_id')
+      .notNull()
+      .references(() => communitySpaces.id),
+    readAt: timestamp('read_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ name: 'notice_reads_pkey', columns: [t.postId, t.userId] }),
+    index('notice_reads_user_space_idx').on(t.userId, t.spaceId),
+  ],
+)
+
+/**
+ * 투표(A-02, SYSTEM_DESIGN §6.7.2 Poll). alumni 방의 방장·운영진이 만듭니다(장소·날짜 투표). 글에 붙이지 않고 방에 둡니다(ADR 0039).
+ * 선택지는 2~10개 배열(만든 뒤 바꾸지 않음), 마감 시각까지 받습니다(방장·운영진이 일찍 마감하면 closes_at을 그 시각으로).
+ * 결과는 선택지별 개수만 — 누가 무엇을 골랐는지는 아무에게도 보이지 않습니다.
+ */
+export const roomPolls = pgTable(
+  'room_polls',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    spaceId: uuid('space_id')
+      .notNull()
+      .references(() => communitySpaces.id),
+    question: text('question').notNull(),
+    options: text('options').array().notNull(),
+    closesAt: timestamp('closes_at', { withTimezone: true }).notNull(),
+    createdBy: uuid('created_by').references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('room_polls_space_created_idx').on(t.spaceId, t.createdAt),
+    index('room_polls_created_by_idx').on(t.createdBy),
+    check('room_polls_question_check', sql`char_length(${t.question}) between 1 and 120`),
+    check('room_polls_options_check', sql`cardinality(${t.options}) between 2 and 10`),
+  ],
+)
+
+/**
+ * 투표 한 표(A-02, SYSTEM_DESIGN §6.7.2 PollVote). (투표, 사람) 하나 — 두 번 투표할 수 없고 바꾸지 않습니다. option_index는 0부터.
+ * 방을 나가거나 내보내지거나 탈퇴하면 그 사람의 표를 지웁니다(집계도 그만큼 줄어듦, 마감한 투표 포함 — ADR 0039).
+ */
+export const roomPollVotes = pgTable(
+  'room_poll_votes',
+  {
+    pollId: uuid('poll_id')
+      .notNull()
+      .references(() => roomPolls.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    optionIndex: integer('option_index').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ name: 'room_poll_votes_pkey', columns: [t.pollId, t.userId] }),
+    index('room_poll_votes_user_id_idx').on(t.userId),
+    check('room_poll_votes_option_check', sql`${t.optionIndex} between 0 and 9`),
+  ],
+)
+
+/**
+ * 앨범 사진(A-02, SYSTEM_DESIGN §6.7.2 Album·AlbumItem, ADR 0007). alumni 방에 앨범 하나(사진 목록)입니다.
+ * - 파일은 격리 키(`quarantine/<uuid>`)에만 둡니다(수료증과 같은 방식, ADR 0037). worker `album-photo-scan`이 형식 판별·내장 콘텐츠·악성코드
+ *   검사 뒤 메타데이터(EXIF·GPS 등)를 지운 내용으로 같은 키를 바꿔 쓰고 clean으로. 산출물 경로로는 내려가지 않습니다.
+ * - 원래 파일 이름은 저장하지 않습니다(확장자만). clean 사진만, 방 active 멤버에게만, 그 사람에게만 맞는 짧은 서명 URL로.
+ * - 방을 나가도 사진은 방의 기록으로 남고(SYSTEM_DESIGN §6.7.2), 올린 사람 표시는 하지 않습니다. 탈퇴 정리는 그 사람의 사진과 파일을 지웁니다.
+ */
+export const roomAlbumPhotos = pgTable(
+  'room_album_photos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    spaceId: uuid('space_id')
+      .notNull()
+      .references(() => communitySpaces.id),
+    uploaderId: uuid('uploader_id')
+      .notNull()
+      .references(() => users.id),
+    caption: text('caption'),
+    objectKey: text('object_key').notNull(),
+    declaredType: text('declared_type').notNull(),
+    fileExtension: text('file_extension').notNull(),
+    byteSize: bigint('byte_size', { mode: 'number' }).notNull(),
+    sha256: text('sha256'),
+    uploadedAt: timestamp('uploaded_at', { withTimezone: true }),
+    scanStatus: scanStatus('scan_status').notNull().default('pending'),
+    scanReason: text('scan_reason'),
+    scanEngine: text('scan_engine'),
+    scanAttempts: integer('scan_attempts').notNull().default(0),
+    scannedAt: timestamp('scanned_at', { withTimezone: true }),
+    /** 판별한 형식(검사 통과 뒤). */
+    mediaType: text('media_type'),
+    /** 메타데이터를 지운 내용이 격리 키에 있는지(clean이면 true). */
+    metadataStripped: boolean('metadata_stripped').notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('room_album_photos_object_key_key').on(t.objectKey),
+    index('room_album_photos_space_created_idx').on(t.spaceId, t.createdAt),
+    index('room_album_photos_uploader_idx').on(t.uploaderId, t.spaceId),
+    check('room_album_photos_object_key_check', sql`${t.objectKey} ~ '^quarantine/[0-9a-f-]{36}$'`),
+    check('room_album_photos_extension_check', sql`${t.fileExtension} in ('png', 'jpg', 'jpeg', 'webp')`),
+    check('room_album_photos_byte_size_check', sql`${t.byteSize} between 1 and 10485760`),
+    check('room_album_photos_sha256_check', sql`${t.sha256} is null or ${t.sha256} ~ '^[0-9a-f]{64}$'`),
+    check('room_album_photos_caption_check', sql`${t.caption} is null or char_length(${t.caption}) between 1 and 100`),
+    check('room_album_photos_clean_check', sql`${t.scanStatus}::text <> 'clean' or (${t.metadataStripped} and ${t.mediaType} is not null)`),
   ],
 )

@@ -8,6 +8,7 @@
  *   공간 상세의 permissions.moderate와 별도 운영 화면(`/spaces/:slug/moderation`)으로만 압니다. 운영진도 익명 작성자를 볼 수 없습니다.
  * - 질문 게시판(C-09, ADR 0025): 글쓴이는 답변 하나를 채택하고, 글을 "아카이브로 옮기기"(막힘 Q&A·내 과제의 막힘 로그·선배 노트 초안)할 수 있습니다.
  *   지금 공개된 복사본이 있으면 "아카이브로 옮겨짐" 표시만 보입니다(링크·동의한 사람 없음). 내가 요청했거나 동의를 요청받은 요청만 상태와 함께 보입니다.
+ * - 동문회·OB 방의 공지(A-02, ADR 0039): 글을 열면 읽었다고 표시하고 "읽음 n명"만 보입니다. 누가 읽었는지는 방장·운영진에게도 보이지 않습니다.
  */
 import type { CommunityPostDto, CommunityReactionDto, SpaceDetailDto, SpaceModerationDto } from '~~/shared/types/api'
 
@@ -49,6 +50,18 @@ async function loadModeration() {
   }
 }
 onMounted(loadModeration)
+
+// 동문회·OB 방 공지(A-02): 열면 읽음 표시(멱등). 읽음 수만 받습니다.
+async function markRead() {
+  if (!post.value?.noticeReads || post.value.noticeReads.readByMe) return
+  try {
+    const reads = await $fetch<{ count: number; readByMe: boolean }>(`/api/v1/community/posts/${postId.value}/read`, { method: 'POST' })
+    if (post.value) post.value = { ...post.value, noticeReads: reads }
+  } catch {
+    // 읽음 표시는 부가 기능이라 실패해도 글은 그대로 봅니다.
+  }
+}
+onMounted(markRead)
 const spaceHiddenIds = computed(() => (moderation.value ? moderation.value.hides.map((h) => h.commentId ?? h.postId) : null))
 const postSpaceHidden = computed(() => !!moderation.value?.hides.some((h) => h.targetType === 'post' && h.postId === postId.value))
 
@@ -146,6 +159,7 @@ async function addComment() {
           <span v-if="post.author.schoolVerified"> · 학교 인증</span>
           <span v-if="post.author.mine" class="badge">내 글</span>
           <span class="muted"> · {{ NAME_MODE_LABELS[post.nameMode] }} · {{ communityTimeText(post) }}<template v-if="post.edited"> · 수정됨</template></span>
+          <span v-if="post.noticeReads" class="muted" data-testid="notice-reads"> · 읽음 {{ post.noticeReads.count }}명</span>
         </p>
         <p v-if="notice" :class="['notice', notice.kind]" :role="notice.kind === 'error' ? 'alert' : 'status'">{{ notice.text }}</p>
         <form v-if="editing" class="stack" novalidate @submit.prevent="saveEdit">

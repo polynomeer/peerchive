@@ -39,6 +39,10 @@ import {
   ROOM_PROFILE_BIO_MAX,
   ROOM_PROFILE_NAME_MAX,
   SPACE_TEMPLATE_LABELS,
+  RSVP_RESPONSE_LABELS,
+  ROOM_EVENT_RECURRENCE_LABELS,
+  ALBUM_PHOTO_MEDIA_TYPES,
+  ALBUM_PHOTO_MAX_BYTES,
 } from '@peerchive/domain'
 import type { CommunityItemStatus, SpaceStatus } from '~~/shared/types/api'
 import { formatDateTime } from './build-log'
@@ -81,6 +85,10 @@ export {
   ROOM_PROFILE_BIO_MAX,
   ROOM_PROFILE_NAME_MAX,
   SPACE_TEMPLATE_LABELS,
+  RSVP_RESPONSE_LABELS,
+  ROOM_EVENT_RECURRENCE_LABELS,
+  ALBUM_PHOTO_MEDIA_TYPES,
+  ALBUM_PHOTO_MAX_BYTES,
 }
 
 /** 글·댓글 상태(운영 화면). */
@@ -120,6 +128,16 @@ export const COMMUNITY_ERROR_MESSAGES: Record<string, string> = {
   not_joinable: '공식 페이지는 가입하지 않고 학교 인증으로 들어갑니다.',
   space_not_active: '보관되었거나 제한된 공간이라 바꿀 수 없습니다.',
   room_profiles_unavailable: '익명 방에는 방별 프로필이 없습니다.',
+  event_cancelled: '취소된 일정입니다.',
+  occurrence_started: '이미 시작한 회차라 응답을 바꿀 수 없습니다.',
+  too_many_events: '이 방의 예정된 일정이 너무 많습니다.',
+  already_voted: '이미 투표했습니다. 투표는 바꿀 수 없습니다.',
+  poll_closed: '마감된 투표입니다.',
+  too_many_polls: '열린 투표가 너무 많습니다. 먼저 마감하세요.',
+  album_full: '이 방의 앨범이 가득 찼습니다.',
+  member_album_full: '이 방에 올릴 수 있는 사진 수를 넘었습니다.',
+  already_uploaded: '이미 받은 파일입니다.',
+  upload_expired: '올리기 시간이 지났습니다. 다시 올리세요.',
   not_member: '이 공간의 멤버가 아닙니다.',
   not_pending: '이미 처리된 요청입니다.',
   not_active_member: '현재 멤버가 아닙니다.',

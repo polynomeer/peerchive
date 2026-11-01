@@ -32,6 +32,12 @@ import {
   recruitmentApplications,
   recruitments,
   reports,
+  noticeReads,
+  roomAlbumPhotos,
+  roomEventRsvps,
+  roomEvents,
+  roomPollVotes,
+  roomPolls,
   roomProfileCohortChanges,
   roomProfiles,
   threadAliases,
@@ -605,6 +611,61 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect(await count(tx, roomProfiles, eq(roomProfiles.userId, M.id))).toBe(1)
       const ledger = await tx.select().from(deletionLedger).where(eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, U.id)))
       expect(ledger.map((l) => l.entityKind)).toEqual(expect.arrayContaining(['room_profiles', 'room_profile_cohort_changes']))
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('deletes the purged user\'s RSVPs, notice read markers, poll votes and album photos with files; keeps events/polls they created with created_by blanked (A-02)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴모임', 'deleted')
+      const M = await user(tx, '남는모임')
+      const [room] = await tx
+        .insert(communitySpaces)
+        .values({ kind: 'user_room', template: 'alumni', name: '모임 방', slug: id().replace(/-/g, '').slice(0, 10), currentNameMode: 'display', createdBy: M.id })
+        .returning()
+      await tx.insert(spaceMemberships).values([
+        { spaceId: room!.id, userId: M.id, role: 'owner', status: 'active', joinedAt: new Date(NOW.getTime() - 30 * DAY) },
+        { spaceId: room!.id, userId: U.id, role: 'admin', status: 'active', joinedAt: new Date(NOW.getTime() - 20 * DAY) },
+      ])
+      const [event] = await tx.insert(roomEvents).values({ spaceId: room!.id, title: '홈커밍', startsAt: new Date(NOW.getTime() + 5 * DAY), createdBy: U.id }).returning()
+      await tx.insert(roomEventRsvps).values([
+        { eventId: event!.id, occurrenceDate: '2027-03-15', userId: U.id, response: 'going' },
+        { eventId: event!.id, occurrenceDate: '2027-03-15', userId: M.id, response: 'maybe' },
+      ])
+      const [board] = await tx.insert(boards).values({ spaceId: room!.id, kind: 'notice', title: '공지', writeRole: 'moderator', position: 1 }).returning()
+      const [post] = await tx.insert(communityPosts).values({ boardId: board!.id, spaceId: room!.id, authorId: M.id, nameMode: 'anonymous', title: '공지', body: '본문' }).returning()
+      await tx.insert(noticeReads).values([
+        { postId: post!.id, userId: U.id, spaceId: room!.id },
+        { postId: post!.id, userId: M.id, spaceId: room!.id },
+      ])
+      const [poll] = await tx.insert(roomPolls).values({ spaceId: room!.id, question: '장소', options: ['a', 'b'], closesAt: new Date(NOW.getTime() + DAY), createdBy: U.id }).returning()
+      await tx.insert(roomPollVotes).values([
+        { pollId: poll!.id, userId: U.id, optionIndex: 0 },
+        { pollId: poll!.id, userId: M.id, optionIndex: 1 },
+      ])
+      const key = `quarantine/${id()}` as const
+      await storage.put(key, Readable.from([Buffer.from('photo')]), { maxBytes: 100 })
+      await tx.insert(roomAlbumPhotos).values({ spaceId: room!.id, uploaderId: U.id, objectKey: key, declaredType: 'image/png', fileExtension: 'png', byteSize: 5 })
+      const otherKey = `quarantine/${id()}` as const
+      await tx.insert(roomAlbumPhotos).values({ spaceId: room!.id, uploaderId: M.id, objectKey: otherKey, declaredType: 'image/png', fileExtension: 'png', byteSize: 5 })
+
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ room_event_rsvps: 1, notice_reads: 1, room_poll_votes: 1, room_album_photos: 1, room_gathering_actors: 2 })
+      expect(counts!.artifact_objects).toBeUndefined()
+      expect(await count(tx, roomEventRsvps, eq(roomEventRsvps.userId, U.id))).toBe(0)
+      expect(await count(tx, noticeReads, eq(noticeReads.userId, U.id))).toBe(0)
+      expect(await count(tx, roomPollVotes, eq(roomPollVotes.userId, U.id))).toBe(0)
+      expect(await count(tx, roomAlbumPhotos, eq(roomAlbumPhotos.uploaderId, U.id))).toBe(0)
+      expect(await storage.head(key)).toBeNull()
+      // 남은 사람의 응답·읽음·표·사진과 방의 일정·투표는 그대로(만든 사람 칸만 비움).
+      expect(await count(tx, roomEventRsvps, eq(roomEventRsvps.userId, M.id))).toBe(1)
+      expect(await count(tx, noticeReads, eq(noticeReads.userId, M.id))).toBe(1)
+      expect(await count(tx, roomPollVotes, eq(roomPollVotes.userId, M.id))).toBe(1)
+      expect(await count(tx, roomAlbumPhotos, eq(roomAlbumPhotos.uploaderId, M.id))).toBe(1)
+      expect((await tx.select().from(roomEvents).where(eq(roomEvents.id, event!.id)))[0]).toMatchObject({ createdBy: null, title: '홈커밍' })
+      expect((await tx.select().from(roomPolls).where(eq(roomPolls.id, poll!.id)))[0]).toMatchObject({ createdBy: null })
+      const ledger = await tx.select().from(deletionLedger).where(eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, U.id)))
+      expect(ledger.map((l) => l.entityKind)).toEqual(expect.arrayContaining(['room_event_rsvps', 'notice_reads', 'room_poll_votes', 'room_album_photos']))
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })

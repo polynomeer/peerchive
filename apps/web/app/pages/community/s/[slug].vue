@@ -9,6 +9,7 @@
  * - 방 운영(C-06, 방장·admin·moderator): 방 운영진이 가린 글·댓글, 제재 요청과 상태(제재가 있었는지만), 이 방 범위 쓰기 제한 개수.
  *   누구에게 무엇이 내려졌는지는 보이지 않습니다.
  * - 동문회·OB 방(A-01, ADR 0038): 멤버에게 방별 프로필 화면 링크(P2 alumni 플래그가 꺼져 있으면 서버가 template을 general로 보내 링크가 없음).
+ *   A-02(ADR 0039): 멤버에게 모임 화면(일정·투표·앨범) 링크.
  * - 스터디 방(C-08): "게시판"·"기록" 탭. 기록 탭은 스터디 기록(빌드 로그·마일스톤·할 일·파일, StudyRecordSection).
  */
 import type {
@@ -395,6 +396,10 @@ const isMe = (m: SpaceMemberDto) => m.userId === me.value?.id
           </ul>
         </section>
 
+        <p v-if="space.template === 'alumni' && space.myMembership?.status === 'active'" data-testid="gatherings-link">
+          <NuxtLink :to="`/community/gatherings/${space.slug}`">모임: 일정·투표·앨범</NuxtLink>
+          <span class="small muted"> — 참석 응답·투표·사진은 이 방 멤버에게만 보입니다. 운영진 공지는 ‘공지’ 게시판에서 읽음 수만 보입니다.</span>
+        </p>
         <p v-if="space.template === 'alumni' && space.nameMode !== 'anonymous'" data-testid="room-profiles-link">
           <NuxtLink :to="`/community/room-profiles/${space.slug}`">방별 프로필·신분 배지</NuxtLink>
           <span class="small muted"> — 이 방 멤버에게만 보입니다.</span>

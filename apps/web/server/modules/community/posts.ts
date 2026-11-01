@@ -93,6 +93,7 @@ import { parseInput } from '../validation'
 import { type SpaceContext, loadReadableSpace, membershipFacts, writeRestricted } from './access'
 import { cancelTransfersForAnswerChangeInTx, cancelTransfersForSourceInTx, postArchiveInfo } from './archive-transfers'
 import { activeDisplayPersona, displayPersonaNames, displayPersonaRequiredError, loadScheduledChange } from './name-modes'
+import { noticeReadsForPost } from './notice-reads'
 import { type RoomAuthorProfile, roomAuthorProfiles } from './room-profiles'
 import type {
   BoardPostsDto,
@@ -405,6 +406,8 @@ async function postDetail(db: DbExecutor, ctx: SpaceContext, post: PostRow, now:
     acceptedCommentId: acceptedOpen ? post.acceptedCommentId : null,
     canAccept: mine && open && active && board!.kind === 'question',
     archive: await postArchiveInfo(db, ctx, post, board!.kind, now),
+    // 동문회·OB 방 공지(A-02, ADR 0039): 읽음 수와 내가 읽었는지만(누가 읽었는지는 없음).
+    ...(open && (await noticeReadsForPost(db, ctx, post, board!.kind).then((r) => (r ? { noticeReads: r } : {})))),
     comments: top,
   }
 }
