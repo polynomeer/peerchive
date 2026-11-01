@@ -400,7 +400,7 @@ erDiagram
 | NoticeRead | post_id, user_id, read_at | `notice` 게시판 글에만 생성, 멱등. API는 **읽음 수만** 반환하고 누가 읽었는지는 내보내지 않음 |
 | Poll / PollVote | post_id, options[], closes_at / poll_id, user_id, option_id | 장소·날짜 투표. §8.9.1의 P2 투표와 같은 테이블. 결과는 집계만 표시 |
 | Album / AlbumItem | space_id, title / album_id, artifact_version_id, uploader_id | §10 파일 검사·격리를 그대로 거친 버전만. 방 멤버에게만 짧은 서명 URL. 방을 나가도 올린 사진은 남되 본인이 삭제 가능 |
-| DirectoryEntry | space_id, user_id, cohort_label?, current_work?, interests[], contact_method?, consented_at, withdrawn_at? | **멤버 명부 동의.** 동의한 멤버만 행이 존재하고 항목별로 비울 수 있음. 동의 철회·방 탈퇴 시 즉시 행 삭제. 내보내기 API·CSV·PDF·일괄 조회 없음, 페이지당 개수 제한과 조회 rate limit. 명부는 방 밖 검색·추천·PersonaActivity에 쓰지 않음 |
+| DirectoryEntry | space_id, user_id, cohort_label?, current_work?, interests[], contact_method?, consented_at, updated_at | **멤버 명부 동의.** 동의한 멤버만 행이 존재하고 항목별로 비울 수 있음. 동의 철회·방 탈퇴 시 즉시 행 삭제. 내보내기 API·CSV·PDF·일괄 조회 없음, 페이지당 개수 제한과 조회 rate limit. 명부는 방 밖 검색·추천·PersonaActivity에 쓰지 않음 |
 
 - 동문회·OB 방의 이름 표시 기본값은 `real` 또는 `display`이며, 만들 때 `anonymous`를 고르면 “동문 네트워킹에는 권장하지 않음”을 안내합니다. 회비·결제 테이블은 두지 않습니다.
 - **공감 라운지 미디어.** 공식 학교 페이지 자유 게시판과 공감 토픽의 이미지·짧은 영상은 `ArtifactVersion` 파이프라인(§10)을 그대로 쓰고, 영상은 길이·용량 한도를 둡니다. 미디어 메타데이터(EXIF 위치 등)는 저장 전에 제거합니다.

@@ -253,6 +253,13 @@
       "when": 1793541945456,
       "tag": "0035_alumni_events",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1793544219592,
+      "tag": "0036_member_directory",
+      "breakpoints": true
     }
   ]
 }

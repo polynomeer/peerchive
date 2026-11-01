@@ -56,6 +56,7 @@
  * A-01(0034 migration): 사용자 방 템플릿(community_spaces.template)·방별 프로필(room_profiles)·기수 이력. 결정은 ADR 0038.
  * A-02(0035 migration): 동문회·OB 방의 일정(room_events)·회차별 참석 응답(room_event_rsvps)·공지 읽음 표시(notice_reads)·
  * 투표(room_polls·room_poll_votes)·앨범 사진(room_album_photos, 격리 키 + 검사·메타데이터 제거). 결정은 ADR 0039.
+ * A-03(0036 migration): 동문회·OB 방의 멤버 명부 동의(directory_entries, 동의한 멤버만 행·철회·나가기 시 즉시 삭제). 결정은 ADR 0040.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -4124,5 +4125,43 @@ export const roomAlbumPhotos = pgTable(
     check('room_album_photos_sha256_check', sql`${t.sha256} is null or ${t.sha256} ~ '^[0-9a-f]{64}$'`),
     check('room_album_photos_caption_check', sql`${t.caption} is null or char_length(${t.caption}) between 1 and 100`),
     check('room_album_photos_clean_check', sql`${t.scanStatus}::text <> 'clean' or (${t.metadataStripped} and ${t.mediaType} is not null)`),
+  ],
+)
+
+// A-03: 동문회·OB 방의 멤버 명부(ADR 0040). 커뮤니티 구역이므로 C-05·S-02 경계 검사와 social DB 역할 권한 검사가 자동으로 덮습니다
+// (social 역할에는 권한을 주지 않음). 공개 프로필·검색·추천·피드·PersonaActivity는 이 테이블을 읽지 않습니다.
+
+/**
+ * 멤버 명부 항목(A-03, SYSTEM_DESIGN §6.7.2 DirectoryEntry). **동의한 멤버만 행이 있습니다**: (방, 사람) 하나, 행을 만드는 요청이 곧 동의.
+ * - 항목은 모두 선택이고 각각 비울 수 있습니다(interests는 빈 배열). 연락 방법은 자유 글(한 줄)이며 방 멤버 모두에게 보입니다.
+ * - 동의 철회·방 나가기·내보내기·탈퇴·익명 방 전환 때 **행을 바로 지웁니다**(설계 초안의 `withdrawn_at`은 두지 않음 — 철회한 사람의 행이
+ *   남지 않게, ADR 0040). 그래서 이 표에 있는 행은 모두 지금 동의 중인 항목입니다.
+ * - consented_at은 처음 동의한 시각(바꾸기는 updated_at). 철회 뒤 다시 동의하면 새 행이라 새 시각입니다.
+ * - 조회는 쪽 단위(최대 20개) + 사용자별 rate limit만 있고, 내보내기·일괄 조회 경로는 없습니다.
+ */
+export const directoryEntries = pgTable(
+  'directory_entries',
+  {
+    spaceId: uuid('space_id')
+      .notNull()
+      .references(() => communitySpaces.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    cohortLabel: text('cohort_label'),
+    currentWork: text('current_work'),
+    interests: text('interests').array().notNull().default(sql`'{}'::text[]`),
+    contactMethod: text('contact_method'),
+    consentedAt: timestamp('consented_at', { withTimezone: true }).notNull(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    primaryKey({ name: 'directory_entries_pkey', columns: [t.spaceId, t.userId] }),
+    index('directory_entries_space_consented_idx').on(t.spaceId, t.consentedAt),
+    index('directory_entries_user_id_idx').on(t.userId),
+    check('directory_entries_cohort_check', sql`${t.cohortLabel} is null or char_length(${t.cohortLabel}) between 1 and 20`),
+    check('directory_entries_current_work_check', sql`${t.currentWork} is null or char_length(${t.currentWork}) between 1 and 60`),
+    check('directory_entries_interests_check', sql`cardinality(${t.interests}) <= 5`),
+    check('directory_entries_contact_check', sql`${t.contactMethod} is null or char_length(${t.contactMethod}) between 1 and 100`),
   ],
 )

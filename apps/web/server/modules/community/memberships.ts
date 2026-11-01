@@ -31,6 +31,7 @@ import { isUuid } from '../projects/access'
 import { parseInput } from '../validation'
 import { type MembershipRow, type SpaceContext, findMembership, loadReadableSpace, loadSpaceContext, membershipFacts } from './access'
 import { deleteGatheringDataInTx } from './alumni-room'
+import { deleteDirectoryEntryInTx } from './member-directory'
 import { deleteRoomProfileInTx } from './room-profiles'
 import { archiveSpaceInTx, assertCanManage, toSpaceSummary } from './spaces'
 import { syncStudyRecordInTx } from './study-records'
@@ -155,6 +156,8 @@ export async function leaveSpace(
     await deleteRoomProfileInTx(tx, ctx.space.row.id, actor.userId)
     // 모임 도구(A-02): 그 방의 참석 응답·공지 읽음·투표 표도 지웁니다(앨범 사진은 방의 기록이라 남김, ADR 0039).
     await deleteGatheringDataInTx(tx, ctx.space.row.id, actor.userId)
+    // 멤버 명부(A-03): 나가면 그 방의 명부 행을 바로 지웁니다(ADR 0040).
+    await deleteDirectoryEntryInTx(tx, ctx.space.row.id, actor.userId)
     let succession: 'transferred' | 'archived' | null = null
     if (m.status === 'active' && m.role === 'owner') {
       const result = await succeedOwner(tx, ctx.space.row.id, actor.userId, now)
@@ -271,6 +274,7 @@ export async function removeMember(db: DbExecutor, actor: Actor, ref: unknown, u
     await tx.update(spaceMemberships).set({ status: 'removed', role: 'member', endedAt: now, updatedAt: now }).where(eq(spaceMemberships.id, target.id))
     await deleteRoomProfileInTx(tx, ctx.space.row.id, target.userId)
     await deleteGatheringDataInTx(tx, ctx.space.row.id, target.userId)
+    await deleteDirectoryEntryInTx(tx, ctx.space.row.id, target.userId)
     await syncStudyRecordInTx(tx, ctx.space.row.id, now)
     await recordAudit(tx, { actorId: actor.userId, action: 'community.member_remove', targetType: 'community_space', targetId: ctx.space.row.id, metadata: { role: target.role } })
   })

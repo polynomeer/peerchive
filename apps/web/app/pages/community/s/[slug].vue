@@ -10,6 +10,7 @@
  *   누구에게 무엇이 내려졌는지는 보이지 않습니다.
  * - 동문회·OB 방(A-01, ADR 0038): 멤버에게 방별 프로필 화면 링크(P2 alumni 플래그가 꺼져 있으면 서버가 template을 general로 보내 링크가 없음).
  *   A-02(ADR 0039): 멤버에게 모임 화면(일정·투표·앨범) 링크.
+ *   A-03(ADR 0040): 익명 방이 아니면 멤버에게 멤버 명부(동의한 멤버만) 링크.
  * - 스터디 방(C-08): "게시판"·"기록" 탭. 기록 탭은 스터디 기록(빌드 로그·마일스톤·할 일·파일, StudyRecordSection).
  */
 import type {
@@ -399,6 +400,10 @@ const isMe = (m: SpaceMemberDto) => m.userId === me.value?.id
         <p v-if="space.template === 'alumni' && space.myMembership?.status === 'active'" data-testid="gatherings-link">
           <NuxtLink :to="`/community/gatherings/${space.slug}`">모임: 일정·투표·앨범</NuxtLink>
           <span class="small muted"> — 참석 응답·투표·사진은 이 방 멤버에게만 보입니다. 운영진 공지는 ‘공지’ 게시판에서 읽음 수만 보입니다.</span>
+        </p>
+        <p v-if="space.template === 'alumni' && space.nameMode !== 'anonymous' && space.myMembership?.status === 'active'" data-testid="directory-link">
+          <NuxtLink :to="`/community/directory/${space.slug}`">멤버 명부</NuxtLink>
+          <span class="small muted"> — 동의한 멤버의 동의한 항목만, 이 방 멤버에게만 보입니다.</span>
         </p>
         <p v-if="space.template === 'alumni' && space.nameMode !== 'anonymous'" data-testid="room-profiles-link">
           <NuxtLink :to="`/community/room-profiles/${space.slug}`">방별 프로필·신분 배지</NuxtLink>

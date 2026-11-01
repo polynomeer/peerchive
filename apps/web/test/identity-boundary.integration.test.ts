@@ -38,6 +38,7 @@ import { joinSpace } from '../server/modules/community/memberships'
 import { scheduleNameModeChange } from '../server/modules/community/name-modes'
 import { createOfficialPage } from '../server/modules/community/official'
 import { createComment, createPost } from '../server/modules/community/posts'
+import { putMyDirectoryEntry } from '../server/modules/community/member-directory'
 import { createRoomEvent, respondToEvent } from '../server/modules/community/room-events'
 import { createRoomPoll, voteOnPoll } from '../server/modules/community/room-polls'
 import { putMyRoomProfile } from '../server/modules/community/room-profiles'
@@ -329,6 +330,8 @@ describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
       expect(COMMUNITY_TABLES.map((t) => t.sqlName)).toEqual(
         expect.arrayContaining(['room_events', 'room_event_rsvps', 'notice_reads', 'room_polls', 'room_poll_votes', 'room_album_photos']),
       )
+      // A-03: 멤버 명부도 커뮤니티 구역입니다(social 역할 권한 없음, 공개·소셜 출력·검색에 0건).
+      expect(COMMUNITY_TABLES.map((t) => t.sqlName)).toContain('directory_entries')
       for (const t of COMMUNITY_TABLES) {
         const [p] = (await tx.execute(
           sql`select has_table_privilege(${SOCIAL_ROLE}, ${`public.${t.sqlName}`}, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') as tbl,
@@ -366,7 +369,7 @@ describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
       const [persona] = await tx.select().from(personas).where(eq(personas.userId, user.id))
       const expected = await getPublicProfile(tx, persona!.handle)
 
-      for (const table of ['community_posts', 'community_comments', 'thread_aliases', 'archive_transfers', 'archive_transfer_consents', 'community_reactions', 'community_spaces', 'room_profiles', 'room_profile_cohort_changes', 'room_events', 'room_event_rsvps', 'notice_reads', 'room_polls', 'room_poll_votes', 'room_album_photos']) {
+      for (const table of ['community_posts', 'community_comments', 'thread_aliases', 'archive_transfers', 'archive_transfer_consents', 'community_reactions', 'community_spaces', 'room_profiles', 'room_profile_cohort_changes', 'room_events', 'room_event_rsvps', 'notice_reads', 'room_polls', 'room_poll_votes', 'room_album_photos', 'directory_entries']) {
         const code = await failsWith(tx, async (inner) => {
           await inner.execute(sql.raw(`set local role ${SOCIAL_ROLE}`))
           await inner.execute(sql.raw(`select 1 from public.${table} limit 1`))
@@ -599,6 +602,7 @@ async function buildWorld(tx: DbExecutor, seed: number) {
   // A-01(ADR 0038): 방 템플릿·방별 프로필은 별도 난수(같은 시드의 기존 세계를 바꾸지 않음). 방별 이름·기수·소개는 고유 표식이라 공개 출력에서 찾습니다.
   const ar = rng(seed ^ 0xa01)
   const roomProfileValues: string[] = []
+  const directoryValues: string[] = []
   for (let i = 0; i < roomCount; i++) {
     const mode = r.pick(['real', 'display', 'anonymous'] as const)
     const owner = r.pick(people)
@@ -631,6 +635,18 @@ async function buildWorld(tx: DbExecutor, seed: number) {
         if (g.chance(0.6)) await voteOnPoll(tx, { userId: p.userId }, room.slug, poll.id, { optionIndex: g.int(0, 1) }, T0)
       }
       roomProfileValues.push(`EVT${mark}`, `LOC${mark}`, `POLQ${mark}`, `OPA${mark}`, `OPB${mark}`, ev.id, poll.id)
+    }
+    // A-03(ADR 0040): 멤버 명부의 기수·하는 일·관심사·연락 방법(별도 난수 — 기존 세계는 그대로). 익명 방에는 명부가 없습니다.
+    if (alumni && mode !== 'anonymous') {
+      const d = rng(seed ^ 0xa03 ^ (i + 1))
+      for (const [j, p] of people.entries()) {
+        if (!d.chance(0.7)) continue
+        const mark = `${seed.toString(36)}d${i}${j}${crypto.randomUUID().slice(0, 4)}`
+        const values = { consent: true, cohortLabel: `DC${mark}`, currentWork: `DW${mark}`, interests: [`DI${mark}`], contactMethod: `DM${mark}` }
+        await putMyDirectoryEntry(tx, { userId: p.userId }, room.slug, values, T0)
+        roomProfileValues.push(values.cohortLabel, values.currentWork, values.interests[0]!, values.contactMethod)
+        directoryValues.push(values.currentWork, values.contactMethod)
+      }
     }
     spaces.push({ slug: room.slug, boardId: room.boards[0]!.id, official: false, mode, ...(mode === 'anonymous' && r.chance(0.7) && { convertTo: r.pick(['real', 'display'] as const) }) })
   }
@@ -721,7 +737,7 @@ async function buildWorld(tx: DbExecutor, seed: number) {
     expect(items.find((i) => i.id === (e.payload as { sourceId: string }).sourceId)?.mode, `seed ${seed} event for anonymous post`).not.toBe('anonymous')
     await handlePersonaActivityProject(tx, e.payload)
   }
-  return { people, items, roomProfileValues, now: new Date(clock + HOUR) }
+  return { people, items, roomProfileValues, directoryValues, now: new Date(clock + HOUR) }
 }
 
 /** 활동 목록 전부(cursor를 따라감). */
@@ -744,11 +760,11 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
   afterEach(() => setFeatureEnvForTesting(null))
 
   it(`for ${WORLDS} seeded random worlds, every persona's public JSON, README card, old profile DTO, activity list (raw and API for every viewer), follow lists, every person's feed and suggestions carry 0 anonymous post ids, bodies, body hashes or timestamps`, async () => {
-    const totals = { worlds: 0, personas: 0, anonymous: 0, projected: 0, follows: 0, feedItems: 0, roomProfileValues: 0 }
+    const totals = { worlds: 0, personas: 0, anonymous: 0, projected: 0, follows: 0, feedItems: 0, roomProfileValues: 0, directoryValues: 0 }
     for (let w = 0; w < WORLDS; w++) {
       const seed = BASE_SEED + w
       await withRollback(async (tx) => {
-        const { people, items, roomProfileValues, now } = await buildWorld(tx, seed)
+        const { people, items, roomProfileValues, directoryValues, now } = await buildWorld(tx, seed)
         // S-04: 무작위 팔로우(실명·표시명 주체 모두)와 전체 공개 팔로우 목록. 목록은 새 공개 출력이라 같은 검사에 넣습니다.
         const r = rng(seed ^ 0x5f04)
         const all = people.flatMap((p) => [p.real, p.display].filter((x): x is NonNullable<typeof x> => !!x).map((persona) => ({ owner: p, persona })))
@@ -773,6 +789,7 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
         // A-01: 방별 프로필의 이름·기수·소개·id도 방 밖의 모든 공개·소셜 출력에 0건이어야 합니다(A-02: 일정·투표의 값과 id도 같은 목록).
         forbidden.push(...roomProfileValues)
         totals.roomProfileValues += roomProfileValues.length
+        totals.directoryValues += directoryValues.length
         const postRows = await tx
           .select({ id: communityPosts.id, personaId: communityPosts.personaId, nameMode: communityPosts.nameMode, discovery: communitySpaces.discovery })
           .from(communityPosts)
@@ -834,7 +851,8 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
           totals.feedItems += feed.items.length
         }
         // A-01: 공개 검색(색인·API)에도 방별 프로필 값이 없습니다.
-        for (const value of roomProfileValues.slice(0, 6)) {
+        // A-03: 명부의 하는 일·연락 방법도 검색(API·색인)과 페르소나 활동에 0건입니다.
+        for (const value of [...roomProfileValues.slice(0, 6), ...directoryValues.slice(0, 4)]) {
           expect((await searchPublic(tx, { q: value }, now)).results, `seed ${seed} search ${value}`).toEqual([])
           const [hit] = (await tx.execute(sql`select count(*)::int as n from search_documents where strpos(search_text || title || snippet, ${value}) > 0`)) as unknown as Array<{ n: number }>
           expect(hit!.n, `seed ${seed} search_documents ${value}`).toBe(0)
@@ -861,5 +879,6 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
     expect(totals.personas).toBeGreaterThan(WORLDS)
     expect(totals.feedItems).toBeGreaterThan(0)
     expect(totals.roomProfileValues).toBeGreaterThan(WORLDS)
+    expect(totals.directoryValues).toBeGreaterThan(0)
   })
 })

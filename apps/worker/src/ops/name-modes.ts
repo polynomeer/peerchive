@@ -23,6 +23,7 @@ import {
   hashSubject,
   inArray,
   lte,
+  directoryEntries,
   nameModeChanges,
   pepperKeyId,
   projects,
@@ -73,6 +74,8 @@ export async function applyNameModeChange(db: DbExecutor, changeId: string, opti
     if (change.toMode === 'anonymous') {
       await tx.delete(roomProfileCohortChanges).where(eq(roomProfileCohortChanges.spaceId, change.spaceId))
       await tx.delete(roomProfiles).where(eq(roomProfiles.spaceId, change.spaceId))
+      // 멤버 명부(A-03, ADR 0040): 익명 방에는 명부가 없습니다. 동의 행도 지웁니다(되돌려도 살아나지 않음 — 다시 동의해야 함).
+      await tx.delete(directoryEntries).where(eq(directoryEntries.spaceId, change.spaceId))
     }
     const payload = sanitizeNoticePayload('name_mode_applied', { fromMode: change.fromMode, toMode: change.toMode, effectiveAt: change.effectiveAt.toISOString() })
     if (!payload) throw new Error('name_mode_applied payload not allowed')

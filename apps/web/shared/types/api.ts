@@ -2820,6 +2820,39 @@ export interface AlbumUploadDto {
   uploadUrl: string
 }
 
+// ── 동문회·OB 방 멤버 명부 동의 (A-03, ADR 0040) ─────────────
+
+/** 명부 항목 하나. 사람 id·핸들·프로필 링크·항목 id가 없습니다(방 안에서 이름과 동의한 값만). */
+export interface DirectoryEntryDto {
+  /** real 방은 실명(없으면 `실명 미입력`), display 방은 방별 프로필 이름(없으면 `방별 이름 없음`). */
+  name: string
+  cohortLabel: string | null
+  currentWork: string | null
+  interests: string[]
+  /** 자유 글. 방 멤버 모두에게 보입니다. */
+  contactMethod: string | null
+  /** 내 항목인지. */
+  mine: boolean
+  updatedAt: string
+}
+
+/** 내 명부 항목(동의하지 않았으면 null). */
+export interface MyDirectoryEntryDto {
+  entry: DirectoryEntryDto | null
+}
+
+/** GET …/directory?page=&pageSize= — 쪽 하나(최대 20개). 전체 수·“전부 가져오기”는 없습니다. */
+export interface DirectoryPageDto {
+  nameMode: 'real' | 'display'
+  /** 동의·바꾸기를 할 수 있는지(보관·제한된 방은 읽기와 철회만). */
+  writable: boolean
+  page: number
+  pageSize: number
+  hasNext: boolean
+  mine: DirectoryEntryDto | null
+  entries: DirectoryEntryDto[]
+}
+
 interface CommunityTimesDto {
   /** 정확한 시각. 소규모(멤버 10명 미만) 사용자 방의 익명 글·댓글은 null이고 createdBucket만 있습니다. */
   createdAt: string | null

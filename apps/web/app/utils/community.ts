@@ -43,6 +43,11 @@ import {
   ROOM_EVENT_RECURRENCE_LABELS,
   ALBUM_PHOTO_MEDIA_TYPES,
   ALBUM_PHOTO_MAX_BYTES,
+  DIRECTORY_COHORT_LABEL_MAX,
+  DIRECTORY_CONTACT_METHOD_MAX,
+  DIRECTORY_CURRENT_WORK_MAX,
+  DIRECTORY_INTEREST_MAX,
+  DIRECTORY_INTERESTS_MAX,
 } from '@peerchive/domain'
 import type { CommunityItemStatus, SpaceStatus } from '~~/shared/types/api'
 import { formatDateTime } from './build-log'
@@ -89,6 +94,11 @@ export {
   ROOM_EVENT_RECURRENCE_LABELS,
   ALBUM_PHOTO_MEDIA_TYPES,
   ALBUM_PHOTO_MAX_BYTES,
+  DIRECTORY_COHORT_LABEL_MAX,
+  DIRECTORY_CONTACT_METHOD_MAX,
+  DIRECTORY_CURRENT_WORK_MAX,
+  DIRECTORY_INTEREST_MAX,
+  DIRECTORY_INTERESTS_MAX,
 }
 
 /** 글·댓글 상태(운영 화면). */
@@ -138,6 +148,7 @@ export const COMMUNITY_ERROR_MESSAGES: Record<string, string> = {
   member_album_full: '이 방에 올릴 수 있는 사진 수를 넘었습니다.',
   already_uploaded: '이미 받은 파일입니다.',
   upload_expired: '올리기 시간이 지났습니다. 다시 올리세요.',
+  directory_unavailable: '익명 방에는 멤버 명부가 없습니다.',
   not_member: '이 공간의 멤버가 아닙니다.',
   not_pending: '이미 처리된 요청입니다.',
   not_active_member: '현재 멤버가 아닙니다.',

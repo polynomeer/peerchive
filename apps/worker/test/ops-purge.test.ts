@@ -32,6 +32,7 @@ import {
   recruitmentApplications,
   recruitments,
   reports,
+  directoryEntries,
   noticeReads,
   roomAlbumPhotos,
   roomEventRsvps,
@@ -666,6 +667,35 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect((await tx.select().from(roomPolls).where(eq(roomPolls.id, poll!.id)))[0]).toMatchObject({ createdBy: null })
       const ledger = await tx.select().from(deletionLedger).where(eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, U.id)))
       expect(ledger.map((l) => l.entityKind)).toEqual(expect.arrayContaining(['room_event_rsvps', 'notice_reads', 'room_poll_votes', 'room_album_photos']))
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('deletes the purged user\'s member directory entries in every room and keeps others (A-03)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴명부', 'deleted')
+      const M = await user(tx, '남는명부')
+      for (const name of ['명부 방 1', '명부 방 2']) {
+        const [room] = await tx
+          .insert(communitySpaces)
+          .values({ kind: 'user_room', template: 'alumni', name, slug: id().replace(/-/g, '').slice(0, 10), currentNameMode: 'real', createdBy: M.id })
+          .returning()
+        await tx.insert(spaceMemberships).values([
+          { spaceId: room!.id, userId: M.id, role: 'owner', status: 'active', joinedAt: new Date(NOW.getTime() - 30 * DAY) },
+          { spaceId: room!.id, userId: U.id, role: 'member', status: 'active', joinedAt: new Date(NOW.getTime() - 20 * DAY) },
+        ])
+        await tx.insert(directoryEntries).values([
+          { spaceId: room!.id, userId: U.id, currentWork: '개발', contactMethod: '메일', consentedAt: NOW },
+          { spaceId: room!.id, userId: M.id, consentedAt: NOW },
+        ])
+      }
+
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ directory_entries: 2 })
+      expect(await count(tx, directoryEntries, eq(directoryEntries.userId, U.id))).toBe(0)
+      expect(await count(tx, directoryEntries, eq(directoryEntries.userId, M.id))).toBe(2)
+      const ledger = await tx.select().from(deletionLedger).where(eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, U.id)))
+      expect(ledger.find((l) => l.entityKind === 'directory_entries')?.count).toBe(2)
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })

@@ -151,6 +151,9 @@ export type AuditAction =
   | 'community.room_poll_close'
   | 'community.album_photo_request'
   | 'community.album_photo_delete'
+  // A-03(ADR 0040): 명부 동의·철회. 새로 동의했는지·채운 항목 수·철회 원인만(기수·하는 일·관심사·연락 방법 값 없음). 조회는 남기지 않습니다.
+  | 'community.directory_consent'
+  | 'community.directory_withdraw'
   | 'course_qa.publish'
   | 'course_qa.withdraw'
   | 'ops_time.save'
