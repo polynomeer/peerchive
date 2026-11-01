@@ -313,8 +313,10 @@ export async function createEdition(db: DbExecutor, actor: Actor, rawInput: unkn
 /** POST /portfolio-editions/preview — 저장하지 않고 공개 보기 그대로를 만들어 봅니다(같은 검증). */
 export async function previewEdition(db: DbExecutor, actor: Actor, rawInput: unknown, now = new Date()): Promise<PortfolioViewDto & { warnings: PublicationCheckDto[] }> {
   const input = parseInput(editionInputSchema, rawInput)
-  const model = await resolveEdition(db, actor, await editionPersona(db, actor, input), input, now)
-  return { ...(await buildPortfolioView(db, model, now)), warnings: warningsFor(model) }
+  const persona = await editionPersona(db, actor, input)
+  const model = await resolveEdition(db, actor, persona, input, now)
+  // E-06: 미리보기도 공개 프로필과 같게 — 실명 페르소나일 때만 "물어보면 좋은 질문"을 싣습니다.
+  return { ...(await buildPortfolioView(db, model, now, { askQuestions: persona.kind === 'real' })), warnings: warningsFor(model) }
 }
 
 /** GET /me/portfolio-editions — 내 판 전체(페르소나별 판이 섞여 있음, 실명 먼저·최근 version 순). */

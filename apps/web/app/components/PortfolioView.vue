@@ -4,6 +4,7 @@
  * - 오직 서버가 만든 `PortfolioViewDto`만으로 그립니다(공개 API 응답 또는 미리보기 응답).
  * - 대표 케이스는 포트폴리오 요약 보기(문제·역할·결정·근거·결과·한계 순)로, 문장마다 출처 칩이 공개 사례 페이지의 그 기록(`/p/<slug>#public-<키>`)으로 갑니다.
  * - 볼 수 없게 된 케이스는 글 없이 안내만 보입니다.
+ * - "이 지원자에게 물어보면 좋은 질문"(E-06, ADR 0050): 서버가 실어 준 질문 글(학생이 공개로 고른 것)만. 답변 메모는 DTO에 없습니다.
  * - 매트릭스 칸은 근거의 종류와 개수만 글자로 보여 주고 점수·색 농도를 쓰지 않습니다.
  */
 import type { PortfolioViewDto } from '~~/shared/types/api'
@@ -56,6 +57,21 @@ const titleOf = (ref: string) => props.view.matrix.columns.find((c) => c.ref ===
                 </p>
               </li>
             </ul>
+          </section>
+          <section v-if="item.askQuestions.length" class="case-section ask-questions" data-testid="ask-questions">
+            <h4>{{ INTERVIEW_PUBLIC_HEADING }}</h4>
+            <ul class="case-sentences">
+              <li v-for="(q, qi) in item.askQuestions" :key="qi">
+                <p class="case-sentence"><span class="badge">{{ q.categoryLabel }}</span> {{ q.text }}</p>
+                <p v-if="q.source" class="chips citation-chips">
+                  <span class="visually-hidden">근거:</span>
+                  <a class="chip static citation-chip" :href="q.source.path">
+                    {{ q.source.label }}<span v-if="print" class="print-url"> ({{ q.source.path }})</span>
+                  </a>
+                </p>
+              </li>
+            </ul>
+            <p class="hint">지원자가 고른 질문입니다. 답변은 싣지 않습니다.</p>
           </section>
           <p class="small">
             <a :href="item.path">원본 공개 사례 보기</a><span v-if="print" class="print-url"> ({{ item.path }})</span>

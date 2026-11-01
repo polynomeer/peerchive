@@ -1758,8 +1758,60 @@ export type PublicCaseStudyDto =
       termLabel: string | null
       selfLabel: string
       sections: Array<{ key: CaseSectionKey; label: string; sentences: PublicCaseSentenceDto[] }>
+      /**
+       * "이 지원자에게 물어보면 좋은 질문"(E-06, ADR 0050): 학생이 공개로 고른 면접 준비 팩 질문의 **글만**(답변 메모 없음).
+       * 실명 페르소나의 공개 프로필에서, 케이스를 지금 볼 수 있고 그 질문이 지금 만들어질 때만. 그 밖에는 빈 배열.
+       */
+      askQuestions: PublicAskQuestionDto[]
     }
   | { anchor: string; available: false; message: string }
+
+/** 공개 화면의 면접 준비 팩 질문(E-06). 근거가 있으면 그 공개 기록으로 가는 출처 칩. */
+export interface PublicAskQuestionDto {
+  text: string
+  categoryLabel: string
+  source: PublicCitationDto | null
+}
+
+export type InterviewQuestionCategory = 'decision' | 'conflict' | 'stuck' | 'failure' | 'reflection'
+
+/** 면접 준비 팩의 질문 하나(본인에게만). note는 비공개 답변 메모입니다. */
+export interface InterviewQuestionDto {
+  /** 안정된 질문 키(`decision:l_…`, `stuck:l_…`, `generic:failure` 등). */
+  key: string
+  category: InterviewQuestionCategory
+  categoryLabel: string
+  text: string
+  /** 근거 로그(고정 release 스냅샷). 일반 질문은 null. */
+  source: { kind: 'log'; key: string; label: string | null; path: string | null } | null
+  note: string | null
+  /** 질문 글을 공개 프로필에 보이기로 골랐는지(답변 메모는 어떤 경우에도 공개하지 않음). */
+  shown: boolean
+  /** 메모를 저장한 뒤 질문 글이 바뀌었는지(케이스 수정·새 공개 버전). */
+  textChanged: boolean
+  updatedAt: string | null
+}
+
+/** 지금 이 케이스에서 만들어지지 않는 질문에 남은 메모(본인에게만, 공개되지 않음). */
+export interface ArchivedInterviewNoteDto {
+  key: string
+  /** 메모를 마지막으로 저장할 때의 질문 글. */
+  text: string
+  note: string | null
+  updatedAt: string
+}
+
+/** GET /case-studies/:id/interview-prep — 작성자만. */
+export interface InterviewPrepDto {
+  caseStudyId: string
+  generator: 'template'
+  /** 케이스의 원본 사례를 지금 볼 수 있는지(아니면 questions가 비고 메모는 모두 archived). */
+  available: boolean
+  /** 지금 공개 프로필에서 이 케이스를 볼 수 있는지(게시 중·제공 가능·숨김 아님). 고른 질문은 이때만 보입니다. */
+  publiclyVisible: boolean
+  questions: InterviewQuestionDto[]
+  archived: ArchivedInterviewNoteDto[]
+}
 
 export interface PublicMatrixCellDto {
   column: string

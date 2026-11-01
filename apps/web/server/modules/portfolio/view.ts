@@ -7,6 +7,8 @@
  *   (`servableReleaseSql`, 같은 쿼리). 아니면 글 없이 "원본 사례를 더 이상 볼 수 없습니다",
  * - 인용 표시·위치와 매트릭스 개수 — 그 release의 저장된 스냅샷.
  * 내부 id(케이스·release·사용자)는 싣지 않고, 대표 케이스는 순서 기반 앵커(`case-1`…)로 가리킵니다.
+ * "이 지원자에게 물어보면 좋은 질문"(E-06, ADR 0050)은 `askQuestions` 옵션을 켠 호출(실명 페르소나의 공개 프로필·판 미리보기)에서만,
+ * 볼 수 있는 케이스의 공개로 고른 질문 글만 싣습니다(답변 메모는 읽지 않음).
  */
 import {
   CASE_JOB_TARGET_LABELS,
@@ -14,6 +16,7 @@ import {
   type CaseCitation,
   type MatrixColumnInput,
   HIDDEN_ITEM_PLACEHOLDER,
+  INTERVIEW_QUESTION_CATEGORY_LABELS,
   canLinkReleaseToPortfolio,
   citationLabel,
   citationPath,
@@ -23,6 +26,7 @@ import {
   isItemHidden,
 } from '@peerchive/domain'
 import { caseStudies, inArray, type DbExecutor } from '@peerchive/db'
+import { publicInterviewQuestions } from './interview-prep'
 import { asCaseSnapshot, type CaseStudyWithRelease, loadCaseStudiesWithRelease, loadSections } from './release-scope'
 import type { PortfolioViewDto, PublicCaseStudyDto, PublicCitationDto } from '../../../shared/types/api'
 
@@ -49,13 +53,19 @@ export const featuredAnchor = (index: number) => `case-${index + 1}`
 export const isPubliclyVisible = (row: CaseStudyWithRelease) =>
   row.caseStudy.status === 'published' && row.servable && row.caseStudy.hiddenAt === null && canLinkReleaseToPortfolio(row.snapshot)
 
-export async function buildPortfolioView(db: DbExecutor, model: EditionModel, now: Date): Promise<PortfolioViewDto> {
+export interface PortfolioViewOptions {
+  /** 면접 준비 팩의 공개 질문을 실을지(E-06). 실명 페르소나의 공개 프로필·판 미리보기만 켭니다. */
+  askQuestions?: boolean
+}
+
+export async function buildPortfolioView(db: DbExecutor, model: EditionModel, now: Date, options: PortfolioViewOptions = {}): Promise<PortfolioViewDto> {
   const rows = model.featured.length
     ? (await loadCaseStudiesWithRelease(db, inArray(caseStudies.id, [...model.featured]), now)).filter((r) => r.caseStudy.userId === model.userId)
     : []
   const byId = new Map(rows.map((r) => [r.caseStudy.id, r]))
   const visible = rows.filter(isPubliclyVisible)
   const sections = await loadSections(db, visible.map((r) => r.caseStudy))
+  const asked = options.askQuestions ? await publicInterviewQuestions(db, visible, sections) : new Map<string, never[]>()
 
   const hiddenBy = new Map(rows.map((r) => [r.caseStudy.id, hiddenItemSet(r.hidden)]))
   const isHidden = (row: CaseStudyWithRelease, c: Pick<CaseCitation, 'kind' | 'key'>) =>
@@ -100,6 +110,11 @@ export async function buildPortfolioView(db: DbExecutor, model: EditionModel, no
                 },
           ),
         })),
+      askQuestions: (asked.get(cs.id) ?? []).map((q) => ({
+        text: q.text,
+        categoryLabel: INTERVIEW_QUESTION_CATEGORY_LABELS[q.category],
+        source: q.source ? citation(row, q.source) : null,
+      })),
     }
   })
 

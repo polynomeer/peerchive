@@ -44,6 +44,7 @@ import {
   authAccounts,
   caseSentences,
   caseStudies,
+  interviewPrepEntries,
   certificateChecks,
   claimEvidence,
   cohortApprovals,
@@ -344,6 +345,8 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
     }
 
     // 3) 포트폴리오 판·케이스 스터디.
+    // E-06(ADR 0050): 면접 준비 팩 항목(비공개 답변 메모·공개 선택)은 그 사람만의 것이라 모두 지웁니다(공개 행보다 먼저).
+    c.add('interview_prep_entries', (await tx.delete(interviewPrepEntries).where(eq(interviewPrepEntries.userId, userId)).returning({ id: interviewPrepEntries.id })).length)
     const editionIds = idsOf(await tx.select({ id: portfolioEditions.id }).from(portfolioEditions).where(eq(portfolioEditions.userId, userId)))
     const caseIds = idsOf(await tx.select({ id: caseStudies.id }).from(caseStudies).where(eq(caseStudies.userId, userId)))
     if (editionIds.length || caseIds.length) {

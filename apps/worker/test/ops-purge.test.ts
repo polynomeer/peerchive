@@ -95,6 +95,7 @@ import {
   stuckQaHelpful,
   stuckQaPosts,
   stuckQaThreads,
+  interviewPrepEntries,
   conceptTags,
   courseCurators,
   conceptTagMergeProposals,
@@ -831,6 +832,25 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect((await tx.select().from(stuckQaCards).where(eq(stuckQaCards.id, mine!.id)))[0]).toMatchObject({ authorId: null, questionsAllowed: false })
       expect((await tx.select().from(stuckQaCards).where(eq(stuckQaCards.id, other!.id)))[0]).toMatchObject({ authorId: M.id, questionsAllowed: true })
       expect(await count(tx, stuckQaAliases, eq(stuckQaAliases.threadId, thread!.id))).toBe(2)
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('deletes the purged user\'s interview prep notes and selections and keeps others (E-06)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴지원자', 'deleted')
+      const M = await user(tx, '남는지원자')
+      const p = await project(tx, U.id, '면접 과제', [{ userId: M.id, role: 'editor' }])
+      const { publication } = await publish(tx, p.id, U.id, [U.id, M.id])
+      await tx.insert(interviewPrepEntries).values([
+        { userId: U.id, publicationId: publication.id, questionKey: 'decision:l_a', questionText: '왜?', note: '비공개 답변', shown: true },
+        { userId: U.id, publicationId: publication.id, questionKey: 'generic:failure', questionText: '실패는?', shown: true },
+        { userId: M.id, publicationId: publication.id, questionKey: 'generic:failure', questionText: '실패는?', note: '남는 답변' },
+      ])
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ interview_prep_entries: 2 })
+      expect(await count(tx, interviewPrepEntries, eq(interviewPrepEntries.userId, U.id))).toBe(0)
+      expect(await count(tx, interviewPrepEntries, eq(interviewPrepEntries.userId, M.id))).toBe(1)
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })

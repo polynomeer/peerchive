@@ -65,7 +65,8 @@ export async function getPublicPortfolioProfile(db: DbExecutor, rawHandle: unkno
   const current = await loadCurrentEditionModel(db, persona.id)
   const model = current?.model ?? { userId, headline: null, featured: [], competencies: [], evidence: [], skillsDeclared: [] }
   // 표시명 판은 대표 케이스를 받지 않지만(editions.ts), 읽을 때도 한 번 더 비웁니다.
-  const view = await buildPortfolioView(db, isReal ? model : { ...model, featured: [], evidence: [] }, now)
+  // E-06: "물어보면 좋은 질문"은 실명 페르소나에서만 싣습니다(표시명 판에는 대표 케이스 자체가 없음).
+  const view = await buildPortfolioView(db, isReal ? model : { ...model, featured: [], evidence: [] }, now, { askQuestions: isReal })
 
   // 게시한 케이스 스터디(지금 제공 가능)의 공개들: 타임라인·포크 수. 실명 페르소나만.
   const published = isReal

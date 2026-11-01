@@ -2795,6 +2795,44 @@ export const competencyEvidence = pgTable(
   ],
 )
 
+/**
+ * 면접 준비 팩 항목(E-06, PROOFU_EVOLUTION_PLAN §10.5, ADR 0050). 질문 자체는 저장하지 않고 읽을 때마다 케이스 문장의 인용에서 만듭니다
+ * (@peerchive/domain `generateInterviewQuestions`). 이 행은 학생이 질문에 붙인 것만 담습니다: 비공개 답변 메모와 공개 선택(shown).
+ * - (user_id, publication_id, question_key)마다 하나. 질문 키는 공개마다 안정된 스냅샷 로그 키로 만들므로, 케이스를 고치거나 새 공개 버전으로
+ *   다시 만들어도 같은 질문의 메모가 이어집니다. 지금 만들어지지 않는 키의 행은 지우지 않고 본인에게만 "보관된 메모"로 보입니다.
+ * - note는 **본인만** 읽습니다. 공개 DTO·검색·피드·인쇄·README 카드 어디에도 싣지 않습니다.
+ * - shown은 질문 글만 공개한다는 선택입니다. 공개 프로필은 그 케이스가 지금 볼 수 있고(게시 중·release 제공 가능·숨김 아님) 실명 페르소나의
+ *   대표 케이스이며 그 질문이 지금 만들어질 때만 보여 줍니다.
+ * - question_text는 마지막으로 저장할 때의 질문 글(보관된 메모를 알아보고, 질문 글이 바뀌었는지 알리는 데만 씀).
+ * 탈퇴 정리 때 그 사람의 행을 모두 지웁니다.
+ */
+export const interviewPrepEntries = pgTable(
+  'interview_prep_entries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    publicationId: uuid('publication_id')
+      .notNull()
+      .references(() => publications.id),
+    questionKey: text('question_key').notNull(),
+    questionText: text('question_text').notNull(),
+    note: text('note'),
+    shown: boolean('shown').notNull().default(false),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('interview_prep_entries_key').on(t.userId, t.publicationId, t.questionKey),
+    index('interview_prep_entries_publication_idx').on(t.publicationId),
+    check('interview_prep_entries_key_check', sql`char_length(${t.questionKey}) between 1 and 100`),
+    check('interview_prep_entries_text_check', sql`char_length(${t.questionText}) between 1 and 400`),
+    check('interview_prep_entries_note_check', sql`${t.note} is null or char_length(${t.note}) between 1 and 2000`),
+    check('interview_prep_entries_nonempty_check', sql`${t.note} is not null or ${t.shown}`),
+  ],
+)
+
 // ── 신고·운영 조치 (§6.6 Report·AuditEvent, §7.2 restricted, §8 운영 예외, T-15, ADR 0015) ─────────────
 
 /**

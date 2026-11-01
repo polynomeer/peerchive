@@ -172,6 +172,8 @@ export type AuditAction =
   // E-04(ADR 0049): 막힘 Q&A 질문 허용 켜고 끄기(카드 id·참거짓)와 운영자의 작성자 확인(글 id·신고 id). 글 본문·번호·작성자는 넣지 않습니다.
   | 'stuck_qa.questions_toggle'
   | 'stuck_qa.author_lookup'
+  // E-06(ADR 0050): 면접 준비 팩 질문의 공개 선택 켜고 끄기(케이스 id·질문 키·참거짓). 답변 메모 글·메모 저장은 기록하지 않습니다.
+  | 'interview_prep.shown_toggle'
   // A-06(ADR 0043): 수료 회고 쓰기·철회. 회고 id와 방식·넓혀졌는지 같은 플래그만(기관·기수·글 없음). 익명 회고는 행위자 없이.
   | 'completion_retro.create'
   | 'completion_retro.withdraw'
@@ -250,6 +252,7 @@ export async function recordAudit(
       | 'room_item'
       | 'stuck_qa_card'
       | 'stuck_qa_post'
+      | 'interview_prep_entry'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

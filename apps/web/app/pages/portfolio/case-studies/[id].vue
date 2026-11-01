@@ -5,6 +5,7 @@
  * - 출처 없는 문장은 글자로 표시하고("출처 없음") 게시를 막습니다. 한계·회고 구역에서만 "본인 회고"로 표시해 출처 없이 둘 수 있습니다.
  * - 저장은 문장 전체를 보냅니다(expectedVersion). 게시된 케이스를 고치면 초안으로 돌아가 다시 게시해야 합니다.
  * - 원본 사례가 철회·대체되면 고칠 수 없고 "새 버전으로 다시 만들기"만 보입니다.
+ * - 면접 준비 팩(E-06, ADR 0050)이 아래에 붙습니다: 예상 질문·비공개 답변 메모·공개로 보일 질문 고르기.
  */
 import type { CaseCitationRef, CaseSectionKey, CaseSentenceKind, CaseStudyDto, PublicationCheckDto } from '~~/shared/types/api'
 
@@ -257,6 +258,8 @@ const warningPlace = (w: PublicationCheckDto) =>
         </p>
         <p v-if="uncitedCount > 0" class="hint">출처 없는 문장이 있으면 게시할 수 없습니다.</p>
       </form>
+
+      <InterviewPrepPack :case-study-id="data.id" :version="data.version" />
     </template>
   </div>
 </template>
