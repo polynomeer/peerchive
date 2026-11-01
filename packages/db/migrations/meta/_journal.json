@@ -302,6 +302,13 @@
       "when": 1793556527822,
       "tag": "0042_p2_ops_metrics",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1793559147591,
+      "tag": "0043_course_registrations",
+      "breakpoints": true
     }
   ]
 }

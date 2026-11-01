@@ -5,6 +5,7 @@
  * - 과목·학교·태그·노트는 학생이 쓴 내용입니다("학생 작성"). 교수 실명·평가는 다루지 않습니다.
  * - 병합된 과목 id로 들어오면 정본 주소로 바꿉니다. 파일럿 동안 기본 noindex.
  * - 신호 버튼·선배 노트 쓰기·신고(T-15)는 화면이 뜬 뒤 클라이언트에서 로그인 여부를 확인합니다.
+ * - "이번 학기 수강 중 N명"(E-01): 서버가 5명 이상일 때만 주는 익명 집계. 등록한 사람은 드러나지 않습니다.
  * - 막힘 Q&A(C-09): 커뮤니티 질문과 채택된 답변을 두 사람의 동의로 옮긴 복사본입니다. 각자 고른 이름만 보이고 원 글로 가는 링크는 없습니다.
  */
 import type { PublicCourseHubDto } from '~~/shared/types/api'
@@ -86,6 +87,10 @@ const difficultyText = computed(() => {
           학교·과목 이름과 아래 내용은 학생이 직접 쓴 것입니다. 공식 강의 정보가 아니며, 교수 개인 평가나 과제 정답은 다루지 않습니다.
         </p>
         <ClientOnly><CourseTeamFindingLink :course-id="data.course.id" /></ClientOnly>
+        <!-- E-01: 지금 학기 등록 인원은 5명 이상일 때만 서버가 줍니다(익명 집계). 없으면 아무것도 보이지 않습니다. -->
+        <p v-if="data.enrollment" class="small muted" data-testid="hub-enrollment">
+          {{ data.enrollment.termLabel }} 수강 중 {{ data.enrollment.count }}명
+        </p>
         <p v-if="data.conceptTags.length" class="chips" aria-label="개념 태그">
           <span v-for="tag in data.conceptTags" :key="tag.id" class="chip static">#{{ tag.label }}</span>
         </p>

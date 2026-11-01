@@ -12,6 +12,7 @@ const { me, logout } = useAuth()
         <ul class="nav-list">
           <template v-if="me">
             <li><NuxtLink to="/projects">내 과제</NuxtLink></li>
+            <li><NuxtLink to="/me/courses">내 과목</NuxtLink></li>
             <li><NuxtLink to="/portfolio">포트폴리오</NuxtLink></li>
             <li><NuxtLink to="/community">커뮤니티</NuxtLink></li>
             <li><NuxtLink to="/feed">피드</NuxtLink></li>

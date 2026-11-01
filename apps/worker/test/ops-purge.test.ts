@@ -87,6 +87,8 @@ import {
   users,
   weeklyCheckins,
   courses,
+  courseRegistrations,
+  courseTerms,
   schools,
   type Database,
   type DbExecutor,
@@ -753,6 +755,31 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect(await count(tx, institutionStaff, eq(institutionStaff.userId, M.id))).toBe(1)
       const ledger = await tx.select().from(deletionLedger).where(eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, U.id)))
       expect(ledger.find((l) => l.entityKind === 'institution_staff')?.count).toBe(1)
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('deletes the purged user\'s course registrations and keeps others (E-01)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴수강생', 'deleted')
+      const M = await user(tx, '남는수강생')
+      const tag = id().slice(0, 8)
+      const [school] = await tx.insert(schools).values({ name: `등록대학${tag}`, nameKey: `regschool${tag}` }).returning()
+      const [course] = await tx.insert(courses).values({ schoolId: school!.id, title: `등록과목${tag}`, titleKey: `regcourse${tag}` }).returning()
+      const [term] = await tx
+        .insert(courseTerms)
+        .values({ courseId: course!.id, year: 2027, semester: 'spring', endsAt: new Date('2027-06-30T14:59:59.999Z') })
+        .returning()
+      await tx.insert(courseRegistrations).values([
+        { userId: U.id, courseTermId: term!.id, postTermPromptedAt: NOW },
+        { userId: M.id, courseTermId: term!.id },
+      ])
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ course_registrations: 1 })
+      expect(await count(tx, courseRegistrations, eq(courseRegistrations.userId, U.id))).toBe(0)
+      expect(await count(tx, courseRegistrations, eq(courseRegistrations.userId, M.id))).toBe(1)
+      const ledger = await tx.select().from(deletionLedger).where(eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, U.id)))
+      expect(ledger.find((l) => l.entityKind === 'course_registrations')?.count).toBe(1)
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })

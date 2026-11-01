@@ -175,6 +175,15 @@
 
 기관 운영진 API(I-02, 플래그 `institutions`): 로그인 — `GET /api/v1/me/institution-staff`. 그 기관 운영진·운영자 — `GET/POST /api/v1/institutions/:id/invite-codes`, `POST /api/v1/invite-codes/:id/revoke`, `GET /api/v1/community/institutions/:id`(기관 페이지·기수 방), `POST /api/v1/community/institutions/:id/cohort-rooms`(`{cohortLabel, name?, description?, nameMode?}`, 201), `GET /api/v1/community/institutions/:id/stats`(5 미만 null). 운영자 — `GET/POST /api/v1/operator/institutions/:id/staff`(`{userId}`), `DELETE /api/v1/operator/institutions/:id/staff/:userId`. 공간 요약·상세에 `institutionSpace`(`page`·`cohort_room`·null).
 
+## P1 제품 기획 보완(E-)
+
+[실행 계획 §4.4](../docs/planning/DELIVERY_PLAN.md) P1 보완 백로그입니다. 착수 순서는 E-01 → E-02 → E-03 → E-04 → E-06 → E-07 → E-08 → E-09 → E-10 → E-05 → E-11 → E-12 → E-13 → E-14입니다.
+
+| 항목 | 상태 | 내용 |
+|---|---|---|
+| E-01 이번 학기 과목 등록 | 완료(플래그 없음) | **등록** `POST /api/v1/me/course-registrations {courseId, year, semester}`(201): 카탈로그에 있는 과목만(병합된 id는 정본, 없으면 422 `courseId: not_found`), 지금·다음 학기만(서울 달력, 422 `term: not_registrable`), (사용자, 개설 학기) 하나(409 `already_registered`), 학기당 15개(409 `limit_reached`), 시간당 60회(429). 개설 학기가 없으면 만든 사람 없이 만듦(감사 actor null). `GET /api/v1/me/course-registrations`(`{items, registrableTerms}`, 본인만), `DELETE …/:id`, `POST …/:id/dismiss-prompt`(남의 id 404). **감사·분석 기록 없음**, 공개 프로필·검색·피드·추천·운영자 경로 0건(S-02 lint 확장: 등록 테이블·모듈에 닿는 서버 파일 허용 목록, 공개·소셜 경로에서는 익명 집계만). **홈** `/`의 "이번 학기 과목": 과목마다 과목 허브·선배 노트(`#hub-notes`)·플랜 포크(`#hub-cases`)·과제 공간 만들기. **과제 공간** `POST /api/v1/projects {courseRegistrationId, …}`(내 등록의 개설 학기로 기존 과제 만들기 — 과목·학기·엠바고 그대로, 남의 등록 422). **허브** 공개 응답 `enrollment`: 지금 학기 등록 active 사용자 수, 5명 미만 null. **학기 종료 알림**: worker `course-term-prompts`(매시)가 종료된 등록마다 한 번 `post_term_prompted_at`, 홈에 "선배 노트를 남겨 주세요"·"공개할까요?"(이 학기의 내 과제 공개 준비) + 닫기, 메일 없음. 탈퇴 정리에 `course_registrations`, 과목 병합 때 정본 학기로 옮김. 화면 `/me/courses`(검색·등록·지우기). migration `0043_course_registrations`, [ADR 0046](../docs/adr/0046-course-registration.md) |
+| E-02~E-14 | 미착수 | §4.4 표 참고 |
+
 ## 운영(신고 대응, 파일럿 G2)
 
 [실행 계획 §7 G2](../docs/planning/DELIVERY_PLAN.md)의 "신고 담당자·대응 시간" 자리입니다. 값은 파일럿 전에 정해 채웁니다(SLA가 아니라 운영 목표).
@@ -276,7 +285,7 @@ docker compose --env-file .env -f ops/docker-compose.yml --profile mailpit --pro
 | `PEERCHIVE_HUB_REQUIRE_AFFILIATION` | `1` | `1`: 선배 노트 만들기·게시에 그 과목 학교의 학교 메일 인증 필요. `0`: 로컬·개발 전용(인증 없이 작성). production에서 `0`이거나 1/0이 아니면 web이 시작하지 않음 |
 | `PEERCHIVE_DELETION_GRACE_DAYS` | `7` | 탈퇴 요청 뒤 정리까지 일수(0–90, web의 상태 확인도 같은 값) |
 | `PEERCHIVE_OPS_BATCH_SIZE` | `500` | 주기 정리 한 문장의 행 수(10–10000) |
-| `PEERCHIVE_CRON_<작업>` | 작업별(ADR 0016) | 5필드 cron(Asia/Seoul) 또는 `off`. 작업: `UPLOAD_INTENTS`, `ORPHAN_QUARANTINE`, `RATE_LIMIT_BUCKETS`, `INTERNAL_NONCES`, `MAGIC_LINK_TOKENS`, `SESSIONS`, `DISCORD_CODES`, `PIN_REQUESTS`, `OUTBOX`, `AFFILIATION_CODES`, `ACCOUNT_PURGE`, `NAME_MODE_CHANGES`, `SOCIAL_LINK_RECHECK`, `CERTIFICATE_FILES`(I-01 수료증 파일 삭제, 10분마다 — 끄지 않음) |
+| `PEERCHIVE_CRON_<작업>` | 작업별(ADR 0016) | 5필드 cron(Asia/Seoul) 또는 `off`. 작업: `UPLOAD_INTENTS`, `ORPHAN_QUARANTINE`, `RATE_LIMIT_BUCKETS`, `INTERNAL_NONCES`, `MAGIC_LINK_TOKENS`, `SESSIONS`, `DISCORD_CODES`, `PIN_REQUESTS`, `OUTBOX`, `AFFILIATION_CODES`, `ACCOUNT_PURGE`, `NAME_MODE_CHANGES`, `SOCIAL_LINK_RECHECK`, `CERTIFICATE_FILES`(I-01 수료증 파일 삭제, 10분마다 — 끄지 않음), `COURSE_TERM_PROMPTS`(E-01 학기 종료 알림, 매시) |
 | `PEERCHIVE_BACKUP_DIR` / `PEERCHIVE_BACKUP_RETENTION_DAYS` / `PEERCHIVE_PG_CONTAINER` | `.data/backups` / `14` / 없음 | `ops/backup.sh`·`restore-drill.sh`. 컨테이너 이름을 주면 그 안의 pg_dump·pg_restore·psql을 씀(로컬 개발) |
 | `PEERCHIVE_COMMUNITY_AUTO_HIDE_OFFICIAL` / `PEERCHIVE_COMMUNITY_AUTO_HIDE_ROOM` | `5` / `3` | 커뮤니티 임시 숨김 기준: 서로 다른 인증 신고자 수(공식 페이지 / 사용자·스터디 방). 정수 2~50, 틀리면 기본값(C-06) |
 | `PEERCHIVE_REPORT_SLA_AUTO_HIDDEN_HOURS` / `PEERCHIVE_REPORT_SLA_HOURS` | `24` / `72` | 신고 처리 기한(시간, 1~720 정수, 틀리면 기본값): 임시 숨김 글·댓글은 숨김 시각부터 / 그 밖의 신고는 첫 신고부터. 대기열 배지·기한 넘김 필터·상태 확인·지표가 같은 값(C-10) |

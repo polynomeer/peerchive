@@ -401,7 +401,39 @@ export interface CourseContextDto {
   tags: ConceptTagDto[]
 }
 
-export type EmbargoSource = 'course_term_end' | 'course_term_embargo' | 'project_embargo'
+/** 등록할 수 있는 학기(E-01: 지금 학기와 다음 학기). */
+export interface RegistrableTermDto {
+  year: number
+  semester: Semester
+  /** "2026년 2학기" */
+  label: string
+  current: boolean
+}
+
+/**
+ * 이번 학기 과목 등록(E-01, ADR 0046). **본인에게만** 돌려줍니다(공개·소셜·운영자 응답에 없음).
+ * phase: upcoming(다음 학기)·current(지금 학기)·ended(개설 학기 종료 시각이 지남).
+ */
+export interface CourseRegistrationDto {
+  id: string
+  school: SchoolDto
+  course: CourseDto
+  term: CourseTermDto
+  termLabel: string
+  phase: 'upcoming' | 'current' | 'ended'
+  /** 학기가 끝난 뒤 worker가 만든 화면 안 알림(선배 노트·공개 제안)이 아직 닫히지 않았는지. */
+  postTermPrompt: boolean
+  /** 이 학기에 연결된 내 과제(active 멤버, 스터디 기록 제외). 공개 제안 링크에 씁니다. */
+  myProjects: Array<{ id: string; title: string }>
+  createdAt: string
+}
+
+export interface MyCourseRegistrationsDto {
+  items: CourseRegistrationDto[]
+  registrableTerms: RegistrableTermDto[]
+}
+
+export type EmbargoSource ='course_term_end' | 'course_term_embargo' | 'project_embargo'
 
 /** 적용 중인 엠바고. active여도 끝나면 자동 공개하지 않습니다(§9.2). */
 export interface EmbargoDto {
@@ -1419,6 +1451,8 @@ export interface PublicCourseHubDto {
   qaItems: PublicCourseQaDto[]
   workload: CourseHubWorkloadDto
   otherSchools: CourseHubRelatedDto[]
+  /** "이번 학기 수강 중 N명"(E-01): 지금 학기에 이 과목을 등록한 active 사용자 수. 5명 미만이면 null(표시하지 않음). 익명 집계뿐입니다. */
+  enrollment: { termLabel: string; count: number } | null
 }
 
 /** 공개 막힘 Q&A(C-09, ADR 0025). 커뮤니티 질문·채택된 답변을 두 사람의 동의로 복사한 것. */

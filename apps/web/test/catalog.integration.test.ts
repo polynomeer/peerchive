@@ -298,7 +298,7 @@ describe.skipIf(!databaseUrl)('catalog, merges and embargo (PostgreSQL)', () => 
         expect((await createCourseTerm(tx, actor, source.id, { year: 2026, semester: 'fall' }, T0)).term.id).toBe(targetFall.id)
 
         const [audit] = await tx.select().from(auditEvents).where(and(eq(auditEvents.targetId, source.id), eq(auditEvents.action, 'course.merge')))
-        expect(audit?.metadata).toEqual({ into: target.id, termsMoved: 1, termsMerged: 1, projectsRepointed: 1, releasesRehomed: 0, seniorNotesRehomed: 0, courseQaRehomed: 0 })
+        expect(audit?.metadata).toEqual({ into: target.id, termsMoved: 1, termsMerged: 1, projectsRepointed: 1, registrationsRepointed: 0, releasesRehomed: 0, seniorNotesRehomed: 0, courseQaRehomed: 0 })
       })
     })
 

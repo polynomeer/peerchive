@@ -12,6 +12,8 @@ const { me } = useAuth()
       <NuxtLink v-if="me" to="/projects">내 과제로 가기</NuxtLink>
       <NuxtLink v-else to="/login">이메일로 시작하기</NuxtLink>
     </p>
+    <!-- 이번 학기 과목(E-01): 본인에게만, 화면이 뜬 뒤 불러옵니다. -->
+    <ClientOnly><CourseRegistrationCards v-if="me" /></ClientOnly>
   </div>
 </template>
 

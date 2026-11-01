@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { MyCheckinStatusDto, ProjectDto } from '~~/shared/types/api'
+import type { CourseRegistrationDto, MyCheckinStatusDto, MyCourseRegistrationsDto, ProjectDto } from '~~/shared/types/api'
 
 definePageMeta({ middleware: 'auth' })
 useHead({ title: '내 과제 — Peerchive' })
@@ -18,6 +18,25 @@ const form = reactive({
   retroMode: false,
   courseTermId: null as string | null,
 })
+// 등록한 과목에서 만들기(E-01): `?registration=<id>`면 그 과목·학기를 채우고, 서버가 같은 규칙으로 학기·엠바고를 연결합니다.
+const route = useRoute()
+const registrationId = computed(() => (typeof route.query.registration === 'string' ? route.query.registration : ''))
+const { data: registrations } = await useFetch<MyCourseRegistrationsDto | null>('/api/v1/me/course-registrations', { default: () => null })
+const fromRegistration = ref<CourseRegistrationDto | null>(null)
+watch(
+  [registrations, registrationId],
+  ([value, id]) => {
+    fromRegistration.value = (id && value?.items.find((r) => r.id === id)) || null
+    if (fromRegistration.value && !form.title) form.title = `${fromRegistration.value.course.title} 과제`
+    if (fromRegistration.value) form.kind = 'team'
+  },
+  { immediate: true },
+)
+function useOtherCourse() {
+  fromRegistration.value = null
+  form.courseTermId = null
+}
+
 const errors = ref<Record<string, string>>({})
 const creating = ref(false)
 const failure = ref<string | null>(null)
@@ -33,7 +52,10 @@ async function create() {
   errors.value = {}
   failure.value = null
   try {
-    const project = await $fetch<ProjectDto>('/api/v1/projects', { method: 'POST', body: form })
+    const body = fromRegistration.value
+      ? { ...form, courseTermId: undefined, courseRegistrationId: fromRegistration.value.id }
+      : form
+    const project = await $fetch<ProjectDto>('/api/v1/projects', { method: 'POST', body })
     await navigateTo(`/projects/${project.id}`)
   } catch (e) {
     const err = apiError(e)
@@ -121,7 +143,17 @@ const studyProjects = computed(() => projects.value.filter((p) => p.kind === 'st
             <label><input v-model="form.kind" type="radio" name="kind" value="team" /> 팀</label>
           </div>
         </fieldset>
-        <CoursePicker v-model="form.courseTermId" id-prefix="new-course" />
+        <fieldset v-if="fromRegistration" data-testid="registration-prefill">
+          <legend>과목</legend>
+          <p>
+            <strong>{{ fromRegistration.school.name }}</strong> › <strong>{{ fromRegistration.course.title }}</strong>
+            › <strong>{{ fromRegistration.termLabel }}</strong> <span class="badge student">학생 작성</span>
+          </p>
+          <p class="hint" role="status">등록한 과목입니다. 학기 종료 {{ seoulDay(fromRegistration.term.endsAt) }}까지 공개할 수 없습니다(엠바고).</p>
+          <button type="button" class="link-button" @click="useOtherCourse">다른 과목 고르기</button>
+        </fieldset>
+        <CoursePicker v-else v-model="form.courseTermId" id-prefix="new-course" />
+        <p v-if="errors.courseRegistrationId" class="field-error">{{ fieldMessage(errors.courseRegistrationId) }}</p>
         <p v-if="errors.courseTermId" class="field-error">{{ fieldMessage(errors.courseTermId) }}</p>
         <div class="field">
           <label class="check">

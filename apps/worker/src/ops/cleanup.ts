@@ -286,7 +286,7 @@ export async function cleanupAffiliationCodes(db: DbExecutor, deps: CleanupDeps,
 
 export type CleanupTask = (db: DbExecutor, deps: CleanupDeps, now: Date) => Promise<TaskOutcome>
 
-export const CLEANUP_TASKS: Record<Exclude<OpsTaskName, 'account-purge' | 'name-mode-changes' | 'social-link-recheck' | 'certificate-files'>, CleanupTask> = {
+export const CLEANUP_TASKS: Record<Exclude<OpsTaskName, 'account-purge' | 'name-mode-changes' | 'social-link-recheck' | 'certificate-files' | 'course-term-prompts'>, CleanupTask> = {
   'upload-intents': cleanupUploadIntents,
   'orphan-quarantine': cleanupOrphanQuarantine,
   'rate-limit-buckets': cleanupRateLimitBuckets,

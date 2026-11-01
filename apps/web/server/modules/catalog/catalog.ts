@@ -370,6 +370,47 @@ export async function createCourseTerm(
   })
 }
 
+/**
+ * 과목 등록(E-01, ADR 0046) 경로의 개설 학기 찾기/만들기. 규칙은 `createCourseTerm`과 같지만(정본 과목, 종료 시각은 서버 계산, (과목, 연도, 학기)마다 하나)
+ * **만든 사람을 남기지 않습니다**: `created_by` null, 감사 `course_term.create`의 actor null(metadata `via: 'registration'`).
+ * 누가 어느 과목을 등록했는지가 카탈로그·감사 기록으로 운영자에게 드러나지 않게 하기 위해서입니다. 등록 경로는 지금·다음 학기만 받고
+ * 등록 한도(course_registration)를 먼저 쓰므로 catalog_create 한도는 쓰지 않습니다.
+ */
+export async function ensureCourseTermUnattributed(
+  db: DbExecutor,
+  courseId: string,
+  term: { year: number; semester: (typeof SEMESTERS)[number] },
+): Promise<CourseTermRow> {
+  const find = async () =>
+    (
+      await db
+        .select()
+        .from(courseTerms)
+        .where(and(eq(courseTerms.courseId, courseId), eq(courseTerms.year, term.year), eq(courseTerms.semester, term.semester)))
+        .limit(1)
+    )[0] ?? null
+  const existing = await find()
+  if (existing) return existing
+  const [inserted] = await db
+    .insert(courseTerms)
+    .values({ courseId, year: term.year, semester: term.semester, endsAt: semesterEndsAt(term.year, term.semester), createdBy: null })
+    .onConflictDoNothing({ target: [courseTerms.courseId, courseTerms.year, courseTerms.semester] })
+    .returning()
+  if (!inserted) {
+    const raced = await find()
+    if (!raced) throw new Error('course term insert failed')
+    return raced
+  }
+  await recordAudit(db, {
+    actorId: null,
+    action: 'course_term.create',
+    targetType: 'course_term',
+    targetId: inserted.id,
+    metadata: { endsAt: inserted.endsAt.toISOString(), via: 'registration' },
+  })
+  return inserted
+}
+
 export const adjustTermSchema = z.object({
   endsAt: z.iso.datetime({ offset: true, error: (issue) => (issue.input === undefined ? 'required' : 'invalid') }),
   reason: z

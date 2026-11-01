@@ -12,6 +12,7 @@
  * - 워크로드 분포: 이 과목 학기에 연결된 프로젝트의 체크인 중 `share_for_stats = true`만, 동의한 사람이 5명 미만이면 null
  *   (@peerchive/domain aggregateCheckinStats). 개인을 구분할 값은 결과에 없습니다.
  * - 다른 학교에서는: 같은 개념 태그를 가진 다른 학교의 정본 과목(최대 5개).
+ * - 이번 학기 수강 중(E-01, ADR 0046): 지금 학기에 이 과목을 등록한 active 사용자 수만(course-registrations/enrollment-count.ts), 5명 미만이면 null.
  */
 import {
   CHECKIN_STATS_MIN_GROUP,
@@ -46,6 +47,7 @@ import {
 } from '@peerchive/db'
 import { loadCanonicalCourse } from '../catalog/catalog'
 import { listCourseTags } from '../catalog/tags'
+import { hubEnrollment } from '../course-registrations/enrollment-count'
 import { notFound } from '../errors'
 import { loadHiddenItems, redactSnapshot } from '../moderation/hidden-items'
 import { publishedCourseQa } from './course-qa'
@@ -323,5 +325,7 @@ export async function getPublicCourseHub(db: DbExecutor, courseId: unknown, now 
     qaItems: await publishedCourseQa(db, course.id),
     workload: await workloadFor(db, course.id),
     otherSchools,
+    // E-01: 지금 학기 등록 인원(5명 미만이면 null). 등록 테이블은 이 집계 함수로만 읽습니다.
+    enrollment: await hubEnrollment(db, course.id, now),
   }
 }

@@ -2288,6 +2288,40 @@ export const searchDocuments = pgTable(
   ],
 )
 
+// ── 이번 학기 과목 등록 (E-01, PROOFU_EVOLUTION_PLAN §8.7, DELIVERY_PLAN §4.4, ADR 0046) ─────────────
+
+/**
+ * 이번 학기 과목 등록 = (사용자, 개설 학기). 개설 학기가 과목을 정하므로 과목 id를 따로 두지 않습니다.
+ * - **본인만 봅니다**: 공개 프로필·검색·페르소나·피드·추천·운영자 화면에 싣지 않습니다. 밖으로 나가는 값은 과목 허브의 "이번 학기 수강 중 N명"
+ *   (정본 과목·지금 학기·active 계정의 서로 다른 사용자 수, 5명 미만이면 없음)뿐입니다. 감사 기록·분석 이벤트도 남기지 않습니다.
+ * - 학기는 등록할 때 정본 학기로 둡니다. 과목 병합으로 학기가 합쳐지면 같은 트랜잭션에서 정본 학기로 옮깁니다(같은 사람이 이미 정본 학기에
+ *   등록했으면 원본 쪽 행을 지움).
+ * - post_term_prompted_at: 학기가 끝난 뒤 worker(`course-term-prompts`)가 한 번만 채우는 화면 안 알림("선배 노트를 남겨 주세요"·"공개할까요?").
+ *   prompt_dismissed_at: 본인이 알림을 닫은 시각. 메일은 보내지 않습니다.
+ * - 본인이 지우거나 탈퇴 정리 때 삭제합니다.
+ */
+export const courseRegistrations = pgTable(
+  'course_registrations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    courseTermId: uuid('course_term_id')
+      .notNull()
+      .references(() => courseTerms.id),
+    postTermPromptedAt: timestamp('post_term_prompted_at', { withTimezone: true }),
+    promptDismissedAt: timestamp('prompt_dismissed_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('course_registrations_user_term_key').on(t.userId, t.courseTermId),
+    index('course_registrations_course_term_idx').on(t.courseTermId),
+    index('course_registrations_prompt_due_idx').on(t.courseTermId).where(sql`${t.postTermPromptedAt} is null`),
+    check('course_registrations_dismissed_check', sql`${t.promptDismissedAt} is null or ${t.postTermPromptedAt} is not null`),
+  ],
+)
+
 // ── 포트폴리오 (§6.5 CaseStudy·CaseSentence·PortfolioEdition·PortfolioItem·CompetencyEvidence, §11, T-14, ADR 0014) ─────
 
 /**

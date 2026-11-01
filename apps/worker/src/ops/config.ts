@@ -27,6 +27,7 @@ export const OPS_TASK_NAMES = [
   'name-mode-changes',
   'social-link-recheck',
   'certificate-files',
+  'course-term-prompts',
 ] as const
 export type OpsTaskName = (typeof OPS_TASK_NAMES)[number]
 
@@ -49,6 +50,8 @@ export const DEFAULT_CRONS: Record<OpsTaskName, string> = {
   'social-link-recheck': '37 * * * *',
   // 수료증 파일 삭제(I-01, ADR 0037): 결정·취소된 수료증 파일을 10분 안에 지우고 삭제 장부(source retention)에 남깁니다(최대 보존 7일 안).
   'certificate-files': '*/10 * * * *',
+  // 학기 종료 알림(E-01, ADR 0046): 종료 시각이 지난 과목 등록마다 한 번 화면 안 알림(선배 노트·공개 제안)을 만듭니다.
+  'course-term-prompts': '53 * * * *',
 }
 
 export const OPS_TIMEZONE = 'Asia/Seoul'

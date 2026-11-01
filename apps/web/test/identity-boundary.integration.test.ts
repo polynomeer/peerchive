@@ -234,6 +234,38 @@ describe('S-02 module boundary lint: social never reaches community posts (sourc
   })
 })
 
+// E-01(ADR 0046): 이번 학기 과목 등록은 본인만 봅니다. 등록 테이블·모듈에 닿는 서버 파일은 허용 목록뿐이고, 공개·소셜 경로(위 closure)에서는
+// 익명 집계 함수(enrollment-count.ts, 5명 미만 null)만 닿을 수 있습니다. 운영자 라우트는 하나도 닿지 않습니다.
+const REGISTRATION_NAME_PATTERN = /\b(courseRegistrations|course_registrations)\b|modules\/course-registrations|\.\.?\/course-registrations\//
+const REGISTRATION_ALLOWED = [
+  'modules/course-registrations/registrations.ts',
+  'modules/course-registrations/enrollment-count.ts',
+  'modules/course-hub/hub.ts',
+  'modules/catalog/merge.ts',
+  'api/v1/projects/index.post.ts',
+  'api/v1/me/course-registrations/index.get.ts',
+  'api/v1/me/course-registrations/index.post.ts',
+  'api/v1/me/course-registrations/[id].delete.ts',
+  'api/v1/me/course-registrations/[id]/dismiss-prompt.post.ts',
+].map((p) => join(SERVER, p))
+
+describe('E-01 boundary lint: course registrations stay with their owner (source)', () => {
+  it('only the allow-listed server files name the registrations table or import the registrations module', () => {
+    const touching = listTs(SERVER).filter((f) => REGISTRATION_NAME_PATTERN.test(readFileSync(f, 'utf8')))
+    expect(touching.sort()).toEqual([...REGISTRATION_ALLOWED].sort())
+    expect(touching.some((f) => f.includes(join('api', 'v1', 'operator')))).toBe(false)
+  })
+
+  it('from the social module, profile/persona routes and public profile/portfolio paths, only the anonymous enrollment count is reachable', () => {
+    const files = closure([...SOCIAL_MODULE, ...SOCIAL_ROUTES, ...PUBLIC_PROFILE_ENTRIES])
+    const offenders = files
+      .filter((f) => f !== join(SERVER, 'modules/course-registrations/enrollment-count.ts'))
+      .filter((f) => f.startsWith(SERVER) && REGISTRATION_NAME_PATTERN.test(readFileSync(f, 'utf8')))
+      .map(rel)
+    expect(offenders).toEqual([])
+  })
+})
+
 // ── DB 도우미 ────────────────────────────────────────────────────────────
 
 const T0 = new Date('2026-11-10T09:00:00Z')
@@ -360,7 +392,8 @@ describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
       )) as unknown as Array<{ column_name: string; sel: boolean }>
       expect(cols.filter((c) => c.sel).map((c) => c.column_name)).toEqual(['display_name', 'id', 'status'])
       // 원천 테이블(선배 노트·공개 후보)도 social 역할은 읽지 않습니다(투영 검사는 트리거가 테이블 주인 권한으로).
-      for (const t of ['senior_notes', 'publication_candidates', 'course_qa_items', 'audit_events'])
+      // E-01: 이번 학기 과목 등록도 social 역할은 읽지 않습니다(본인만 보는 정보).
+      for (const t of ['senior_notes', 'publication_candidates', 'course_qa_items', 'audit_events', 'course_registrations'])
         expect((await tx.execute(sql`select has_table_privilege(${SOCIAL_ROLE}, ${`public.${t}`}, 'SELECT') as sel`))[0], t).toEqual({ sel: false })
       // S-05: 원본 재확인·카드는 SECURITY DEFINER 함수 하나만 실행(원천 확인·거두기 함수는 실행 권한 없음, PUBLIC에서도 거둠).
       const fn = async (signature: string) =>

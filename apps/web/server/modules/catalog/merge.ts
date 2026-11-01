@@ -21,6 +21,7 @@ import {
   and,
   conceptTags,
   courseConceptTags,
+  courseRegistrations,
   courseTerms,
   courses,
   embargoes,
@@ -175,6 +176,7 @@ export async function mergeCourse(db: DbExecutor, actor: Actor, sourceId: unknow
     let termsMoved = 0
     let termsMerged = 0
     let projectsRepointed = 0
+    let registrationsRepointed = 0
     for (const term of sourceTerms) {
       const twin = targetTerms.find((t) => t.year === term.year && t.semester === term.semester && !t.mergedInto)
       if (!twin) {
@@ -195,6 +197,16 @@ export async function mergeCourse(db: DbExecutor, actor: Actor, sourceId: unknow
         .where(eq(projects.courseTermId, term.id))
         .returning({ id: projects.id })
       projectsRepointed += repointed.length
+      // 이번 학기 과목 등록(E-01)도 정본 학기로 옮깁니다. 같은 사람이 이미 정본 학기에 등록했으면 원본 쪽 행을 지웁니다(사람당 하나).
+      await tx.execute(sql`
+        delete from ${courseRegistrations} r where r.course_term_id = ${term.id}
+          and exists (select 1 from ${courseRegistrations} t where t.course_term_id = ${twin.id} and t.user_id = r.user_id)`)
+      const moved = await tx
+        .update(courseRegistrations)
+        .set({ courseTermId: twin.id })
+        .where(eq(courseRegistrations.courseTermId, term.id))
+        .returning({ id: courseRegistrations.id })
+      registrationsRepointed += moved.length
       await tx.update(courseTerms).set({ mergedInto: twin.id }).where(eq(courseTerms.mergedInto, term.id))
       await tx.update(courseTerms).set({ mergedInto: twin.id }).where(eq(courseTerms.id, term.id))
       termsMerged++
@@ -238,6 +250,7 @@ export async function mergeCourse(db: DbExecutor, actor: Actor, sourceId: unknow
         termsMoved,
         termsMerged,
         projectsRepointed,
+        registrationsRepointed,
         releasesRehomed: releasesRehomed.length,
         seniorNotesRehomed: notesRehomed.length,
         courseQaRehomed: qaRehomed.length,
