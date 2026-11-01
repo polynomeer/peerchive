@@ -148,6 +148,29 @@ The alumni and club OB rooms, cross-school topics with affiliation-labeled anony
 
 The start order is A-01 → A-02/A-03 → A-04 → I-01 → A-05 → A-06 → I-02 → A-07. If alumni spaces strongly boost senior note supply (§6.2), A-01–A-03 can move up to P1 per product plan §19. When time is short, defer polls and albums (part of A-02) and lounge video (A-04) first; A-06, which leads into records, is not deferred.
 
+### 4.4 P1 product-plan follow-up backlog
+
+Items from the P1 rows of [product plan §16](../PROOFU_EVOLUTION_PLAN.md) (AI assistance, archive, portfolio and collaboration upgrades) and §8.5–§8.7, §10.5–§10.6 that had no ID in the backlogs above. A code audit on 2026-11-01 excluded what is already built: the competency × evidence matrix and README card (T-14) and the school-verified writing gate (C-01). On the roadmap (§3), E-08 and E-14 are stage 3 and E-04, E-05, E-09 and E-11 stage 4 candidates; they are implemented, but openings that need pilot evidence sit behind default-off flags.
+
+| ID | Work | Depends on | Done when |
+|---|---|---|---|
+| E-01 | This term's course registration (§8.7) | T-10 | Students register by searching school and course (no crawling or account import); registrations are visible only to the student (0 in public profile and search); home shows hub, senior-note and plan-fork entry points per course; a project space created from a registered course gets course, term and embargo filled in; the hub's "N taking this term" appears only when n ≥ 5; after term end, senior-note and publication prompts |
+| E-02 | Staged course hub opening (§8.6) | E-01, T-11 | Hub is closed while public cases + senior notes are below a threshold (setting, initially 3); registered students see "coming soon" and can ask to be notified; students who finished the course get a senior-note request; the hub opens on the next request once the threshold is reached |
+| E-03 | Student curators (§8.6) | E-02, T-15 | Operators assign and remove 1–2 per course (audited); curators can only propose tag merges, write assignment-type summaries and do first-pass report review (no withdrawals, account actions or author lookup); activity can be shown as junior contribution in the portfolio by the curator's choice |
+| E-04 | Stuck Q&A threads (§8.5) | T-11, C-04 | Questions only on published 🧱 logs whose author enabled them; per-thread `질문자`/`익명N` numbering with the log author always `작성자`; "helpful" affects card ordering only (no personal score); answerers choose whether anonymous answers count as junior contribution; reports and hiding; withdrawal of the publication closes the thread |
+| E-05 | Semantic search for similar stuck items | T-12 | Only stuck/resolution text from public snapshots is embedded (0 from private spaces); withdrawn or hidden items drop out on the next request; keyword search still works without an embedding provider; embargoed courses excluded |
+| E-06 | Interview prep pack (§10.5) | T-13 | Expected questions generated from decision and stuck citations of featured cases (templates, AI optional); answer notes are private; only questions the student selects appear to recruiters as "good questions to ask" |
+| E-07 | Limited share links | T-14 | Per portfolio-edition token (hash stored), expiry, revocation, view count only; token pages are noindex and excluded from search; 404 from the next request after revocation; shows only the edition's public cases and never widens visibility |
+| E-08 | Application PDF (§10.6) | T-14 | Server-generated PDF from the same public DTO as the print view, with evidence links; 0 information about an unlinked persona (S-01); generation rate limit |
+| E-09 | Kanban board view (§6.6) | T-07 | Status-column board; keyboard and button alternatives with the same result as drag; same permissions and ordering data as the list view; completion-to-log prompt kept |
+| E-10 | Per-log feedback comments | T-04 | Team members only; comments never enter public snapshots; kept across log revisions; authors delete, owners hide |
+| E-11 | GitHub App integration | T-08 | Per-repository installation linked to a project space; commits and PRs become evidence candidates for the contribution ledger (never auto-confirmed); webhook signature check and replay protection; tokens revoked on disconnect; private repository content never auto-enters public snapshots |
+| E-12 | AI retrospective interview (§6.4) | T-09 | Only when the student turns it on; log drafts are saved only after student approval and marked `AI 초안`; uses only that team's data; no-training API terms; the form check-in keeps working with AI off |
+| E-13 | AI meeting summary (§6.5) | T-08, E-12 | Only meeting channels the team agreed to; 🗣️ meeting log drafts (decisions, follow-ups) saved after team approval; raw conversation not stored |
+| E-14 | AI case polishing (§10.3) | T-13, E-12 | Only within the visibility the student chose; every sentence cites a source log; uncited sentences are highlighted and must be fixed or removed before publishing; records `generator = ai` |
+
+Start order: E-01 → E-02 → E-03 → E-04 → E-06 → E-07 → E-08 → E-09 → E-10 → E-05 → E-11 → E-12 → E-13 → E-14. AI items (E-12–E-14) stay off without a provider key, and core features must work without AI (product plan §15).
+
 ## 5. Acceptance scenarios
 
 **A. Recording a personal assignment without GitHub**
