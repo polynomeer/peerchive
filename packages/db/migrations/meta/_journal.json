@@ -316,6 +316,13 @@
       "when": 1793561102653,
       "tag": "0044_course_hub_notices",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1793563133092,
+      "tag": "0045_student_curators",
+      "breakpoints": true
     }
   ]
 }

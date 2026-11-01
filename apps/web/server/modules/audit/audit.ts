@@ -102,6 +102,14 @@ export type AuditAction =
   /** I-02(ADR 0044): 기관 운영진 지정·해제(지정 행 id + 기관·대상 사용자 id만), 기수 방 만들기(기관·기수 id·방식·운영진 여부). */
   | 'institution_staff.grant'
   | 'institution_staff.revoke'
+  // E-03(ADR 0048): 학생 큐레이터 지정·해제, 과제 유형 요약 고침, 개념 태그 병합 제안·결정, 1차 신고 의견. id·종류·version·플래그만(글 없음).
+  | 'curator.grant'
+  | 'curator.revoke'
+  | 'curator.summary_update'
+  | 'curator.tag_merge_propose'
+  | 'curator.report_recommend'
+  | 'concept_tag_proposal.approve'
+  | 'concept_tag_proposal.reject'
   | 'community.cohort_room_create'
   | 'community.board_create'
   | 'community.board_update'
@@ -233,6 +241,8 @@ export async function recordAudit(
       | 'invite_code'
       | 'certificate_check'
       | 'institution_staff'
+      | 'course_curator'
+      | 'concept_tag_proposal'
       | 'completion_retro'
       | 'room_item'
     targetId?: string | null

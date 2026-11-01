@@ -78,7 +78,7 @@ const age = (iso: string) => {
     </template>
     <template v-else>
       <h1>신고 대기열</h1>
-      <p><NuxtLink to="/operator/metrics">pilot 지표·시스템 상태 보기</NuxtLink> · <NuxtLink to="/operator/community">커뮤니티 운영(공식 페이지·공간)</NuxtLink> · <NuxtLink to="/operator/community-moderation">커뮤니티 제재(요청·작성자 확인·이용 제한)</NuxtLink> · <NuxtLink to="/operator/hub-opening">과목 허브 개방 진행</NuxtLink><template v-if="features.institutions"> · <NuxtLink to="/operator/certificates">수료증 확인</NuxtLink> · <NuxtLink to="/operator/verification-queue">인증 처리 큐</NuxtLink> · <NuxtLink to="/operator/institutions">기관 운영진</NuxtLink></template></p>
+      <p><NuxtLink to="/operator/metrics">pilot 지표·시스템 상태 보기</NuxtLink> · <NuxtLink to="/operator/community">커뮤니티 운영(공식 페이지·공간)</NuxtLink> · <NuxtLink to="/operator/community-moderation">커뮤니티 제재(요청·작성자 확인·이용 제한)</NuxtLink> · <NuxtLink to="/operator/hub-opening">과목 허브 개방 진행</NuxtLink> · <NuxtLink to="/operator/curators">학생 큐레이터·병합 제안</NuxtLink><template v-if="features.institutions"> · <NuxtLink to="/operator/certificates">수료증 확인</NuxtLink> · <NuxtLink to="/operator/verification-queue">인증 처리 큐</NuxtLink> · <NuxtLink to="/operator/institutions">기관 운영진</NuxtLink></template></p>
       <p class="hint">
         운영자는 공개됐던 내용만 봅니다(비공개 과제 공간은 볼 수 없음). 모든 처리·배정·이의 결정은 감사 기록에 남습니다. 삭제는 이 화면에서 하지 않습니다.
       </p>
@@ -100,6 +100,7 @@ const age = (iso: string) => {
             <NuxtLink :to="`/operator/reports/${g.reportId}`"><strong>{{ g.targetLabel || REPORT_TARGET_LABELS[g.targetType] }}</strong></NuxtLink>
             <span v-if="g.hold" class="badge embargo">게시 보류 중</span>
             <span v-if="g.autoHidden" class="badge embargo" data-testid="auto-hidden-badge">임시 숨김 · 우선 검토</span>
+            <span v-if="g.curatorRecommended" class="badge" data-testid="curator-recommended-badge">큐레이터 의견 있음</span>
           </p>
           <p class="small">
             <span :class="['badge', 'sla', `sla-${g.sla.state}`]" data-testid="sla-badge" :data-sla="g.sla.state">{{ slaText(g) }}</span>

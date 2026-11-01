@@ -430,6 +430,10 @@ export const archiveTransferTarget = pgEnum('archive_transfer_target', ['course_
 export const archiveTransferStatus = pgEnum('archive_transfer_status', ['awaiting_consent', 'done', 'cancelled'])
 /** 과목 허브 단계적 개방(E-02)의 본인 알림 행: 열리면 알려 주기 신청 / 선배 노트 요청 닫음. */
 export const courseHubNoticeKind = pgEnum('course_hub_notice_kind', ['open_notify', 'note_request'])
+/** 학생 큐레이터(E-03)의 개념 태그 병합 제안 상태: 운영자 대기 → 승인(운영자가 병합 실행) / 거절. */
+export const conceptTagProposalStatus = pgEnum('concept_tag_proposal_status', ['pending', 'approved', 'rejected'])
+/** 학생 큐레이터(E-03)의 1차 신고 검토 의견: 기각 권장 / 가리기 권장. 처리는 운영자만 합니다. */
+export const curatorRecommendation = pgEnum('curator_recommendation', ['dismiss', 'hide'])
 
 // ── 신원·프로필 (§6.1) ───────────────────────────────────────────────────
 
@@ -759,7 +763,7 @@ export const courses = pgTable(
     mergedInto: uuid('merged_into').references((): AnyPgColumn => courses.id),
     mergedAt: timestamp('merged_at', { withTimezone: true }),
     /**
-     * 수업이 팀을 배정하는 과목이라 팀원 찾기를 숨김(C-07, PROOFU_EVOLUTION_PLAN §8.8 "과목 큐레이터가 표시"). 큐레이터 역할이 아직 없어 운영자가 정합니다.
+     * 수업이 팀을 배정하는 과목이라 팀원 찾기를 숨김(C-07, PROOFU_EVOLUTION_PLAN §8.8 "과목 큐레이터가 표시"). 운영자 또는 그 과목 학생 큐레이터(E-03, ADR 0048)가 정합니다.
      * 정본 과목의 값만 봅니다. 공개 과목 허브 응답에는 싣지 않습니다.
      */
     teamFindingDisabled: boolean('team_finding_disabled').notNull().default(false),
@@ -2354,6 +2358,128 @@ export const courseHubNotices = pgTable(
     index('course_hub_notices_course_idx').on(t.courseId),
     check('course_hub_notices_opened_check', sql`${t.openedAt} is null or ${t.kind} = 'open_notify'`),
     check('course_hub_notices_note_request_check', sql`${t.kind} <> 'note_request' or ${t.dismissedAt} is not null`),
+  ],
+)
+
+// ── 학생 큐레이터 (E-03, PROOFU_EVOLUTION_PLAN §8.6, DELIVERY_PLAN §4.4, ADR 0048) ─────────────
+//
+// 과목마다 그 과목을 마친 고학년·졸업생 1~2명. 개념 태그 병합 제안·과제 유형 요약·1차 신고 검토(의견만)·팀원 찾기 끄기만 하고, 공개 철회·
+// 가리기·계정 조치·작성자 확인·신고 처리는 운영자만 합니다.
+
+/**
+ * 과목 큐레이터 지정. 운영자만 지정·해제(감사 id만). 정본 과목에 최대 2명(애플리케이션이 과목별 잠금 안에서 확인, 병합으로 넘칠 수 있음).
+ * 해제는 revoked_at·revoked_by를 채우고 행은 남깁니다(같은 사람을 다시 지정하면 새 행). 권한은 해제되지 않은 행 + active 계정일 때만이라
+ * 해제하는 순간 다음 요청부터 권한이 없습니다. show_in_portfolio는 본인만 켜고 끄며 기본 꺼짐(공개 프로필 "후배 기여"에 과목 이름 표시).
+ * 과목 병합 때 정본으로 옮기고(같은 사람이 이미 있으면 원본 쪽을 해제), 탈퇴 정리 때 그 사람의 행을 지웁니다.
+ */
+export const courseCurators = pgTable(
+  'course_curators',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    courseId: uuid('course_id')
+      .notNull()
+      .references(() => courses.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    /** 지정한 운영자. */
+    grantedBy: uuid('granted_by').references(() => users.id),
+    grantedAt: timestamp('granted_at', { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    revokedBy: uuid('revoked_by').references(() => users.id),
+    showInPortfolio: boolean('show_in_portfolio').notNull().default(false),
+  },
+  (t) => [
+    uniqueIndex('course_curators_open_key').on(t.courseId, t.userId).where(sql`${t.revokedAt} is null`),
+    index('course_curators_user_id_idx').on(t.userId),
+    check('course_curators_revoked_check', sql`${t.revokedAt} is not null or ${t.revokedBy} is null`),
+  ],
+)
+
+/**
+ * 과제 유형 요약(§8.6 "과제 유형 요약 정리"): 정본 과목마다 한 편, 큐레이터(또는 운영자)가 쓰는 짧은 글(1000자). 과목 허브(열린 허브)에 공개됩니다.
+ * 작성자 이름은 허브에 싣지 않습니다. 고칠 때마다 version이 오르고 감사 `curator.summary_update`(과목 id·version만)가 남습니다(이전 글은 보관하지 않음).
+ * 비우면 행을 지웁니다. 과목 병합 때 정본에 요약이 없으면 옮기고, 있으면 정본 것을 둡니다. 탈퇴 정리 때 updated_by만 비웁니다(글은 과목의 것).
+ */
+export const courseTypeSummaries = pgTable(
+  'course_type_summaries',
+  {
+    courseId: uuid('course_id')
+      .primaryKey()
+      .references(() => courses.id),
+    body: text('body').notNull(),
+    version: integer('version').notNull().default(1),
+    updatedBy: uuid('updated_by').references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    check('course_type_summaries_body_check', sql`char_length(${t.body}) between 1 and 1000`),
+    check('course_type_summaries_version_check', sql`${t.version} >= 1`),
+  ],
+)
+
+/**
+ * 큐레이터의 개념 태그 병합 제안. 원본 태그는 그 과목에 붙은 정본 태그, 대상은 아무 정본 태그. 운영자가 승인하면 기존 병합(ADR 0010)을 같은 트랜잭션에서
+ * 실행하고, 거절하면 상태만 바꿉니다. 같은 (원본, 대상)의 대기 제안은 하나. 탈퇴 정리 때 proposed_by만 비웁니다(제안·결정 기록은 남김).
+ */
+export const conceptTagMergeProposals = pgTable(
+  'concept_tag_merge_proposals',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    courseId: uuid('course_id')
+      .notNull()
+      .references(() => courses.id),
+    sourceTagId: uuid('source_tag_id')
+      .notNull()
+      .references(() => conceptTags.id),
+    targetTagId: uuid('target_tag_id')
+      .notNull()
+      .references(() => conceptTags.id),
+    proposedBy: uuid('proposed_by').references(() => users.id),
+    /** 제안 이유(300자, 선택). 운영자와 같은 과목 큐레이터가 봅니다. */
+    note: text('note'),
+    status: conceptTagProposalStatus('status').notNull().default('pending'),
+    decidedBy: uuid('decided_by').references(() => users.id),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('concept_tag_merge_proposals_pending_key').on(t.sourceTagId, t.targetTagId).where(sql`${t.status} = 'pending'`),
+    index('concept_tag_merge_proposals_course_idx').on(t.courseId),
+    index('concept_tag_merge_proposals_status_idx').on(t.status, t.createdAt),
+    check('concept_tag_merge_proposals_distinct_check', sql`${t.sourceTagId} <> ${t.targetTagId}`),
+    check('concept_tag_merge_proposals_note_check', sql`${t.note} is null or char_length(${t.note}) between 1 and 300`),
+    check('concept_tag_merge_proposals_decided_check', sql`(${t.status} = 'pending') = (${t.decidedAt} is null)`),
+  ],
+)
+
+/**
+ * 큐레이터의 1차 신고 검토 의견(기각 권장·가리기 권장 + 짧은 메모). 신고 묶음(같은 target_key의 처리 전 신고)의 가장 오래된 신고(report_id)에 붙고,
+ * 큐레이터마다 하나(다시 내면 고침). 운영자 신고 상세가 보여 주며 신고 상태·처리에는 영향이 없습니다. 탈퇴 정리 때 curator_id만 비웁니다.
+ */
+export const curatorReportRecommendations = pgTable(
+  'curator_report_recommendations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    reportId: uuid('report_id')
+      .notNull()
+      .references(() => reports.id),
+    targetKey: text('target_key').notNull(),
+    /** 의견을 낼 때의 정본 과목. */
+    courseId: uuid('course_id')
+      .notNull()
+      .references(() => courses.id),
+    curatorId: uuid('curator_id').references(() => users.id),
+    recommendation: curatorRecommendation('recommendation').notNull(),
+    note: text('note'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('curator_report_recommendations_report_curator_key').on(t.reportId, t.curatorId),
+    index('curator_report_recommendations_target_key_idx').on(t.targetKey),
+    check('curator_report_recommendations_note_check', sql`${t.note} is null or char_length(${t.note}) between 1 and 300`),
   ],
 )
 

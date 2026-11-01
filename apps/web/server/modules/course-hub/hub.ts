@@ -50,6 +50,7 @@ import {
 } from '@peerchive/db'
 import { loadCanonicalCourse } from '../catalog/catalog'
 import { listCourseTags } from '../catalog/tags'
+import { loadAssignmentTypeSummary } from '../curators/summaries'
 import { hubEnrollment } from '../course-registrations/enrollment-count'
 import { notFound } from '../errors'
 import { loadHiddenItems, redactSnapshot } from '../moderation/hidden-items'
@@ -331,5 +332,7 @@ export async function getPublicCourseHub(db: DbExecutor, courseId: unknown, now 
     otherSchools,
     // E-01: 지금 학기 등록 인원(5명 미만이면 null). 등록 테이블은 이 집계 함수로만 읽습니다.
     enrollment: await hubEnrollment(db, course.id, now),
+    // E-03: 큐레이터가 정리한 과제 유형 요약(작성자 없음). 없으면 null.
+    assignmentTypeSummary: await loadAssignmentTypeSummary(db, course.id),
   }
 }

@@ -255,6 +255,8 @@ const REGISTRATION_ALLOWED = [
   'api/v1/me/course-hubs/[id]/dismiss-note-request.post.ts',
   'api/v1/me/course-hub-notices/index.get.ts',
   'api/v1/me/course-hub-notices/[id]/dismiss.post.ts',
+  // E-03(ADR 0048): 큐레이터 지정 자격(그 과목을 마쳤는지, 참거짓만). 운영자 라우트는 이 모듈을 거치며 등록 테이블·모듈을 직접 부르지 않습니다.
+  'modules/curators/assignments.ts',
 ].map((p) => join(SERVER, p))
 
 describe('E-01 boundary lint: course registrations stay with their owner (source)', () => {

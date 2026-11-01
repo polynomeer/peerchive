@@ -11,6 +11,7 @@
  *   정본에 같은 (연도, 학기)가 있으면 원본 학기를 그 학기로 병합해 프로젝트·학기 엠바고를 옮깁니다. 옮겨진 프로젝트의
  *   embargo_until은 단조 규칙대로 max(지금 값, 정본 학기 종료·학기 엠바고)입니다. 개념 태그 연결도 정본으로 옮깁니다.
  *   과목 허브(T-13)의 공개 release 과목 연결(publication_candidates.course_id)과 선배 노트(senior_notes.course_id)도 정본으로 옮깁니다.
+ *   학생 큐레이터 지정·과제 유형 요약·병합 제안·신고 의견(E-03, ADR 0048)도 정본으로 옮깁니다.
  * - 개념 태그: 과목 연결과 하위 태그(parent_id)를 정본으로 옮깁니다.
  * 순환·사슬 방지: 대상은 정본(merged_into null)이어야 하고 원본도 아직 병합되지 않아야 하며(checkMerge),
  * 원본을 가리키던 병합 행도 정본을 가리키게 바꿔(평탄화) 항상 한 단계입니다.
@@ -19,9 +20,13 @@ import { z } from 'zod'
 import { checkMerge, raiseEmbargo, type MergeCheck } from '@peerchive/domain'
 import {
   and,
+  conceptTagMergeProposals,
   conceptTags,
   courseConceptTags,
+  courseCurators,
   courseHubNotices,
+  courseTypeSummaries,
+  curatorReportRecommendations,
   courseRegistrations,
   courseTerms,
   courses,
@@ -246,6 +251,24 @@ export async function mergeCourse(db: DbExecutor, actor: Actor, sourceId: unknow
         and exists (select 1 from ${courseHubNotices} t where t.course_id = ${target.id} and t.user_id = n.user_id and t.kind = n.kind)`)
     await tx.update(courseHubNotices).set({ courseId: target.id }).where(eq(courseHubNotices.courseId, source.id))
 
+    // 학생 큐레이터(E-03, ADR 0048): 지정 행을 정본으로 옮깁니다. 같은 사람이 정본에도 지정돼 있으면 원본 쪽 행을 해제합니다(운영자 해제와 같은 모양).
+    // 옮긴 뒤 정본에 2명을 넘을 수 있습니다(운영자 정리 대상, 태그 12개와 같음). 과제 유형 요약은 정본에 없을 때만 옮기고, 병합 제안·신고 의견은 정본으로.
+    const curatorsClosed = await tx.execute<{ id: string }>(sql`
+      update ${courseCurators} c set revoked_at = ${now.toISOString()}::timestamptz, revoked_by = ${actor.userId}
+      where c.course_id = ${source.id} and c.revoked_at is null
+        and exists (select 1 from ${courseCurators} t where t.course_id = ${target.id} and t.user_id = c.user_id and t.revoked_at is null)
+      returning c.id`)
+    const curatorsMoved = await tx
+      .update(courseCurators)
+      .set({ courseId: target.id })
+      .where(eq(courseCurators.courseId, source.id))
+      .returning({ id: courseCurators.id })
+    await tx.execute(sql`
+      update ${courseTypeSummaries} set course_id = ${target.id}
+      where course_id = ${source.id} and not exists (select 1 from ${courseTypeSummaries} t where t.course_id = ${target.id})`)
+    await tx.update(conceptTagMergeProposals).set({ courseId: target.id }).where(eq(conceptTagMergeProposals.courseId, source.id))
+    await tx.update(curatorReportRecommendations).set({ courseId: target.id }).where(eq(curatorReportRecommendations.courseId, source.id))
+
     await tx.update(courses).set({ mergedInto: target.id }).where(eq(courses.mergedInto, source.id))
     await tx.update(courses).set({ mergedInto: target.id, mergedAt: now }).where(eq(courses.id, source.id))
     await recordAudit(tx, {
@@ -262,6 +285,8 @@ export async function mergeCourse(db: DbExecutor, actor: Actor, sourceId: unknow
         releasesRehomed: releasesRehomed.length,
         seniorNotesRehomed: notesRehomed.length,
         courseQaRehomed: qaRehomed.length,
+        curatorsMoved: curatorsMoved.length,
+        curatorsClosed: curatorsClosed.length,
       },
     })
     return toCourseDto(target)
@@ -280,31 +305,44 @@ export async function mergeConceptTag(
   const input = parseInput(mergeSchema, rawInput)
   if (!isUuid(sourceId)) throw notFound()
   if (sourceId.toLowerCase() === input.into) throw invalid({ into: 'self' })
-  return db.transaction(async (tx) => {
-    const load = async (id: string) => (await tx.select().from(conceptTags).where(eq(conceptTags.id, id)).limit(1).for('update'))[0]
-    const { source, target } = await lockPair(load, sourceId.toLowerCase(), input.into)
-    throwMergeError(checkMerge(source, target))
+  return db.transaction((tx) => mergeConceptTagInTx(tx, actor, sourceId.toLowerCase(), input.into, now))
+}
 
-    await tx.execute(sql`
-      insert into ${courseConceptTags} (course_id, tag_id, added_by, created_at)
-      select course_id, ${target.id}, added_by, created_at from ${courseConceptTags} where tag_id = ${source.id}
-      on conflict do nothing`)
-    const unlinked = await tx.delete(courseConceptTags).where(eq(courseConceptTags.tagId, source.id)).returning({ courseId: courseConceptTags.courseId })
-    // 하위 태그는 정본 아래로. 정본이 원본의 하위였다면 원본의 상위로 올립니다(자기 자신을 상위로 두지 않음).
-    await tx.update(conceptTags).set({ parentId: target.id }).where(and(eq(conceptTags.parentId, source.id), ne(conceptTags.id, target.id)))
-    if (target.parentId === source.id) {
-      const parent = source.parentId && source.parentId !== target.id ? source.parentId : null
-      await tx.update(conceptTags).set({ parentId: parent }).where(eq(conceptTags.id, target.id))
-    }
-    await tx.update(conceptTags).set({ mergedInto: target.id }).where(eq(conceptTags.mergedInto, source.id))
-    await tx.update(conceptTags).set({ mergedInto: target.id, mergedAt: now }).where(eq(conceptTags.id, source.id))
-    await recordAudit(tx, {
-      actorId: actor.userId,
-      action: 'concept_tag.merge',
-      targetType: 'concept_tag',
-      targetId: source.id,
-      metadata: { into: target.id, coursesRelinked: unlinked.length },
-    })
-    return toConceptTagDto(target)
+/**
+ * 개념 태그 병합 본체(트랜잭션 안에서). 운영자 확인은 호출자가 합니다 — 운영자 병합 경로와 큐레이터 병합 제안 승인(E-03, curators/tag-proposals.ts)이
+ * 같은 규칙을 씁니다. 원본이 없으면 404, 대상이 없으면 422, 병합 규칙 위반은 409·422(checkMerge).
+ */
+export async function mergeConceptTagInTx(
+  tx: DbExecutor,
+  actor: Actor,
+  sourceId: string,
+  targetId: string,
+  now: Date,
+  extraMetadata: Record<string, string> = {},
+): Promise<ConceptTagDto> {
+  const load = async (id: string) => (await tx.select().from(conceptTags).where(eq(conceptTags.id, id)).limit(1).for('update'))[0]
+  const { source, target } = await lockPair(load, sourceId, targetId)
+  throwMergeError(checkMerge(source, target))
+
+  await tx.execute(sql`
+    insert into ${courseConceptTags} (course_id, tag_id, added_by, created_at)
+    select course_id, ${target.id}, added_by, created_at from ${courseConceptTags} where tag_id = ${source.id}
+    on conflict do nothing`)
+  const unlinked = await tx.delete(courseConceptTags).where(eq(courseConceptTags.tagId, source.id)).returning({ courseId: courseConceptTags.courseId })
+  // 하위 태그는 정본 아래로. 정본이 원본의 하위였다면 원본의 상위로 올립니다(자기 자신을 상위로 두지 않음).
+  await tx.update(conceptTags).set({ parentId: target.id }).where(and(eq(conceptTags.parentId, source.id), ne(conceptTags.id, target.id)))
+  if (target.parentId === source.id) {
+    const parent = source.parentId && source.parentId !== target.id ? source.parentId : null
+    await tx.update(conceptTags).set({ parentId: parent }).where(eq(conceptTags.id, target.id))
+  }
+  await tx.update(conceptTags).set({ mergedInto: target.id }).where(eq(conceptTags.mergedInto, source.id))
+  await tx.update(conceptTags).set({ mergedInto: target.id, mergedAt: now }).where(eq(conceptTags.id, source.id))
+  await recordAudit(tx, {
+    actorId: actor.userId,
+    action: 'concept_tag.merge',
+    targetType: 'concept_tag',
+    targetId: source.id,
+    metadata: { into: target.id, coursesRelinked: unlinked.length, ...extraMetadata },
   })
+  return toConceptTagDto(target)
 }

@@ -14,6 +14,7 @@
  *   별도 필드입니다(조치가 있고 notifyOwner면 필수).
  * - 제한 해제 `POST /operator/publications/:id/lift-restriction {note}`: restricted → draft(owner가 후보·동의·게시를 다시 함).
  * - 이의제기 `GET /operator/appeals?status=`·`POST /operator/appeals/:id/decide {decision: uphold|reverse, note}`: 되돌리면 조치를 풉니다.
+ * - 학생 큐레이터(E-03, ADR 0048)의 1차 검토 의견: 대기열 묶음의 `curatorRecommended`, 상세의 `curatorRecommendations`(의견·메모·큐레이터 이름). 의견은 신고 상태를 바꾸지 않습니다.
  * - 감사 `GET /operator/audit?target=<id>`: 그 대상(또는 조치·신고 id)의 감사 기록. 감사에는 신고 설명·메모 글이 없습니다(id·종류만).
  */
 import { z } from 'zod'
@@ -60,6 +61,7 @@ import { loadRetroForOperator } from '../institutions/completion-retros'
 import { recordAudit } from '../audit/audit'
 import { communityItemStatuses, operatorCommunityItem, operatorRecruitmentItem, operatorRoomItem, operatorSpaceContent } from '../community/reporting'
 import { requireOperator } from '../catalog/operators'
+import { curatorRecommendationsFor, reportIdsWithRecommendation } from '../curators/recommendations'
 import { publicNotePath } from '../course-hub/search'
 import { publicQaPath, toPublicCourseQa } from '../course-hub/course-qa'
 import { toPublicSeniorNote } from '../course-hub/hub'
@@ -152,6 +154,7 @@ export async function listReportGroups(db: DbExecutor, actor: Actor, rawQuery: R
         .where(and(inArray(holds.createdByReportId, rows.map((r) => r.report.id)), isNull(holds.releasedAt)))
     : []
   const held = new Set(openHolds.map((h) => h.reportId))
+  const recommended = await reportIdsWithRecommendation(db, rows.map((r) => r.report.id))
   const groups = new Map<string, { first: ReportRow; rows: typeof rows }>()
   for (const r of rows) {
     const g = groups.get(r.report.targetKey) ?? { first: r.report, rows: [] }
@@ -191,6 +194,7 @@ export async function listReportGroups(db: DbExecutor, actor: Actor, rawQuery: R
       assignee: assigned ? { userId: assigned.report.assignedTo!, displayName: assigned.assigneeName ?? '' } : null,
       hold: members.some((m) => held.has(m.report.id)),
       autoHidden: itemStatus.get(first.communityCommentId ?? first.communityPostId ?? '') === 'auto_hidden',
+      curatorRecommended: members.some((m) => recommended.has(m.report.id)),
       sla: {
         priority: sla.priority,
         startedAt: sla.startedAt.toISOString(),
@@ -428,6 +432,8 @@ async function detail(db: DbExecutor, report: ReportRow, now: Date, operatorId: 
     holds: holdRows.map((h) => ({ reason: h.reason, createdAt: h.createdAt.toISOString(), releasedAt: h.releasedAt?.toISOString() ?? null })),
     actions,
     allowedActions: [...ACTIONS_BY_TARGET[report.targetType]],
+    // E-03: 과목 큐레이터의 1차 검토 의견(의견만, 처리는 운영자).
+    curatorRecommendations: await curatorRecommendationsFor(db, report.targetKey),
   }
 }
 

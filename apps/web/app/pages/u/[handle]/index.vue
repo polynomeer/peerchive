@@ -155,6 +155,10 @@ const years = computed(() => {
         <p>
           공개한 계획을 포크한 사람 {{ profile.juniorContribution.planForks }}명 · 이름으로 남긴 선배 노트 {{ profile.juniorContribution.seniorNotes }}개
         </p>
+        <p v-if="profile.juniorContribution.curatedCourses.length" data-testid="curated-courses">
+          학생 큐레이터:
+          <template v-for="(c, i) in profile.juniorContribution.curatedCourses" :key="i"><template v-if="i"> · </template>{{ c.schoolName }} {{ c.courseTitle }}</template>
+        </p>
         <p class="hint">개수만 보여 주며 순위를 매기지 않습니다.</p>
       </section>
 

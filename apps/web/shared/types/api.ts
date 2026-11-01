@@ -1455,6 +1455,8 @@ export interface PublicCourseHubDto {
   otherSchools: CourseHubRelatedDto[]
   /** "이번 학기 수강 중 N명"(E-01): 지금 학기에 이 과목을 등록한 active 사용자 수. 5명 미만이면 null(표시하지 않음). 익명 집계뿐입니다. */
   enrollment: { termLabel: string; count: number } | null
+  /** 과제 유형 요약(E-03, ADR 0048): 과목 큐레이터가 정리한 짧은 글. 작성자 이름은 싣지 않습니다. 없으면 null. */
+  assignmentTypeSummary: AssignmentTypeSummaryDto | null
 }
 
 /**
@@ -1802,8 +1804,10 @@ export interface PublicPortfolioProfileDto extends PortfolioViewDto {
   contactText: string
   openToWork: boolean
   edition: { version: number; createdAt: string } | null
-  /** 후배 기여: 개수만, 순위 없음. */
-  juniorContribution: { planForks: number; seniorNotes: number }
+  /**
+   * 후배 기여: 개수만, 순위 없음. curatedCourses(E-03, ADR 0048)는 지금 큐레이터인 과목 중 본인이 포트폴리오 표시를 켠 것만(기본 꺼짐, 실명 프로필만).
+   */
+  juniorContribution: { planForks: number; seniorNotes: number; curatedCourses: CuratedCourseLabelDto[] }
   timeline: PublicTimelineItemDto[]
   /** 학교 인증 배지(C-01). 본인이 켰을 때만, active 인증의 학교 이름 + 졸업생 여부. 학과·메일·도메인 없음. */
   affiliationBadges: PublicAffiliationBadgeDto[]
@@ -2200,6 +2204,8 @@ export interface OperatorReportGroupDto {
   autoHidden: boolean
   /** 처리 기한(C-10, ADR 0027). 처리 전 묶음은 지금까지, 끝난 묶음은 처리 시각까지. */
   sla: ReportSlaDto
+  /** 과목 큐레이터의 1차 검토 의견이 이 묶음의 신고에 있는지(E-03, ADR 0048). */
+  curatorRecommended: boolean
 }
 
 export type ReportSlaState = 'ok' | 'due_soon' | 'overdue'
@@ -2337,6 +2343,8 @@ export interface OperatorReportDetailDto {
   holds: Array<{ reason: ReportReason; createdAt: string; releasedAt: string | null }>
   actions: OperatorActionDto[]
   allowedActions: ModerationActionKind[]
+  /** 과목 큐레이터의 1차 검토 의견(E-03, ADR 0048). 같은 대상의 의견 전부(최근 것부터). 처리는 운영자가 합니다. */
+  curatorRecommendations: OperatorCuratorRecommendationDto[]
 }
 
 export interface OperatorAppealDto {
@@ -3798,4 +3806,105 @@ export interface CompletionRetroComposerDto {
   displayPersonaName: string | null
   guideline: string
   broadenedNote: string
+}
+
+// ── 학생 큐레이터 (E-03, PROOFU_EVOLUTION_PLAN §8.6, ADR 0048) ─────────────────
+
+export type CuratorRecommendationKind = 'dismiss' | 'hide'
+export type ConceptTagProposalStatus = 'pending' | 'approved' | 'rejected'
+
+/** 과목 허브의 과제 유형 요약. 작성자 없음. */
+export interface AssignmentTypeSummaryDto {
+  body: string
+  version: number
+  updatedAt: string
+}
+
+/** 공개 프로필 "후배 기여"의 큐레이터 과목(과목·학교 이름만). */
+export interface CuratedCourseLabelDto {
+  courseTitle: string
+  schoolName: string
+}
+
+export interface CuratorCourseRefDto {
+  id: string
+  title: string
+  code: string | null
+  schoolName: string
+}
+
+/** GET /api/v1/operator/courses/:id/curators · GET /api/v1/operator/curators — 운영자만. 사용자 id·계정 이름·지정 시각. */
+export interface OperatorCourseCuratorDto {
+  id: string
+  course: CuratorCourseRefDto
+  userId: string
+  displayName: string
+  grantedAt: string
+}
+
+/** GET /api/v1/me/curated-courses — 내가 지금 큐레이터인 과목. */
+export interface MyCuratedCourseDto {
+  course: CuratorCourseRefDto
+  grantedAt: string
+  /** 공개 프로필 "후배 기여"에 이 과목을 보일지(본인 선택, 기본 꺼짐). */
+  showInPortfolio: boolean
+}
+
+export interface ConceptTagProposalDto {
+  id: string
+  course: CuratorCourseRefDto
+  source: ConceptTagDto
+  target: ConceptTagDto
+  note: string | null
+  status: ConceptTagProposalStatus
+  createdAt: string
+  decidedAt: string | null
+  /** 큐레이터 화면: 내가 낸 제안인지(다른 큐레이터의 이름은 싣지 않음). */
+  mine?: boolean
+  /** 운영자 화면만: 제안한 큐레이터(탈퇴했으면 null). */
+  proposer?: { userId: string; displayName: string } | null
+}
+
+/** GET /api/v1/curator/courses/:id — 큐레이터(또는 운영자) 작업 화면. */
+export interface CuratorWorkspaceDto {
+  course: CuratorCourseRefDto
+  /** 운영자로서 보는지(병합 제안·신고 의견은 큐레이터만). */
+  operator: boolean
+  summary: AssignmentTypeSummaryDto | null
+  conceptTags: ConceptTagDto[]
+  proposals: ConceptTagProposalDto[]
+  teamFindingDisabled: boolean
+}
+
+/** 큐레이터가 보는 신고 대상 내용: 지금 공개 중인 것만(공개 화면과 같은 내용). */
+export type CuratorReportContentDto =
+  | { kind: 'senior_note'; note: PublicSeniorNoteDto }
+  | { kind: 'course_qa'; qa: PublicCourseQaDto }
+  | { kind: 'publication'; title: string; summary: string; itemKind: 'log' | 'claim' | 'artifact' | null }
+  | { kind: 'unavailable'; message: string }
+
+/**
+ * GET /api/v1/curator/courses/:id/reports — 그 과목 허브 항목에 대한 처리 전 신고 묶음. **신고자 신원·신고 설명·신고 시각 없음**, 사유별 개수만.
+ * 작성자 신원도 공개 화면에 보이는 것 말고는 없습니다.
+ */
+export interface CuratorReportGroupDto {
+  /** 묶음의 가장 오래된 처리 전 신고(의견을 붙이는 곳). */
+  reportId: string
+  targetType: 'senior_note' | 'course_qa' | 'publication' | 'publication_item'
+  targetLabel: string
+  reasons: Partial<Record<ReportReason, number>>
+  content: CuratorReportContentDto
+  /** 지금 공개 경로(공개 중일 때만). */
+  publicPath: string | null
+  myRecommendation: { recommendation: CuratorRecommendationKind; note: string | null; updatedAt: string } | null
+}
+
+export interface OperatorCuratorRecommendationDto {
+  reportId: string
+  recommendation: CuratorRecommendationKind
+  note: string | null
+  /** 의견을 낸 큐레이터(탈퇴했으면 null). */
+  curator: { userId: string; displayName: string } | null
+  createdAt: string
+  updatedAt: string
 }

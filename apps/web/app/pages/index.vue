@@ -16,6 +16,8 @@ const { me } = useAuth()
     <ClientOnly><CourseRegistrationCards v-if="me" /></ClientOnly>
     <!-- 과목 허브 소식(E-02): 단계적 개방이 켜져 있을 때 본인에게만(열림 알림·선배 노트 요청). -->
     <ClientOnly><HubOpeningNotices v-if="me" /></ClientOnly>
+    <!-- 학생 큐레이터(E-03): 지금 큐레이터인 과목이 있을 때만. -->
+    <ClientOnly><CuratorCourses v-if="me" /></ClientOnly>
   </div>
 </template>
 

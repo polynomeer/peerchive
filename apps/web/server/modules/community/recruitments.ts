@@ -79,6 +79,7 @@ import { emitAnalytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
 import { loadCanonicalTerm } from '../catalog/catalog'
 import { requireOperator } from '../catalog/operators'
+import { requireCuratorOrOperator } from '../curators/access'
 import { type Actor, ServiceError, conflict, forbidden, invalid, notFound, rateLimited } from '../errors'
 import { HANDLE_PATTERN } from '../identity/profiles'
 import { isUuid } from '../projects/access'
@@ -995,7 +996,7 @@ export const teamFindingSchema = z.object({ disabled: z.boolean({ error: (i) => 
 
 /**
  * POST /operator/community/courses/:id/team-finding {disabled} — 수업이 팀을 배정하는 과목이라 팀원 찾기를 숨김(§8.8 "과목 큐레이터가 표시").
- * 큐레이터 역할이 생기기 전까지 운영자만(403 `operator_only`). 정본 과목에 저장합니다. 켜면 그 과목의 팀원 모집은 모집자 외에는 보이지 않고
+ * 운영자만(403 `operator_only`). 학생 큐레이터(E-03)는 아래 setCourseTeamFindingAsCurator로 자기 과목만 바꿉니다. 정본 과목에 저장합니다. 켜면 그 과목의 팀원 모집은 모집자 외에는 보이지 않고
  * 새로 올릴 수 없습니다(409 `team_finding_disabled`). 스터디 모집은 영향 없음. 200 `{courseId, teamFindingDisabled}`.
  */
 export async function setCourseTeamFinding(db: DbExecutor, actor: Actor, courseId: unknown, rawInput: unknown): Promise<{ courseId: string; teamFindingDisabled: boolean }> {
@@ -1007,6 +1008,31 @@ export async function setCourseTeamFinding(db: DbExecutor, actor: Actor, courseI
   return db.transaction(async (tx) => {
     await tx.update(courses).set({ teamFindingDisabled: input.disabled }).where(eq(courses.id, course.id))
     await recordAudit(tx, { actorId: actor.userId, action: 'community.course_team_finding', targetType: 'course', targetId: course.id, metadata: { disabled: input.disabled } })
+    return { courseId: course.id, teamFindingDisabled: input.disabled }
+  })
+}
+
+/**
+ * POST /community/courses/:id/team-finding {disabled} — 학생 큐레이터(E-03, ADR 0048)가 자기 과목의 팀원 찾기를 끄고 켭니다(§8.8 "과목 큐레이터가 표시").
+ * 그 과목 큐레이터 또는 운영자(403 `curator_only`). 운영자 경로와 같은 플래그·감사(`community.course_team_finding`, metadata에 `byCurator`).
+ */
+export async function setCourseTeamFindingAsCurator(
+  db: DbExecutor,
+  actor: Actor,
+  courseId: unknown,
+  rawInput: unknown,
+): Promise<{ courseId: string; teamFindingDisabled: boolean }> {
+  const { course, operator } = await requireCuratorOrOperator(db, actor, courseId)
+  const input = parseInput(teamFindingSchema, rawInput)
+  return db.transaction(async (tx) => {
+    await tx.update(courses).set({ teamFindingDisabled: input.disabled }).where(eq(courses.id, course.id))
+    await recordAudit(tx, {
+      actorId: actor.userId,
+      action: 'community.course_team_finding',
+      targetType: 'course',
+      targetId: course.id,
+      metadata: { disabled: input.disabled, byCurator: !operator },
+    })
     return { courseId: course.id, teamFindingDisabled: input.disabled }
   })
 }

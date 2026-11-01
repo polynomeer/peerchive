@@ -126,6 +126,13 @@ const difficultyText = computed(() => {
         </form>
       </header>
 
+      <!-- E-03: 과목 큐레이터가 정리한 과제 유형 요약(작성자 이름 없음). 없으면 그리지 않습니다. -->
+      <section v-if="hub.assignmentTypeSummary" aria-labelledby="hub-assignment-types" data-testid="hub-assignment-types">
+        <h2 id="hub-assignment-types">과제 유형 요약</h2>
+        <p class="pre">{{ hub.assignmentTypeSummary.body }}</p>
+        <p class="small muted">이 과목을 마친 학생 큐레이터가 정리했습니다 · {{ formatDay(hub.assignmentTypeSummary.updatedAt) }} 고침</p>
+      </section>
+
       <section aria-labelledby="hub-workload">
         <h2 id="hub-workload">체감 소요 시간·난이도</h2>
         <template v-if="hub.workload.stats">

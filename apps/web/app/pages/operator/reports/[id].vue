@@ -301,6 +301,21 @@ async function loadAudit() {
         <p v-else-if="data.content.kind === 'unavailable'" class="muted">{{ data.content.message }}</p>
       </section>
 
+      <!-- E-03: 과목 큐레이터의 1차 검토 의견(의견만 — 처리는 아래에서 운영자가 합니다). -->
+      <section v-if="data.curatorRecommendations.length" aria-labelledby="op-curator" data-testid="curator-recommendations">
+        <h2 id="op-curator">큐레이터 1차 검토 의견</h2>
+        <ul class="plain operator-list">
+          <li v-for="r in data.curatorRecommendations" :key="`${r.reportId}-${r.curator?.userId ?? 'gone'}`">
+            <p>
+              <strong>{{ r.recommendation === 'hide' ? '가리기 권장' : '기각 권장' }}</strong>
+              · {{ r.curator?.displayName || '탈퇴한 큐레이터' }} · {{ formatDateTime(r.updatedAt) }}
+            </p>
+            <p v-if="r.note" class="small">{{ r.note }}</p>
+          </li>
+        </ul>
+        <p class="small muted">큐레이터는 신고자·신고 설명·작성자를 보지 못하고, 처리·가리기·계정 조치를 하지 않습니다.</p>
+      </section>
+
       <section v-if="open" aria-labelledby="op-resolve">
         <h2 id="op-resolve">처리</h2>
         <form class="stack" @submit.prevent="resolve">

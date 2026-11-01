@@ -88,6 +88,14 @@ async function finishedCourseIds(db: DbExecutor, userId: string, now: Date, cano
   return rows.map((r) => r.course_id)
 }
 
+/**
+ * 이 사람이 이 과목(정본)을 마쳤는지(위와 같은 판정, 플래그와 무관). 학생 큐레이터 지정 자격(E-03, ADR 0048)이 씁니다 — 참거짓만 돌려주고
+ * 등록 행·학기·과제 공간은 내보내지 않습니다.
+ */
+export async function hasFinishedCourse(db: DbExecutor, userId: string, canonicalCourseId: string, now: Date): Promise<boolean> {
+  return (await finishedCourseIds(db, userId, now, canonicalCourseId)).length > 0
+}
+
 /** 내 선배 노트(초안·게시·숨김, 철회 제외)가 있는 정본 과목 id. */
 async function coursesWithMyNote(db: DbExecutor, userId: string, canonicalIds: readonly string[]): Promise<Set<string>> {
   if (canonicalIds.length === 0) return new Set()

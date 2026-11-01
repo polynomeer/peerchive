@@ -89,6 +89,11 @@ import {
   courses,
   courseRegistrations,
   courseHubNotices,
+  conceptTags,
+  courseCurators,
+  conceptTagMergeProposals,
+  curatorReportRecommendations,
+  courseTypeSummaries,
   courseTerms,
   schools,
   type Database,
@@ -756,6 +761,35 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect(await count(tx, institutionStaff, eq(institutionStaff.userId, M.id))).toBe(1)
       const ledger = await tx.select().from(deletionLedger).where(eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, U.id)))
       expect(ledger.find((l) => l.entityKind === 'institution_staff')?.count).toBe(1)
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('deletes the purged curator\'s assignments and blanks their name on proposals, report recommendations and summaries (E-03)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴큐레이터', 'deleted')
+      const M = await user(tx, '남는큐레이터')
+      const tag = id().slice(0, 8)
+      const [school] = await tx.insert(schools).values({ name: `큐레이터대학${tag}`, nameKey: `curatorschool${tag}` }).returning()
+      const [course] = await tx.insert(courses).values({ schoolId: school!.id, title: `큐레이터과목${tag}`, titleKey: `curatorcourse${tag}` }).returning()
+      await tx.insert(courseCurators).values([
+        { courseId: course!.id, userId: U.id, grantedBy: M.id, grantedAt: NOW, showInPortfolio: true },
+        { courseId: course!.id, userId: U.id, grantedBy: M.id, grantedAt: NOW, revokedAt: NOW, revokedBy: M.id },
+        { courseId: course!.id, userId: M.id, grantedBy: U.id, grantedAt: NOW },
+      ])
+      const [a, b] = await tx.insert(conceptTags).values([{ slug: `a-${tag}`, label: 'a' }, { slug: `b-${tag}`, label: 'b' }]).returning()
+      const [proposal] = await tx.insert(conceptTagMergeProposals).values({ courseId: course!.id, sourceTagId: a!.id, targetTagId: b!.id, proposedBy: U.id, note: '같은 개념' }).returning()
+      const [report] = await tx.insert(reports).values({ reporterId: M.id, targetType: 'profile', targetKey: `profile:${tag}`, profileUserId: M.id, reason: 'spam' }).returning()
+      await tx.insert(curatorReportRecommendations).values({ reportId: report!.id, targetKey: report!.targetKey, courseId: course!.id, curatorId: U.id, recommendation: 'dismiss' })
+      await tx.insert(courseTypeSummaries).values({ courseId: course!.id, body: '팀 구현 과제 3개', updatedBy: U.id })
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ course_curators: 2, curator_actor_refs: 3 })
+      expect(await count(tx, courseCurators, eq(courseCurators.userId, U.id))).toBe(0)
+      expect(await count(tx, courseCurators, eq(courseCurators.userId, M.id))).toBe(1)
+      expect((await tx.select().from(conceptTagMergeProposals).where(eq(conceptTagMergeProposals.id, proposal!.id)))[0]).toMatchObject({ proposedBy: null, note: '같은 개념' })
+      expect(await count(tx, curatorReportRecommendations, eq(curatorReportRecommendations.reportId, report!.id))).toBe(1)
+      expect(await count(tx, curatorReportRecommendations, eq(curatorReportRecommendations.curatorId, U.id))).toBe(0)
+      expect((await tx.select().from(courseTypeSummaries).where(eq(courseTypeSummaries.courseId, course!.id)))[0]).toMatchObject({ updatedBy: null, body: '팀 구현 과제 3개' })
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })
