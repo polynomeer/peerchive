@@ -20,7 +20,7 @@ import {
   canRemoveSpaceMember,
   chooseOwnerSuccessor,
   hasRoomFor,
-  isOfficialKind,
+  isOperatorSpaceKind,
   type JoinDecision,
 } from '@peerchive/domain'
 import { and, asc, eq, inArray, profiles, spaceMemberships, users, type DbExecutor } from '@peerchive/db'
@@ -202,7 +202,7 @@ const ROLE_ORDER = { owner: 0, admin: 1, moderator: 2, member: 3 } as const
 /** GET /community/spaces/:slug/members — owner·admin만(403). 공식 페이지는 409 `no_member_list`. */
 export async function listMembers(db: DbExecutor, actor: Actor, ref: unknown): Promise<SpaceMembersDto> {
   const ctx = await loadReadableSpace(db, actor, ref)
-  if (isOfficialKind(ctx.space.row.kind)) throw conflict('no_member_list')
+  if (isOperatorSpaceKind(ctx.space.row.kind)) throw conflict('no_member_list')
   const m = membershipFacts(ctx.membership)
   // 보관·제한된 방에서도 owner·admin은 목록을 봅니다(관리는 못 함).
   if (!m || m.status !== 'active' || (m.role !== 'owner' && m.role !== 'admin')) throw forbidden()

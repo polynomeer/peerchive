@@ -44,6 +44,7 @@ import { createRoomEvent, respondToEvent } from '../server/modules/community/roo
 import { createRoomPoll, voteOnPoll } from '../server/modules/community/room-polls'
 import { putMyRoomProfile } from '../server/modules/community/room-profiles'
 import { createRoom } from '../server/modules/community/spaces'
+import { createTopic } from '../server/modules/community/topics'
 import { searchPublic } from '../server/modules/course-hub/search'
 import { setFeatureEnvForTesting } from '../server/modules/features'
 import { getPublicProfile, updateRealName, upsertProfile } from '../server/modules/identity/profiles'
@@ -416,7 +417,9 @@ describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
 
 // ── DB: 작성 시점 페르소나·투영 트리거 ────────────────────────────────────
 
-type Mode = 'real' | 'display' | 'anonymous'
+type Mode = 'real' | 'display' | 'anonymous' | 'affiliated_anonymous'
+/** 0~1단계(익명·소속 표시 익명, A-05): 어떤 페르소나 출력에도 나가면 안 되는 글. */
+const isStageZeroOrOne = (mode: Mode) => mode === 'anonymous' || mode === 'affiliated_anonymous'
 
 interface Person {
   userId: string
@@ -713,6 +716,35 @@ async function buildWorld(tx: DbExecutor, seed: number) {
   }
   await writeRound(2)
 
+  // A-05(ADR 0042): 학교를 넘나드는 토픽의 소속 표시 익명(1단계) 글·댓글(별도 난수 — 기존 세계는 그대로). 표시 범위를 무작위로 고르고,
+  // 위의 "모든 페르소나로 투영 시도"·outbox 처리에 함께 들어가 0건이어야 합니다. 토픽 이름·소속 표시도 페르소나 출력에 없어야 합니다.
+  const tr = rng(seed ^ 0xa05)
+  const topicMark = `${seed.toString(36)}t${crypto.randomUUID().slice(0, 4)}`
+  const topic = await createTopic(tx, { userId: opId }, { name: `TOPIC${topicMark}`, category: tr.pick(['career', 'grad_school', 'startup'] as const) }, T0)
+  const topicValues = [`TOPIC${topicMark}`, topic.slug]
+  const topicBoard = topic.boards[0]!.id
+  const posts = tr.int(2, 4)
+  for (let i = 0; i < posts; i++) {
+    const marker = `S02T-${seed}-${i}-${crypto.randomUUID().slice(0, 6)}`
+    const at = tick()
+    const author = tr.pick(people)
+    const scope = tr.pick(['institution', 'institution_kind', 'none'] as const)
+    const post = await createPost(tx, { userId: author.userId }, topicBoard, { title: `제목 ${marker}`, body: `본문 ${marker}`, affiliationScope: scope }, at)
+    expect(post.nameMode, `seed ${seed} topic post mode`).toBe('affiliated_anonymous')
+    // 사람 수가 임계값보다 훨씬 적으므로 기관 이름은 언제나 넓혀집니다(이 세계의 학교 이름이 소속 표시로도 나가지 않음). 두 단계 임계값(ADR 0042 §4):
+    // DB 전체의 대학 재학생이 50명 미만이면 범주도 표시하지 않습니다.
+    expect([null, ...(scope === 'none' ? [] : ['대학 재학생'])], `seed ${seed} topic label`).toContain(post.affiliationLabel)
+    items.push({ kind: 'post', id: post.id, postId: post.id, authorId: author.userId, mode: post.nameMode, title: `제목 ${marker}`, body: `본문 ${marker}`, createdAt: at })
+    for (let c = tr.int(0, 2); c > 0; c--) {
+      const cMarker = `S02TC-${seed}-${i}-${c}-${crypto.randomUUID().slice(0, 6)}`
+      const cAt = tick()
+      const who = tr.pick(people)
+      const thread = await createComment(tx, { userId: who.userId }, post.id, { body: `댓글 ${cMarker}`, affiliationScope: tr.pick(['institution', 'institution_kind', 'none'] as const) }, cAt)
+      const mine = thread.comments.flatMap((x) => [x, ...x.replies]).find((x) => x.body === `댓글 ${cMarker}`)!
+      items.push({ kind: 'comment', id: mine.id, postId: post.id, authorId: who.userId, mode: mine.nameMode, title: null, body: `댓글 ${cMarker}`, createdAt: cAt })
+    }
+  }
+
   // 원본 모듈(outbox 처리)이 하듯: 모든 글을 작성자의 모든 페르소나로 투영 시도(규칙이 거름).
   for (const item of items.filter((i) => i.kind === 'post')) {
     const [row] = await tx
@@ -737,7 +769,8 @@ async function buildWorld(tx: DbExecutor, seed: number) {
     .from(outboxEvents)
     .where(and(eq(outboxEvents.topic, PERSONA_ACTIVITY_PROJECT_TOPIC), isNull(outboxEvents.dispatchedAt), gte(outboxEvents.createdAt, T0)))
   for (const e of events) {
-    expect(items.find((i) => i.id === (e.payload as { sourceId: string }).sourceId)?.mode, `seed ${seed} event for anonymous post`).not.toBe('anonymous')
+    const eventMode = items.find((i) => i.id === (e.payload as { sourceId: string }).sourceId)?.mode
+    expect(eventMode && isStageZeroOrOne(eventMode), `seed ${seed} event for anonymous/affiliated post`).not.toBe(true)
     await handlePersonaActivityProject(tx, e.payload)
   }
   // A-04(ADR 0041): 공감 라운지(공식 학교 페이지 자유 게시판) 글의 미디어 id·서명 URL도 공개·소셜 출력·검색에 0건이어야 합니다
@@ -764,7 +797,7 @@ async function buildWorld(tx: DbExecutor, seed: number) {
     expect(seen.lounge?.items.map((m) => m.id), `seed ${seed} lounge media`).toEqual([media!.id])
     loungeMediaValues.push(media!.id, seen.lounge!.items[0]!.url!)
   }
-  return { people, items, roomProfileValues, directoryValues, loungeMediaValues, now: new Date(clock + HOUR) }
+  return { people, items, roomProfileValues, directoryValues, loungeMediaValues, topicValues, now: new Date(clock + HOUR) }
 }
 
 /** 활동 목록 전부(cursor를 따라감). */
@@ -782,16 +815,16 @@ async function allActivity(tx: DbExecutor, actor: { userId: string } | null, han
 
 describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a persona (PostgreSQL)', () => {
   afterAll(closeTestDb)
-  // A-01: 동문회·OB 방(방별 프로필)을 세계에 넣으려면 P2 alumni 플래그가 켜져 있어야 합니다.
-  beforeEach(() => setFeatureEnvForTesting({ PEERCHIVE_FEATURE_P2_ALUMNI: 'on' }))
+  // A-01: 동문회·OB 방(방별 프로필)을 세계에 넣으려면 P2 alumni 플래그가, A-05 토픽은 topics 플래그가 켜져 있어야 합니다.
+  beforeEach(() => setFeatureEnvForTesting({ PEERCHIVE_FEATURE_P2_ALUMNI: 'on', PEERCHIVE_FEATURE_P2_TOPICS: 'on' }))
   afterEach(() => setFeatureEnvForTesting(null))
 
-  it(`for ${WORLDS} seeded random worlds, every persona's public JSON, README card, old profile DTO, activity list (raw and API for every viewer), follow lists, every person's feed and suggestions carry 0 anonymous post ids, bodies, body hashes or timestamps`, async () => {
-    const totals = { worlds: 0, personas: 0, anonymous: 0, projected: 0, follows: 0, feedItems: 0, roomProfileValues: 0, directoryValues: 0, loungeMedia: 0 }
+  it(`for ${WORLDS} seeded random worlds, every persona's public JSON, README card, old profile DTO, activity list (raw and API for every viewer), follow lists, every person's feed and suggestions carry 0 anonymous or affiliated-anonymous (topic) post ids, bodies, body hashes or timestamps`, async () => {
+    const totals = { worlds: 0, personas: 0, anonymous: 0, affiliated: 0, projected: 0, follows: 0, feedItems: 0, roomProfileValues: 0, directoryValues: 0, loungeMedia: 0 }
     for (let w = 0; w < WORLDS; w++) {
       const seed = BASE_SEED + w
       await withRollback(async (tx) => {
-        const { people, items, roomProfileValues, directoryValues, loungeMediaValues, now } = await buildWorld(tx, seed)
+        const { people, items, roomProfileValues, directoryValues, loungeMediaValues, topicValues, now } = await buildWorld(tx, seed)
         // S-04: 무작위 팔로우(실명·표시명 주체 모두)와 전체 공개 팔로우 목록. 목록은 새 공개 출력이라 같은 검사에 넣습니다.
         const r = rng(seed ^ 0x5f04)
         const all = people.flatMap((p) => [p.real, p.display].filter((x): x is NonNullable<typeof x> => !!x).map((persona) => ({ owner: p, persona })))
@@ -804,7 +837,8 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
               edges.push({ from: a.persona.handle, to: b.persona.handle })
             }
         totals.follows += edges.length
-        const anonymous = items.filter((i) => i.mode === 'anonymous')
+        // 0~1단계: 익명(0단계)과 토픽의 소속 표시 익명(1단계, A-05) 글·댓글 모두.
+        const anonymous = items.filter((i) => isStageZeroOrOne(i.mode))
         const forbidden = anonymous.flatMap((i) => [
           i.id,
           i.body,
@@ -817,6 +851,8 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
         forbidden.push(...roomProfileValues)
         // A-04: 라운지 미디어 id·서명 URL도 같은 목록(공개·소셜 출력에 0건).
         forbidden.push(...loungeMediaValues)
+        // A-05: 토픽 이름·주소도 페르소나 출력에 0건(소속 표시 익명 글이 어느 토픽에 있었는지로도 이어지지 않음).
+        forbidden.push(...topicValues)
         totals.loungeMedia += loungeMediaValues.length / 2
         totals.roomProfileValues += roomProfileValues.length
         totals.directoryValues += directoryValues.length
@@ -883,7 +919,8 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
         // A-01: 공개 검색(색인·API)에도 방별 프로필 값이 없습니다.
         // A-03: 명부의 하는 일·연락 방법도 검색(API·색인)과 페르소나 활동에 0건입니다.
         // A-04: 라운지 미디어 id도 검색(API·색인)에 0건입니다.
-        for (const value of [...roomProfileValues.slice(0, 6), ...directoryValues.slice(0, 4), ...loungeMediaValues.filter((_, i) => i % 2 === 0).slice(0, 2)]) {
+        // A-05: 토픽 이름도 검색(API·색인)에 0건입니다.
+        for (const value of [...roomProfileValues.slice(0, 6), ...directoryValues.slice(0, 4), ...loungeMediaValues.filter((_, i) => i % 2 === 0).slice(0, 2), topicValues[0]!]) {
           expect((await searchPublic(tx, { q: value }, now)).results, `seed ${seed} search ${value}`).toEqual([])
           const [hit] = (await tx.execute(sql`select count(*)::int as n from search_documents where strpos(search_text || title || snippet, ${value}) > 0`)) as unknown as Array<{ n: number }>
           expect(hit!.n, `seed ${seed} search_documents ${value}`).toBe(0)
@@ -898,6 +935,9 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
           )) as unknown as Array<{ n: number }>
           expect(Number(attributed!.n), `seed ${seed}`).toBe(0)
         }
+        // A-05: 소속 표시 익명 글·댓글은 페르소나가 없고(행), 소속 표시가 있어도 페르소나 활동이 0건입니다(위 anonIds 검사에 포함).
+        const affiliated = items.filter((i) => i.mode === 'affiliated_anonymous')
+        totals.affiliated += affiliated.length
         totals.worlds++
         totals.anonymous += anonymous.length
       })
@@ -905,6 +945,7 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
     // 생성기가 실제로 익명 글과 투영된 글을 모두 만들었는지(빈 세계로 통과하지 않게).
     expect(totals.worlds).toBe(WORLDS)
     expect(totals.anonymous).toBeGreaterThan(WORLDS)
+    expect(totals.affiliated).toBeGreaterThanOrEqual(2 * WORLDS)
     expect(totals.projected).toBeGreaterThan(0)
     expect(totals.follows).toBeGreaterThan(WORLDS)
     expect(totals.personas).toBeGreaterThan(WORLDS)

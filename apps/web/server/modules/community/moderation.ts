@@ -567,6 +567,7 @@ export async function operatorCommunityItem(db: DbExecutor, target: ItemRef): Pr
     status: item.status,
     nameMode: item.nameMode,
     authorLabel: display.label ?? '익명',
+    ...(item.nameMode === 'affiliated_anonymous' && { affiliationLabel: item.affiliationLabel }),
     createdAt: item.createdAt.toISOString(),
     edited: item.editedAt !== null,
   }
@@ -702,6 +703,8 @@ export async function lookupAuthor(db: DbExecutor, actor: Actor, rawInput: unkno
       postId: loaded.post.id,
       spaceId: loaded.post.spaceId,
       author: { userId: loaded.item.authorId, handle: author?.handle ?? null, status: author?.status ?? 'deleted', purged: !author || author.purgedAt !== null },
+      // 소속 표시 익명(A-05, ADR 0042): 표시에 쓴 소속 id는 사유를 남긴 이 확인 경로로만 운영자에게 보입니다.
+      ...(loaded.item.nameMode === 'affiliated_anonymous' && { affiliationId: loaded.item.affiliationId }),
       sanctions: await toOperatorSanctions(tx, history, now),
       createdAt: lookup!.createdAt.toISOString(),
       validUntil: new Date(lookup!.createdAt.getTime() + AUTHOR_LOOKUP_VALID_MS).toISOString(),

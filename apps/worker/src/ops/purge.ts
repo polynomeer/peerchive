@@ -270,6 +270,10 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
       }
     }
     if (affiliationIds.length) {
+      // 소속 표시 익명(A-05, ADR 0042) 글·댓글이 가리키는 소속 id(운영자 전용 열)를 먼저 비웁니다(고정 열 트리거는 비우기만 허용).
+      // 표시 문자열은 작성 시점 값으로 남지만 그 글·댓글은 아래 purgeCommunity가 작성자 삭제로 바꿔 화면에 나오지 않습니다.
+      await tx.update(communityPosts).set({ affiliationId: null }).where(inArray(communityPosts.affiliationId, affiliationIds))
+      await tx.update(communityComments).set({ affiliationId: null }).where(inArray(communityComments.affiliationId, affiliationIds))
       c.add('affiliation_codes', (await tx.delete(affiliationCodes).where(inArray(affiliationCodes.affiliationId, affiliationIds)).returning({ id: affiliationCodes.id })).length)
       c.add(
         'institution_affiliations',

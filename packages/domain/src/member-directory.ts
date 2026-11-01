@@ -25,7 +25,7 @@ export const DIRECTORY_MAX_PAGE = 500
 
 /** 명부를 쓰는 방인지: alumni 템플릿이고 지금 효력이 있는 이름 표시 방식이 익명이 아님. */
 export function directoryAvailable(template: SpaceTemplate, effectiveMode: NameMode): boolean {
-  return template === 'alumni' && effectiveMode !== 'anonymous'
+  return template === 'alumni' && (effectiveMode === 'real' || effectiveMode === 'display')
 }
 
 export interface DirectoryEntryValue {

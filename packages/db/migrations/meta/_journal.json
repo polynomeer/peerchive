@@ -267,6 +267,20 @@
       "when": 1793545858653,
       "tag": "0037_lounge_media",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1793547776058,
+      "tag": "0038_topics_affiliation_labels",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1793549839777,
+      "tag": "0039_affiliation_label_category_threshold",
+      "breakpoints": true
     }
   ]
 }

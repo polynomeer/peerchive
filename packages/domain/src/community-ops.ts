@@ -334,7 +334,8 @@ export function computeCommunityMetrics(input: CommunityMetricsInput, range: { f
   // 글쓰기
   const posts = ev.filter(named('post_created'))
   const comments = ev.filter(named('comment_created'))
-  const anon = [...posts, ...comments].filter((e) => e.props.mode === 'anonymous').length
+  // 소속 표시 익명(A-05)도 이름이 보이지 않는 글이라 익명 비율에 셉니다.
+  const anon = [...posts, ...comments].filter((e) => e.props.mode === 'anonymous' || e.props.mode === 'affiliated_anonymous').length
   const namedWrites = [...posts, ...comments].filter((e) => e.props.mode === 'display' || e.props.mode === 'real').length
   const writes = posts.length + comments.length
 

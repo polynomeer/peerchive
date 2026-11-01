@@ -2281,8 +2281,8 @@ export interface CommunityMetricsDto {
     posts: number | null
     comments: number | null
     postsByBoard: Counts<BoardKind>
-    postsByMode: Counts<NameMode>
-    commentsByMode: Counts<NameMode>
+    postsByMode: Counts<RoomNameMode>
+    commentsByMode: Counts<RoomNameMode>
     anonymousShare: RateMetricDto
     namedShare: RateMetricDto
   }
@@ -2328,8 +2328,8 @@ export interface CommunitySpaceBreakdownDto {
   kind: SpaceKind
   minMembers: number
   postsByBoard: Counts<BoardKind>
-  postsByMode: Counts<NameMode>
-  commentsByMode: Counts<NameMode>
+  postsByMode: Counts<RoomNameMode>
+  commentsByMode: Counts<RoomNameMode>
   anonymousShare: RateMetricDto
   namedWriters: number | null
   reportCases: number | null
@@ -2345,8 +2345,11 @@ export interface CommunityMetricsSpaceOptionDto {
 
 // ── 캠퍼스 커뮤니티: 공간·게시판·멤버십 (C-02, ADR 0019) ──────────────────
 
-export type SpaceKind = 'official_school' | 'official_department' | 'user_room' | 'study_room'
-export type NameMode = 'real' | 'display' | 'anonymous'
+/** topic: 학교를 넘나드는 토픽(A-05, ADR 0042, 운영자만 만듦). */
+export type SpaceKind = 'official_school' | 'official_department' | 'user_room' | 'study_room' | 'topic'
+/** affiliated_anonymous: 1단계 소속 표시 익명(A-05, 토픽 글·댓글에만). 방이 고를 수 있는 방식은 RoomNameMode. */
+export type NameMode = 'real' | 'display' | 'anonymous' | 'affiliated_anonymous'
+export type RoomNameMode = Exclude<NameMode, 'affiliated_anonymous'>
 /** 사용자 방 템플릿(A-01, ADR 0038). P2 alumni 플래그가 꺼져 있으면 응답은 항상 general입니다. */
 export type SpaceTemplate = 'general' | 'alumni'
 export type SpaceDiscovery = 'listed' | 'unlisted'
@@ -2874,6 +2877,13 @@ export interface CommunityPostSummaryDto extends CommunityTimesDto {
   placeholder: string | null
   nameMode: NameMode
   author: CommunityAuthorDto
+  /**
+   * 소속 표시 익명(A-05) 글의 작성 시점 소속 표시(`○○대 · 졸업생`·`부트캠프 수료생`, 표시 안 함이면 null). 그 밖의 방식에는 키가 없습니다.
+   * 게시 중이 아니면 null. 소속 id·회원 수는 어디에도 없습니다.
+   */
+  affiliationLabel?: string | null
+  /** 내 글이고 소속 표시가 자동으로 넓혀졌는지(작성자 본인 응답에만 키가 있음). */
+  labelBroadened?: boolean
   commentCount: number
   reactionCount: number
 }
@@ -2886,6 +2896,10 @@ export interface CommunityCommentDto extends CommunityTimesDto {
   placeholder: string | null
   nameMode: NameMode
   author: CommunityAuthorDto
+  /** 글과 같은 규칙(A-05): 소속 표시 익명 댓글의 작성 시점 소속 표시. */
+  affiliationLabel?: string | null
+  /** 내 댓글이고 소속 표시가 넓혀졌는지(작성자 본인 응답에만). */
+  labelBroadened?: boolean
   version: number
   reactionCount: number
   reacted: boolean
@@ -2920,6 +2934,46 @@ export interface CommunityComposerDto {
   displayPersonaRequired: boolean
   /** 이 공간에서 지금 내 쓰기를 막는 이용 제한(C-06). 본인 응답에만 있고 다른 사람에게는 항상 null입니다. */
   restriction: CommunityWriteRestrictionDto | null
+  /** 토픽(A-05, ADR 0042)의 소속 표시 고르기. 토픽에만 있고, 내용은 보는 사람 자신의 소속뿐입니다. */
+  affiliation?: TopicComposerAffiliationDto
+}
+
+// ── 토픽·소속 표시 익명 (A-05, ADR 0042) ─────────────────────────────────
+
+export type AffiliationLabelScope = 'institution' | 'institution_kind' | 'none'
+export type TopicCategory = 'career' | 'grad_school' | 'startup' | 'military' | 'campus_life' | 'role'
+
+/** 내 소속 하나의 소속 표시 미리보기(작성자 본인에게만). 회원 수는 없습니다. */
+export interface TopicAffiliationOptionDto {
+  /** 내 소속 id(글쓰기 요청의 affiliationId). */
+  affiliationId: string
+  /** 고르기 화면 글자(`○○대 · 졸업생`): 내 소속이라 나에게만 보입니다. */
+  title: string
+  /** 범위마다 지금 쓰면 붙을 표시와 넓혀졌는지. none은 label null. */
+  previews: Record<AffiliationLabelScope, { label: string | null; broadened: boolean }>
+}
+
+export interface TopicComposerAffiliationDto {
+  scopes: AffiliationLabelScope[]
+  defaultScope: AffiliationLabelScope
+  /** 내 active 소속(최근 인증 순). 기본은 첫 번째. */
+  options: TopicAffiliationOptionDto[]
+  /** 넓혀졌을 때 보여 줄 안내(나에게만). */
+  broadenedNote: string
+}
+
+export interface TopicSummaryDto {
+  slug: string
+  name: string
+  description: string | null
+  category: TopicCategory
+  status: SpaceStatus
+}
+
+/** GET /community/topics. 활성 기관 인증이 없으면 eligible false + 빈 목록. */
+export interface TopicListDto {
+  eligible: boolean
+  items: TopicSummaryDto[]
 }
 
 export type SanctionLevel = 'warning' | 'write_suspended' | 'permanent'
@@ -3111,6 +3165,8 @@ export interface OperatorCommunityItemDto {
   nameMode: NameMode
   /** 작성자 표시(익명은 `익명`, 표시명·실명은 그 이름). */
   authorLabel: string
+  /** 소속 표시 익명(A-05)의 작성 시점 소속 표시(화면과 같은 값). 그 밖에는 키가 없습니다. */
+  affiliationLabel?: string | null
   createdAt: string
   edited: boolean
 }
@@ -3175,6 +3231,8 @@ export interface AuthorLookupResultDto {
   postId: string
   spaceId: string
   author: { userId: string; handle: string | null; status: 'active' | 'suspended' | 'deleted'; purged: boolean }
+  /** 소속 표시 익명(A-05) 글·댓글이면 표시에 쓴 소속 id(운영자 전용 열, 표시 안 함·탈퇴 정리 뒤면 null). 그 밖의 방식에는 키가 없습니다. */
+  affiliationId?: string | null
   /** 그 사람의 제재 이력(최근 50). */
   sanctions: OperatorSanctionDto[]
   createdAt: string

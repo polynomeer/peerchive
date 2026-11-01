@@ -16,7 +16,7 @@ import {
   BOARD_WRITE_ROLES,
   JOIN_POLICIES,
   MAX_BOARDS_PER_ROOM,
-  NAME_MODES,
+  ROOM_NAME_MODES,
   ROOM_BOARD_KINDS,
   SPACE_DESCRIPTION_MAX,
   SPACE_DISCOVERIES,
@@ -27,6 +27,7 @@ import {
   type SpaceMembershipStatus,
   type SpaceRole,
   type SpaceTemplate,
+  type TopicCategory,
   canCreateRoom,
   canJoinSpace,
   canManageSpace,
@@ -41,6 +42,7 @@ import {
   defaultJoinPolicy,
   effectiveWriteRole,
   isOfficialKind,
+  isOperatorSpaceKind,
   previewIncludesDescription,
   ALUMNI_ROOM_DEFAULT_BOARDS,
 } from '@peerchive/domain'
@@ -114,6 +116,8 @@ export function toSpaceSummary(
   membership: { role: SpaceRole; status: SpaceMembershipStatus } | null,
 ): SpaceSummaryDto {
   const official = isOfficialKind(space.row.kind)
+  // 운영자가 연 공간(공식 페이지·토픽)은 멤버 수를 세지 않습니다(인증 구성원 전체, 토픽은 소규모 회원 수를 드러내지 않음).
+  const operatorKind = isOperatorSpaceKind(space.row.kind)
   return {
     slug: space.row.slug,
     kind: space.row.kind,
@@ -127,7 +131,7 @@ export function toSpaceSummary(
     discovery: space.row.discovery,
     joinPolicy: space.row.joinPolicy,
     status: space.row.status,
-    memberCount: official ? null : memberCount,
+    memberCount: operatorKind ? null : memberCount,
     myMembership: membership && (membership.status === 'active' || membership.status === 'pending') ? { role: membership.role, status: membership.status } : null,
   }
 }
@@ -187,7 +191,7 @@ function joinActionFor(ctx: SpaceContext): SpaceDetailDto['joinAction'] {
  * 초대 전용 방은 preview 자체가 없습니다(canPreviewSpace → 404).
  */
 async function detailFor(db: DbExecutor, ctx: SpaceContext, access: SpaceDetailDto['access'], now: Date): Promise<SpaceDetailDto> {
-  const official = isOfficialKind(ctx.space.row.kind)
+  const official = isOperatorSpaceKind(ctx.space.row.kind)
   // 졸업생 인증 이력(A-04, ADR 0041)으로는 졸업생·자유(공감 라운지) 게시판만 보입니다(다른 게시판은 이름도 없음, 권한은 모두 false).
   const boardRows =
     access === 'member'
@@ -347,7 +351,8 @@ export const createRoomSchema = z.object({
   name: z.unknown(),
   description: descriptionSchema,
   schoolId: z.uuid({ error: 'invalid' }).nullish(),
-  nameMode: z.enum(NAME_MODES, { error: requiredOr('invalid') }),
+  // 소속 표시 익명(A-05)은 토픽 전용이라 방이 고를 수 없습니다.
+  nameMode: z.enum(ROOM_NAME_MODES, { error: requiredOr('invalid') }),
   discovery: z.enum(SPACE_DISCOVERIES, { error: 'invalid' }).optional(),
   joinPolicy: z.enum(JOIN_POLICIES, { error: 'invalid' }).optional(),
   capacity: z.unknown().optional(),
@@ -365,6 +370,8 @@ export interface NewSpaceInput {
   nameMode: NameMode
   /** 사용자 방 템플릿(A-01). 기본 general. */
   template?: SpaceTemplate
+  /** 토픽 분류(A-05, kind = topic만). */
+  topicCategory?: TopicCategory | null
   discovery: 'listed' | 'unlisted'
   joinPolicy: 'open' | 'approval' | 'invite'
   capacity: number
@@ -393,6 +400,7 @@ export async function insertSpace(tx: DbExecutor, input: NewSpaceInput, now: Dat
             slug: generateSpaceSlug(),
             currentNameMode: input.nameMode,
             template: input.template ?? 'general',
+            topicCategory: input.topicCategory ?? null,
             discovery: input.discovery,
             joinPolicy: input.joinPolicy,
             capacity: input.capacity,
@@ -571,7 +579,7 @@ export async function updateSpace(db: DbExecutor, actor: Actor, ref: unknown, ra
   const slug = await db.transaction(async (tx) => {
     const ctx = await loadReadableSpace(tx, actor, ref, true)
     assertCanManage(ctx, 'update_settings')
-    const official = isOfficialKind(ctx.space.row.kind)
+    const official = isOperatorSpaceKind(ctx.space.row.kind)
     if (official && (input.joinPolicy !== undefined || input.discovery !== undefined)) {
       throw invalid({ [input.joinPolicy !== undefined ? 'joinPolicy' : 'discovery']: 'not_editable' })
     }
@@ -657,7 +665,7 @@ export async function createBoard(db: DbExecutor, actor: Actor, ref: unknown, ra
   return db.transaction(async (tx) => {
     const ctx = await loadReadableSpace(tx, actor, ref, true)
     assertCanManage(ctx, 'manage_boards')
-    const official = isOfficialKind(ctx.space.row.kind)
+    const official = isOperatorSpaceKind(ctx.space.row.kind)
     if (!official && !ROOM_BOARD_KINDS.includes(input.kind)) throw invalid({ kind: 'not_allowed' })
     const existing = await loadBoards(tx, ctx.space.row.id)
     if (!official && existing.length >= MAX_BOARDS_PER_ROOM) throw conflict('too_many_boards', { max: MAX_BOARDS_PER_ROOM })

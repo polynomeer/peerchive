@@ -17,7 +17,7 @@
  *
  * `analyzeSelection`은 같은 포함 규칙으로 동의 당사자·범위·비공개 참조(refs)를 계산합니다(공개 데이터를 만들지 않음).
  */
-import { claimStatusSummary, findEmails, findPhoneNumbers, findStudentIds, isRetrospectiveLog } from '@peerchive/domain'
+import { asRoomNameMode, claimStatusSummary, findEmails, findPhoneNumbers, findStudentIds, isRetrospectiveLog } from '@peerchive/domain'
 import type {
   artifactVersions,
   artifacts,
@@ -367,7 +367,7 @@ export function buildPublicSnapshot(source: SnapshotSource): PublicSnapshot {
     summary: source.summary,
     kind: source.project.kind,
     // 스터디 기록(C-08, ADR 0026): 후보를 만들 때의 방 이름 표시 방식을 고정합니다(다른 종류에는 키 자체가 없음 — 기존 manifest 해시 유지).
-    ...(source.project.kind === 'study' && { studyNameMode: source.project.studyNameMode ?? 'display' }),
+    ...(source.project.kind === 'study' && { studyNameMode: asRoomNameMode(source.project.studyNameMode ?? 'display') }),
     retrospective: source.project.retroMode,
     course: course
       ? {

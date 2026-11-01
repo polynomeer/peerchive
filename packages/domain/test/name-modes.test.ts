@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   NAME_MODES,
+  ROOM_NAME_MODES,
   NAME_MODE_CHANGE_DELAY_MS,
   DISPLAY_PERSONA_MISSING_LABEL,
   REAL_NAME_MISSING_LABEL,
@@ -41,12 +42,12 @@ const author = (overrides: Partial<AuthorProfileBits> = {}): AuthorProfileBits =
 
 describe('name mode transitions', () => {
   it('official pages cannot change at all; rooms can move between any two different modes', () => {
-    for (const kind of ['official_school', 'official_department'] as const) {
+    for (const kind of ['official_school', 'official_department', 'topic'] as const) {
       for (const to of NAME_MODES) expect(checkNameModeTransition(kind, 'anonymous', to)).toEqual({ ok: false, reason: 'fixed' })
     }
     for (const kind of ['user_room', 'study_room'] as const) {
-      for (const from of NAME_MODES) {
-        for (const to of NAME_MODES) {
+      for (const from of ROOM_NAME_MODES) {
+        for (const to of ROOM_NAME_MODES) {
           expect(checkNameModeTransition(kind, from, to)).toEqual(from === to ? { ok: false, reason: 'same_mode' } : { ok: true })
         }
       }

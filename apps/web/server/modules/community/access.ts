@@ -18,7 +18,7 @@ import {
   canReadBoard,
   canReadSpace,
   departmentKey,
-  isOfficialKind,
+  isOperatorSpaceKind,
   isSpaceSlug,
 } from '@peerchive/domain'
 import {
@@ -183,10 +183,14 @@ export interface SpaceContext {
 /** 공간 + 요청한 사람(그 공간 기준의 제재 포함) + 멤버십 + 판정 재료를 한 번에. */
 export async function loadSpaceContext(db: DbExecutor, actor: Actor, ref: unknown, lock = false, now = new Date()): Promise<SpaceContext> {
   const space = await loadSpace(db, ref, lock)
+  // 토픽(A-05, ADR 0042)은 P2 topics 플래그가 꺼져 있으면 없는 공간과 같습니다(상세·게시판·글·댓글·신고·공감 모두 이 함수를 거침).
+  // 운영자 공간 도구(official.ts)는 loadSpace를 바로 써서 플래그와 무관하게 조치할 수 있습니다.
+  if (space.row.kind === 'topic' && !isFeatureOn('topics')) throw notFound()
   const [viewer, membership, count] = await Promise.all([
     loadViewer(db, actor, space.row.id, now),
     findMembership(db, space.row.id, actor.userId, lock),
-    isOfficialKind(space.row.kind) ? Promise.resolve(0) : activeMemberCount(db, space.row.id),
+    // 운영자가 연 공간(공식 페이지·토픽)은 멤버 수를 세지 않습니다(자격이 인증에서 나옴).
+    isOperatorSpaceKind(space.row.kind) ? Promise.resolve(0) : activeMemberCount(db, space.row.id),
   ])
   return { viewer, space, membership, facts: spaceFacts(space, count) }
 }

@@ -11,7 +11,7 @@
  *
  * 런타임 의존성 없음.
  */
-import { type JoinPolicy, type NameMode, type SpaceKind, NAME_MODES, NAME_MODE_LABELS, isOfficialKind } from './community'
+import { type JoinPolicy, type NameMode, type SpaceKind, NAME_MODES, NAME_MODE_LABELS, ROOM_NAME_MODES, isAnonymousMode, isOfficialKind, isOperatorSpaceKind } from './community'
 
 /** 예약에서 적용까지(7일, §8.9.4 "전환 전 멤버 전원에게 알리고 7일 뒤 적용"). DB check도 같은 값입니다. */
 export const NAME_MODE_CHANGE_DELAY_MS = 7 * 24 * 60 * 60 * 1000
@@ -46,8 +46,9 @@ export type NameModeTransition = { ok: true } | { ok: false; reason: 'fixed' | '
  * 바꿀 수 있는 방식인지. 공식 페이지는 어떤 방식으로도 못 바꿉니다(fixed). 사용자 방·스터디 방은 세 방식 어디로든(같은 방식은 same_mode).
  */
 export function checkNameModeTransition(kind: SpaceKind, from: NameMode, to: unknown): NameModeTransition {
-  if (isOfficialKind(kind)) return { ok: false, reason: 'fixed' }
-  if (!isNameMode(to)) return { ok: false, reason: 'invalid' }
+  if (isOperatorSpaceKind(kind)) return { ok: false, reason: 'fixed' }
+  // 소속 표시 익명(A-05)은 토픽 전용이라 방이 고를 수 있는 방식이 아닙니다.
+  if (!(ROOM_NAME_MODES as readonly unknown[]).includes(to)) return { ok: false, reason: 'invalid' }
   if (to === from) return { ok: false, reason: 'same_mode' }
   return { ok: true }
 }
@@ -109,18 +110,25 @@ export interface WriteSpaceFacts {
   scheduledChange?: ScheduledChangeFacts | null
 }
 
-export type NameModeAtWrite = { ok: true; mode: NameMode } | { ok: false; reason: 'mode_fixed' | 'real_not_allowed' | 'invalid' }
+export type NameModeAtWrite = { ok: true; mode: NameMode } | { ok: false; reason: 'mode_fixed' | 'real_not_allowed' | 'affiliated_not_allowed' | 'invalid' }
 
 /**
  * 글·댓글을 쓰는 순간 복사해 고정할 방식(C-04가 posts.name_mode·comments.name_mode에 넣는 유일한 값).
  * - 사용자 방·스터디 방: 그 순간의 effectiveNameMode. 글쓴이가 다른 방식을 고를 수 없습니다(requested가 있고 다르면 mode_fixed).
  * - 공식 페이지: anonymous 기본, 글 단위로 display만 고를 수 있음(real은 real_not_allowed, §6.7 Post·§8.1 "글 단위 이름 표시 선택").
+ *   소속 표시 익명은 affiliated_not_allowed(토픽 전용).
+ * - 토픽(A-05, ADR 0042): 항상 affiliated_anonymous(다른 방식을 고르면 mode_fixed). 소속 표시 범위는 이 함수가 아니라 affiliation-labels.ts가 정합니다.
  * 예약된 변경은 effective_at 전에는 영향이 없습니다. 같은 트랜잭션에서 공간 행을 잠그고(FOR SHARE) 이 함수를 부른 뒤 insert하세요.
  */
 export function nameModeAtWrite(space: WriteSpaceFacts, now: Date, requested?: unknown): NameModeAtWrite {
   if (requested !== undefined && requested !== null && !isNameMode(requested)) return { ok: false, reason: 'invalid' }
+  if (space.kind === 'topic') {
+    if (requested !== undefined && requested !== null && requested !== 'affiliated_anonymous') return { ok: false, reason: 'mode_fixed' }
+    return { ok: true, mode: 'affiliated_anonymous' }
+  }
   if (isOfficialKind(space.kind)) {
     if (requested === 'real') return { ok: false, reason: 'real_not_allowed' }
+    if (requested === 'affiliated_anonymous') return { ok: false, reason: 'affiliated_not_allowed' }
     return { ok: true, mode: requested === 'display' ? 'display' : 'anonymous' }
   }
   const mode = effectiveNameMode(space.currentNameMode, space.scheduledChange, now)
@@ -175,7 +183,8 @@ export type AuthorDisplay =
  */
 export function resolveAuthorDisplay(modeAtWrite: NameMode, author: AuthorProfileBits, viewer: AuthorViewer | null | undefined): AuthorDisplay {
   const mine = !!viewer && viewer.userId === author.userId
-  if (modeAtWrite === 'anonymous') return { kind: 'anonymous', label: null, threadAlias: 'computed_by_thread', mine }
+  // 소속 표시 익명(A-05)도 이름은 익명과 같습니다(소속 표시 문자열은 글에 고정된 값을 호출자가 따로 붙임).
+  if (isAnonymousMode(modeAtWrite)) return { kind: 'anonymous', label: null, threadAlias: 'computed_by_thread', mine }
   if (author.purged || author.status === 'deleted') return { kind: 'withdrawn', label: WITHDRAWN_AUTHOR_LABEL, mine: false }
   if (modeAtWrite === 'real') {
     const name = author.realName?.trim() || null

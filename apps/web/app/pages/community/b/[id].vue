@@ -3,8 +3,9 @@
  * 커뮤니티 게시판(C-04, ADR 0022). 글 목록(최신순, 지운 글은 빠지고 가린 글은 자리 표시)과 글쓰기. 로그인 전용·noindex·제목 고정(C-05).
  * - 글쓰기 화면에 이 공간의 이름 표시 방식을 항상 보여 줍니다(서버가 쓰는 순간 다시 정해 고정). 공식 페이지는 익명 기본·표시명 선택.
  * - 작성자는 이름·`글쓴이`·`익명N`·`탈퇴한 사용자`로만 보이고 사람 id·프로필 링크가 없습니다.
+ * - 토픽(A-05, ADR 0042)은 이름 대신 소속 표시를 고릅니다(TopicAffiliationPicker). 넓혀졌다는 안내는 작성자 본인에게만 보입니다.
  */
-import type { BoardPostsDto, CommunityPostDto, NameMode } from '~~/shared/types/api'
+import type { AffiliationLabelScope, BoardPostsDto, CommunityPostDto, NameMode } from '~~/shared/types/api'
 
 definePageMeta({ middleware: 'auth' })
 // 제목·robots·referrer는 공통(C-05): 게시판·글 제목으로 문서 제목·OG를 만들지 않습니다.
@@ -34,7 +35,16 @@ const items = computed(() => [...(data.value?.items ?? []), ...more.value])
 
 const notice = ref<{ kind: 'ok' | 'error'; text: string } | null>(null)
 const busy = ref(false)
-const form = reactive({ title: '', body: '', nameMode: '' as NameMode | '' })
+const form = reactive({ title: '', body: '', nameMode: '' as NameMode | '', affiliationScope: 'institution' as AffiliationLabelScope, affiliationId: '' })
+watch(
+  () => data.value?.composer.affiliation,
+  (a) => {
+    if (!a) return
+    form.affiliationScope = a.defaultScope
+    if (!a.options.some((o) => o.affiliationId === form.affiliationId)) form.affiliationId = a.options[0]?.affiliationId ?? ''
+  },
+  { immediate: true },
+)
 const fieldErrors = ref<Record<string, string>>({})
 const FIELD_TEXT: Record<string, string> = {
   required: '내용을 입력하세요.',
@@ -42,6 +52,7 @@ const FIELD_TEXT: Record<string, string> = {
   invalid: '쓸 수 없는 글자가 있습니다.',
   real_not_allowed: '공식 페이지에서는 실명으로 쓸 수 없습니다.',
   mode_fixed: '이 방의 이름 표시 방식으로만 쓸 수 있습니다.',
+  affiliated_not_allowed: '소속 표시 익명은 토픽에서만 쓸 수 있습니다.',
 }
 
 async function loadMore() {
@@ -66,6 +77,10 @@ async function submit() {
   try {
     const body: Record<string, unknown> = { title: form.title, body: form.body }
     if (data.value.space.official && form.nameMode) body.nameMode = form.nameMode
+    if (data.value.composer.affiliation) {
+      body.affiliationScope = form.affiliationScope
+      if (form.affiliationScope !== 'none' && form.affiliationId) body.affiliationId = form.affiliationId
+    }
     const post = await $fetch<CommunityPostDto>(`/api/v1/community/boards/${boardId.value}/posts`, { method: 'POST', body })
     form.title = ''
     form.body = ''
@@ -129,6 +144,13 @@ async function submit() {
               <label for="mode-display">표시명</label>
             </div>
           </fieldset>
+          <TopicAffiliationPicker
+            v-if="data.composer.affiliation"
+            v-model:scope="form.affiliationScope"
+            v-model:affiliation-id="form.affiliationId"
+            :affiliation="data.composer.affiliation"
+            id-prefix="post"
+          />
           <div class="field">
             <label for="post-title">제목</label>
             <input id="post-title" v-model="form.title" :maxlength="POST_TITLE_MAX" required aria-describedby="post-title-error" />
@@ -145,7 +167,13 @@ async function submit() {
         </form>
       </section>
       <p v-else class="small muted">
-        {{ data.board.writeRole === 'moderator' ? '이 게시판은 운영진·모더레이터만 글을 씁니다.' : '이 게시판에 쓸 자격이 없습니다.' }}
+        {{
+          data.board.writeRole === 'moderator'
+            ? '이 게시판은 운영진·모더레이터만 글을 씁니다.'
+            : data.space.kind === 'topic'
+              ? '토픽에 쓰려면 학교·기관 인증이 필요합니다.'
+              : '이 게시판에 쓸 자격이 없습니다.'
+        }}
       </p>
 
       <section aria-labelledby="posts">
@@ -160,6 +188,8 @@ async function submit() {
             </p>
             <p class="small muted">
               <span>{{ p.author.label ?? '' }}</span>
+              <span v-if="p.affiliationLabel" data-testid="affiliation-label"> · {{ p.affiliationLabel }}</span>
+              <span v-if="p.labelBroadened" class="hint" data-testid="label-broadened"> (넓혀 표시됨 · 나에게만 보이는 안내)</span>
               <RoomBadges :tag="p.author.roomProfile" />
               <span v-if="p.author.schoolVerified"> · 학교 인증</span>
               <span v-if="p.author.mine"> · 내 글</span>

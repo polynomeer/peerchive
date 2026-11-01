@@ -11,8 +11,10 @@
  * - 동문회·OB 방의 공지(A-02, ADR 0039): 글을 열면 읽었다고 표시하고 "읽음 n명"만 보입니다. 누가 읽었는지는 방장·운영진에게도 보이지 않습니다.
  * - 공감 라운지(공식 학교 페이지 자유 게시판, A-04·ADR 0041): 검사·메타데이터 제거를 통과한 이미지만 짧은 서명 URL로, 글쓴이는 이미지를 붙이고 지웁니다.
  *   졸업생 인증 이력으로 읽는 사람에게는 읽기 전용 안내가 보입니다.
+ * - 토픽(A-05, ADR 0042): 이름 대신 작성 시점에 고정한 소속 표시(`○○대 · 졸업생`)가 번호 옆에 붙고, 댓글도 소속 표시를 고릅니다.
+ *   넓혀 표시됐다는 안내는 작성자 본인의 글·댓글에만 보입니다.
  */
-import type { CommunityPostDto, CommunityReactionDto, SpaceDetailDto, SpaceModerationDto } from '~~/shared/types/api'
+import type { AffiliationLabelScope, CommunityPostDto, CommunityReactionDto, SpaceDetailDto, SpaceModerationDto } from '~~/shared/types/api'
 
 definePageMeta({ middleware: 'auth' })
 // 제목·robots·referrer는 공통(C-05): 글 제목으로 문서 제목·OG를 만들지 않습니다.
@@ -128,7 +130,18 @@ const transferText = (t: { target: keyof typeof ARCHIVE_TARGET_LABELS; status: k
   `${ARCHIVE_TARGET_LABELS[t.target]} · ${ARCHIVE_STATUS_LABELS[t.status]}`
 
 // ── 댓글 ──
-const comment = reactive({ body: '', nameMode: '' as '' | 'display' })
+const comment = reactive({ body: '', nameMode: '' as '' | 'display', affiliationScope: 'institution' as AffiliationLabelScope, affiliationId: '' })
+watch(
+  () => post.value?.composer.affiliation,
+  (a) => {
+    if (!a) return
+    if (!a.options.some((o) => o.affiliationId === comment.affiliationId)) {
+      comment.affiliationScope = a.defaultScope
+      comment.affiliationId = a.options[0]?.affiliationId ?? ''
+    }
+  },
+  { immediate: true },
+)
 async function addComment() {
   if (!post.value) return
   busy.value = true
@@ -136,6 +149,10 @@ async function addComment() {
   try {
     const body: Record<string, unknown> = { body: comment.body }
     if (post.value.space.official && comment.nameMode) body.nameMode = comment.nameMode
+    if (post.value.composer.affiliation) {
+      body.affiliationScope = comment.affiliationScope
+      if (comment.affiliationScope !== 'none' && comment.affiliationId) body.affiliationId = comment.affiliationId
+    }
     setThread(await $fetch<CommunityPostDto>(`/api/v1/community/posts/${postId.value}/comments`, { method: 'POST', body }))
     comment.body = ''
     showStatus('댓글을 달았습니다.')
@@ -165,11 +182,15 @@ async function addComment() {
         <h1 id="post-title">{{ post.title ?? post.placeholder }}</h1>
         <p class="small post-meta">
           <strong class="post-author">{{ post.author.label ?? '' }}</strong>
+          <span v-if="post.affiliationLabel" data-testid="post-affiliation-label"> · {{ post.affiliationLabel }}</span>
           <RoomBadges :tag="post.author.roomProfile" />
           <span v-if="post.author.schoolVerified"> · 학교 인증</span>
           <span v-if="post.author.mine" class="badge">내 글</span>
           <span class="muted"> · {{ NAME_MODE_LABELS[post.nameMode] }} · {{ communityTimeText(post) }}<template v-if="post.edited"> · 수정됨</template></span>
           <span v-if="post.noticeReads" class="muted" data-testid="notice-reads"> · 읽음 {{ post.noticeReads.count }}명</span>
+        </p>
+        <p v-if="post.labelBroadened" class="hint" data-testid="post-label-broadened">
+          소속 인증 회원이 적어 소속 표시를 학교·기관 유형으로 넓혀 표시했습니다. 이 안내는 나에게만 보입니다.
         </p>
         <p v-if="notice" :class="['notice', notice.kind]" :role="notice.kind === 'error' ? 'alert' : 'status'">{{ notice.text }}</p>
         <form v-if="editing" class="stack" novalidate @submit.prevent="saveEdit">
@@ -295,6 +316,13 @@ async function addComment() {
               <label for="comment-display">표시명</label>
             </div>
           </fieldset>
+          <TopicAffiliationPicker
+            v-if="post.composer.affiliation"
+            v-model:scope="comment.affiliationScope"
+            v-model:affiliation-id="comment.affiliationId"
+            :affiliation="post.composer.affiliation"
+            id-prefix="comment"
+          />
           <div class="field">
             <label for="comment-body">댓글</label>
             <textarea id="comment-body" v-model="comment.body" rows="3" :maxlength="COMMENT_BODY_MAX" aria-describedby="comment-body-hint" />

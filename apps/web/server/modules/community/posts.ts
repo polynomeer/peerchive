@@ -25,6 +25,9 @@
  *   outbox 행을 남깁니다(worker가 투영). 익명 글은 이벤트를 만들지 않습니다. 지우기·숨김·unlisted 전환의 거두기는 DB 트리거가 같은 트랜잭션에서 합니다.
  * - **동문회·OB 방(A-01, ADR 0038)**: P2 alumni 플래그가 켜진 alumni 방의 실명·표시명 글·댓글에는 작성자의 방별 배지·기수(roomProfile)가 붙고,
  *   표시명 글의 이름은 방별 이름(있으면)입니다. 익명 글·지운 글에는 없고, 방 밖(활동 카드·공개 프로필)에는 이 값이 가지 않습니다.
+ * - **토픽·소속 표시 익명(A-05, ADR 0042)**: 토픽 글·댓글은 항상 `affiliated_anonymous`(이름은 익명과 같은 스레드 번호)이고, 쓰는 트랜잭션에서
+ *   소속 표시(범위·문자열·소속 id)를 정해 행에 고정합니다(topics.ts affiliationLabelAtWrite). 응답에는 문자열(`affiliationLabel`)만, 넓혀졌는지
+ *   (`labelBroadened`)는 작성자 본인 응답에만 싣습니다. 페르소나 id는 항상 null이고 활동 투영 이벤트를 만들지 않습니다.
  * - 감사 기록을 남기지 않습니다: 작성자 id와 글 id를 한 행에 남기면 익명 글의 작성자를 찾는 길(C-06의 사유 기록 경로 밖)이 생기기 때문입니다.
  *   분석 이벤트는 허용 목록(게시판 종류·방식·답글 여부·대상 종류)만, 익명 글·댓글은 사용자 키 없이(unlinked) 남깁니다.
  */
@@ -51,6 +54,7 @@ import {
   composerNameModeNote,
   decidePersonaActivityProjection,
   effectiveNameMode,
+  isAnonymousMode,
   isOfficialKind,
   isOpenItem,
   itemPlaceholder,
@@ -96,6 +100,7 @@ import { loungeMediaForPost } from './lounge-media'
 import { activeDisplayPersona, displayPersonaNames, displayPersonaRequiredError, loadScheduledChange } from './name-modes'
 import { noticeReadsForPost } from './notice-reads'
 import { type RoomAuthorProfile, roomAuthorProfiles } from './room-profiles'
+import { type AffiliationLabelColumns, affiliationInputSchema, affiliationLabelAtWrite, topicComposerAffiliation } from './topics'
 import type {
   BoardPostsDto,
   CommunityAuthorDto,
@@ -156,10 +161,13 @@ function assertWritable(ctx: SpaceContext, allowed: boolean): void {
 /** 지금 쓰면 고정될 방식과 글쓰기 화면 안내. */
 async function composerFor(db: DbExecutor, ctx: SpaceContext, board: BoardRow, now: Date, target: 'post' | 'comment'): Promise<CommunityComposerDto> {
   const official = isOfficialKind(ctx.space.row.kind)
-  const scheduled = official ? null : await loadScheduledChange(db, ctx.space.row.id)
-  const mode: NameMode = official
-    ? 'anonymous'
-    : effectiveNameMode(ctx.space.row.currentNameMode, scheduled && { status: scheduled.status, toMode: scheduled.toMode, effectiveAt: scheduled.effectiveAt }, now)
+  const topic = ctx.space.row.kind === 'topic'
+  const scheduled = official || topic ? null : await loadScheduledChange(db, ctx.space.row.id)
+  const mode: NameMode = topic
+    ? 'affiliated_anonymous'
+    : official
+      ? 'anonymous'
+      : effectiveNameMode(ctx.space.row.currentNameMode, scheduled && { status: scheduled.status, toMode: scheduled.toMode, effectiveAt: scheduled.effectiveAt }, now)
   const m = membershipFacts(ctx.membership)
   const allowed =
     target === 'post' ? canWriteBoard(ctx.viewer, ctx.facts, m, boardFacts(board)) : canCommentOnBoard(ctx.viewer, ctx.facts, m, boardFacts(board))
@@ -179,9 +187,11 @@ async function composerFor(db: DbExecutor, ctx: SpaceContext, board: BoardRow, n
     nameMode: mode,
     choices,
     note: composerNameModeNote(ctx.space.row.kind, mode),
-    anonymityNote: official || mode === 'anonymous' ? ANONYMITY_OPERATOR_NOTE : null,
+    anonymityNote: official || isAnonymousMode(mode) ? ANONYMITY_OPERATOR_NOTE : null,
     realNameRequired: mode === 'real' && !me?.realName,
     displayPersonaRequired: choices.includes('display') && !displayPersona,
+    // 토픽(A-05): 쓸 수 있는 사람에게만 자기 소속의 표시 미리보기(넓혀졌는지 포함, 회원 수 없음).
+    ...(topic && allowed && { affiliation: await topicComposerAffiliation(db, ctx.viewer.userId) }),
   }
 }
 
@@ -253,8 +263,8 @@ async function threadContext(db: DbExecutor, ctx: SpaceContext, items: ReadonlyA
     loadAuthors(db, ctx, items),
     loadAliases(db, postIds),
     displayPersonaNames(db, items.filter((i) => i.nameMode === 'display').map((i) => i.personaId)),
-    // 익명 글·댓글의 작성자는 방별 프로필을 찾지도 않습니다.
-    roomAuthorProfiles(db, ctx.space, items.filter((i) => i.nameMode !== 'anonymous').map((i) => i.authorId), now),
+    // 익명·소속 표시 익명 글·댓글의 작성자는 방별 프로필을 찾지도 않습니다.
+    roomAuthorProfiles(db, ctx.space, items.filter((i) => !isAnonymousMode(i.nameMode)).map((i) => i.authorId), now),
   ])
   // 공식 페이지는 멤버 수를 세지 않습니다(학교 인증 구성원 전체). 사용자 방은 loadSpaceContext가 센 active 멤버 수.
   return { ctx, now, authors, displayNames, aliases, roomProfiles, bucket: (mode) => shouldBucketTimes({ kind: ctx.space.row.kind, activeMembers: ctx.facts.activeMembers }, mode) }
@@ -265,7 +275,7 @@ function authorOf(tc: ThreadContext, postId: string, item: AuthoredItem & { stat
   // 표시명 이름은 이 글에 고정한 표시명 페르소나에서만(없으면 null → `표시명 없음`).
   // 동문회·OB 방(A-01, ADR 0038): 표시명 글은 방별 이름이 있으면 그 이름(없으면 고정한 표시명 페르소나 이름), 실명 글은 실명 그대로.
   // 방식은 글에 고정한 값(ADR 0020)만 보고, 익명 글에는 방별 프로필을 쓰지 않습니다.
-  const room = item.nameMode === 'anonymous' ? undefined : tc.roomProfiles.get(item.authorId)
+  const room = isAnonymousMode(item.nameMode) ? undefined : tc.roomProfiles.get(item.authorId)
   const displayPersonaName =
     item.nameMode === 'display' ? (room?.displayName ?? (item.personaId ? (tc.displayNames.get(item.personaId) ?? null) : null)) : null
   const display = resolveAuthorDisplay(item.nameMode, { ...base, displayPersonaName }, { userId: tc.ctx.viewer.userId })
@@ -273,6 +283,20 @@ function authorOf(tc: ThreadContext, postId: string, item: AuthoredItem & { stat
   // 배지는 게시 중인 실명·표시명 글에만(지운·가린 글, 탈퇴한 작성자에는 없음).
   if (room && view.label !== null && (view.kind === 'real' || view.kind === 'display')) view.roomProfile = room.tag
   return view
+}
+
+/**
+ * 소속 표시 익명(A-05) 글·댓글의 소속 표시: 게시 중일 때 고정한 문자열(표시 안 함이면 null), 지우거나 가리면 null. 그 밖의 방식에는 키가 없습니다.
+ * 넓혀졌는지는 보는 사람이 작성자 본인일 때만 싣습니다(고른 범위와 적용 범위가 다름). 소속 id는 싣지 않습니다.
+ */
+function affiliationOf(
+  tc: ThreadContext,
+  item: { authorId: string; nameMode: NameMode; status: CommunityItemStatus; affiliationLabel: string | null; labelScopeRequested: string | null; labelScopeApplied: string | null },
+): { affiliationLabel?: string | null; labelBroadened?: boolean } {
+  if (item.nameMode !== 'affiliated_anonymous') return {}
+  const out: { affiliationLabel: string | null; labelBroadened?: boolean } = { affiliationLabel: isOpenItem(item.status) ? item.affiliationLabel : null }
+  if (item.authorId === tc.ctx.viewer.userId) out.labelBroadened = item.labelScopeApplied !== item.labelScopeRequested
+  return out
 }
 
 function timesOf(tc: ThreadContext, item: { nameMode: NameMode; createdAt: Date; editedAt: Date | null }) {
@@ -332,6 +356,7 @@ function summaryOf(tc: ThreadContext, post: PostRow, comments: number, reactions
     placeholder: itemPlaceholder('post', post.status),
     nameMode: post.nameMode,
     author: authorOf(tc, post.id, post),
+    ...affiliationOf(tc, post),
     ...timesOf(tc, post),
     commentCount: comments,
     reactionCount: reactions,
@@ -350,6 +375,7 @@ function commentOf(tc: ThreadContext, post: PostRow, c: CommentRow, reactions: {
     placeholder: itemPlaceholder('comment', c.status),
     nameMode: c.nameMode,
     author: authorOf(tc, post.id, c),
+    ...affiliationOf(tc, c),
     ...timesOf(tc, c),
     version: c.version,
     reactionCount: reactions?.count ?? 0,
@@ -481,11 +507,13 @@ export async function getPost(db: DbExecutor, actor: Actor, postId: unknown, now
 
 const requestedMode = z.enum(NAME_MODES, { error: 'invalid' }).nullish()
 
-export const createPostSchema = z.object({ title: z.unknown(), body: z.unknown(), nameMode: requestedMode })
+/** affiliationScope·affiliationId(A-05): 토픽에서만. 다른 공간에서 보내면 422 `affiliationScope: not_allowed`. */
+export const createPostSchema = z.object({ title: z.unknown(), body: z.unknown(), nameMode: requestedMode, ...affiliationInputSchema })
 export const createCommentSchema = z.object({
   body: z.unknown(),
   parentCommentId: z.uuid({ error: 'invalid' }).nullish(),
   nameMode: requestedMode,
+  ...affiliationInputSchema,
 })
 export const editPostSchema = z.object({
   title: z.unknown().optional(),
@@ -520,7 +548,7 @@ async function decideNameMode(
   now: Date,
   requested: NameMode | null | undefined,
 ): Promise<{ mode: NameMode; personaId: string | null }> {
-  const official = isOfficialKind(ctx.space.row.kind)
+  const official = isOfficialKind(ctx.space.row.kind) || ctx.space.row.kind === 'topic'
   const scheduled = official ? null : await loadScheduledChange(tx, ctx.space.row.id)
   const decided = nameModeAtWrite(
     {
@@ -542,6 +570,23 @@ async function decideNameMode(
     return { mode: 'display', personaId: persona.id }
   }
   return { mode: decided.mode, personaId: await writerPersonaId(tx, ctx.viewer.userId, decided.mode) }
+}
+
+/**
+ * 작성 시점에 고정할 소속 표시 열(A-05). 토픽이 아니면 모두 null이고, 소속 표시 입력이 있으면 422 `affiliationScope: not_allowed`.
+ * 토픽이면 topics.ts가 그 순간의 인증 회원 수로 정합니다(같은 트랜잭션).
+ */
+async function affiliationColumns(
+  tx: DbExecutor,
+  ctx: SpaceContext,
+  mode: NameMode,
+  input: { affiliationScope?: AffiliationLabelColumns['labelScopeRequested'] | null; affiliationId?: string | null },
+): Promise<AffiliationLabelColumns | { affiliationId: null; labelScopeRequested: null; labelScopeApplied: null; affiliationLabel: null }> {
+  if (mode !== 'affiliated_anonymous') {
+    if (input.affiliationScope != null || input.affiliationId != null) throw invalid({ [input.affiliationScope != null ? 'affiliationScope' : 'affiliationId']: 'not_allowed' })
+    return { affiliationId: null, labelScopeRequested: null, labelScopeApplied: null, affiliationLabel: null }
+  }
+  return affiliationLabelAtWrite(tx, ctx.viewer.userId, input)
 }
 
 /**
@@ -568,8 +613,9 @@ async function rateLimitOrThrow(tx: DbExecutor, scope: string, userId: string, r
 }
 
 /**
- * POST /community/boards/:id/posts {title, body, nameMode?} — 201 + 글. 401, 403 `write_not_allowed`(공지 게시판은 운영진·모더레이터,
- * 공식 학과 페이지는 같은 학과)·`real_name_required`·`display_persona_required`, 404(읽을 수 없음), 409 `space_not_active`, 422 `title`·`body`·`nameMode`, 429(시간당 10개).
+ * POST /community/boards/:id/posts {title, body, nameMode?, affiliationScope?, affiliationId?} — 201 + 글. 401, 403 `write_not_allowed`(공지 게시판은 운영진·모더레이터,
+ * 공식 학과 페이지는 같은 학과, 토픽은 active 기관 인증)·`real_name_required`·`display_persona_required`, 404(읽을 수 없음, 플래그가 꺼진 토픽),
+ * 409 `space_not_active`, 422 `title`·`body`·`nameMode`(real_not_allowed·affiliated_not_allowed·mode_fixed)·`affiliationScope`·`affiliationId`, 429(시간당 10개).
  */
 export async function createPost(db: DbExecutor, actor: Actor, boardId: unknown, rawInput: unknown, now = new Date()): Promise<CommunityPostDto> {
   const input = parseInput(createPostSchema, rawInput)
@@ -581,6 +627,7 @@ export async function createPost(db: DbExecutor, actor: Actor, boardId: unknown,
     const ctx = await loadReadableSpace(tx, actor, board.spaceId, false, now)
     assertWritable(ctx, canWriteBoard(ctx.viewer, ctx.facts, membershipFacts(ctx.membership), boardFacts(board)))
     const { mode, personaId } = await decideNameMode(tx, ctx, now, input.nameMode)
+    const label = await affiliationColumns(tx, ctx, mode, input)
     await rateLimitOrThrow(tx, 'community_post_create', actor.userId, POST_RATE_LIMIT, now)
     const [post] = await tx
       .insert(communityPosts)
@@ -590,6 +637,7 @@ export async function createPost(db: DbExecutor, actor: Actor, boardId: unknown,
         authorId: actor.userId,
         nameMode: mode,
         personaId,
+        ...label,
         title,
         body,
         createdAt: now,
@@ -611,8 +659,9 @@ export async function createPost(db: DbExecutor, actor: Actor, boardId: unknown,
         })
       }
     }
-    const area = ctx.space.row.kind === 'user_room' ? 'room' : ctx.space.row.kind === 'study_room' ? 'study' : 'official'
-    await emitAnalytics(tx, { name: 'post_created', actorId: actor.userId, unlinked: mode === 'anonymous', props: { kind: board.kind, mode, area }, now })
+    const kind = ctx.space.row.kind
+    const area = kind === 'user_room' ? 'room' : kind === 'study_room' ? 'study' : kind === 'topic' ? 'topic' : 'official'
+    await emitAnalytics(tx, { name: 'post_created', actorId: actor.userId, unlinked: mode === 'anonymous' || mode === 'affiliated_anonymous', props: { kind: board.kind, mode, area }, now })
     return post!.id
   })
   return getPost(db, actor, postId, now)
@@ -648,6 +697,7 @@ export async function createComment(db: DbExecutor, actor: Actor, postId: unknow
       parentId = parent.id
     }
     const { mode, personaId } = await decideNameMode(tx, ctx, now, input.nameMode)
+    const label = await affiliationColumns(tx, ctx, mode, input)
     await rateLimitOrThrow(tx, 'community_comment_create', actor.userId, COMMENT_RATE_LIMIT, now)
     await tx
       .insert(communityComments)
@@ -657,13 +707,14 @@ export async function createComment(db: DbExecutor, actor: Actor, postId: unknow
         authorId: actor.userId,
         nameMode: mode,
         personaId,
+        ...label,
         body,
         createdAt: now,
         updatedAt: now,
       })
     await ensureAlias(tx, post, actor.userId, mode, now)
     if (post.authorId !== actor.userId) await notifyPostAuthor(tx, post, now)
-    await emitAnalytics(tx, { name: 'comment_created', actorId: actor.userId, unlinked: mode === 'anonymous', props: { mode, reply: parentId !== null }, now })
+    await emitAnalytics(tx, { name: 'comment_created', actorId: actor.userId, unlinked: mode === 'anonymous' || mode === 'affiliated_anonymous', props: { mode, reply: parentId !== null }, now })
     return post.id
   })
   return getPost(db, actor, id, now)
@@ -853,7 +904,7 @@ export async function setReaction(
             .onConflictDoNothing()
             .returning({ id: communityReactions.id }),
         )
-        if (inserted.length) await emitAnalytics(tx, { name: 'reaction_added', actorId: actor.userId, unlinked: item.nameMode === 'anonymous', props: { target }, now })
+        if (inserted.length) await emitAnalytics(tx, { name: 'reaction_added', actorId: actor.userId, unlinked: item.nameMode === 'anonymous' || item.nameMode === 'affiliated_anonymous', props: { target }, now })
       } catch (error) {
         if (sqlState(error) !== '23505') throw error
       }

@@ -119,6 +119,7 @@ export type AuditAction =
   | 'community.name_mode_schedule'
   | 'community.official_create'
   | 'community.official_request'
+  | 'community.topic_create'
   | 'community.official_request.student_council'
   | 'community.official_request.threshold'
   | 'community.owner_succession'

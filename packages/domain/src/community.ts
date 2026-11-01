@@ -18,11 +18,31 @@
  */
 import { labelKey, normalizeLabel } from './courses'
 
-export const SPACE_KINDS = ['official_school', 'official_department', 'user_room', 'study_room'] as const
+export const SPACE_KINDS = ['official_school', 'official_department', 'user_room', 'study_room', 'topic'] as const
 export type SpaceKind = (typeof SPACE_KINDS)[number]
 export const OFFICIAL_SPACE_KINDS: readonly SpaceKind[] = ['official_school', 'official_department']
-export const NAME_MODES = ['real', 'display', 'anonymous'] as const
+/**
+ * 이름 표시 방식(DB enum community_name_mode와 같은 값). affiliated_anonymous(A-05, 1단계 소속 표시 익명, ADR 0042)는 토픽 공간·글·댓글에만 있고
+ * 사용자가 방에 고르는 방식이 아닙니다(방 만들기·방식 변경 예약은 ROOM_NAME_MODES만 받음).
+ */
+export const NAME_MODES = ['real', 'display', 'anonymous', 'affiliated_anonymous'] as const
 export type NameMode = (typeof NAME_MODES)[number]
+/** 사용자 방·스터디 방이 고를 수 있는 방식(만들기·바꾸기 예약·모집의 스터디 방 방식). */
+export const ROOM_NAME_MODES = ['real', 'display', 'anonymous'] as const
+export type RoomNameMode = (typeof ROOM_NAME_MODES)[number]
+
+/**
+ * 방(사용자 방·스터디 방)·스터디 과제의 방식으로 읽기. DB enum을 함께 쓰는 열(projects.study_name_mode 등)에는 affiliated_anonymous가 들어오지 않지만,
+ * 타입이 넓어졌으므로 들어오면 가장 보수적인 anonymous로 읽습니다(이름·페르소나가 드러나는 쪽으로 바꾸지 않음).
+ */
+export function asRoomNameMode(mode: NameMode): RoomNameMode {
+  return mode === 'affiliated_anonymous' ? 'anonymous' : mode
+}
+
+/** 이름이 보이지 않는 방식(0단계 익명·1단계 소속 표시 익명): 스레드 익명 번호를 쓰고 페르소나와 이어지지 않습니다. */
+export function isAnonymousMode(mode: NameMode): mode is 'anonymous' | 'affiliated_anonymous' {
+  return mode === 'anonymous' || mode === 'affiliated_anonymous'
+}
 export const SPACE_DISCOVERIES = ['listed', 'unlisted'] as const
 export type SpaceDiscovery = (typeof SPACE_DISCOVERIES)[number]
 export const JOIN_POLICIES = ['open', 'approval', 'invite'] as const
@@ -46,8 +66,9 @@ export const SPACE_KIND_LABELS: Readonly<Record<SpaceKind, string>> = {
   official_department: '공식 학과 페이지',
   user_room: '사용자 방',
   study_room: '스터디 방',
+  topic: '토픽',
 }
-export const NAME_MODE_LABELS: Readonly<Record<NameMode, string>> = { real: '실명', display: '표시명', anonymous: '익명' }
+export const NAME_MODE_LABELS: Readonly<Record<NameMode, string>> = { real: '실명', display: '표시명', anonymous: '익명', affiliated_anonymous: '소속 표시 익명' }
 export const JOIN_POLICY_LABELS: Readonly<Record<JoinPolicy, string>> = { open: '자유 가입', approval: '방장 승인', invite: '초대 전용' }
 export const SPACE_ROLE_LABELS: Readonly<Record<SpaceRole, string>> = { owner: '방장', admin: '운영진', moderator: '모더레이터', member: '멤버' }
 export const BOARD_KIND_LABELS: Readonly<Record<BoardKind, string>> = {
@@ -79,6 +100,14 @@ export const SPACE_INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 export function isOfficialKind(kind: SpaceKind): boolean {
   return kind === 'official_school' || kind === 'official_department'
+}
+
+/**
+ * 운영자가 여는 공간(공식 학교·학과 페이지 + 토픽, A-05·ADR 0042): 멤버십이 아니라 인증에서 읽기·쓰기 자격이 나오고, 가입·초대·멤버 목록이 없고,
+ * 이름 표시 방식을 바꿀 수 없고, 설정·게시판·보관은 운영자만 합니다. `공식` 배지·학교 연결은 isOfficialKind(공식 페이지만)입니다.
+ */
+export function isOperatorSpaceKind(kind: SpaceKind): boolean {
+  return isOfficialKind(kind) || kind === 'topic'
 }
 
 // ── 이름 ─────────────────────────────────────────────────────────────────
@@ -169,7 +198,11 @@ export const OFFICIAL_DEFAULT_BOARDS: readonly BoardTemplate[] = [
 /** 사용자 방·스터디 방 기본 게시판: 하나. 방장·운영진이 MAX_BOARDS_PER_ROOM까지 더합니다. */
 export const ROOM_DEFAULT_BOARDS: readonly BoardTemplate[] = [{ kind: 'general', title: '게시판', writeRole: 'member' }]
 
+/** 토픽 기본 게시판(A-05): 하나. 미디어 없음(라운지 미디어는 공식 학교 페이지 자유 게시판만, ADR 0041·0042). */
+export const TOPIC_DEFAULT_BOARDS: readonly BoardTemplate[] = [{ kind: 'general', title: '게시판', writeRole: 'member' }]
+
 export function defaultBoardsFor(kind: SpaceKind): readonly BoardTemplate[] {
+  if (kind === 'topic') return TOPIC_DEFAULT_BOARDS
   return isOfficialKind(kind) ? OFFICIAL_DEFAULT_BOARDS : ROOM_DEFAULT_BOARDS
 }
 
@@ -255,12 +288,15 @@ export function canCreateRoom(viewer: CommunityViewer | null | undefined, school
  * 공간 내용(게시판·멤버 수·내 권한, C-04 이후 글·댓글)을 읽을 수 있는지. 아니면 API·화면은 404입니다(존재를 숨김).
  * 커뮤니티의 모든 읽기(API·화면·알림의 공간 이름·신고 대상 확인·C-04 글 목록)는 이 함수와 canPreviewSpace만 거칩니다(ADR 0021).
  * - 공식 페이지: 그 학교 active 인증(학과 페이지도 학교 인증이면 읽음) 또는 운영자.
+ * - 토픽(A-05): active 기관 인증 하나 이상 또는 운영자. 인증이 만료·철회되면 다음 요청부터 404입니다.
  * - 사용자 방·스터디 방: active 멤버 + 지금도 학교 자격이 있을 것(C-05). 학교 연결 방은 그 학교 active 인증, 학교 무관 방은 아무 학교
  *   active 인증 하나(들어올 때의 조건과 같음). 인증이 해제·취소되면 멤버십이 남아도 다음 요청부터 404이고, 다시 인증하면 돌아옵니다.
  *   보관·제한 상태여도 멤버는 읽기만. 운영자도 멤버가 아니면 못 읽습니다.
  */
 export function canReadSpace(viewer: CommunityViewer | null | undefined, space: SpaceFacts, membership: MembershipFacts | null | undefined): boolean {
   if (!isActiveViewer(viewer)) return false
+  // 토픽(A-05, ADR 0042): 학교를 넘나드는 공간 — active 기관 인증이 하나라도 있으면(대학·부트캠프 무관) 또는 운영자. 플래그는 서버가 공간을 불러올 때 봅니다.
+  if (space.kind === 'topic') return viewer.operator || viewer.affiliations.length > 0
   if (isOfficialKind(space.kind)) return viewer.operator || hasSchoolAffiliation(viewer, space.schoolId)
   return activeMember(membership) && meetsRoomAffiliation(viewer, space)
 }
@@ -333,7 +369,7 @@ export function canJoinSpace(
   via: 'self' | 'invite',
 ): JoinDecision {
   if (!isActiveViewer(viewer)) return { ok: false, reason: 'not_found' }
-  if (isOfficialKind(space.kind)) return { ok: false, reason: 'not_joinable' }
+  if (isOperatorSpaceKind(space.kind)) return { ok: false, reason: 'not_joinable' }
   if (space.status !== 'active') return { ok: false, reason: 'not_found' }
   if (!meetsRoomAffiliation(viewer, space)) return { ok: false, reason: 'not_found' }
   if (membership?.status === 'active') return { ok: false, reason: 'already_member' }
@@ -363,7 +399,7 @@ const ROOM_MODERATOR_ROLES: readonly SpaceRole[] = ['owner', 'admin', 'moderator
  */
 export function canModerate(viewer: CommunityViewer | null | undefined, space: SpaceFacts, membership: MembershipFacts | null | undefined): boolean {
   if (!isActiveViewer(viewer) || !canReadSpace(viewer, space, membership)) return false
-  if (isOfficialKind(space.kind)) return viewer.operator || (activeMember(membership) && membership.role === 'moderator')
+  if (isOperatorSpaceKind(space.kind)) return viewer.operator || (activeMember(membership) && membership.role === 'moderator')
   return activeMember(membership) && ROOM_MODERATOR_ROLES.includes(membership.role)
 }
 
@@ -387,6 +423,8 @@ export function canWriteBoard(
   if (space.kind === 'official_department') {
     return hasDepartmentAffiliation(viewer, space.schoolId, space.departmentKey) && membership?.status !== 'removed'
   }
+  // 토픽(A-05): 소속 표시에 쓸 active 기관 인증이 있어야 씁니다(운영자도 인증이 없으면 읽기만).
+  if (space.kind === 'topic') return viewer.affiliations.length > 0
   return activeMember(membership)
 }
 
@@ -415,7 +453,7 @@ export function canManageSpace(
   action: SpaceManageAction,
 ): boolean {
   if (!isActiveViewer(viewer) || space.status !== 'active') return false
-  if (isOfficialKind(space.kind)) {
+  if (isOperatorSpaceKind(space.kind)) {
     return viewer.operator && (action === 'update_settings' || action === 'manage_boards' || action === 'archive')
   }
   if (!activeMember(membership)) return false

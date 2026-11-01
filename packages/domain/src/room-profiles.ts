@@ -41,7 +41,7 @@ export function templateAllowed(kind: SpaceKind, template: SpaceTemplate): boole
 
 /** 방별 프로필을 쓰는 방인지: alumni 템플릿이고 지금 효력이 있는 이름 표시 방식이 익명이 아님. */
 export function roomProfilesAvailable(template: SpaceTemplate, effectiveMode: NameMode): boolean {
-  return template === 'alumni' && effectiveMode !== 'anonymous'
+  return template === 'alumni' && (effectiveMode === 'real' || effectiveMode === 'display')
 }
 
 /** 다른 멤버의 기수를 고칠 수 있는 역할(방장·운영진). */

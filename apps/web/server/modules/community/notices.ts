@@ -29,6 +29,7 @@ import {
 } from '@peerchive/domain'
 import { and, communityNotices, communitySpaces, desc, eq, inArray, isNull, spaceMemberships, sql, type DbExecutor } from '@peerchive/db'
 import type { Actor } from '../errors'
+import { isFeatureOn } from '../features'
 import { parseInput } from '../validation'
 import { loadSpacesWhere, loadViewer, spaceFacts } from './access'
 import type { CommunityNoticeDto, CommunityNoticesDto } from '../../../shared/types/api'
@@ -77,7 +78,8 @@ export async function listMyCommunityNotices(db: DbExecutor, actor: Actor): Prom
       .where(and(eq(spaceMemberships.userId, actor.userId), inArray(spaceMemberships.spaceId, spaceIds)))
     const mine = new Map(memberships.map((m) => [m.spaceId, { role: m.role, status: m.status }]))
     for (const s of spaces) {
-      // 멤버 수는 읽기 판정에 쓰지 않습니다(멤버십·학교 인증만 봄).
+      // 멤버 수는 읽기 판정에 쓰지 않습니다(멤버십·학교 인증만 봄). 토픽(A-05)은 topics 플래그가 꺼지면 없는 공간과 같습니다.
+      if (s.row.kind === 'topic' && !isFeatureOn('topics')) continue
       if (canReadSpace(viewer, spaceFacts(s, 0), mine.get(s.row.id) ?? null)) readable.set(s.row.id, { slug: s.row.slug, name: s.row.name })
     }
   }

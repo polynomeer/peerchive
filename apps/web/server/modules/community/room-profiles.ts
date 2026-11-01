@@ -16,7 +16,6 @@ import {
   REAL_NAME_MISSING_LABEL,
   ROOM_COHORT_LABEL_MAX,
   ROOM_PROFILE_NAME_MISSING_LABEL,
-  type NameMode,
   type RoomStoredBadge,
   type SpaceTemplate,
   canEditMemberCohort,
@@ -62,7 +61,7 @@ export function effectiveTemplate(row: { template: SpaceTemplate }): SpaceTempla
 
 interface ProfileSpace {
   ctx: SpaceContext
-  mode: Exclude<NameMode, 'anonymous'>
+  mode: 'real' | 'display'
 }
 
 /** 플래그 → 읽을 수 있는 공간(멤버) → alumni 템플릿 → 익명이 아닌 방. */
@@ -71,7 +70,7 @@ async function loadProfileSpace(db: DbExecutor, actor: Actor, ref: unknown, lock
   const ctx = await loadReadableSpace(db, actor, ref, lock, now)
   if (ctx.space.row.template !== 'alumni') throw notFound()
   const { mode } = nameModeNow(ctx.space.row.currentNameMode, await loadScheduledChange(db, ctx.space.row.id), now)
-  if (!roomProfilesAvailable(ctx.space.row.template, mode) || mode === 'anonymous') throw conflict('room_profiles_unavailable')
+  if (!roomProfilesAvailable(ctx.space.row.template, mode) || (mode !== 'real' && mode !== 'display')) throw conflict('room_profiles_unavailable')
   return { ctx, mode }
 }
 

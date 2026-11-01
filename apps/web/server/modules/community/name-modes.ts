@@ -16,14 +16,14 @@
  */
 import { z } from 'zod'
 import {
-  NAME_MODES,
+  ROOM_NAME_MODES,
   type NameMode,
   canCancelNameModeChange,
   canManageSpace,
   checkNameModeTransition,
   effectiveNameMode,
   isNameModeChangeDue,
-  isOfficialKind,
+  isOperatorSpaceKind,
   joinPolicyForNameModeChange,
   nameModeEffectiveAt,
 } from '@peerchive/domain'
@@ -40,7 +40,7 @@ import type { NameModeChangeDto, NameModeStateDto, PendingNameModeChangeDto } fr
 export type NameModeChangeRow = typeof nameModeChanges.$inferSelect
 
 const requiredOr = (code: string) => (issue: { input?: unknown }) => (issue.input === undefined ? 'required' : code)
-export const scheduleNameModeSchema = z.object({ toMode: z.enum(NAME_MODES, { error: requiredOr('invalid') }) })
+export const scheduleNameModeSchema = z.object({ toMode: z.enum(ROOM_NAME_MODES, { error: requiredOr('invalid') }) })
 
 /** 공간의 scheduled 예약(있으면). */
 export async function loadScheduledChange(db: DbExecutor, spaceId: string, lock = false): Promise<NameModeChangeRow | null> {
@@ -113,7 +113,7 @@ function toChangeDto(row: NameModeChangeRow): NameModeChangeDto {
 const canChange = (ctx: SpaceContext) => canManageSpace(ctx.viewer, ctx.facts, membershipFacts(ctx.membership), 'change_name_mode')
 
 async function stateFor(db: DbExecutor, ctx: SpaceContext, now: Date): Promise<NameModeStateDto> {
-  const fixed = isOfficialKind(ctx.space.row.kind)
+  const fixed = isOperatorSpaceKind(ctx.space.row.kind)
   const history = fixed
     ? []
     : await db
@@ -135,7 +135,7 @@ export async function getNameModeState(db: DbExecutor, actor: Actor, ref: unknow
 
 /** 공식 페이지 409, 보관·제한 409, 방장이 아니면 403(읽을 수 없으면 이미 404). */
 function assertCanChange(ctx: SpaceContext): void {
-  if (isOfficialKind(ctx.space.row.kind)) throw conflict('name_mode_fixed')
+  if (isOperatorSpaceKind(ctx.space.row.kind)) throw conflict('name_mode_fixed')
   if (ctx.space.row.status !== 'active') throw conflict('space_not_active', { status: ctx.space.row.status })
   if (!canChange(ctx)) throw forbidden()
 }

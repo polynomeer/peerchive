@@ -25,7 +25,9 @@ import {
   type SpaceKind,
   canReadSpace,
   canWriteBoard,
+  isAnonymousMode,
   isOfficialKind,
+  isOperatorSpaceKind,
 } from './community'
 import type { AuthorDisplay } from './name-modes'
 
@@ -106,10 +108,11 @@ export function assignThreadAlias(input: {
   postNameMode: NameMode
   writeMode: NameMode
 }): AliasAssignment {
-  if (input.writeMode !== 'anonymous') return { aliasNo: null, insert: false }
+  // 소속 표시 익명(A-05)도 익명과 같은 번호를 씁니다(소속 표시는 번호 옆에 붙음, SYSTEM_DESIGN §6.7.2).
+  if (!isAnonymousMode(input.writeMode)) return { aliasNo: null, insert: false }
   const mine = input.existing.find((a) => a.userId === input.userId)
   if (mine) return { aliasNo: mine.aliasNo, insert: false }
-  if (input.userId === input.postAuthorId && input.postNameMode === 'anonymous') return { aliasNo: POST_AUTHOR_ALIAS, insert: true }
+  if (input.userId === input.postAuthorId && isAnonymousMode(input.postNameMode)) return { aliasNo: POST_AUTHOR_ALIAS, insert: true }
   const max = input.existing.reduce((m, a) => (a.aliasNo > m ? a.aliasNo : m), 0)
   return { aliasNo: max + 1, insert: true }
 }
@@ -155,9 +158,12 @@ export const SMALL_ROOM_MEMBER_THRESHOLD = 10
 export type CommunityTimeBucket = 'today' | 'this_week' | 'earlier'
 export const COMMUNITY_TIME_BUCKET_LABELS: Readonly<Record<CommunityTimeBucket, string>> = { today: '오늘', this_week: '이번 주', earlier: '일주일 전 이전' }
 
-/** 시각을 감춰야 하는지: 공식 페이지가 아니고, 익명 글·댓글이고, 지금 active 멤버가 10명 미만. DB에는 정확한 시각이 남습니다. */
+/**
+ * 시각을 감춰야 하는지: 운영자가 연 공간(공식 페이지·토픽 — 멤버 수를 세지 않는 넓은 공간)이 아니고, 익명 글·댓글이고, 지금 active 멤버가 10명 미만.
+ * DB에는 정확한 시각이 남습니다.
+ */
 export function shouldBucketTimes(space: { kind: SpaceKind; activeMembers: number }, itemMode: NameMode): boolean {
-  return !isOfficialKind(space.kind) && itemMode === 'anonymous' && space.activeMembers < SMALL_ROOM_MEMBER_THRESHOLD
+  return !isOperatorSpaceKind(space.kind) && isAnonymousMode(itemMode) && space.activeMembers < SMALL_ROOM_MEMBER_THRESHOLD
 }
 
 const SEOUL_OFFSET_MS = 9 * 60 * 60 * 1000
@@ -240,6 +246,7 @@ export function checkItemBody(raw: unknown, max: number): TextCheck {
  * 익명이면 "운영자는 신고 처리를 위해 작성자를 확인할 수 있고, 방장·모더레이터는 확인할 수 없음"을 함께 알립니다(§8.9.6).
  */
 export function composerNameModeNote(kind: SpaceKind, mode: NameMode): string {
+  if (kind === 'topic') return '토픽의 글은 이름 없이 소속과 신분만 보입니다(예: ○○대 · 졸업생). 표시할 범위를 고르거나 표시하지 않을 수 있습니다.'
   if (isOfficialKind(kind)) return '공식 페이지의 글은 익명이 기본이고, 글마다 표시명을 고를 수 있습니다(실명은 쓸 수 없음).'
   if (mode === 'anonymous') return '이 방은 익명으로 표시됩니다.'
   if (mode === 'display') return '이 방은 표시명으로 표시됩니다.'

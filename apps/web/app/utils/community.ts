@@ -126,10 +126,12 @@ export const NAME_MODE_HINTS: Record<keyof typeof NAME_MODE_LABELS, string> = {
   real: '계정에 입력한 실명(커뮤니티 화면에서 선택 입력)으로 글을 씁니다(Peerchive가 신분을 확인하지 않음). 가입은 승인제가 기본입니다.',
   display: '공개 프로필의 표시명으로 씁니다. 실명은 보이지 않습니다.',
   anonymous: '글마다 익명으로 씁니다. 방장도 작성자를 볼 수 없습니다. 소규모 익명 방은 말투·시간으로 작성자가 추정될 수 있습니다.',
+  affiliated_anonymous: '이름 없이 소속과 신분만 보입니다(토픽 전용). 소속 인증 회원이 적으면 학교·기관 유형으로 넓혀 표시합니다.',
 }
 
 export const COMMUNITY_ERROR_MESSAGES: Record<string, string> = {
   affiliation_required: '학교 메일 인증이 필요합니다. 학교 인증을 마친 뒤 다시 시도하세요.',
+  topic_exists: '같은 이름의 토픽이 이미 있습니다.',
   already_member: '이미 이 방의 멤버입니다.',
   already_pending: '이미 가입을 요청했습니다. 방장의 승인을 기다리세요.',
   invite_only: '초대 링크로만 들어갈 수 있는 방입니다.',

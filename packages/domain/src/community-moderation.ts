@@ -13,7 +13,7 @@
  *
  * 런타임 의존성 없음.
  */
-import { type SpaceKind, isOfficialKind } from './community'
+import { type SpaceKind, isOperatorSpaceKind } from './community'
 
 // ── 임시 숨김 ────────────────────────────────────────────────────────────
 
@@ -29,7 +29,7 @@ export interface AutoHideThresholds {
 
 /** 공간 종류의 기준 수. */
 export function autoHideThreshold(kind: SpaceKind, thresholds: AutoHideThresholds = AUTO_HIDE_THRESHOLDS): number {
-  return isOfficialKind(kind) ? thresholds.official : thresholds.room
+  return isOperatorSpaceKind(kind) ? thresholds.official : thresholds.room
 }
 
 /** 환경 변수 값 → 기준 수(정수 2~50). 비었거나 틀리면 기본값. */

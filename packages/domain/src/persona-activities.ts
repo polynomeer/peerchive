@@ -3,13 +3,14 @@
  * DELIVERY_PLAN §4.2 S-02·§5.2 Q, ADR 0029).
  *
  * - 공개 프로필의 활동 목록과 팔로우 피드(S-05)는 `PersonaActivity`만 읽습니다. 이 파일은 **어떤 원천을 어느 페르소나에 투영해도 되는지**만 정합니다.
- * - 0~1단계(익명) 글은 투영 경로가 없습니다: 커뮤니티 글은 이름 표시 방식이 real·display이고 작성 시점에 고정한 페르소나가 있고 listed 공간의
+ * - 0~1단계(익명·소속 표시 익명) 글은 투영 경로가 없습니다: 커뮤니티 글은 이름 표시 방식이 real·display이고 작성 시점에 고정한 페르소나가 있고 listed 공간의
  *   게시 중인 글만, 익명 선배 노트·익명 스터디 방 release는 어떤 페르소나에도 투영하지 않습니다.
  * - 같은 규칙을 DB 트리거(persona_activities_projection_guard, migration 0027)가 원본 행으로 다시 확인합니다. 이 함수는 원본 모듈이 투영을
  *   시도하기 전에 거르고 거부 이유를 코드로 돌려주는 쪽입니다.
  *
  * 런타임 의존성 없음.
  */
+import { type NameMode, isAnonymousMode } from './community'
 import type { PersonaKind } from './personas'
 
 export const PERSONA_ACTIVITY_SOURCES = ['publication_release', 'senior_note', 'study_release', 'profile_post', 'community_post'] as const
@@ -32,9 +33,9 @@ export function personaActivityItemKind(source: PersonaActivitySource): PersonaA
   return ITEM_KIND[source]
 }
 
-/** 커뮤니티 이름 표시 방식(C-03) → 그 글이 귀속될 페르소나 종류. anonymous(0단계)는 페르소나가 없습니다. */
-export function personaKindForNameMode(mode: 'real' | 'display' | 'anonymous'): PersonaKind | null {
-  return mode === 'anonymous' ? null : mode
+/** 커뮤니티 이름 표시 방식(C-03) → 그 글이 귀속될 페르소나 종류. anonymous(0단계)·affiliated_anonymous(1단계, A-05)는 페르소나가 없습니다. */
+export function personaKindForNameMode(mode: NameMode): PersonaKind | null {
+  return isAnonymousMode(mode) ? null : mode
 }
 
 /** 투영 대상 페르소나(원본 모듈이 고른 것). */
@@ -47,7 +48,7 @@ export interface ProjectionPersona {
 export type PersonaActivitySourceFacts =
   | {
       type: 'community_post'
-      nameMode: 'real' | 'display' | 'anonymous'
+      nameMode: NameMode
       /** 글에 작성 시점에 고정한 페르소나(community_posts.persona_id). */
       personaId: string | null
       discovery: 'listed' | 'unlisted'

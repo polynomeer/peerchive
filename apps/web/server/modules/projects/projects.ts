@@ -11,7 +11,7 @@
  * 단건 조회·수정 응답은 적용 엠바고와 과목 정보를 함께 싣습니다(ProjectDetailDto).
  */
 import { z } from 'zod'
-import { canChangeRetroMode, canEditProject, type ProjectRole } from '@peerchive/domain'
+import { asRoomNameMode, canChangeRetroMode, canEditProject, type ProjectRole } from '@peerchive/domain'
 import { and, desc, eq, sql, courses, projectMembers, projects, schools, type DbExecutor } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
 import { emitAnalytics } from '../analytics/analytics'
@@ -77,7 +77,7 @@ export function toProjectDto(row: ProjectRow, myRole: ProjectRole): ProjectDto {
     courseTermId: row.courseTermId,
     retroMode: row.retroMode,
     retrospective: row.retroMode,
-    studyNameMode: row.studyNameMode,
+    studyNameMode: row.studyNameMode && asRoomNameMode(row.studyNameMode),
     visibility: 'private',
     version: row.version,
     myRole,

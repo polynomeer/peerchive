@@ -8,7 +8,7 @@
  * - 초대 미리보기(`POST /community/invitations/preview`)는 방 이름·소개·이름 표시 방식만(멤버·게시판 없음).
  */
 import { z } from 'zod'
-import { SPACE_INVITATION_TTL_MS, canJoinSpace, isOfficialKind } from '@peerchive/domain'
+import { SPACE_INVITATION_TTL_MS, canJoinSpace, isOperatorSpaceKind } from '@peerchive/domain'
 import { and, desc, eq, spaceInvitations, type DbExecutor } from '@peerchive/db'
 import { emitAnalytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
@@ -50,7 +50,7 @@ export interface CreatedSpaceInvitation {
 export async function createSpaceInvitation(db: DbExecutor, actor: Actor, ref: unknown, now = new Date()): Promise<CreatedSpaceInvitation> {
   return db.transaction(async (tx) => {
     const ctx = await loadReadableSpace(tx, actor, ref, true)
-    if (isOfficialKind(ctx.space.row.kind)) throw conflict('not_joinable')
+    if (isOperatorSpaceKind(ctx.space.row.kind)) throw conflict('not_joinable')
     assertCanManage(ctx, 'invite')
     return issueSpaceInvitationInTx(tx, ctx.space.row.id, actor.userId, now)
   })
@@ -70,7 +70,7 @@ export async function issueSpaceInvitationInTx(tx: DbExecutor, spaceId: string, 
 /** GET /community/spaces/:slug/invitations — owner·admin. 최근 50개. */
 export async function listSpaceInvitations(db: DbExecutor, actor: Actor, ref: unknown, now = new Date()): Promise<SpaceInvitationDto[]> {
   const ctx = await loadReadableSpace(db, actor, ref)
-  if (isOfficialKind(ctx.space.row.kind)) throw conflict('not_joinable')
+  if (isOperatorSpaceKind(ctx.space.row.kind)) throw conflict('not_joinable')
   assertCanManage(ctx, 'invite')
   const rows = await db.select().from(spaceInvitations).where(eq(spaceInvitations.spaceId, ctx.space.row.id)).orderBy(desc(spaceInvitations.createdAt)).limit(50)
   return rows.map((r) => toDto(r, now))

@@ -12,7 +12,7 @@
  * - 이 모듈은 커뮤니티 모듈 안에 있고 social 모듈·공개 경로·검색·추천은 이 표를 읽지 않습니다(S-02 경계 테스트가 확인).
  * - 감사 기록에는 새 동의 여부·채운 항목 수·철회 원인만(값 없음). 명부 조회는 남기지 않습니다.
  */
-import { type NameMode, checkDirectoryEntryInput, directoryAvailable, filledDirectoryFields, parseDirectoryQuery } from '@peerchive/domain'
+import { checkDirectoryEntryInput, directoryAvailable, filledDirectoryFields, parseDirectoryQuery } from '@peerchive/domain'
 import { and, asc, directoryEntries, eq, spaceMemberships, users, type DbExecutor } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, invalid, rateLimited } from '../errors'
@@ -28,13 +28,13 @@ export const DIRECTORY_PAGE_VIEW_LIMIT = { limit: 20, windowMs: 10 * 60 * 1000 }
 export const DIRECTORY_UPDATE_LIMIT = { limit: 30, windowMs: 60 * 60 * 1000 }
 
 interface DirectoryRoom extends AlumniRoom {
-  mode: Exclude<NameMode, 'anonymous'>
+  mode: 'real' | 'display'
 }
 
 /** 플래그 → 읽을 수 있는 공간 → active 멤버 → alumni 템플릿(아니면 404) → 익명이 아님(409 `directory_unavailable`). */
 async function loadDirectoryRoom(db: DbExecutor, actor: Actor, ref: unknown, lock: boolean, now: Date): Promise<DirectoryRoom> {
   const room = await loadAlumniRoom(db, actor, ref, lock, now)
-  if (!directoryAvailable('alumni', room.mode) || room.mode === 'anonymous') throw conflict('directory_unavailable')
+  if (!directoryAvailable('alumni', room.mode) || (room.mode !== 'real' && room.mode !== 'display')) throw conflict('directory_unavailable')
   return { ctx: room.ctx, mode: room.mode }
 }
 

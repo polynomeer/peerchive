@@ -214,7 +214,7 @@ interface ProjectFacts {
   membershipStatus: 'invited' | 'active' | 'left' | 'removed'
   title: string
   kind: 'individual' | 'team' | 'study'
-  studyNameMode: 'real' | 'display' | 'anonymous' | null
+  studyNameMode: 'real' | 'display' | 'anonymous' | 'affiliated_anonymous' | null
   courseTermId: string | null
   embargoUntil: Date | null
   courseTitle: string | null

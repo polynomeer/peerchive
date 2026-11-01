@@ -74,6 +74,8 @@ export type AnalyticsProps = Readonly<Record<string, AnalyticsPropValue>>
 const LOG_TAGS = ['progress', 'stuck', 'solution', 'decision', 'meeting', 'validation', 'retro'] as const
 const LOG_SOURCES = ['web', 'discord', 'ai', 'task', 'retro'] as const
 const NAME_MODE_VALUES = ['real', 'display', 'anonymous'] as const
+/** 글·댓글에 고정된 방식(A-05: 토픽의 소속 표시 익명 포함). 방식 변경 예약·스터디 방은 NAME_MODE_VALUES만. */
+const WRITE_MODE_VALUES = [...NAME_MODE_VALUES, 'affiliated_anonymous'] as const
 const enumOf = (values: readonly string[]): AnalyticsPropSpec => ({ kind: 'enum', values })
 const bool: AnalyticsPropSpec = { kind: 'bool' }
 const count = (max: number, min = 0): AnalyticsPropSpec => ({ kind: 'int', min, max })
@@ -116,7 +118,7 @@ export const ANALYTICS_PROP_SPECS: Readonly<Record<AnalyticsEventName, Readonly<
   // 학교 메일 인증 성공(C-01). 학교 id·도메인은 넣지 않습니다(작은 학교는 학교만으로 사람을 좁힐 수 있음). 재학/졸업생 구분만.
   affiliation_verified: { standing: enumOf(['student', 'alumni']) },
   // 커뮤니티 공간(C-02). 공간·학교 id·이름은 넣지 않습니다(사용자 키만 해시). 종류·가입 방식만.
-  space_created: { kind: enumOf(['official_school', 'official_department', 'user_room', 'study_room']) },
+  space_created: { kind: enumOf(['official_school', 'official_department', 'user_room', 'study_room', 'topic']) },
   space_joined: {
     kind: enumOf(['user_room', 'study_room']),
     policy: enumOf(['open', 'approval', 'invite']),
@@ -126,13 +128,13 @@ export const ANALYTICS_PROP_SPECS: Readonly<Record<AnalyticsEventName, Readonly<
   name_mode_applied: { from: enumOf(NAME_MODE_VALUES), to: enumOf(NAME_MODE_VALUES) },
   // 커뮤니티 글·댓글·공감(C-04). 글·공간·게시판 id·제목·본문은 넣지 않습니다. 게시판 종류·고정된 이름 표시 방식·답글 여부·공감 대상 종류만.
   // 익명 글·댓글은 사용자 키 없이 기록합니다(웹 emitter의 unlinked, SYSTEM_DESIGN §6.7 "익명 글과 프로필의 분리").
-  // area(C-10, §6.1 space_kind): 공간 종류를 묶은 코드(official = 공식 학교·학과 페이지, room = 사용자 방, study = 스터디 방). 키 이름에 space를 쓰지 않습니다(C-05 금지 키).
+  // area(C-10, §6.1 space_kind): 공간 종류를 묶은 코드(official = 공식 학교·학과 페이지, room = 사용자 방, study = 스터디 방, topic = 토픽(A-05)). 키 이름에 space를 쓰지 않습니다(C-05 금지 키).
   post_created: {
     kind: enumOf(['free', 'freshmen', 'alumni', 'question', 'info', 'recruiting', 'notice', 'general']),
-    mode: enumOf(NAME_MODE_VALUES),
-    area: enumOf(['official', 'room', 'study']),
+    mode: enumOf(WRITE_MODE_VALUES),
+    area: enumOf(['official', 'room', 'study', 'topic']),
   },
-  comment_created: { mode: enumOf(NAME_MODE_VALUES), reply: bool },
+  comment_created: { mode: enumOf(WRITE_MODE_VALUES), reply: bool },
   reaction_added: { target: enumOf(['post', 'comment']) },
   // C-06(ADR 0023): 대상 종류·제재 수준·범위만. 신고·글·공간·사람 id, 사유, 신고 수는 없습니다.
   community_report_filed: { targetKind: enumOf(['space', 'post', 'comment', 'recruitment', 'application']) },

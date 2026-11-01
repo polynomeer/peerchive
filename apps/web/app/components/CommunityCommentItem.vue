@@ -107,6 +107,8 @@ async function toggleReaction() {
   <li class="comment" :data-testid="`comment-${c.id}`">
     <p class="small comment-meta">
       <strong class="comment-author">{{ c.author.label ?? '' }}</strong>
+      <span v-if="c.affiliationLabel" data-testid="comment-affiliation-label"> · {{ c.affiliationLabel }}</span>
+      <span v-if="c.labelBroadened" class="hint"> (넓혀 표시됨 · 나에게만 보이는 안내)</span>
       <RoomBadges :tag="c.author.roomProfile" />
       <span v-if="c.author.schoolVerified"> · 학교 인증</span>
       <span v-if="c.author.mine" class="badge">내 댓글</span>

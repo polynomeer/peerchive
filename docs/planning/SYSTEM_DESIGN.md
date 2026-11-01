@@ -413,7 +413,7 @@ erDiagram
 | Post·Comment (확장) | name_mode에 `affiliated_anonymous` 추가, affiliation_id?, label_scope_requested(institution/institution_kind/none), label_scope_applied, affiliation_label | `affiliation_label`은 **작성 시점 문자열로 고정**(예: `○○대 · 졸업생`). 이후 소속 변경·인원 증가로 바뀌지 않음. `affiliation_id`는 운영자 전용 컬럼이며 공개 DTO에는 문자열만 실림 |
 | InstitutionMemberCount | institution_id, standing, active_count, computed_at | 활성 인증 회원 수의 일 단위 집계. 소속 표시 임계값 판정에만 씀 |
 
-- **소속 표시 임계값.** 작성 시점에 `(institution_id, standing)`의 `active_count`가 임계값(초기안 50, 설정값) 미만이거나 집계가 없으면 `label_scope_applied`를 `institution_kind`(예: `부트캠프 수료생`, `대학 졸업생`)로 자동 상향합니다. 작성자가 고른 범위보다 좁게 표시하는 경우는 없습니다. 학과·기수·입학연도는 소속 표시에 넣지 않습니다. 임계값 판정은 제품 기획 §6.4의 n ≥ 5 익명 집계 원칙을 개인 글에 확장한 것입니다.
+- **소속 표시 임계값.** 작성 시점에 `(institution_id, standing)`의 `active_count`가 임계값(초기안 50, 설정값) 미만이거나 집계가 없으면 `label_scope_applied`를 `institution_kind`(예: `부트캠프 수료생`, `대학 졸업생`)로 자동 상향합니다. 작성자가 고른 범위보다 좁게 표시하는 경우는 없습니다. 학과·기수·입학연도는 소속 표시에 넣지 않습니다. 임계값 판정은 제품 기획 §6.4의 n ≥ 5 익명 집계 원칙을 개인 글에 확장한 것입니다. A-05 구현은 일 단위 집계 표 대신 쓰는 트랜잭션 안에서 (정본 기관, 신분)의 인증된 active 소속(active 계정, 사람 단위)을 실시간으로 세고 결과를 저장·응답하지 않습니다. 넓힌 범주(기관 유형, 신분 — 모든 기관 합계)도 임계값 미만이면 소속을 표시하지 않습니다(`none`). 임계값은 `PEERCHIVE_AFFILIATION_LABEL_THRESHOLD`(기본 50, 5 미만 불가)입니다. 토픽에는 미디어를 붙이지 않습니다([ADR 0042](../adr/0042-topics-affiliation-labels.md)).
 - **번호.** 토픽 글도 `ThreadAlias`로 스레드 안 번호를 붙이고, 소속 표시는 번호 옆에 붙습니다. 같은 작성자의 다른 스레드와는 연결하지 않습니다.
 - **현직자 답변의 이동.** 토픽 답변을 선배 노트로 옮길 때는 `ArchiveTransfer`(§6.7)를 쓰고 이름 표시 방식을 다시 고릅니다. 1단계로 남기면 선배 노트에도 소속 표시만 붙고 페르소나와 연결되지 않습니다.
 - **수료 회고.** 부트캠프·교육 프로그램 경험은 `SeniorNote`에 `institution_id`·`cohort_id`를 붙인 구조화된 회고로 남깁니다. 별점·연봉·추천 점수 필드는 두지 않습니다.

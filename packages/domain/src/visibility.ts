@@ -144,8 +144,8 @@ export function canViewPersonaItem(
 
 export interface ListableProjectFacts {
   kind: 'individual' | 'team' | 'study'
-  /** 스터디 기록일 때 방의 지금 이름 표시 방식(C-08). */
-  studyNameMode: 'real' | 'display' | 'anonymous' | null
+  /** 스터디 기록일 때 방의 지금 이름 표시 방식(C-08). DB enum을 함께 써 affiliated_anonymous도 타입에 있지만 스터디 방에는 없고, 있으면 익명처럼 다룹니다. */
+  studyNameMode: 'real' | 'display' | 'anonymous' | 'affiliated_anonymous' | null
   /** 요청자의 멤버십 상태. */
   membershipStatus: 'invited' | 'active' | 'left' | 'removed'
 }

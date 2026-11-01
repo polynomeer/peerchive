@@ -3,9 +3,10 @@
  * 운영자 커뮤니티 도구(C-02, ADR 0019). 운영자가 아니면 404로 보입니다(API는 403 operator_only). noindex.
  * - 공식 페이지 개설 요청 묶음(학교·학과별 요청자 수·학생회 표시·기준 도달). 기준에 이르러도 자동으로 열지 않고 운영자가 엽니다.
  * - 공식 페이지 열기(학교 id + 학과 선택), 공간 목록(정보만 — 게시판·멤버 목록은 운영자에게도 보이지 않음)과 제한·해제·보관·정원 결정.
+ * - 토픽 열기(A-05, ADR 0042): P2 topics 플래그가 켜져 있을 때만 보입니다(꺼지면 API 404). CLI `pnpm --filter @peerchive/db topic create`도 같은 규칙.
  * 절차는 docs/ops/RUNBOOK.md §4.2.
  */
-import type { OperatorOfficialRequestGroupDto, OperatorSpaceDto, SpaceDetailDto, SpaceStatus } from '~~/shared/types/api'
+import type { OperatorOfficialRequestGroupDto, OperatorSpaceDto, SpaceDetailDto, SpaceStatus, TopicCategory } from '~~/shared/types/api'
 
 definePageMeta({ middleware: 'auth' })
 useHead({ title: '커뮤니티 운영 — Peerchive', meta: [{ name: 'robots', content: 'noindex, nofollow' }] })
@@ -31,6 +32,36 @@ const busy = ref<string | null>(null)
 function fail(e: unknown) {
   const err = apiError(e)
   notice.value = { kind: 'error', text: err.code === 'validation_failed' ? '입력한 내용을 확인하세요.' : communityErrorMessage(err.code) }
+}
+
+const { flags, ensure: ensureFeatures } = useFeatures()
+await ensureFeatures()
+const TOPIC_CATEGORY_TEXT: Record<TopicCategory, string> = {
+  career: '취준',
+  grad_school: '대학원',
+  startup: '창업',
+  military: '군대·예비역',
+  campus_life: '학교생활',
+  role: '직무',
+}
+const topicForm = reactive({ name: '', description: '', category: 'career' as TopicCategory })
+async function createTopic() {
+  busy.value = 'topic'
+  notice.value = null
+  try {
+    const created = await $fetch<SpaceDetailDto>('/api/v1/operator/community/topics', {
+      method: 'POST',
+      body: { name: topicForm.name, description: topicForm.description || null, category: topicForm.category },
+    })
+    notice.value = { kind: 'ok', text: `토픽 “${created.name}”을 열었습니다.` }
+    topicForm.name = ''
+    topicForm.description = ''
+    await refreshSpaces()
+  } catch (e) {
+    fail(e)
+  } finally {
+    busy.value = null
+  }
 }
 
 const form = reactive({ schoolId: '', departmentLabel: '', name: '', description: '' })
@@ -158,6 +189,28 @@ async function decideCapacity(s: OperatorSpaceDto) {
             <textarea id="official-desc" v-model="form.description" rows="2" maxlength="300" />
           </div>
           <p class="actions"><button type="submit" :disabled="busy === 'create' || !form.schoolId">공식 페이지 열기</button></p>
+        </form>
+      </section>
+
+      <section v-if="flags.topics" aria-labelledby="op-topic">
+        <h2 id="op-topic">토픽 열기</h2>
+        <p class="hint">학교를 넘나드는 공간입니다. 기관 인증이 있으면 누구나 읽고 쓰며, 글에는 이름 대신 소속 표시(인증 회원이 적으면 넓은 범주)만 보입니다.</p>
+        <form class="stack" novalidate @submit.prevent="createTopic">
+          <div class="field">
+            <label for="topic-category">분류</label>
+            <select id="topic-category" v-model="topicForm.category">
+              <option v-for="(label, key) in TOPIC_CATEGORY_TEXT" :key="key" :value="key">{{ label }}</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="topic-name">이름</label>
+            <input id="topic-name" v-model="topicForm.name" maxlength="40" />
+          </div>
+          <div class="field">
+            <label for="topic-desc">소개 (선택)</label>
+            <textarea id="topic-desc" v-model="topicForm.description" rows="2" maxlength="300" />
+          </div>
+          <p class="actions"><button type="submit" :disabled="busy === 'topic' || !topicForm.name.trim()">토픽 열기</button></p>
         </form>
       </section>
 

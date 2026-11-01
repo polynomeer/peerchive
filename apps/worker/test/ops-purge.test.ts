@@ -949,6 +949,33 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
     })
   })
 
+  it('topic posts with an affiliation label (A-05): the operator-only affiliation id is cleared before the affiliation rows go, the frozen label stays on a deleted post', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '토픽작성자', 'deleted')
+      const [school] = await tx.insert(schools).values({ name: `토픽대${id().slice(0, 8)}`, nameKey: `토픽대${id().slice(0, 8)}` }).returning()
+      const [aff] = await tx
+        .insert(institutionAffiliations)
+        .values({ userId: U.id, schoolId: school!.id, emailHash: 'c'.repeat(64), emailDomain: 'topic.ac.kr', standing: 'alumni', status: 'active', verifiedAt: NOW })
+        .returning()
+      const [topic] = await tx
+        .insert(communitySpaces)
+        .values({ kind: 'topic', name: '취준', slug: id().replace(/-/g, '').slice(0, 10), currentNameMode: 'affiliated_anonymous', topicCategory: 'career', createdBy: U.id })
+        .returning()
+      const [board] = await tx.insert(boards).values({ spaceId: topic!.id, kind: 'general', title: '게시판', position: 0 }).returning()
+      const label = { nameMode: 'affiliated_anonymous' as const, affiliationId: aff!.id, labelScopeRequested: 'institution' as const, labelScopeApplied: 'institution_kind' as const, affiliationLabel: '대학 졸업생' }
+      const [post] = await tx.insert(communityPosts).values({ boardId: board!.id, spaceId: topic!.id, authorId: U.id, title: '토픽 글', body: '본문', ...label }).returning()
+      await tx.insert(communityComments).values({ postId: post!.id, authorId: U.id, body: '댓글', ...label })
+
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ institution_affiliations: 1 })
+      const [p] = await tx.select().from(communityPosts).where(eq(communityPosts.id, post!.id))
+      expect(p).toMatchObject({ status: 'deleted_by_author', title: '', body: '', affiliationId: null, affiliationLabel: '대학 졸업생', labelScopeApplied: 'institution_kind' })
+      const [c] = await tx.select().from(communityComments).where(eq(communityComments.postId, post!.id))
+      expect(c).toMatchObject({ status: 'deleted_by_author', affiliationId: null })
+      expect(await count(tx, institutionAffiliations, eq(institutionAffiliations.userId, U.id))).toBe(0)
+    })
+  })
+
   it('purges only accounts past the grace period and never active ones', async () => {
     await rollback(async (tx) => {
       const w = await world(tx)

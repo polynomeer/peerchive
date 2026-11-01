@@ -310,10 +310,25 @@ export const affiliationMethod = pgEnum('affiliation_method', ['email', 'invite_
 export const affiliationStanding = pgEnum('affiliation_standing', ['student', 'alumni'])
 /** pending(코드 대기) → active(인증) / expired(만료·시도 초과·새 요청으로 대체) / revoked(본인 해제·운영자 취소). */
 export const affiliationStatus = pgEnum('affiliation_status', ['pending', 'active', 'revoked', 'expired'])
-/** 커뮤니티 공간 종류(C-02, @peerchive/domain SPACE_KINDS). official_*는 운영자만 만듭니다. */
-export const communitySpaceKind = pgEnum('community_space_kind', ['official_school', 'official_department', 'user_room', 'study_room'])
-/** 공간의 이름 표시 방식(실명·표시명·익명). 공식 페이지는 anonymous 고정. 바꾸기는 C-03(7일 예약). */
-export const communityNameMode = pgEnum('community_name_mode', ['real', 'display', 'anonymous'])
+/**
+ * 커뮤니티 공간 종류(C-02, @peerchive/domain SPACE_KINDS). official_*는 운영자만 만듭니다.
+ * topic(A-05, ADR 0042): 학교를 넘나드는 토픽. 운영자만 만들고 기관 인증이 하나라도 있으면 읽고 씁니다(멤버십 없음).
+ * enum 값은 0038에서 더했으므로 같은 migration의 check는 `kind::text`로 비교합니다(ALTER TYPE … ADD VALUE는 같은 트랜잭션에서 쓸 수 없음).
+ */
+export const communitySpaceKind = pgEnum('community_space_kind', ['official_school', 'official_department', 'user_room', 'study_room', 'topic'])
+/**
+ * 이름 표시 방식(실명·표시명·익명). 공식 페이지는 anonymous 고정. 바꾸기는 C-03(7일 예약).
+ * affiliated_anonymous(A-05, 1단계 소속 표시 익명, ADR 0042): 토픽 공간·글·댓글에만. 이름은 익명이고 작성 시점에 고정한 소속 표시만 붙습니다.
+ * persona_id는 항상 null(check)이고 페르소나 활동으로 투영되지 않습니다. 같은 migration의 check는 `name_mode::text`로 비교합니다.
+ */
+export const communityNameMode = pgEnum('community_name_mode', ['real', 'display', 'anonymous', 'affiliated_anonymous'])
+/** 토픽 분류(A-05, SYSTEM_DESIGN §6.7.2 topic_category, @peerchive/domain TOPIC_CATEGORIES): 취준·대학원·창업·군대/예비역·학교생활·직무. */
+export const topicCategory = pgEnum('topic_category', ['career', 'grad_school', 'startup', 'military', 'campus_life', 'role'])
+/**
+ * 소속 표시 범위(A-05, @peerchive/domain AFFILIATION_LABEL_SCOPES). institution(`○○대 · 졸업생`) → institution_kind(`대학 졸업생`) → none(표시 안 함)
+ * 순으로 넓습니다. 작성자가 고른 값(requested)보다 좁게 표시하는 경우는 없습니다(check).
+ */
+export const affiliationLabelScope = pgEnum('affiliation_label_scope', ['institution', 'institution_kind', 'none'])
 /** 사용자 방 템플릿(A-01, ADR 0038). alumni = 동문회·OB 방(방별 프로필·신분 배지). */
 export const communitySpaceTemplate = pgEnum('community_space_template', ['general', 'alumni'])
 /** 동문회·OB 방 일정의 반복 규칙(A-02, ADR 0039, @peerchive/domain ROOM_EVENT_RECURRENCES). 회차는 저장하지 않고 규칙에서 계산합니다. */
@@ -3118,6 +3133,8 @@ export const communitySpaces = pgTable(
     currentNameMode: communityNameMode('current_name_mode').notNull(),
     /** 사용자 방 템플릿(A-01, ADR 0038). alumni는 user_room만(check). P2 alumni 플래그가 꺼져 있으면 general처럼 동작합니다. */
     template: communitySpaceTemplate('template').notNull().default('general'),
+    /** 토픽 분류(A-05, ADR 0042). kind = topic일 때만 있습니다(check). */
+    topicCategory: topicCategory('topic_category'),
     discovery: spaceDiscovery('discovery').notNull().default('listed'),
     joinPolicy: spaceJoinPolicy('join_policy').notNull().default('open'),
     capacity: integer('capacity').notNull().default(300),
@@ -3155,6 +3172,13 @@ export const communitySpaces = pgTable(
     check('community_spaces_archived_check', sql`${t.status} <> 'archived' or ${t.archivedAt} is not null`),
     check('community_spaces_restricted_check', sql`${t.status} <> 'restricted' or ${t.restrictedAt} is not null`),
     check('community_spaces_template_check', sql`${t.template}::text = 'general' or ${t.kind}::text = 'user_room'`),
+    // A-05(ADR 0042): 토픽은 학교에 묶이지 않고 이름 표시가 소속 표시 익명으로 고정, 소속 표시 익명은 토픽에만. enum 값을 같은 migration에서 더해 text로 비교합니다.
+    check('community_spaces_topic_category_check', sql`(${t.kind}::text = 'topic') = (${t.topicCategory} is not null)`),
+    check(
+      'community_spaces_topic_check',
+      sql`(${t.kind}::text <> 'topic' or (${t.schoolId} is null and ${t.currentNameMode}::text = 'affiliated_anonymous'))
+        and (${t.kind}::text = 'topic' or ${t.currentNameMode}::text <> 'affiliated_anonymous')`,
+    ),
   ],
 )
 
@@ -3385,6 +3409,17 @@ export const communityPosts = pgTable(
      * 고정 열 트리거가 null로 비우는 것(탈퇴 정리) 말고는 바꾸지 못하게 합니다. 이름 표시(작성자 표시)는 아직 이 열을 쓰지 않습니다(ADR 0029).
      */
     personaId: uuid('persona_id').references(() => personas.id),
+    /**
+     * 소속 표시 익명(A-05, ADR 0042) 글의 소속 표시. 모두 **작성 시점에 고정**(고정 열 트리거): 이후 소속 변경·인원 증가로 바뀌지 않습니다.
+     * - affiliation_id: 표시에 쓴 소속(운영자 전용 — 공개 DTO에는 문자열만). 표시 안 함이면 null, 탈퇴 정리는 null로 비웁니다(비우기만 허용).
+     * - label_scope_requested: 작성자가 고른 범위, label_scope_applied: 임계값을 적용한 범위(고른 것보다 좁지 않음, check).
+     * - affiliation_label: `○○대 · 졸업생`·`부트캠프 수료생` 같은 문자열(applied = none이면 null). 학과·기수·입학연도는 넣지 않습니다.
+     * 다른 방식의 글은 넷 모두 null입니다(check).
+     */
+    affiliationId: uuid('affiliation_id').references((): AnyPgColumn => institutionAffiliations.id),
+    labelScopeRequested: affiliationLabelScope('label_scope_requested'),
+    labelScopeApplied: affiliationLabelScope('label_scope_applied'),
+    affiliationLabel: text('affiliation_label'),
     title: text('title').notNull(),
     body: text('body').notNull(),
     status: communityItemStatus('status').notNull().default('published'),
@@ -3403,7 +3438,27 @@ export const communityPosts = pgTable(
     index('community_posts_author_idx').on(t.authorId),
     index('community_posts_space_idx').on(t.spaceId),
     index('community_posts_persona_idx').on(t.personaId),
-    check('community_posts_persona_check', sql`${t.nameMode} <> 'anonymous' or ${t.personaId} is null`),
+    // 0~1단계(익명·소속 표시 익명)는 페르소나가 없습니다(S-02, A-05). affiliated_anonymous는 같은 migration에서 더해 text로 비교합니다.
+    check('community_posts_persona_check', sql`${t.nameMode}::text not in ('anonymous', 'affiliated_anonymous') or ${t.personaId} is null`),
+    index('community_posts_affiliation_idx').on(t.affiliationId),
+    // A-05(ADR 0042): 소속 표시 열은 소속 표시 익명 글에만, 표시 범위는 고른 것보다 좁지 않음(institution → institution_kind → none, 두 단계 임계값), 표시 안 함이면 문자열 없음.
+    check(
+      'community_posts_affiliation_mode_check',
+      sql`(${t.nameMode}::text = 'affiliated_anonymous') = (${t.labelScopeRequested} is not null and ${t.labelScopeApplied} is not null)
+        and (${t.nameMode}::text = 'affiliated_anonymous' or (${t.affiliationId} is null and ${t.affiliationLabel} is null))`,
+    ),
+    check(
+      'community_posts_label_scope_check',
+      sql`${t.labelScopeApplied} is null or ${t.labelScopeApplied} = ${t.labelScopeRequested}
+        or (${t.labelScopeRequested} = 'institution' and ${t.labelScopeApplied} in ('institution_kind', 'none'))
+        or (${t.labelScopeRequested} = 'institution_kind' and ${t.labelScopeApplied} = 'none')`,
+    ),
+    check(
+      'community_posts_affiliation_label_check',
+      sql`${t.labelScopeApplied} is null or ((${t.labelScopeApplied} = 'none') = (${t.affiliationLabel} is null)
+        and (${t.affiliationLabel} is null or char_length(${t.affiliationLabel}) between 1 and 100))`,
+    ),
+
     check(
       'community_posts_content_check',
       sql`(${t.status} = 'deleted_by_author' and ${t.title} = '' and ${t.body} = '' and ${t.deletedAt} is not null)
@@ -3430,8 +3485,13 @@ export const communityComments = pgTable(
       .notNull()
       .references(() => users.id),
     nameMode: communityNameMode('name_mode').notNull(),
-    /** 작성 시점의 페르소나(S-02). 규칙은 글과 같습니다(anonymous면 null, 트리거로 주인·종류 확인). */
+    /** 작성 시점의 페르소나(S-02). 규칙은 글과 같습니다(anonymous·affiliated_anonymous면 null, 트리거로 주인·종류 확인). */
     personaId: uuid('persona_id').references(() => personas.id),
+    /** 소속 표시(A-05, ADR 0042). 규칙은 글과 같습니다(작성 시점 고정, 소속 표시 익명 댓글에만). */
+    affiliationId: uuid('affiliation_id').references((): AnyPgColumn => institutionAffiliations.id),
+    labelScopeRequested: affiliationLabelScope('label_scope_requested'),
+    labelScopeApplied: affiliationLabelScope('label_scope_applied'),
+    affiliationLabel: text('affiliation_label'),
     body: text('body').notNull(),
     status: communityItemStatus('status').notNull().default('published'),
     editedAt: timestamp('edited_at', { withTimezone: true }),
@@ -3445,7 +3505,26 @@ export const communityComments = pgTable(
     index('community_comments_author_idx').on(t.authorId),
     index('community_comments_parent_idx').on(t.parentCommentId),
     index('community_comments_persona_idx').on(t.personaId),
-    check('community_comments_persona_check', sql`${t.nameMode} <> 'anonymous' or ${t.personaId} is null`),
+    check('community_comments_persona_check', sql`${t.nameMode}::text not in ('anonymous', 'affiliated_anonymous') or ${t.personaId} is null`),
+    index('community_comments_affiliation_idx').on(t.affiliationId),
+    // A-05(ADR 0042): 소속 표시 열은 소속 표시 익명 글에만, 표시 범위는 고른 것보다 좁지 않음(institution → institution_kind → none, 두 단계 임계값), 표시 안 함이면 문자열 없음.
+    check(
+      'community_comments_affiliation_mode_check',
+      sql`(${t.nameMode}::text = 'affiliated_anonymous') = (${t.labelScopeRequested} is not null and ${t.labelScopeApplied} is not null)
+        and (${t.nameMode}::text = 'affiliated_anonymous' or (${t.affiliationId} is null and ${t.affiliationLabel} is null))`,
+    ),
+    check(
+      'community_comments_label_scope_check',
+      sql`${t.labelScopeApplied} is null or ${t.labelScopeApplied} = ${t.labelScopeRequested}
+        or (${t.labelScopeRequested} = 'institution' and ${t.labelScopeApplied} in ('institution_kind', 'none'))
+        or (${t.labelScopeRequested} = 'institution_kind' and ${t.labelScopeApplied} = 'none')`,
+    ),
+    check(
+      'community_comments_affiliation_label_check',
+      sql`${t.labelScopeApplied} is null or ((${t.labelScopeApplied} = 'none') = (${t.affiliationLabel} is null)
+        and (${t.affiliationLabel} is null or char_length(${t.affiliationLabel}) between 1 and 100))`,
+    ),
+
     check(
       'community_comments_content_check',
       sql`(${t.status} = 'deleted_by_author' and ${t.body} = '' and ${t.deletedAt} is not null)

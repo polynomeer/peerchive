@@ -18,7 +18,7 @@ import {
   type MembershipFacts,
   type NameMode,
   type SpaceFacts,
-  NAME_MODES,
+  ROOM_NAME_MODES,
   canReadSpace,
   canWriteBoard,
   checkSpaceName,
@@ -121,7 +121,8 @@ export function checkClosesAt(raw: unknown, now: Date): { ok: true; value: Date 
 export function roomNameModeFor(kind: RecruitmentKind, raw: unknown): { ok: true; value: NameMode | null } | { ok: false; reason: 'invalid' | 'not_allowed' } {
   if (kind === 'team') return raw === undefined || raw === null ? { ok: true, value: null } : { ok: false, reason: 'not_allowed' }
   if (raw === undefined || raw === null) return { ok: true, value: 'display' }
-  return (NAME_MODES as readonly unknown[]).includes(raw) ? { ok: true, value: raw as NameMode } : { ok: false, reason: 'invalid' }
+  // 소속 표시 익명(A-05)은 토픽 전용이라 스터디 방 방식이 아닙니다.
+  return (ROOM_NAME_MODES as readonly unknown[]).includes(raw) ? { ok: true, value: raw as NameMode } : { ok: false, reason: 'invalid' }
 }
 
 /**

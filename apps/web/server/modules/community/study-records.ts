@@ -13,7 +13,7 @@
  * - 기록을 끄는 경로는 없습니다(공개 사례·동의가 이 과제를 가리킬 수 있음).
  */
 import { z } from 'zod'
-import { planStudyRecordSync } from '@peerchive/domain'
+import { asRoomNameMode, planStudyRecordSync } from '@peerchive/domain'
 import { and, communitySpaces, courses, eq, projectMembers, projects, spaceMemberships, sql, studyRecords, type DbExecutor } from '@peerchive/db'
 import { emitAnalytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
@@ -77,7 +77,7 @@ async function stateFor(db: DbExecutor, actor: Actor, ctx: Awaited<ReturnType<ty
   const space = ctx.space.row
   const m = membershipFacts(ctx.membership)
   const isOwner = m?.status === 'active' && m.role === 'owner'
-  const nameMode = space.currentNameMode
+  const nameMode = asRoomNameMode(space.currentNameMode)
   const base = { nameMode, portfolioLinkable: nameMode !== 'anonymous' }
   if (space.kind !== 'study_room') return { available: false, enabled: false, projectId: null, myRole: null, canEnable: false, ...base }
   const [record] = await db.select({ projectId: studyRecords.projectId }).from(studyRecords).where(eq(studyRecords.spaceId, space.id)).limit(1)
@@ -132,7 +132,7 @@ export async function enableStudyRecord(db: DbExecutor, actor: Actor, ref: unkno
       actor.userId,
       { title, kind: 'team', courseTermId: input.courseTermId ?? null, summaryByStudent: null, goal: null, constraints: null, retroMode: false },
       'study',
-      { nameMode: space.currentNameMode, schoolId: ctx.space.schoolId },
+      { nameMode: asRoomNameMode(space.currentNameMode), schoolId: ctx.space.schoolId },
     )
     await tx.insert(studyRecords).values({ spaceId: space.id, projectId: project.id, enabledBy: actor.userId, createdAt: now })
     await syncStudyRecordInTx(tx, space.id, now)

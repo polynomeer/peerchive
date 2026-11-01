@@ -52,6 +52,8 @@ const isMember = computed(() => space.value?.access === 'member')
 // 스터디 방의 탭(C-08). 주소의 #record로 기록 탭을 바로 엽니다.
 const tab = ref<'boards' | 'record'>('boards')
 const isStudyRoom = computed(() => space.value?.kind === 'study_room')
+// 운영자가 연 공간(공식 페이지·토픽, A-05): 가입·멤버·이름 표시 방식 바꾸기·가입 설정이 없습니다.
+const operatorSpace = computed(() => !!space.value && (space.value.official || space.value.kind === 'topic'))
 onMounted(() => {
   if (window.location.hash === '#record') tab.value = 'record'
 })
@@ -129,7 +131,7 @@ async function saveSettings() {
   settingsErrors.value = {}
   try {
     const body: Record<string, unknown> = { name: settings.name, description: settings.description || null }
-    if (!space.value.official) Object.assign(body, { discovery: settings.discovery, joinPolicy: settings.joinPolicy })
+    if (!operatorSpace.value) Object.assign(body, { discovery: settings.discovery, joinPolicy: settings.joinPolicy })
     space.value = await $fetch<SpaceDetailDto>(`/api/v1/community/spaces/${slug.value}`, { method: 'PATCH', body })
     notice.value = { kind: 'ok', text: '설정을 저장했습니다.' }
   } catch (e) {
@@ -193,7 +195,7 @@ async function loadInvitations() {
 const nameModes = ref<NameModeStateDto | null>(null)
 const nextMode = ref<NameMode | ''>('')
 async function loadNameModes() {
-  if (!isMember.value || space.value?.official) return
+  if (!isMember.value || operatorSpace.value) return
   try {
     nameModes.value = await $fetch<NameModeStateDto>(`/api/v1/community/spaces/${slug.value}/name-mode-changes`)
   } catch {
@@ -335,6 +337,10 @@ const isMe = (m: SpaceMemberDto) => m.userId === me.value?.id
       </p>
       <p class="notice">이 공간의 이름 표시 방식: <strong>{{ NAME_MODE_LABELS[space.nameMode] }}</strong></p>
       <p v-if="banner" class="notice name-mode-banner" role="status">{{ banner }}</p>
+      <p v-if="space.kind === 'topic'" class="hint" data-testid="topic-hint">
+        학교를 넘나드는 토픽입니다. 학교·기관 인증이 있으면 누구나 읽고 쓰며, 글에는 이름 대신 소속과 신분만 보입니다(인증 회원이 적은 소속은 넓은 범주로).
+        <NuxtLink to="/community/topics">토픽 목록</NuxtLink>
+      </p>
       <p v-if="space.official" class="hint">‘공식’은 Peerchive가 열고 운영하는 페이지라는 뜻이며 학교가 인정했다는 뜻이 아닙니다. 이 학교 메일로 인증한 계정만 읽습니다.</p>
       <p v-if="space.description" class="pre">{{ space.description }}</p>
       <p v-if="space.status !== 'active'" class="notice error" role="status">{{ SPACE_STATUS_LABELS[space.status] }}</p>
@@ -454,7 +460,7 @@ const isMe = (m: SpaceMemberDto) => m.userId === me.value?.id
               <label for="set-desc">소개</label>
               <textarea id="set-desc" v-model="settings.description" rows="2" :maxlength="SPACE_DESCRIPTION_MAX" />
             </div>
-            <template v-if="!space.official">
+            <template v-if="!operatorSpace">
               <div class="field">
                 <label for="set-join">가입 방식</label>
                 <select id="set-join" v-model="settings.joinPolicy">
@@ -475,7 +481,7 @@ const isMe = (m: SpaceMemberDto) => m.userId === me.value?.id
           </form>
         </section>
 
-        <section v-if="!space.official && nameModes" aria-labelledby="name-mode">
+        <section v-if="!operatorSpace && nameModes" aria-labelledby="name-mode">
           <h2 id="name-mode">이름 표시 방식</h2>
           <p>지금: <strong>{{ NAME_MODE_LABELS[nameModes.currentMode] }}</strong> — {{ NAME_MODE_HINTS[nameModes.currentMode] }}</p>
           <template v-if="perms?.changeNameMode">
@@ -517,7 +523,7 @@ const isMe = (m: SpaceMemberDto) => m.userId === me.value?.id
           <p v-else class="small muted">아직 바꾼 적이 없습니다.</p>
         </section>
 
-        <section v-if="perms?.manageBoards && !space.official" aria-labelledby="add-board">
+        <section v-if="perms?.manageBoards && !operatorSpace" aria-labelledby="add-board">
           <h2 id="add-board">게시판 더하기</h2>
           <form class="stack" novalidate @submit.prevent="addBoard">
             <div class="field">
