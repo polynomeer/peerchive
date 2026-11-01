@@ -9,6 +9,8 @@
  * - 질문 게시판(C-09, ADR 0025): 글쓴이는 답변 하나를 채택하고, 글을 "아카이브로 옮기기"(막힘 Q&A·내 과제의 막힘 로그·선배 노트 초안)할 수 있습니다.
  *   지금 공개된 복사본이 있으면 "아카이브로 옮겨짐" 표시만 보입니다(링크·동의한 사람 없음). 내가 요청했거나 동의를 요청받은 요청만 상태와 함께 보입니다.
  * - 동문회·OB 방의 공지(A-02, ADR 0039): 글을 열면 읽었다고 표시하고 "읽음 n명"만 보입니다. 누가 읽었는지는 방장·운영진에게도 보이지 않습니다.
+ * - 공감 라운지(공식 학교 페이지 자유 게시판, A-04·ADR 0041): 검사·메타데이터 제거를 통과한 이미지만 짧은 서명 URL로, 글쓴이는 이미지를 붙이고 지웁니다.
+ *   졸업생 인증 이력으로 읽는 사람에게는 읽기 전용 안내가 보입니다.
  */
 import type { CommunityPostDto, CommunityReactionDto, SpaceDetailDto, SpaceModerationDto } from '~~/shared/types/api'
 
@@ -36,6 +38,14 @@ function fail(e: unknown) {
 }
 function setThread(next: CommunityPostDto) {
   post.value = next
+}
+// 공감 라운지 이미지(A-04)를 붙이거나 지운 뒤: 새 서명 URL과 검사 상태를 다시 받습니다.
+async function reloadPost() {
+  try {
+    setThread(await $fetch<CommunityPostDto>(`/api/v1/community/posts/${postId.value}`))
+  } catch (e) {
+    fail(e)
+  }
 }
 
 // ── 방 운영진 도구(C-06) ──
@@ -179,6 +189,8 @@ async function addComment() {
         </form>
         <p v-else-if="post.body" class="pre post-body">{{ post.body }}</p>
         <p v-else-if="post.title" class="muted">{{ post.placeholder }}</p>
+        <LoungeMedia v-if="post.lounge && !editing" :post-id="post.id" :lounge="post.lounge" @changed="reloadPost" />
+        <p v-if="post.alumniHistoryOnly" class="small muted" data-testid="alumni-history-note">졸업생 인증 이력으로 읽는 중입니다. 댓글·공감은 이 학교 메일 인증이 지금 유지될 때만 쓸 수 있습니다.</p>
         <p v-if="post.archive.archived" class="small" data-testid="archived-marker"><span class="badge">{{ ARCHIVED_MARKER_TEXT }}</span></p>
         <p v-if="post.status === 'auto_hidden' && post.author.mine" class="notice" role="status" data-testid="own-review-notice">
           내 글이 여러 사람의 신고로 운영 검토 중이라 다른 사람에게는 임시로 가려져 있습니다. 검토가 끝나면

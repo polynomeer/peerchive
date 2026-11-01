@@ -148,6 +148,7 @@ export const COMMUNITY_ERROR_MESSAGES: Record<string, string> = {
   member_album_full: '이 방에 올릴 수 있는 사진 수를 넘었습니다.',
   already_uploaded: '이미 받은 파일입니다.',
   upload_expired: '올리기 시간이 지났습니다. 다시 올리세요.',
+  media_full: '이 글에 붙일 수 있는 이미지 수를 넘었습니다.',
   directory_unavailable: '익명 방에는 멤버 명부가 없습니다.',
   not_member: '이 공간의 멤버가 아닙니다.',
   not_pending: '이미 처리된 요청입니다.',

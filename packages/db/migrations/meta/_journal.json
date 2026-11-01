@@ -260,6 +260,13 @@
       "when": 1793544219592,
       "tag": "0036_member_directory",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1793545858653,
+      "tag": "0037_lounge_media",
+      "breakpoints": true
     }
   ]
 }

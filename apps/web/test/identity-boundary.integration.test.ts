@@ -19,6 +19,7 @@ import {
   PERSONA_ACTIVITY_PROJECT_TOPIC,
   and,
   communityComments,
+  communityPostMedia,
   communityPosts,
   communitySpaces,
   eq,
@@ -37,7 +38,7 @@ import { createSchool } from '../server/modules/catalog/catalog'
 import { joinSpace } from '../server/modules/community/memberships'
 import { scheduleNameModeChange } from '../server/modules/community/name-modes'
 import { createOfficialPage } from '../server/modules/community/official'
-import { createComment, createPost } from '../server/modules/community/posts'
+import { createComment, createPost, getPost } from '../server/modules/community/posts'
 import { putMyDirectoryEntry } from '../server/modules/community/member-directory'
 import { createRoomEvent, respondToEvent } from '../server/modules/community/room-events'
 import { createRoomPoll, voteOnPoll } from '../server/modules/community/room-polls'
@@ -332,6 +333,8 @@ describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
       )
       // A-03: 멤버 명부도 커뮤니티 구역입니다(social 역할 권한 없음, 공개·소셜 출력·검색에 0건).
       expect(COMMUNITY_TABLES.map((t) => t.sqlName)).toContain('directory_entries')
+      // A-04: 라운지 미디어도 커뮤니티 구역입니다.
+      expect(COMMUNITY_TABLES.map((t) => t.sqlName)).toContain('community_post_media')
       for (const t of COMMUNITY_TABLES) {
         const [p] = (await tx.execute(
           sql`select has_table_privilege(${SOCIAL_ROLE}, ${`public.${t.sqlName}`}, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') as tbl,
@@ -369,7 +372,7 @@ describe.skipIf(!databaseUrl)('S-02 social DB role (PostgreSQL)', () => {
       const [persona] = await tx.select().from(personas).where(eq(personas.userId, user.id))
       const expected = await getPublicProfile(tx, persona!.handle)
 
-      for (const table of ['community_posts', 'community_comments', 'thread_aliases', 'archive_transfers', 'archive_transfer_consents', 'community_reactions', 'community_spaces', 'room_profiles', 'room_profile_cohort_changes', 'room_events', 'room_event_rsvps', 'notice_reads', 'room_polls', 'room_poll_votes', 'room_album_photos', 'directory_entries']) {
+      for (const table of ['community_posts', 'community_comments', 'thread_aliases', 'archive_transfers', 'archive_transfer_consents', 'community_reactions', 'community_spaces', 'room_profiles', 'room_profile_cohort_changes', 'room_events', 'room_event_rsvps', 'notice_reads', 'room_polls', 'room_poll_votes', 'room_album_photos', 'directory_entries', 'community_post_media']) {
         const code = await failsWith(tx, async (inner) => {
           await inner.execute(sql.raw(`set local role ${SOCIAL_ROLE}`))
           await inner.execute(sql.raw(`select 1 from public.${table} limit 1`))
@@ -737,7 +740,31 @@ async function buildWorld(tx: DbExecutor, seed: number) {
     expect(items.find((i) => i.id === (e.payload as { sourceId: string }).sourceId)?.mode, `seed ${seed} event for anonymous post`).not.toBe('anonymous')
     await handlePersonaActivityProject(tx, e.payload)
   }
-  return { people, items, roomProfileValues, directoryValues, now: new Date(clock + HOUR) }
+  // A-04(ADR 0041): 공감 라운지(공식 학교 페이지 자유 게시판) 글의 미디어 id·서명 URL도 공개·소셜 출력·검색에 0건이어야 합니다
+  // (난수를 쓰지 않음 — 기존 세계는 그대로). 검사를 통과한 상태로 넣고, 글쓴이 눈의 글 응답에서 실제 서명 URL을 받아 금지 목록에 넣습니다.
+  const loungeMediaValues: string[] = []
+  const loungePosts = await tx.select({ id: communityPosts.id, authorId: communityPosts.authorId }).from(communityPosts).where(eq(communityPosts.boardId, officialBoard.id))
+  for (const lp of loungePosts) {
+    const [media] = await tx
+      .insert(communityPostMedia)
+      .values({
+        postId: lp.id,
+        uploaderId: lp.authorId,
+        objectKey: `quarantine/${crypto.randomUUID()}`,
+        declaredType: 'image/png',
+        fileExtension: 'png',
+        byteSize: 8,
+        scanStatus: 'clean',
+        mediaType: 'image/png',
+        metadataStripped: true,
+        uploadedAt: T0,
+      })
+      .returning({ id: communityPostMedia.id })
+    const seen = await getPost(tx, { userId: lp.authorId }, lp.id, new Date(clock))
+    expect(seen.lounge?.items.map((m) => m.id), `seed ${seed} lounge media`).toEqual([media!.id])
+    loungeMediaValues.push(media!.id, seen.lounge!.items[0]!.url!)
+  }
+  return { people, items, roomProfileValues, directoryValues, loungeMediaValues, now: new Date(clock + HOUR) }
 }
 
 /** 활동 목록 전부(cursor를 따라감). */
@@ -760,11 +787,11 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
   afterEach(() => setFeatureEnvForTesting(null))
 
   it(`for ${WORLDS} seeded random worlds, every persona's public JSON, README card, old profile DTO, activity list (raw and API for every viewer), follow lists, every person's feed and suggestions carry 0 anonymous post ids, bodies, body hashes or timestamps`, async () => {
-    const totals = { worlds: 0, personas: 0, anonymous: 0, projected: 0, follows: 0, feedItems: 0, roomProfileValues: 0, directoryValues: 0 }
+    const totals = { worlds: 0, personas: 0, anonymous: 0, projected: 0, follows: 0, feedItems: 0, roomProfileValues: 0, directoryValues: 0, loungeMedia: 0 }
     for (let w = 0; w < WORLDS; w++) {
       const seed = BASE_SEED + w
       await withRollback(async (tx) => {
-        const { people, items, roomProfileValues, directoryValues, now } = await buildWorld(tx, seed)
+        const { people, items, roomProfileValues, directoryValues, loungeMediaValues, now } = await buildWorld(tx, seed)
         // S-04: 무작위 팔로우(실명·표시명 주체 모두)와 전체 공개 팔로우 목록. 목록은 새 공개 출력이라 같은 검사에 넣습니다.
         const r = rng(seed ^ 0x5f04)
         const all = people.flatMap((p) => [p.real, p.display].filter((x): x is NonNullable<typeof x> => !!x).map((persona) => ({ owner: p, persona })))
@@ -788,6 +815,9 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
         ])
         // A-01: 방별 프로필의 이름·기수·소개·id도 방 밖의 모든 공개·소셜 출력에 0건이어야 합니다(A-02: 일정·투표의 값과 id도 같은 목록).
         forbidden.push(...roomProfileValues)
+        // A-04: 라운지 미디어 id·서명 URL도 같은 목록(공개·소셜 출력에 0건).
+        forbidden.push(...loungeMediaValues)
+        totals.loungeMedia += loungeMediaValues.length / 2
         totals.roomProfileValues += roomProfileValues.length
         totals.directoryValues += directoryValues.length
         const postRows = await tx
@@ -852,7 +882,8 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
         }
         // A-01: 공개 검색(색인·API)에도 방별 프로필 값이 없습니다.
         // A-03: 명부의 하는 일·연락 방법도 검색(API·색인)과 페르소나 활동에 0건입니다.
-        for (const value of [...roomProfileValues.slice(0, 6), ...directoryValues.slice(0, 4)]) {
+        // A-04: 라운지 미디어 id도 검색(API·색인)에 0건입니다.
+        for (const value of [...roomProfileValues.slice(0, 6), ...directoryValues.slice(0, 4), ...loungeMediaValues.filter((_, i) => i % 2 === 0).slice(0, 2)]) {
           expect((await searchPublic(tx, { q: value }, now)).results, `seed ${seed} search ${value}`).toEqual([])
           const [hit] = (await tx.execute(sql`select count(*)::int as n from search_documents where strpos(search_text || title || snippet, ${value}) > 0`)) as unknown as Array<{ n: number }>
           expect(hit!.n, `seed ${seed} search_documents ${value}`).toBe(0)
@@ -879,6 +910,7 @@ describe.skipIf(!databaseUrl)('S-02 property: anonymous posts never reach a pers
     expect(totals.personas).toBeGreaterThan(WORLDS)
     expect(totals.feedItems).toBeGreaterThan(0)
     expect(totals.roomProfileValues).toBeGreaterThan(WORLDS)
+    expect(totals.loungeMedia).toBeGreaterThanOrEqual(WORLDS)
     expect(totals.directoryValues).toBeGreaterThan(0)
   })
 })

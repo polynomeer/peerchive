@@ -18,6 +18,7 @@ import {
   claimRevisions,
   boards,
   communityAuthorLookups,
+  communityPostMedia,
   identityLinks,
   communityComments,
   communityNotices,
@@ -667,6 +668,42 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect((await tx.select().from(roomPolls).where(eq(roomPolls.id, poll!.id)))[0]).toMatchObject({ createdBy: null })
       const ledger = await tx.select().from(deletionLedger).where(eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, U.id)))
       expect(ledger.map((l) => l.entityKind)).toEqual(expect.arrayContaining(['room_event_rsvps', 'notice_reads', 'room_poll_votes', 'room_album_photos']))
+      expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('deletes the media rows and files the purged user attached to lounge posts and keeps others\' (A-04)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴라운지', 'deleted')
+      const M = await user(tx, '남는라운지')
+      const [school] = await tx.insert(schools).values({ name: '라운지대', nameKey: `lounge${id()}` }).returning()
+      const [space] = await tx
+        .insert(communitySpaces)
+        .values({ kind: 'official_school', schoolId: school!.id, name: '라운지 학교', slug: id().replace(/-/g, '').slice(0, 10), currentNameMode: 'anonymous', createdBy: M.id })
+        .returning()
+      const [board] = await tx.insert(boards).values({ spaceId: space!.id, kind: 'free', title: '자유', position: 0 }).returning()
+      const post = async (authorId: string) =>
+        (await tx.insert(communityPosts).values({ boardId: board!.id, spaceId: space!.id, authorId, nameMode: 'anonymous', title: '학식', body: '본문' }).returning())[0]!
+      const [mine, theirs] = [await post(U.id), await post(M.id)]
+      const key = `quarantine/${id()}` as const
+      await storage.put(key, Readable.from([Buffer.from('image')]), { maxBytes: 100 })
+      const otherKey = `quarantine/${id()}` as const
+      await storage.put(otherKey, Readable.from([Buffer.from('image')]), { maxBytes: 100 })
+      const clean = { declaredType: 'image/png', fileExtension: 'png', byteSize: 5, scanStatus: 'clean' as const, metadataStripped: true, mediaType: 'image/png' }
+      await tx.insert(communityPostMedia).values({ postId: mine.id, uploaderId: U.id, objectKey: key, ...clean })
+      await tx.insert(communityPostMedia).values({ postId: theirs.id, uploaderId: M.id, objectKey: otherKey, ...clean })
+
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ community_post_media: 1 })
+      expect(counts!.artifact_objects).toBeUndefined()
+      expect(await count(tx, communityPostMedia, eq(communityPostMedia.uploaderId, U.id))).toBe(0)
+      expect(await storage.head(key)).toBeNull()
+      // 글은 "작성자가 삭제한 글"로 남고, 남은 사람의 미디어와 파일은 그대로.
+      expect((await tx.select().from(communityPosts).where(eq(communityPosts.id, mine.id)))[0]).toMatchObject({ status: 'deleted_by_author', title: '', body: '' })
+      expect(await count(tx, communityPostMedia, eq(communityPostMedia.uploaderId, M.id))).toBe(1)
+      expect(await storage.head(otherKey)).not.toBeNull()
+      const ledger = await tx.select().from(deletionLedger).where(eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, U.id)))
+      expect(ledger.map((l) => l.entityKind)).toContain('community_post_media')
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
     })
   })

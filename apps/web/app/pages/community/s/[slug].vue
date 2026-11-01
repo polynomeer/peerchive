@@ -339,6 +339,9 @@ const isMe = (m: SpaceMemberDto) => m.userId === me.value?.id
       <p v-if="space.description" class="pre">{{ space.description }}</p>
       <p v-if="space.status !== 'active'" class="notice error" role="status">{{ SPACE_STATUS_LABELS[space.status] }}</p>
       <p v-if="notice" :class="['notice', notice.kind]" :role="notice.kind === 'error' ? 'alert' : 'status'">{{ notice.text }}</p>
+      <p v-if="space.access === 'alumni_history'" class="notice" role="status" data-testid="alumni-history-note">
+        졸업생 인증 이력으로 졸업생 게시판과 공감 라운지를 읽고 있습니다. 글·댓글·공감은 이 학교 메일 인증이 지금 유지될 때만 쓸 수 있습니다.
+      </p>
 
       <template v-if="space.access === 'preview'">
         <p class="small muted">{{ JOIN_POLICY_LABELS[space.joinPolicy] }}</p>

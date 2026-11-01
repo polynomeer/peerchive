@@ -4165,3 +4165,53 @@ export const directoryEntries = pgTable(
     check('directory_entries_contact_check', sql`${t.contactMethod} is null or char_length(${t.contactMethod}) between 1 and 100`),
   ],
 )
+
+// A-04: 공감 라운지 미디어(ADR 0041). 커뮤니티 구역이므로 C-05·S-02 경계 검사와 social DB 역할 권한 검사가 자동으로 덮습니다
+// (social 역할에는 권한을 주지 않음). 공개 프로필·검색·피드·PersonaActivity·공개 DTO는 이 테이블을 읽지 않습니다.
+
+/**
+ * 공감 라운지 글의 미디어(A-04, PROOFU_EVOLUTION_PLAN §8.9.9, SYSTEM_DESIGN §6.7.2 "공감 라운지 미디어", ADR 0041). 지금은 이미지만(영상은 미룸).
+ * - 공식 학교 페이지 자유 게시판(공감 라운지) 글에만, 글쓴이 본인만 붙입니다(서비스가 확인). 글 하나에 4개(검사 대기·통과).
+ * - 파일은 격리 키(`quarantine/<uuid>`)에만 둡니다(앨범 사진과 같은 방식, ADR 0039). worker `post-media-scan`이 형식 판별·내장 콘텐츠·악성코드
+ *   검사 뒤 메타데이터(EXIF·GPS 등)를 지운 내용으로 같은 키를 바꿔 쓰고 clean으로. 원래 파일 이름은 저장하지 않습니다(확장자만).
+ * - 보는 것은 **그 글을 읽을 수 있는 사람**에게, 그 사람에게만 맞는 짧은 서명 URL로. 글이 게시 중이 아니면(가림·지움) 404.
+ * - 글쓴이가 글을 지우면 worker 정리가 행과 파일을 지웁니다(가린 글은 이의제기로 되돌릴 수 있게 남김). 탈퇴 정리는 그 사람의 미디어를 모두 지웁니다.
+ */
+export const communityPostMedia = pgTable(
+  'community_post_media',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    postId: uuid('post_id')
+      .notNull()
+      .references(() => communityPosts.id),
+    uploaderId: uuid('uploader_id')
+      .notNull()
+      .references(() => users.id),
+    objectKey: text('object_key').notNull(),
+    declaredType: text('declared_type').notNull(),
+    fileExtension: text('file_extension').notNull(),
+    byteSize: bigint('byte_size', { mode: 'number' }).notNull(),
+    sha256: text('sha256'),
+    uploadedAt: timestamp('uploaded_at', { withTimezone: true }),
+    scanStatus: scanStatus('scan_status').notNull().default('pending'),
+    scanReason: text('scan_reason'),
+    scanEngine: text('scan_engine'),
+    scanAttempts: integer('scan_attempts').notNull().default(0),
+    scannedAt: timestamp('scanned_at', { withTimezone: true }),
+    /** 판별한 형식(검사 통과 뒤). */
+    mediaType: text('media_type'),
+    /** 메타데이터를 지운 내용이 격리 키에 있는지(clean이면 true). */
+    metadataStripped: boolean('metadata_stripped').notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('community_post_media_object_key_key').on(t.objectKey),
+    index('community_post_media_post_created_idx').on(t.postId, t.createdAt),
+    index('community_post_media_uploader_idx').on(t.uploaderId),
+    check('community_post_media_object_key_check', sql`${t.objectKey} ~ '^quarantine/[0-9a-f-]{36}$'`),
+    check('community_post_media_extension_check', sql`${t.fileExtension} in ('png', 'jpg', 'jpeg', 'webp')`),
+    check('community_post_media_byte_size_check', sql`${t.byteSize} between 1 and 10485760`),
+    check('community_post_media_sha256_check', sql`${t.sha256} is null or ${t.sha256} ~ '^[0-9a-f]{64}$'`),
+    check('community_post_media_clean_check', sql`${t.scanStatus}::text <> 'clean' or (${t.metadataStripped} and ${t.mediaType} is not null)`),
+  ],
+)

@@ -12,6 +12,9 @@ import {
   artifactVersions,
   artifacts,
   auditEvents,
+  boards,
+  communityPostMedia,
+  communityPosts,
   communitySpaces,
   createDb,
   discordChannelBindings,
@@ -45,6 +48,7 @@ import {
   cleanupOrphanQuarantine,
   cleanupOutbox,
   cleanupPinRequests,
+  cleanupPostMedia,
   cleanupRateLimitBuckets,
   cleanupSessions,
   cleanupStaleAlbumPhotos,
@@ -193,6 +197,45 @@ describe.skipIf(!url)('ops cleanup tasks (PostgreSQL)', () => {
       for (const key of [unfinished, quarantined]) expect(await storage.head(key)).toBeNull()
       for (const key of [clean, freshPending]) expect(await storage.head(key)).not.toBeNull()
       expect((await tx.select().from(roomAlbumPhotos).where(eq(roomAlbumPhotos.spaceId, space!.id))).map((r) => r.objectKey).sort()).toEqual([clean, freshPending].sort())
+    })
+  })
+
+  it('lounge media (A-04): media of author-deleted posts go at once, unfinished/quarantined ones after a day; hidden posts keep theirs and the orphan sweep keeps their keys', async () => {
+    await rollback(async (tx) => {
+      const { userId } = await userAndProject(tx)
+      const [school] = await tx.insert(schools).values({ name: '라운지대', nameKey: `lounge${id()}` }).returning()
+      const [space] = await tx
+        .insert(communitySpaces)
+        .values({ kind: 'official_school', schoolId: school!.id, name: '라운지 학교', slug: id().replace(/-/g, '').slice(0, 10), currentNameMode: 'anonymous', createdBy: userId })
+        .returning()
+      const [board] = await tx.insert(boards).values({ spaceId: space!.id, kind: 'free', title: '자유', position: 0 }).returning()
+      const post = async (status: 'published' | 'hidden' | 'deleted_by_author') => {
+        const deleted = status === 'deleted_by_author'
+        const [row] = await tx
+          .insert(communityPosts)
+          .values({ boardId: board!.id, spaceId: space!.id, authorId: userId, nameMode: 'anonymous', title: deleted ? '' : '제목', body: deleted ? '' : '본문', status, ...(deleted && { deletedAt: ago(HOUR) }) })
+          .returning()
+        return row!.id
+      }
+      const [open, hidden, gone] = [await post('published'), await post('hidden'), await post('deleted_by_author')]
+      const media = async (postId: string, key: ObjectKey, values: Partial<typeof communityPostMedia.$inferInsert>) => {
+        await putObject(key, ago(2 * DAY))
+        await tx.insert(communityPostMedia).values({ postId, uploaderId: userId, objectKey: key, declaredType: 'image/png', fileExtension: 'png', byteSize: 1, ...values })
+      }
+      const clean = { uploadedAt: ago(HOUR), scanStatus: 'clean' as const, metadataStripped: true, mediaType: 'image/png', scannedAt: ago(HOUR), createdAt: ago(HOUR) }
+      const [unfinished, quarantined, keptClean, keptHidden, ofDeleted, freshPending] = Array.from({ length: 6 }, () => newQuarantineKey()) as [ObjectKey, ObjectKey, ObjectKey, ObjectKey, ObjectKey, ObjectKey]
+      await media(open, unfinished, { createdAt: ago(2 * DAY) })
+      await media(open, quarantined, { createdAt: ago(3 * DAY), uploadedAt: ago(3 * DAY), scanStatus: 'quarantined', scannedAt: ago(2 * DAY) })
+      await media(open, keptClean, clean)
+      await media(hidden, keptHidden, clean)
+      await media(gone, ofDeleted, clean)
+      await media(open, freshPending, { createdAt: ago(HOUR) })
+      expect(await cleanupOrphanQuarantine(tx, deps(), NOW)).toMatchObject({ affected: 0 })
+      expect(await cleanupPostMedia(tx, deps(10), NOW)).toMatchObject({ affected: 3, objects: 3 })
+      for (const key of [unfinished, quarantined, ofDeleted]) expect(await storage.head(key)).toBeNull()
+      for (const key of [keptClean, keptHidden, freshPending]) expect(await storage.head(key)).not.toBeNull()
+      const left = await tx.select({ key: communityPostMedia.objectKey }).from(communityPostMedia).where(inArray(communityPostMedia.postId, [open, hidden, gone]))
+      expect(left.map((r) => r.key).sort()).toEqual([keptClean, keptHidden, freshPending].sort())
     })
   })
 

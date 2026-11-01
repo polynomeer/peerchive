@@ -33,6 +33,7 @@ import {
   canModerate,
   canPreviewSpace,
   canReadSpace,
+  readsByAlumniHistory,
   canWriteBoard,
   checkRoomCapacity,
   checkSpaceName,
@@ -185,14 +186,20 @@ function joinActionFor(ctx: SpaceContext): SpaceDetailDto['joinAction'] {
  * 게시판·권한·멤버 목록 없음, 정원 검토 요청값 없음, unlisted 방은 소개 글도 없음(`previewIncludesDescription`).
  * 초대 전용 방은 preview 자체가 없습니다(canPreviewSpace → 404).
  */
-async function detailFor(db: DbExecutor, ctx: SpaceContext, access: 'member' | 'preview', now: Date): Promise<SpaceDetailDto> {
+async function detailFor(db: DbExecutor, ctx: SpaceContext, access: SpaceDetailDto['access'], now: Date): Promise<SpaceDetailDto> {
   const official = isOfficialKind(ctx.space.row.kind)
-  const boardRows = access === 'member' ? await loadBoards(db, ctx.space.row.id) : []
+  // 졸업생 인증 이력(A-04, ADR 0041)으로는 졸업생·자유(공감 라운지) 게시판만 보입니다(다른 게시판은 이름도 없음, 권한은 모두 false).
+  const boardRows =
+    access === 'member'
+      ? await loadBoards(db, ctx.space.row.id)
+      : access === 'alumni_history'
+        ? (await loadBoards(db, ctx.space.row.id)).filter((b) => readsByAlumniHistory(ctx.viewer, ctx.facts, b.kind))
+        : []
   const { mode, pending } = nameModeNow(ctx.space.row.currentNameMode, official ? null : await loadScheduledChange(db, ctx.space.row.id), now)
   const summary = toSpaceSummary(ctx.space, ctx.facts.activeMembers, ctx.membership)
   return {
     ...summary,
-    description: access === 'member' || previewIncludesDescription(ctx.facts) ? summary.description : null,
+    description: access !== 'preview' || previewIncludesDescription(ctx.facts) ? summary.description : null,
     nameMode: mode,
     pendingNameModeChange: pending,
     access,
@@ -220,6 +227,8 @@ function officialForSchools(schoolIds: string[]) {
 export async function listMySpaces(db: DbExecutor, actor: Actor): Promise<MySpacesDto> {
   const viewer = await loadViewer(db, actor)
   const schoolIds = viewer.affiliations.map((a) => a.schoolId)
+  // 졸업생 인증 이력(A-04)만 있는 학교는 공식 학교 페이지만(학과 페이지 없음) 목록에 넣습니다. 플래그가 꺼지면 비어 있습니다.
+  const historySchoolIds = (viewer.alumniHistorySchoolIds ?? []).filter((id) => !schoolIds.includes(id))
   const myRows = await db
     .select({ spaceId: spaceMemberships.spaceId, role: spaceMemberships.role, status: spaceMemberships.status })
     .from(spaceMemberships)
@@ -231,6 +240,9 @@ export async function listMySpaces(db: DbExecutor, actor: Actor): Promise<MySpac
       or(
         myRows.length ? and(inArray(communitySpaces.id, [...mine.keys()]), inArray(communitySpaces.kind, ['user_room', 'study_room'])) : sql`false`,
         viewer.status === 'active' ? officialForSchools(schoolIds) : sql`false`,
+        viewer.status === 'active' && historySchoolIds.length
+          ? and(eq(communitySpaces.kind, 'official_school'), inArray(sql`coalesce(${schools.mergedInto}, ${schools.id})`, historySchoolIds))
+          : sql`false`,
       ),
     ),
   )
@@ -244,7 +256,7 @@ export async function listMySpaces(db: DbExecutor, actor: Actor): Promise<MySpac
     const facts = spaceFacts(s, count)
     const isPending = !isOfficialKind(s.row.kind) && m?.status === 'pending'
     const mf = m ? { role: m.role, status: m.status } : null
-    if (isPending ? !canPreviewSpace(viewer, facts, mf) : !canReadSpace(viewer, facts, mf)) continue
+    if (isPending ? !canPreviewSpace(viewer, facts, mf) : !canReadSpace(viewer, facts, mf) && !readsByAlumniHistory(viewer, facts, null)) continue
     const dto = toSpaceSummary(s, count, m)
     if (isPending) pending.push({ ...dto, description: previewIncludesDescription(facts) ? dto.description : null })
     else items.push(dto)
@@ -306,6 +318,7 @@ export async function getSpaceDetail(db: DbExecutor, actor: Actor, ref: unknown,
   const ctx = await loadSpaceContext(db, actor, ref)
   const m = membershipFacts(ctx.membership)
   if (canReadSpace(ctx.viewer, ctx.facts, m)) return detailFor(db, ctx, 'member', now)
+  if (readsByAlumniHistory(ctx.viewer, ctx.facts, null)) return detailFor(db, ctx, 'alumni_history', now)
   if (canPreviewSpace(ctx.viewer, ctx.facts, m)) return detailFor(db, ctx, 'preview', now)
   throw notFound()
 }

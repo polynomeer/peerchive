@@ -13,7 +13,9 @@ import {
   type MembershipFacts,
   type SpaceFacts,
   type WriteRestriction,
+  type BoardKind,
   activeWriteRestriction,
+  canReadBoard,
   canReadSpace,
   departmentKey,
   isOfficialKind,
@@ -24,6 +26,8 @@ import {
   communitySanctions,
   communitySpaces,
   eq,
+  inArray,
+  isNotNull,
   isNull,
   institutionAffiliations,
   schools,
@@ -34,6 +38,7 @@ import {
 } from '@peerchive/db'
 import { isOperator } from '../catalog/operators'
 import { type Actor, ServiceError, notFound } from '../errors'
+import { isFeatureOn } from '../features'
 import { isUuid } from '../projects/access'
 
 export type SpaceRow = typeof communitySpaces.$inferSelect
@@ -74,10 +79,32 @@ export async function loadViewer(db: DbExecutor, actor: Actor, spaceId: string |
     status: user?.status ?? 'deleted',
     operator: await isOperator(db, actor.userId),
     affiliations: rows.map((r) => ({ schoolId: r.schoolId, departmentKey: departmentKey(r.departmentLabel) })),
+    ...(isFeatureOn('alumni') && { alumniHistorySchoolIds: await alumniHistorySchoolIds(db, actor.userId) }),
     communityWriteSuspended: restriction !== null,
     writeRestriction: restriction,
     schools: [...new Map(rows.map((r) => [r.schoolId, { id: r.schoolId, name: r.schoolName, departmentLabel: r.departmentLabel }])).values()],
   }
+}
+
+/**
+ * 졸업생 인증 이력이 있는 정본 학교 id(A-04, ADR 0041). @peerchive/domain `countsAsAlumniHistory`와 같은 조건: standing alumni + 인증된 적 있음
+ * (verified_at) + active 또는 expired(인증 뒤 메일 확인이 끝남). revoked(이유 무관)·pending·인증 전 만료·재학생 이력은 세지 않습니다.
+ * P2 alumni 플래그가 켜졌을 때만 부릅니다(꺼지면 열람은 active 인증만 — 기존 동작).
+ */
+async function alumniHistorySchoolIds(db: DbExecutor, userId: string): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ schoolId: sql<string>`coalesce(${schools.mergedInto}, ${schools.id})` })
+    .from(institutionAffiliations)
+    .innerJoin(schools, eq(schools.id, institutionAffiliations.schoolId))
+    .where(
+      and(
+        eq(institutionAffiliations.userId, userId),
+        eq(institutionAffiliations.standing, 'alumni'),
+        isNotNull(institutionAffiliations.verifiedAt),
+        inArray(institutionAffiliations.status, ['active', 'expired']),
+      ),
+    )
+  return rows.map((r) => r.schoolId)
 }
 
 /** 공간 행 + 정본 학교 id·이름. */
@@ -169,6 +196,30 @@ export async function loadReadableSpace(db: DbExecutor, actor: Actor, ref: unkno
   const ctx = await loadSpaceContext(db, actor, ref, lock, now)
   if (!canReadSpace(ctx.viewer, ctx.facts, membershipFacts(ctx.membership))) throw notFound()
   return ctx
+}
+
+/** 게시판 단위로 읽는 문맥(A-04): `alumniHistoryOnly`면 졸업생 인증 이력으로만 읽는 사람입니다(쓰기·공감·운영 자격 없음). */
+export interface BoardReadContext extends SpaceContext {
+  alumniHistoryOnly: boolean
+}
+
+/**
+ * 게시판(과 그 글·댓글)을 읽을 수 있는 공간만(아니면 404). 공간을 읽으면(canReadSpace) 그대로, 아니면 졸업생 인증 이력으로 그 게시판을 읽는지
+ * (canReadBoard → readsByAlumniHistory, A-04·ADR 0041 — 공식 학교 페이지의 졸업생·자유 게시판만, 플래그가 켜졌을 때만).
+ */
+export async function loadBoardReadableSpace(
+  db: DbExecutor,
+  actor: Actor,
+  ref: unknown,
+  boardKind: BoardKind,
+  lock = false,
+  now = new Date(),
+): Promise<BoardReadContext> {
+  const ctx = await loadSpaceContext(db, actor, ref, lock, now)
+  const m = membershipFacts(ctx.membership)
+  if (canReadSpace(ctx.viewer, ctx.facts, m)) return { ...ctx, alumniHistoryOnly: false }
+  if (canReadBoard(ctx.viewer, ctx.facts, m, boardKind)) return { ...ctx, alumniHistoryOnly: true }
+  throw notFound()
 }
 
 /** 403 `write_restricted`(C-06): 이용 제한 중. 수준·범위·기한만 싣습니다(어느 글·누구의 요청 때문인지는 없음). */

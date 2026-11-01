@@ -191,6 +191,11 @@ export interface CommunityViewer {
   /** active 학교 인증들(C-01). */
   affiliations: ReadonlyArray<{ schoolId: string; departmentKey: string | null }>
   /**
+   * 졸업생 인증 이력이 있는 학교(정본 id, A-04, ADR 0041 — @peerchive/domain countsAsAlumniHistory). P2 alumni 플래그가 켜졌을 때만 서버가 채우고,
+   * 꺼져 있거나 비어 있으면 열람은 active 인증만 봅니다(기존 동작). 이 값은 공식 학교 페이지의 졸업생 게시판·공감 라운지 **열람에만** 씁니다.
+   */
+  alumniHistorySchoolIds?: ReadonlyArray<string>
+  /**
    * 커뮤니티 쓰기 제한(C-06 CommunitySanction). 서버가 **판정하는 공간 기준**으로 채웁니다: 커뮤니티 전체 제재(쓰기 기간 제한·영구) 또는
    * 그 공간 범위 제재가 지금 효력이 있으면 true. 공간 밖 판정(방 만들기)은 커뮤니티 전체 제재만. 경고는 막지 않습니다.
    */
@@ -258,6 +263,34 @@ export function canReadSpace(viewer: CommunityViewer | null | undefined, space: 
   if (!isActiveViewer(viewer)) return false
   if (isOfficialKind(space.kind)) return viewer.operator || hasSchoolAffiliation(viewer, space.schoolId)
   return activeMember(membership) && meetsRoomAffiliation(viewer, space)
+}
+
+/** 졸업생 인증 이력으로 읽는 공식 학교 페이지 게시판(A-04, ADR 0041): 자유 게시판(공감 라운지)과 졸업생 게시판. */
+export const ALUMNI_HISTORY_BOARD_KINDS: readonly BoardKind[] = ['free', 'alumni']
+
+/**
+ * 졸업생 인증 이력만으로 이 공식 학교 페이지(의 그 게시판)를 읽는지(A-04, PROOFU_EVOLUTION_PLAN §8.9.9, ADR 0041).
+ * active 사용자 + 공식 **학교** 페이지(학과 페이지 아님) + 그 학교(정본)의 졸업생 인증 이력 + 졸업생·자유 게시판.
+ * `boardKind`가 null이면 공간 단위(상세에서 두 게시판만 보여 줄지)로 판정합니다. 쓰기·공감·운영에는 쓰지 않습니다.
+ */
+export function readsByAlumniHistory(
+  viewer: CommunityViewer | null | undefined,
+  space: Pick<SpaceFacts, 'kind' | 'schoolId'>,
+  boardKind: BoardKind | null,
+): boolean {
+  if (!isActiveViewer(viewer) || space.kind !== 'official_school' || !space.schoolId) return false
+  if (!(viewer.alumniHistorySchoolIds ?? []).includes(space.schoolId)) return false
+  return boardKind === null || ALUMNI_HISTORY_BOARD_KINDS.includes(boardKind)
+}
+
+/** 게시판(의 글·댓글)을 읽을 수 있는지: 공간을 읽거나(canReadSpace), 졸업생 인증 이력으로 그 게시판을 읽음(readsByAlumniHistory). */
+export function canReadBoard(
+  viewer: CommunityViewer | null | undefined,
+  space: SpaceFacts,
+  membership: MembershipFacts | null | undefined,
+  boardKind: BoardKind,
+): boolean {
+  return canReadSpace(viewer, space, membership) || readsByAlumniHistory(viewer, space, boardKind)
 }
 
 /**

@@ -2420,7 +2420,11 @@ export interface SpacePermissionsDto {
  */
 export interface SpaceDetailDto extends SpaceSummaryDto {
   pendingNameModeChange: PendingNameModeChangeDto | null
-  access: 'member' | 'preview'
+  /**
+   * member: 공간을 읽음 / preview: 소개만 / alumni_history: 졸업생 인증 이력으로 공식 학교 페이지의 졸업생·자유(공감 라운지) 게시판만 읽음
+   * (A-04, ADR 0041 — 쓰기·공감 없음, 다른 게시판은 목록에도 없음).
+   */
+  access: 'member' | 'preview' | 'alumni_history'
   boards: BoardDto[]
   permissions: SpacePermissionsDto
   /** 가입 버튼: join(바로 가입) / request(승인 요청) / pending(대기 중) / none. */
@@ -2966,7 +2970,42 @@ export interface CommunityPostDto extends CommunityPostSummaryDto {
   archive: PostArchiveDto
   /** alumni 방 공지 게시판 글의 읽음 수(A-02). 그 밖의 글에는 없습니다. */
   noticeReads?: NoticeReadsDto
+  /** 공감 라운지(공식 학교 페이지 자유 게시판) 글의 미디어(A-04, 플래그가 켜졌을 때만). 그 밖의 글에는 없습니다. */
+  lounge?: LoungePostMediaDto
+  /** 졸업생 인증 이력으로만 읽는 중이면 true(A-04, 쓰기·공감 없음). */
+  alumniHistoryOnly?: boolean
   comments: CommunityCommentDto[]
+}
+
+// ── 공감 라운지 미디어 (A-04, ADR 0041) ───────────────────────────────
+
+/** 라운지 글의 미디어 하나. 올린 사람 id·원래 파일 이름·저장 키가 없습니다. */
+export interface LoungeMediaDto {
+  id: string
+  /** 내가 올린 것인지(= 내 글). */
+  mine: boolean
+  /** 검사 상태(검사 대기·격리·실패는 올린 본인에게만 보임). */
+  scanStatus: ScanStatus
+  /** 검사를 통과한 이미지의 짧은 서명 URL(이 사람에게만 맞음). 그 밖은 null. */
+  url: string | null
+  urlExpiresAt: string | null
+  mediaType: string | null
+  canDelete: boolean
+  createdAt: string
+}
+
+export interface LoungePostMediaDto {
+  /** 게시 중인 글이면 검사를 통과한 미디어(+ 글쓴이에게는 검사 중·실패한 것). 가린·지운 글은 빈 목록. */
+  items: LoungeMediaDto[]
+  /** 내 글이고 지금 더 붙일 수 있는지(쓰기 자격·게시 중·한도). */
+  canAttach: boolean
+  limits: { maxBytes: number; perPost: number; types: string[] }
+}
+
+export interface LoungeMediaUploadDto {
+  media: LoungeMediaDto
+  /** PUT으로 파일 내용을 보낼 주소(15분 안에). */
+  uploadUrl: string
 }
 
 // ── 아카이브로 옮기기 (C-09, ADR 0025) ──────────────────────────────────

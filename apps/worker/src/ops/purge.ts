@@ -5,7 +5,7 @@
  *
  * 지우는 것(그 사람만의 자료): 프로필(실명·표시명 페르소나·연결 플래그 포함, S-01, 페르소나의 소셜 링크 S-06), 세션, 로그인 수단, 그 주소의 매직링크 토큰, 외부 연동(디스코드 id), 학교 메일 인증·인증 코드(C-01), 기수 승인·수료증 확인과 파일(I-01),
  * 커뮤니티 멤버십·그 사람이 만들거나 쓴 공간 초대·공식 페이지 개설 요청(C-02, 방장이었으면 먼저 승계: 가장 오래된 admin → 멤버, 없으면 방 보관),
- * 동문회·OB 방의 참석 응답·공지 읽음·투표 표·올린 앨범 사진과 파일(A-02)·멤버 명부 동의 행(A-03), 받은 커뮤니티 알림과 선택 실명(C-03; 이름 표시 방식 변경 이력 행은 공간의 기록이라 남기고 예약·취소한 사람만 null), 커뮤니티 글·댓글의 제목·본문
+ * 동문회·OB 방의 참석 응답·공지 읽음·투표 표·올린 앨범 사진과 파일(A-02)·멤버 명부 동의 행(A-03), 공감 라운지 글에 붙인 미디어 행과 파일(A-04), 받은 커뮤니티 알림과 선택 실명(C-03; 이름 표시 방식 변경 이력 행은 공간의 기록이라 남기고 예약·취소한 사람만 null), 커뮤니티 글·댓글의 제목·본문
  * (C-04; 행·스레드 익명 번호는 남기고 "작성자가 삭제한 글"로)과 공감, 그 사람에게 내려진 커뮤니티 이용 제한 행(C-06; 짝인 운영 조치 행은 운영 기록으로 남음)·
  * 작성자 확인 기록의 확인된 작성자 칸(기록 자체는 운영자의 접근 기록이라 남김)·그 사람이 쓴 제재 요청 설명, 디스코드 코드·📌 요청,
  * 주간 체크인(모든 과제), 유용성 신호, 선배 노트(철회 + 삭제), 케이스 스터디·포트폴리오 판, 분석 이벤트, 업로드 의도,
@@ -108,6 +108,7 @@ import {
   sessions,
   directoryEntries,
   noticeReads,
+  communityPostMedia,
   roomAlbumPhotos,
   roomEventRsvps,
   roomEvents,
@@ -251,11 +252,21 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
     // 앨범 사진(A-02, ADR 0039): 방을 나가도 남지만 탈퇴하면 그 사람이 올린 사진 행과 파일을 지웁니다(파일은 커밋 직전).
     const photos = await tx.delete(roomAlbumPhotos).where(eq(roomAlbumPhotos.uploaderId, userId)).returning({ key: roomAlbumPhotos.objectKey })
     c.add('room_album_photos', photos.length)
-    let albumObjects = 0
+    // 앨범 사진·라운지 미디어 파일 수(artifact_objects에서 뺌).
+    let communityMediaObjects = 0
     for (const { key } of photos) {
       if (isObjectKey(key) && !objectKeys.has(key)) {
         objectKeys.add(key)
-        albumObjects++
+        communityMediaObjects++
+      }
+    }
+    // 공감 라운지 미디어(A-04, ADR 0041): 그 사람이 붙인 미디어 행과 파일을 지웁니다(글은 아래에서 "작성자가 삭제한 글"이 됨, 파일은 커밋 직전).
+    const media = await tx.delete(communityPostMedia).where(eq(communityPostMedia.uploaderId, userId)).returning({ key: communityPostMedia.objectKey })
+    c.add('community_post_media', media.length)
+    for (const { key } of media) {
+      if (isObjectKey(key) && !objectKeys.has(key)) {
+        objectKeys.add(key)
+        communityMediaObjects++
       }
     }
     if (affiliationIds.length) {
@@ -406,7 +417,7 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
         .where(eq(users.id, userId))
       c.add('account', 1)
     }
-    c.add('artifact_objects', objectKeys.size - certificateObjects - albumObjects)
+    c.add('artifact_objects', objectKeys.size - certificateObjects - communityMediaObjects)
 
     // 8) 장부(개수만)·감사.
     const kinds = Object.keys(c.counts).sort()

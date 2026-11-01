@@ -90,8 +90,9 @@ import { type Actor, ServiceError, conflict, forbidden, invalid, notFound, rateL
 import { isUuid } from '../projects/access'
 import { hitRateLimit } from '../security/rate-limit'
 import { parseInput } from '../validation'
-import { type SpaceContext, loadReadableSpace, membershipFacts, writeRestricted } from './access'
+import { type SpaceContext, loadBoardReadableSpace, loadReadableSpace, membershipFacts, writeRestricted } from './access'
 import { cancelTransfersForAnswerChangeInTx, cancelTransfersForSourceInTx, postArchiveInfo } from './archive-transfers'
+import { loungeMediaForPost } from './lounge-media'
 import { activeDisplayPersona, displayPersonaNames, displayPersonaRequiredError, loadScheduledChange } from './name-modes'
 import { noticeReadsForPost } from './notice-reads'
 import { type RoomAuthorProfile, roomAuthorProfiles } from './room-profiles'
@@ -363,7 +364,7 @@ function commentOf(tc: ThreadContext, post: PostRow, c: CommentRow, reactions: {
   }
 }
 
-async function postDetail(db: DbExecutor, ctx: SpaceContext, post: PostRow, now: Date): Promise<CommunityPostDto> {
+async function postDetail(db: DbExecutor, ctx: SpaceContext & { alumniHistoryOnly?: boolean }, post: PostRow, now: Date): Promise<CommunityPostDto> {
   const [board] = await db.select().from(boards).where(eq(boards.id, post.boardId)).limit(1)
   const comments = await db
     .select()
@@ -408,6 +409,10 @@ async function postDetail(db: DbExecutor, ctx: SpaceContext, post: PostRow, now:
     archive: await postArchiveInfo(db, ctx, post, board!.kind, now),
     // 동문회·OB 방 공지(A-02, ADR 0039): 읽음 수와 내가 읽었는지만(누가 읽었는지는 없음).
     ...(open && (await noticeReadsForPost(db, ctx, post, board!.kind).then((r) => (r ? { noticeReads: r } : {})))),
+    // 공감 라운지 미디어(A-04, ADR 0041): 라운지 글이고 플래그가 켜졌을 때만. 가린·지운 글은 빈 목록.
+    ...(await loungeMediaForPost(db, ctx, post, board!, now).then((lounge) => (lounge ? { lounge } : {}))),
+    // 졸업생 인증 이력으로만 읽는 중(A-04): 화면이 쓰기 대신 안내를 보여 줍니다.
+    ...(ctx.alumniHistoryOnly && { alumniHistoryOnly: true }),
     comments: top,
   }
 }
@@ -423,7 +428,8 @@ const listQuery = z.object({ cursor: z.uuid({ error: 'invalid' }).optional() })
 export async function listBoardPosts(db: DbExecutor, actor: Actor, boardId: unknown, rawQuery: unknown, now = new Date()): Promise<BoardPostsDto> {
   const { cursor } = parseInput(listQuery, rawQuery ?? {})
   const board = await findBoard(db, boardId)
-  const ctx = await loadReadableSpace(db, actor, board.spaceId, false, now)
+  // 졸업생 인증 이력(A-04, ADR 0041)으로는 공식 학교 페이지의 졸업생·자유 게시판만 읽습니다(쓰기 자격은 composer가 그대로 판정).
+  const ctx = await loadBoardReadableSpace(db, actor, board.spaceId, board.kind, false, now)
   let after: { createdAt: Date; id: string } | null = null
   if (cursor) {
     const [row] = await db
@@ -466,7 +472,8 @@ export async function listBoardPosts(db: DbExecutor, actor: Actor, boardId: unkn
 /** GET /community/posts/:id — 글 + 댓글(답글 한 단계). 지운 글도 자리 표시와 남은 댓글을 보여 줍니다. 읽을 수 없으면 404. */
 export async function getPost(db: DbExecutor, actor: Actor, postId: unknown, now = new Date()): Promise<CommunityPostDto> {
   const post = await findPost(db, postId)
-  const ctx = await loadReadableSpace(db, actor, post.spaceId, false, now)
+  const board = await findBoard(db, post.boardId)
+  const ctx = await loadBoardReadableSpace(db, actor, post.spaceId, board.kind, false, now)
   return postDetail(db, ctx, post, now)
 }
 
@@ -863,7 +870,8 @@ export async function setReaction(
 /** 신고 대상 글: 신고자가 읽을 수 있는 게시 중인 글(아니면 404). */
 export async function reportablePost(db: DbExecutor, actor: Actor, postId: unknown): Promise<PostRow> {
   const post = await findPost(db, postId)
-  await loadReadableSpace(db, actor, post.spaceId)
+  // 읽을 수 있는 글이면 신고할 수 있습니다(졸업생 인증 이력으로 읽는 졸업생·라운지 글 포함, A-04).
+  await loadBoardReadableSpace(db, actor, post.spaceId, (await findBoard(db, post.boardId)).kind)
   if (!isOpenItem(post.status)) throw notFound()
   return post
 }
@@ -872,7 +880,7 @@ export async function reportablePost(db: DbExecutor, actor: Actor, postId: unkno
 export async function reportableComment(db: DbExecutor, actor: Actor, commentId: unknown): Promise<CommentRow> {
   const comment = await findComment(db, commentId)
   const post = await findPost(db, comment.postId)
-  await loadReadableSpace(db, actor, post.spaceId)
+  await loadBoardReadableSpace(db, actor, post.spaceId, (await findBoard(db, post.boardId)).kind)
   if (!isOpenItem(comment.status)) throw notFound()
   return comment
 }

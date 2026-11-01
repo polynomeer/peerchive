@@ -201,3 +201,19 @@ export function decideCodeAttempt(code: CodeState, matched: boolean, now: Date):
 export function affiliationBadgeLabel(schoolName: string, standing: AffiliationStanding): string {
   return standing === 'alumni' ? `${schoolName} 인증 · 졸업생` : `${schoolName} 인증`
 }
+
+// ── 졸업생 인증 이력 (A-04, ADR 0041) ─────────────────────────────────────
+
+/**
+ * 졸업생 인증 이력으로 셀 수 있는 소속인지(PROOFU_EVOLUTION_PLAN §8.9.9 "졸업 후 학교 메일이 없어져도 재학 중 인증 이력으로 졸업생 게시판과
+ * 라운지에 계속 들어올 수 있습니다", A-04, ADR 0041).
+ *
+ * - 셈: `standing = alumni`이고 **한 번 인증된(verified_at 있음)** 행 중 `active`(지금도 인증 유지) 또는 `expired`(인증 뒤 메일 확인이 끝남 —
+ *   메일 해시는 지워지고 학교·인증 시각 이력만 남은 상태).
+ * - 세지 않음: `revoked`(본인 해제·운영자 취소·학교 병합 중복·수료증 거절 — 이유와 상관없이), `pending`(아직 인증 전), 인증된 적 없는 `expired`
+ *   (코드 만료·시도 초과·새 요청으로 대체), `standing = student`(졸업을 선언하지 않은 이력).
+ * - 이 판정은 **열람에만** 씁니다(공식 학교 페이지의 졸업생 게시판·공감 라운지). 쓰기 자격은 그대로 active 인증입니다.
+ */
+export function countsAsAlumniHistory(row: { standing: AffiliationStanding; status: AffiliationStatus; verifiedAt: Date | null }): boolean {
+  return row.standing === 'alumni' && row.verifiedAt !== null && (row.status === 'active' || row.status === 'expired')
+}

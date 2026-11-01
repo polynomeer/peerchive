@@ -29,8 +29,9 @@ import {
 import { isObjectKey, type ObjectKey, type ObjectStorage } from '@peerchive/files'
 import { cleanupStaleAlbumPhotos, referencedAlbumPhotoKeys } from './album-photos'
 import type { OpsTaskName } from './config'
+import { cleanupPostMedia, referencedPostMediaKeys } from './post-media'
 
-export { cleanupStaleAlbumPhotos }
+export { cleanupPostMedia, cleanupStaleAlbumPhotos }
 
 const MINUTE_MS = 60 * 1000
 const HOUR_MS = 60 * MINUTE_MS
@@ -100,7 +101,10 @@ async function deleteInBatches(db: DbExecutor, table: ReturnType<typeof sql.iden
 
 const t = (name: string) => sql.identifier(name)
 
-/** 만료된 업로드 의도 + 그 격리 파일(버전이 이어받지 않은 것만). 앨범 사진의 끝나지 않은 올리기·통과하지 못한 사진도 함께(A-02). */
+/**
+ * 만료된 업로드 의도 + 그 격리 파일(버전이 이어받지 않은 것만). 앨범 사진의 끝나지 않은 올리기·통과하지 못한 사진도 함께(A-02),
+ * 라운지 미디어의 끝나지 않은 올리기·통과하지 못한 미디어·지운 글의 미디어도 함께(A-04).
+ */
 export async function cleanupUploadIntents(db: DbExecutor, deps: CleanupDeps, now: Date): Promise<TaskOutcome> {
   const cutoff = new Date(now.getTime() - RETENTION.uploadIntentGraceMs)
   let affected = 0
@@ -136,7 +140,12 @@ export async function cleanupUploadIntents(db: DbExecutor, deps: CleanupDeps, no
     if (rows.length < deps.batchSize) break
   }
   const album = await cleanupStaleAlbumPhotos(db, deps, now)
-  return { affected: affected + album.affected, batches: batches + album.batches, objects: objects + album.objects }
+  const media = await cleanupPostMedia(db, deps, now)
+  return {
+    affected: affected + album.affected + media.affected,
+    batches: batches + album.batches + media.batches,
+    objects: objects + album.objects + media.objects,
+  }
 }
 
 /** 어떤 버전·업로드 의도도 가리키지 않는 24시간 넘은 격리 파일. */
@@ -158,6 +167,8 @@ export async function cleanupOrphanQuarantine(db: DbExecutor, deps: CleanupDeps,
       ...(await db.select({ key: certificateChecks.objectKey }).from(certificateChecks).where(inArray(certificateChecks.objectKey, chunk))).map((r) => r.key!),
       // 앨범 사진(A-02, ADR 0039)도 검사 뒤 격리 키에 둡니다. 행이 없는(지운 사진의) 파일만 여기서 지웁니다.
       ...(await referencedAlbumPhotoKeys(db, chunk)),
+      // 라운지 미디어(A-04, ADR 0041)도 같습니다.
+      ...(await referencedPostMediaKeys(db, chunk)),
     ])
     for (const key of chunk) if (!referenced.has(key)) orphans.push(key)
   }

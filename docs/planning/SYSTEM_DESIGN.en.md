@@ -403,7 +403,7 @@ erDiagram
 | DirectoryEntry | space_id, user_id, cohort_label?, current_work?, interests[], contact_method?, consented_at, updated_at | **Member directory consent.** A row exists only for consenting members, and each field can be left empty. Withdrawing consent or leaving the room deletes the row immediately. No export API, CSV, PDF, or bulk read; page-size limits and read rate limits. The directory is never used for search, recommendations, or PersonaActivity outside the room |
 
 - Alumni and OB rooms default to `real` or `display`; choosing `anonymous` at creation shows a note that it is not recommended for alumni networking. There are no dues or payment tables.
-- **Lounge media.** Images and short videos in official school free boards and commiseration topics use the `ArtifactVersion` pipeline (§10) as is, with length and size limits for video. Media metadata (EXIF location, etc.) is stripped before storage.
+- **Lounge media.** Images and short videos in official school free boards and commiseration topics use the `ArtifactVersion` pipeline (§10) as is, with length and size limits for video. Media metadata (EXIF location, etc.) is stripped before storage. The A-04 implementation accepts images only (same quarantine, scan and stripping as the album, `community_post_media`, short signed URLs only for viewers who can read the post); video is deferred. Alumni verification history (`standing = alumni` + verified at some point + active/expired) grants read-only access to the official school page's alumni and free boards ([ADR 0041](../adr/0041-lounge-media-alumni-access.md)).
 
 **Topics and affiliation-labeled anonymity**
 
