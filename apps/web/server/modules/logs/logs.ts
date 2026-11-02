@@ -15,6 +15,7 @@
  * - 출처·사후 작성(T-07): 사후 작성 모드 과제에서 쓴 로그는 source `retro`, 할 일에서 전환한 로그는 `task`이고,
  *   만들 때의 모드를 retrospective로 고정합니다. DTO의 retrospective는 isRetrospectiveLog로 정합니다.
  *   할 일 전환(tasks.ts)은 이 파일의 parseLogInput·insertLog를 그대로 써서 검증·권한 규칙을 나누지 않습니다.
+ *   학생이 승인한 AI 회고 인터뷰 초안(E-12, ai/retro-interview.ts)도 같은 함수로 만들며 source `ai`(화면·공개 스냅샷의 `AI 초안`)입니다.
  * - 감사 이벤트에는 태그·revision 번호만 남기고 본문은 넣지 않습니다(§6.6).
  */
 import {
@@ -421,7 +422,15 @@ export async function insertLog(
   }
   const [revision] = await tx
     .insert(logRevisions)
-    .values({ logEntryId: entry.id, revisionNo: 1, tag, ...revisionValues(content), recordedAt: now })
+    .values({
+      logEntryId: entry.id,
+      revisionNo: 1,
+      tag,
+      ...revisionValues(content),
+      recordedAt: now,
+      // AI 초안(E-12, ADR 0057): 학생이 승인한 첫 revision에 생성·승인 표시를 남깁니다(이후 학생이 고친 revision은 false).
+      ...(origin === 'ai' && { aiGenerated: true, approvedAt: now }),
+    })
     .returning({ id: logRevisions.id })
   if (!revision) throw new Error('log revision insert failed')
   await insertEvidence(tx, revision.id, evidenceIds)

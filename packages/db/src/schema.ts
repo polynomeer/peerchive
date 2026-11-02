@@ -62,6 +62,9 @@
  * E-11(0051 migration): GitHub App 연동 — 회원 GitHub 계정(integrations.external_login), 일회용 state(github_oauth_states),
  * 과제 공간 ↔ 저장소 연결(github_repo_links), 커밋·PR 근거 후보(github_items, 최소 필드), 웹훅 재전송 방지(github_webhook_deliveries),
  * 선언 근거 종류 github(claim_evidence.github_*). 결정은 ADR 0056.
+ * E-12(0052 migration): AI 회고 인터뷰 — 학생별·과제별 사용 동의(ai_retro_opt_ins), 인터뷰 세션(ai_retro_sessions: 질문·답변은 초안을 만들면 비우고,
+ * 초안을 다 처리하거나 7일이 지나면 행째 삭제), 승인 전 로그 초안(ai_retro_drafts, 본인만), 날짜·기능·모델별 토큰 집계(ai_usage_daily, 사람·내용 없음),
+ * 분석 이벤트 ai_retro_drafts_proposed·ai_retro_draft_resolved. 승인한 초안은 로그 source `ai` + revision ai_generated·approved_at. 결정은 ADR 0057.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -347,6 +350,9 @@ export const analyticsEventName = pgEnum('analytics_event_name', [
   'directory_consent_changed',
   'topic_post_created',
   'completion_retro_published',
+  // E-12(ADR 0057): AI 회고 인터뷰. 개수·태그·결정·플래그만(질문·답변·초안 글 없음).
+  'ai_retro_drafts_proposed',
+  'ai_retro_draft_resolved',
 ])
 /** 기관 종류(C-01은 university만, I-01에서 나머지, SYSTEM_DESIGN §6.7.2, ADR 0018·0037). */
 export const institutionKind = pgEnum('institution_kind', ['university', 'bootcamp', 'training_program', 'club_federation'])
@@ -1929,6 +1935,120 @@ export const weeklyCheckins = pgTable(
     check('weekly_checkins_iso_week_check', sql`${t.isoWeek} ~ '^[0-9]{4}-W[0-9]{2}$'`),
     check('weekly_checkins_difficulty_check', sql`${t.difficulty} between 1 and 5`),
     check('weekly_checkins_note_check', sql`${t.note} is null or char_length(${t.note}) between 1 and 200`),
+  ],
+)
+
+// ── AI 회고 인터뷰 (E-12, ADR 0057) ─────────────────────────────────────
+
+/**
+ * 학생별·과제별 AI 회고 인터뷰 사용 동의. 행이 있으면 켜짐(기본 꺼짐). 끄면 행과 진행 중 세션·초안을 지웁니다.
+ * 서버에 AI 공급자가 설정되어 있지 않으면 행이 있어도 기능은 꺼져 있습니다(경로 404).
+ */
+export const aiRetroOptIns = pgTable(
+  'ai_retro_opt_ins',
+  {
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ name: 'ai_retro_opt_ins_pkey', columns: [t.projectId, t.userId] }), index('ai_retro_opt_ins_user_idx').on(t.userId)],
+)
+
+/** 인터뷰 상태: 질문 중(active) → 초안을 만듦(drafted, 질문·답변은 비움). 초안을 다 처리하면 행을 지웁니다. */
+export const aiRetroSessionStatus = pgEnum('ai_retro_session_status', ['active', 'drafted'])
+
+/**
+ * AI 회고 인터뷰 세션(학생·과제마다 하나). `transcript`는 `[{q, a}]`(질문과 학생 답, 마지막 질문은 a가 null)이며
+ * **초안을 만드는 순간 비웁니다**. 세션은 마지막 초안을 승인·버리면 지우고, 그러지 않아도 `expires_at`(만든 지 7일) 뒤 worker가 지웁니다.
+ * 본인만 읽습니다(팀원·운영 화면 없음).
+ */
+export const aiRetroSessions = pgTable(
+  'ai_retro_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    status: aiRetroSessionStatus('status').notNull().default('active'),
+    transcript: jsonb('transcript').$type<Array<{ q: string; a: string | null }>>().notNull().default([]),
+    /** 지금까지 한 질문 수(초안을 만든 뒤에도 남는 개수 — 분석·표시용). */
+    questionCount: integer('question_count').notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique('ai_retro_sessions_project_user_key').on(t.projectId, t.userId),
+    index('ai_retro_sessions_user_idx').on(t.userId),
+    index('ai_retro_sessions_expires_at_idx').on(t.expiresAt),
+    check('ai_retro_sessions_transcript_array_check', sql`jsonb_typeof(${t.transcript}) = 'array'`),
+    check('ai_retro_sessions_question_count_check', sql`${t.questionCount} between 0 and 10`),
+  ],
+)
+
+/**
+ * 승인 전 로그 초안(본인만). 승인하면 같은 트랜잭션에서 로그(source `ai`)를 만들고 이 행을 지웁니다. 버리면 행만 지웁니다.
+ * payload는 빌드 로그 태그별 구조화 필드와 같은 모양(서버가 로그 검증 규칙으로 확인한 값만 저장).
+ */
+export const aiRetroDrafts = pgTable(
+  'ai_retro_drafts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sessionId: uuid('session_id')
+      .notNull()
+      .references(() => aiRetroSessions.id),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    position: integer('position').notNull(),
+    tag: logTag('tag').notNull(),
+    body: text('body').notNull().default(''),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('ai_retro_drafts_session_position_key').on(t.sessionId, t.position),
+    index('ai_retro_drafts_project_user_idx').on(t.projectId, t.userId),
+    check('ai_retro_drafts_payload_object_check', sql`jsonb_typeof(${t.payload}) = 'object'`),
+    check('ai_retro_drafts_tag_check', sql`${t.tag}::text in ('progress', 'stuck', 'decision', 'validation', 'retro')`),
+  ],
+)
+
+/**
+ * AI 사용량 일별 집계(비용 추적, RUNBOOK). 날짜(UTC)·기능·모델마다 한 행이며 **사람·과제·내용은 없습니다**(토큰 수와 횟수만).
+ * 서버 전체 하루 토큰 상한(PEERCHIVE_AI_GLOBAL_DAILY_TOKENS)도 이 표로 셉니다.
+ */
+export const aiUsageDaily = pgTable(
+  'ai_usage_daily',
+  {
+    day: date('day').notNull(),
+    feature: text('feature').notNull(),
+    model: text('model').notNull(),
+    requests: integer('requests').notNull().default(0),
+    inputTokens: bigint('input_tokens', { mode: 'number' }).notNull().default(0),
+    outputTokens: bigint('output_tokens', { mode: 'number' }).notNull().default(0),
+    cacheReadTokens: bigint('cache_read_tokens', { mode: 'number' }).notNull().default(0),
+    cacheCreationTokens: bigint('cache_creation_tokens', { mode: 'number' }).notNull().default(0),
+    /** 거절(stop_reason refusal) 수. */
+    refusals: integer('refusals').notNull().default(0),
+    /** 서버 쪽 거절 대체 모델이 답한 수. */
+    fallbacks: integer('fallbacks').notNull().default(0),
+    /** 그 밖의 실패(상한·형식·공급자 오류) 수. */
+    failures: integer('failures').notNull().default(0),
+  },
+  (t) => [
+    primaryKey({ name: 'ai_usage_daily_pkey', columns: [t.day, t.feature, t.model] }),
+    check('ai_usage_daily_feature_check', sql`char_length(${t.feature}) between 1 and 64`),
   ],
 )
 

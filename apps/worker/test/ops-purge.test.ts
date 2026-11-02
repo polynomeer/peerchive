@@ -9,6 +9,9 @@ import { Readable } from 'node:stream'
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   affiliationCodes,
+  aiRetroDrafts,
+  aiRetroOptIns,
+  aiRetroSessions,
   analyticsEvents,
   and,
   artifactVersions,
@@ -318,6 +321,26 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       { claimRevisionId: tClaim.revisionId, endorserId: U.id, status: 'confirmed', note: '내 개인적인 메모' },
     ])
     await tx.insert(weeklyCheckins).values({ projectId: team.id, userId: U.id, isoWeek: '2027-W09', timeBucket: 'lt5h', difficulty: 3, note: '이번 주 힘들었음' })
+    // AI 회고 인터뷰(E-12): U의 켜기(팀·혼자)·초안 두 개인 세션, T의 팀 켜기·세션(남아야 함), 혼자 과제에 남은 T의 켜기(예전 멤버 — 과제와 함께 지워져야 함).
+    const expiresAt = new Date(NOW.getTime() + 7 * 24 * 60 * 60 * 1000)
+    await tx.insert(aiRetroOptIns).values([
+      { projectId: team.id, userId: U.id },
+      { projectId: solo.id, userId: U.id },
+      { projectId: team.id, userId: T.id },
+      { projectId: solo.id, userId: T.id },
+    ])
+    const [uSession, tSession] = await tx
+      .insert(aiRetroSessions)
+      .values([
+        { projectId: team.id, userId: U.id, status: 'drafted', transcript: [], questionCount: 3, expiresAt },
+        { projectId: team.id, userId: T.id, status: 'active', transcript: [{ q: '질문', a: null }], questionCount: 1, expiresAt },
+      ])
+      .returning()
+    await tx.insert(aiRetroDrafts).values([
+      { sessionId: uSession!.id, projectId: team.id, userId: U.id, position: 0, tag: 'progress', body: 'U의 AI 초안' },
+      { sessionId: uSession!.id, projectId: team.id, userId: U.id, position: 1, tag: 'retro', body: 'U의 AI 회고 초안' },
+    ])
+    void tSession
     const teamPub = await publish(tx, team.id, U.id, [U.id, T.id])
 
     // 과목 허브·포트폴리오
@@ -379,6 +402,9 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         magic_link_tokens: 1,
         integrations: 1,
         checkins: 1,
+        ai_retro_drafts: 2,
+        ai_retro_sessions: 1,
+        ai_retro_opt_ins: 2,
         signals: 1,
         analytics_events: 1,
         senior_notes: 1,
@@ -413,6 +439,10 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         [magicLinkTokens, eq(magicLinkTokens.email, w.U.email)],
         [integrations, eq(integrations.userId, w.U.id)],
         [weeklyCheckins, eq(weeklyCheckins.userId, w.U.id)],
+        [aiRetroDrafts, eq(aiRetroDrafts.userId, w.U.id)],
+        [aiRetroSessions, eq(aiRetroSessions.userId, w.U.id)],
+        [aiRetroOptIns, eq(aiRetroOptIns.userId, w.U.id)],
+        [aiRetroOptIns, eq(aiRetroOptIns.projectId, w.solo.id)],
         [seniorNotes, eq(seniorNotes.authorId, w.U.id)],
         [usefulnessSignals, eq(usefulnessSignals.seniorNoteId, w.note.id)],
         [caseStudies, eq(caseStudies.userId, w.U.id)],
@@ -423,6 +453,9 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         expect(await count(tx, table, where)).toBe(0)
       }
       expect(await count(tx, institutionAffiliations, eq(institutionAffiliations.id, w.tAffiliationId))).toBe(1)
+      // 팀원 T의 AI 회고 켜기·세션은 그대로.
+      expect(await count(tx, aiRetroSessions, eq(aiRetroSessions.userId, w.T.id))).toBe(1)
+      expect(await count(tx, aiRetroOptIns, and(eq(aiRetroOptIns.userId, w.T.id), eq(aiRetroOptIns.projectId, w.team.id))!)).toBe(1)
       // U와 무관한 X → T 팔로우·X의 T 뮤트는 그대로.
       expect(await count(tx, follows, eq(follows.followeePersonaId, w.tPersonaId))).toBe(1)
       expect(await count(tx, mutes, eq(mutes.mutedPersonaId, w.tPersonaId))).toBe(1)

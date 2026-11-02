@@ -24,6 +24,9 @@
  * 저장소 파일은 행을 지운 뒤 커밋 직전에 지웁니다(파일 삭제가 실패하면 트랜잭션 전체가 되돌아가 다음 주기에 다시 시도).
  */
 import {
+  aiRetroDrafts,
+  aiRetroOptIns,
+  aiRetroSessions,
   PUBLICATION_WITHDRAWN_TOPIC,
   archiveTransferConsents,
   archiveTransfers,
@@ -339,6 +342,10 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
       ).length,
     )
     c.add('checkins', (await tx.delete(weeklyCheckins).where(eq(weeklyCheckins.userId, userId)).returning({ id: weeklyCheckins.id })).length)
+    // AI 회고 인터뷰(E-12, ADR 0057): 본인만 보던 초안·세션(질문·답변)·과제별 켜기. 초안 → 세션 순서(외래 키).
+    c.add('ai_retro_drafts', (await tx.delete(aiRetroDrafts).where(eq(aiRetroDrafts.userId, userId)).returning({ id: aiRetroDrafts.id })).length)
+    c.add('ai_retro_sessions', (await tx.delete(aiRetroSessions).where(eq(aiRetroSessions.userId, userId)).returning({ id: aiRetroSessions.id })).length)
+    c.add('ai_retro_opt_ins', (await tx.delete(aiRetroOptIns).where(eq(aiRetroOptIns.userId, userId)).returning({ id: aiRetroOptIns.userId })).length)
     // 이번 학기 과목 등록(E-01): 본인만 보던 행이라 남길 이유가 없습니다(학기 종료 알림 시각 포함).
     c.add('course_registrations', (await tx.delete(courseRegistrations).where(eq(courseRegistrations.userId, userId)).returning({ id: courseRegistrations.id })).length)
     // 과목 허브 알림 신청·닫음(E-02): 본인만 보던 행.
@@ -1036,6 +1043,10 @@ async function purgeSoloProject(tx: DbExecutor, projectId: string, userId: strin
   }
   c.add('tasks', (await tx.delete(tasks).where(eq(tasks.projectId, projectId)).returning({ id: tasks.id })).length)
   await tx.delete(weeklyCheckins).where(eq(weeklyCheckins.projectId, projectId))
+  // AI 회고 인터뷰(E-12): 예전 멤버가 남긴 초안·세션·켜기도 함께(과제 행을 지우기 전에).
+  await tx.delete(aiRetroDrafts).where(eq(aiRetroDrafts.projectId, projectId))
+  await tx.delete(aiRetroSessions).where(eq(aiRetroSessions.projectId, projectId))
+  await tx.delete(aiRetroOptIns).where(eq(aiRetroOptIns.projectId, projectId))
 
   // 디스코드 연결
   const bindingIds = idsOf(await tx.select({ id: discordChannelBindings.id }).from(discordChannelBindings).where(eq(discordChannelBindings.projectId, projectId)))

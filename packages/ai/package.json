@@ -1,0 +1,23 @@
+{
+  "name": "@peerchive/ai",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Peerchive 공용 Claude API 클라이언트(E-12 AI 회고 인터뷰, E-13·E-14가 재사용): 설정 해석, 공급자 인터페이스, 공식 @anthropic-ai/sdk 어댑터(구조화 출력·서버 쪽 거절 대체·프롬프트 캐싱), 테스트 전용 가짜 공급자, 오류 분류. 프롬프트·출력은 로그에 남기지 않습니다.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.135.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "typescript": "5.9.3",
+    "vitest": "5.0.3"
+  }
+}

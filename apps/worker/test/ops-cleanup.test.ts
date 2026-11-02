@@ -9,6 +9,8 @@ import { Readable } from 'node:stream'
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   affiliationCodes,
+  aiRetroDrafts,
+  aiRetroSessions,
   artifactVersions,
   artifacts,
   auditEvents,
@@ -42,6 +44,7 @@ import { createFilesystemStorage, newQuarantineKey, type ObjectKey, type ObjectS
 import {
   RETENTION,
   cleanupAffiliationCodes,
+  cleanupAiRetroSessions,
   cleanupDiscordCodes,
   cleanupInternalNonces,
   cleanupMagicLinkTokens,
@@ -364,6 +367,31 @@ describe.skipIf(!url)('ops cleanup tasks (PostgreSQL)', () => {
       expect((await cleanupOutbox(tx, deps(10_000), NOW)).affected).toBeGreaterThanOrEqual(1)
       const left = await tx.select({ id: outboxEvents.id }).from(outboxEvents).where(inArray(outboxEvents.id, rows.map((r) => r.id)))
       expect(left.map((r) => r.id).sort()).toEqual([rows[1]!.id, rows[2]!.id].sort())
+    })
+  })
+
+  it('AI retro interview (E-12): deletes sessions past expires_at with their drafts, leaving live ones', async () => {
+    await rollback(async (tx) => {
+      const { userId, projectId } = await userAndProject(tx)
+      const [other] = await tx.insert(users).values({ displayName: 'ops2', privateEmail: `ops+${id()}@example.test` }).returning()
+      const session = (uid: string, expiresAt: Date, status: 'active' | 'drafted') => ({
+        projectId,
+        userId: uid,
+        status,
+        transcript: status === 'active' ? [{ q: '질문', a: '학생 답' }] : [],
+        questionCount: 1,
+        expiresAt,
+      })
+      const [old, live] = await tx
+        .insert(aiRetroSessions)
+        .values([session(userId, ago(HOUR), 'drafted'), session(other!.id, new Date(NOW.getTime() + DAY), 'active')])
+        .returning()
+      const draft = (sessionId: string, uid: string, position: number) => ({ sessionId, projectId, userId: uid, position, tag: 'progress' as const, body: '초안' })
+      await tx.insert(aiRetroDrafts).values([draft(old!.id, userId, 0), draft(old!.id, userId, 1), draft(old!.id, userId, 2)])
+      const outcome = await cleanupAiRetroSessions(tx, deps(2), NOW)
+      expect(outcome.affected).toBeGreaterThanOrEqual(4)
+      expect(await tx.select().from(aiRetroSessions).where(inArray(aiRetroSessions.id, [old!.id, live!.id]))).toMatchObject([{ id: live!.id }])
+      expect(await tx.select().from(aiRetroDrafts).where(eq(aiRetroDrafts.sessionId, old!.id))).toEqual([])
     })
   })
 

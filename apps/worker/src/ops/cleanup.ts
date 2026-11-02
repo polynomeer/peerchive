@@ -284,6 +284,21 @@ export async function cleanupAffiliationCodes(db: DbExecutor, deps: CleanupDeps,
   return { affected: expired.length + cohortExpired.length + codes.affected, batches: codes.batches + 1 }
 }
 
+/**
+ * AI 회고 인터뷰(E-12, ADR 0057): expires_at이 지난 세션과 그 초안을 지웁니다(초안 → 세션 순서, 외래 키). 질문·답변·초안 글은 로그에 남기지 않고 개수만.
+ */
+export async function cleanupAiRetroSessions(db: DbExecutor, deps: CleanupDeps, now: Date): Promise<TaskOutcome> {
+  const expired = sql`session_id in (select id from ai_retro_sessions where expires_at < ${now.toISOString()}::timestamptz)`
+  const drafts = await deleteInBatches(db, t('ai_retro_drafts'), expired, deps.batchSize)
+  const sessions = await deleteInBatches(
+    db,
+    t('ai_retro_sessions'),
+    sql`expires_at < ${now.toISOString()}::timestamptz and not exists (select 1 from ai_retro_drafts d where d.session_id = ai_retro_sessions.id)`,
+    deps.batchSize,
+  )
+  return { affected: drafts.affected + sessions.affected, batches: drafts.batches + sessions.batches }
+}
+
 export type CleanupTask = (db: DbExecutor, deps: CleanupDeps, now: Date) => Promise<TaskOutcome>
 
 export const CLEANUP_TASKS: Record<Exclude<OpsTaskName, 'account-purge' | 'name-mode-changes' | 'social-link-recheck' | 'certificate-files' | 'course-term-prompts'>, CleanupTask> = {
@@ -297,6 +312,7 @@ export const CLEANUP_TASKS: Record<Exclude<OpsTaskName, 'account-purge' | 'name-
   'pin-requests': cleanupPinRequests,
   outbox: cleanupOutbox,
   'affiliation-codes': cleanupAffiliationCodes,
+  'ai-retro-sessions': cleanupAiRetroSessions,
 }
 
 /**

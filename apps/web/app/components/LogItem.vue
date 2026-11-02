@@ -119,6 +119,7 @@ async function saveEdit() {
       </span>
       <span v-if="log.retrospective" class="badge retro">사후 작성</span>
       <span v-if="log.source === 'discord'" class="badge">디스코드</span>
+      <span v-if="log.source === 'ai'" class="badge" title="AI 회고 인터뷰가 만든 초안을 작성자가 고쳐 승인한 기록">AI 초안</span>
       <span v-if="log.revisionNo > 1" class="badge">수정됨 (r{{ log.revisionNo }})</span>
     </header>
     <p v-if="log.task" class="relation small">↳ 할 일에서 남김: {{ log.task.title }}</p>

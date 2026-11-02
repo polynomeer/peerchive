@@ -122,6 +122,11 @@ async function start(): Promise<void> {
   delete shared.PEERCHIVE_INTERNAL_SECRET
   delete shared.PEERCHIVE_MAINTENANCE
   delete shared.PEERCHIVE_PUBLIC_READS_DISABLED
+  // AI(E-12, ADR 0057): E2E는 AI 공급자를 부르지 않습니다(꺼진 상태만 확인). 로컬 키가 있어도 켜지지 않게 지웁니다.
+  delete shared.PEERCHIVE_AI_ENABLED
+  delete shared.PEERCHIVE_AI_PROVIDER
+  delete shared.ANTHROPIC_API_KEY
+  delete shared.ANTHROPIC_AUTH_TOKEN
   // worker가 사이트 origin을 모르면 소셜 링크 되돌림 확인(S-06)을 건너뜁니다: E2E는 바깥 인터넷에 접속하지 않습니다(web에만 따로 넣음).
   delete shared.NUXT_SITE_ORIGIN
 

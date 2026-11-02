@@ -68,6 +68,9 @@ export const ANALYTICS_EVENT_NAMES = [
   'directory_consent_changed',
   'topic_post_created',
   'completion_retro_published',
+  // E-12(ADR 0057): AI 회고 인터뷰. 개수·태그·결정·플래그만(질문·답변·초안 글·모델 이름 없음).
+  'ai_retro_drafts_proposed',
+  'ai_retro_draft_resolved',
 ] as const
 export type AnalyticsEventName = (typeof ANALYTICS_EVENT_NAMES)[number]
 
@@ -195,6 +198,10 @@ export const ANALYTICS_PROP_SPECS: Readonly<Record<AnalyticsEventName, Readonly<
   topic_post_created: { labelScope: enumOf(['institution', 'institution_kind', 'none']), broadened: bool },
   // 수료 회고 게시: 이름 표시 방식·적용된 기관 표시 범위·넓혀졌는지. 익명 회고면 사용자 키 없음.
   completion_retro_published: { displayMode: enumOf(['name', 'display', 'anonymous']), labelScope: enumOf(['institution', 'institution_kind', 'none']), broadened: bool },
+  // E-12(ADR 0057): 인터뷰가 초안을 제안함 — 초안 수·질문 수·학생이 일찍 끝냈는지. 승인한 초안의 로그는 log_saved(source ai)로 따로 남습니다.
+  ai_retro_drafts_proposed: { drafts: count(5), questions: count(10, 1), endedEarly: bool },
+  // 초안 하나를 승인·버림 — 태그·결정·승인 전에 고쳤는지.
+  ai_retro_draft_resolved: { decision: enumOf(['approved', 'discarded']), tag: enumOf(LOG_TAGS), edited: bool },
 }
 
 /** A-07(ADR 0045): 시 단위 시각으로 기록하는 P2 이벤트(affiliation_verified는 C-01부터 있던 이벤트라 시각을 그대로 둠). */

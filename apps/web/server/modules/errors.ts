@@ -8,6 +8,7 @@
  * - PAYLOAD_TOO_LARGE(413): 업로드 본문이 선언한 크기·파일 한도를 넘음(받던 내용은 지움).
  * - VALIDATION(422): 필드별 오류 코드.
  * - RATE_LIMITED(429): 사용자별 생성 한도(학교·과목·학기·개념 태그 만들기 등) 초과.
+ * - UNAVAILABLE(503): 외부 공급자(AI 등)가 지금 답하지 못함. 이유 코드만 싣고 공급자 응답·입력 글은 싣지 않습니다(E-12).
  */
 export type ServiceErrorCode =
   | 'NOT_FOUND'
@@ -17,6 +18,7 @@ export type ServiceErrorCode =
   | 'PAYLOAD_TOO_LARGE'
   | 'VALIDATION'
   | 'RATE_LIMITED'
+  | 'UNAVAILABLE'
 
 /** 오류 응답의 추가 값. 409 similar_exists의 후보 목록처럼 짧은 레코드 배열도 됩니다. 민감 정보 금지. */
 export type ErrorDetailValue = string | number | null | ReadonlyArray<Readonly<Record<string, string | number | null>>>
@@ -43,6 +45,7 @@ export const conflict = (reason: string, details?: Record<string, ErrorDetailVal
 export const rateLimited = () => new ServiceError('RATE_LIMITED', 'rate_limited')
 export const gone = (reason = 'link_unavailable') => new ServiceError('GONE', reason)
 export const tooLarge = () => new ServiceError('PAYLOAD_TOO_LARGE', 'too_large')
+export const unavailable = (reason: string) => new ServiceError('UNAVAILABLE', reason)
 export const invalid = (fields: Record<string, string>) => new ServiceError('VALIDATION', 'validation_failed', fields)
 
 /** drizzle가 감싼 오류에서 PostgreSQL SQLSTATE를 찾습니다. */

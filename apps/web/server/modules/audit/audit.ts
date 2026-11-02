@@ -46,6 +46,12 @@ export type AuditAction =
   | 'discord.pin_request'
   | 'discord.pin_decision'
   | 'checkin.submit'
+  /** E-12(ADR 0057): AI 회고 인터뷰 켜기·끄기, 초안 승인·버림, 세션 버림. metadata는 태그·개수·플래그만(질문·답변·초안 글 없음). */
+  | 'ai_retro.opt_in'
+  | 'ai_retro.opt_out'
+  | 'ai_retro.draft_approve'
+  | 'ai_retro.draft_discard'
+  | 'ai_retro.session_discard'
   | 'school.create'
   | 'school.merge'
   | 'course.create'
@@ -271,6 +277,8 @@ export async function recordAudit(
       | 'share_link'
       | 'log_comment'
       | 'github_repo_link'
+      | 'ai_retro_session'
+      | 'ai_retro_draft'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

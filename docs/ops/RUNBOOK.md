@@ -197,6 +197,7 @@ P2 기능은 코드가 있어도 **기본으로 꺼져 있고** 이 게이트(DE
 - 단계적 개방(E-02)을 끄면 다음 요청부터 모든 허브가 열리고 본인 화면 API는 404입니다. 알림 신청 행은 남고(다시 켜면 이어짐), 허브를 여닫는 수동 조작은 없습니다(기준값만 바꿈).
 - 막힘 Q&A(E-04)를 끄면 다음 요청부터 카드·스레드·글 API와 새 신고가 404이고 사례 페이지의 링크가 사라지며 포트폴리오 답변 수는 0입니다. 행은 남고(다시 켜면 그대로), 이미 받은 신고의 처리·작성자 확인·탈퇴 정리는 플래그와 무관하게 돕니다.
 - 유사 막힘 의미 검색(E-05)은 이 표의 플래그가 아니라 임베딩 공급자 설정(`PEERCHIVE_EMBEDDINGS_PROVIDER`·`VOYAGE_API_KEY`)으로 켜지고 `/api/v1/features`의 `semanticStuck`으로 보입니다. 켜기 전 확인·끄기는 §4.10.
+- AI 회고 인터뷰(E-12)도 이 표의 플래그가 아니라 AI 공급자 설정(`PEERCHIVE_AI_ENABLED=on` + `ANTHROPIC_API_KEY`)으로 켜지고 `/api/v1/features`의 `ai`로 보이며, 그 위에 학생이 과제마다 켜야 씁니다. 켜기 전 확인·비용 상한·끄기는 §4.12.
 - 끄기(되돌리기): 변수를 지우고 재시작하면 새 경로가 다음 요청부터 404입니다. 이미 만든 소속은 그대로 active이고(다시 켜면 그대로 보임), 이미 올라온 수료증 파일은 worker가 계속 지웁니다.
 - `alumni`를 끄면 이미 만든 동문회·OB 방은 일반 방처럼 보입니다(방별 프로필 API 404, 글의 방별 이름·배지 없음). 방별 프로필 행은 지우지 않으므로 다시 켜면 그대로 보입니다. 나가기·탈퇴·익명 전환에 따른 방별 프로필 삭제는 플래그와 무관하게 돕니다(삭제 장부 종류 `room_profiles`·`room_profile_cohort_changes`·`room_profile_cohort_actors`).
 - A-02 모임 도구도 같습니다: 끄면 일정·투표·앨범·공지 읽음 API가 404, 글에 읽음 수가 없고, 행·사진 파일은 그대로 남아 다시 켜면 보입니다. 나가기·내보내기에 따른 참석 응답·공지 읽음·투표 표 삭제와 탈퇴 정리(삭제 장부 종류 `room_event_rsvps`·`notice_reads`·`room_poll_votes`·`room_album_photos`·`room_gathering_actors`)는 플래그와 무관하게 돕니다. 공지 읽음은 누가 읽었는지 보는 화면·API가 없습니다(운영자 포함, [ADR 0039](../adr/0039-alumni-events.md)).
@@ -264,6 +265,14 @@ P2 기능은 코드가 있어도 **기본으로 꺼져 있고** 이 게이트(DE
 1. GitHub App 설정에서 웹훅 비밀·client secret·private key를 새로 만들고 `GITHUB_APP_WEBHOOK_SECRET`·`GITHUB_APP_CLIENT_SECRET`·`GITHUB_APP_PRIVATE_KEY`를 교체 → web 재시작 → 이전 client secret·private key 삭제(§4.11 "비밀 교체").
 2. 노출 기간의 감사 기록(`github.repo_link`·`github.repo_unlink`·`github.identity_link`)과 GitHub App의 Recent Deliveries·설치 목록을 확인합니다. 모르는 연결이 있으면 owner에게 알리고 해제합니다.
 3. 급하면 `GITHUB_APP_ID`를 비우고 재시작해 기능을 끕니다(경로·웹훅 404).
+
+### 3.6.2 AI 키 노출·AI 사고(E-12)
+
+1. **즉시 끄기**: `PEERCHIVE_AI_ENABLED=off`(또는 변수 삭제) → web 재시작. 다음 요청부터 AI 경로 모두 404·화면 칸 없음이고 폼 체크인·빌드 로그는 그대로입니다. 진행 중 세션·초안 행은 남지만 아무도 읽지 못하고 7일 정리 작업이 지웁니다(바로 지우려면 §4.12 "끄기").
+2. **키 노출**: Anthropic Console에서 그 API 키를 폐기(disable)하고 새 키를 만들어 `ANTHROPIC_API_KEY` 교체 → 재시작. Console의 사용량·로그(Usage)에서 노출 기간의 호출을 확인하고, `ai_usage_daily`와 비교합니다(우리 집계에 없는 사용량 = 외부 사용).
+3. **비용 급증**: `select day, feature, model, requests, input_tokens, output_tokens, refusals, failures from ai_usage_daily order by day desc limit 14;`로 확인 → `PEERCHIVE_AI_USER_DAILY_REQUESTS`·`PEERCHIVE_AI_GLOBAL_DAILY_REQUESTS`·`PEERCHIVE_AI_GLOBAL_DAILY_TOKENS`를 낮추고 재시작(즉시 429). Console에서 조직 지출 한도도 확인합니다.
+4. **AI가 부적절한 초안·질문을 냄**: 초안은 학생 승인 전에는 어디에도 저장·공개되지 않습니다. 승인된 로그는 일반 로그와 같이 신고·운영 조치(§3.2)로 다룹니다. 반복되면 1번으로 끄고 프롬프트(`server/modules/ai/retro-interview.ts`)를 고칩니다. 질문·답변 원문은 서버 로그에 없으므로 학생 화면 캡처로만 재현합니다.
+5. **400이 계속됨**(`[ai] … unavailable (400)` 경고): 모델 id·beta 헤더가 조직에서 막혔을 수 있습니다. `PEERCHIVE_AI_FALLBACKS=off`로 서버 쪽 거절 대체를 끄고 재시작해 보고, 그래도 400이면 `PEERCHIVE_AI_MODEL`을 확인합니다.
 
 ### 3.7 정리 작업이 멈춤(`halted`)
 
@@ -559,6 +568,21 @@ select column_name from information_schema.columns where table_name = 'instituti
 
 **탈퇴 정리**: 계정 연결 행·그 사람 GitHub 번호가 작성한 후보(다른 과제 포함)·일회용 state 삭제, 혼자만 쓴 과제는 연결·후보까지 삭제(삭제 장부 `integrations`·`github_items`·`github_oauth_states`).
 
+### 4.12 AI 회고 인터뷰·Claude API(E-12, ADR 0057)
+
+- **켜짐 조건**: `PEERCHIVE_AI_ENABLED=on`과 `ANTHROPIC_API_KEY`(비밀 저장소에만)가 **둘 다** 있을 때. web 재시작 뒤 `curl -s https://<사이트>/api/v1/features`의 `"ai":true`로 확인합니다. 학생은 과제 화면 "AI 회고 인터뷰 (선택)"에서 과제마다 직접 켭니다(기본 꺼짐). worker는 AI를 부르지 않고 만료 정리만 합니다.
+- **켜기 전 확인(owner 책임)**:
+  - Anthropic **상용** API 조건(Commercial Terms)으로 계약했는지 — 상용 API는 기본적으로 입력·출력을 모델 학습에 쓰지 않습니다(§15 "학습 미사용 API 조건"). 소비자용 Claude 앱 계정 키가 아닌지 확인합니다.
+  - Console의 **조직 데이터 보존 설정**(보존 기간, 영구 무보존 ZDR 약정 여부)과 처리 지역을 확인해 개인정보 처리방침·pilot 동의 안내에 적습니다. ZDR은 조직 단위 별도 약정이며 코드로 켜지 않습니다.
+  - 모델 `claude-opus-5-5`(또는 `PEERCHIVE_AI_MODEL`)와 beta `server-side-fallback-2026-07-01`이 조직에서 쓸 수 있는지(안 되면 400 → `PEERCHIVE_AI_FALLBACKS=off`).
+  - 회귀 테스트 `apps/web/test/ai-retro.integration.test.ts`(꺼짐 404·폼 체크인 그대로·보낸 데이터 표지 검사·승인 전 로그 0건·팀원에게 안 보임)와 `packages/ai/test/ai.test.ts` 통과.
+- **보내는 데이터**(ADR 0057 §4): 고정 system 프롬프트 + 이 과제 이름·이 학생의 이번 주 체크인·이 학생의 이 과제 최근 로그 5개 태그·요약·이 세션 답. 팀원·다른 과제 데이터, 사용자 id·이메일은 보내지 않습니다.
+- **비용 상한**(하루 UTC, 넘으면 429·공급자 호출 없음): 사용자마다 `PEERCHIVE_AI_USER_DAILY_REQUESTS`(기본 40, 인터뷰 한 번 ≈ 호출 2~5) / 서버 전체 `PEERCHIVE_AI_GLOBAL_DAILY_REQUESTS`(기본 2000) / 서버 전체 토큰 `PEERCHIVE_AI_GLOBAL_DAILY_TOKENS`(기본 5,000,000, 0이면 없음). 요청 제한 시간 `PEERCHIVE_AI_TIMEOUT_MS`(기본 60초)·SDK 재시도 `PEERCHIVE_AI_MAX_RETRIES`(기본 2). 대략 비용은 `ai_usage_daily`의 토큰 × 모델 단가(Claude Opus 5.5: 입력 $4 / 출력 $20 per MTok, 캐시 읽기는 입력의 0.05배)로 셉니다.
+- **사용량 점검(주 1회)**: `select day, feature, model, requests, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, refusals, fallbacks, failures from ai_usage_daily where day > current_date - 14 order by day desc, feature;` — 사람·과제·내용은 없습니다. `refusals`·`failures` 비율이 높으면 서버 로그의 `[ai] <기능>: <종류> (<상태>)` 줄을 봅니다(프롬프트·출력은 로그에 없음). `fallbacks`는 서버 쪽 거절 대체 모델이 답한 수입니다.
+- **끄기**: `PEERCHIVE_AI_ENABLED=off` + 재시작 → 다음 요청부터 404·칸 없음, 폼 체크인 그대로(§3.6.2). 학생의 켜기 행·승인한 로그는 남습니다(로그는 학생 자료, 출처 `AI 초안` 유지). 진행 중 세션·초안을 바로 지우려면 `delete from ai_retro_drafts; delete from ai_retro_sessions;`(로그 없음, 학생이 다시 켜면 새로 시작).
+- **보존**: 질문·답변은 초안을 만드는 순간 비움, 세션·초안은 처리 즉시 또는 만든 지 7일 뒤 `ai-retro-sessions`(매시 19분, `PEERCHIVE_CRON_AI_RETRO_SESSIONS`)가 삭제, 켜기를 끄면 즉시 삭제, 탈퇴 정리(`account-purge`). §8 표.
+- **SDK 버전**: `@anthropic-ai/sdk` 0.135.0(저장소 규칙상 공개 14일 지난 버전). 1.x로 올릴 때는 `packages/ai/test/ai.test.ts`(요청 모양·오류 분류)로 확인합니다.
+
 ## 5. 백업 일정과 보존
 
 | 대상 | 방법 | 주기 | 보존 |
@@ -628,6 +652,7 @@ RTO 목표 4시간 대비 로컬 연습은 수 초입니다. 운영 데이터 �
 | 제한 공유 링크(E-07) | 주인이 지우거나 탈퇴할 때까지. 행에는 토큰 SHA-256 해시·이름(본인만 봄)·만료·철회 시각·열람 횟수만 있고 원문 토큰·보는 사람의 IP·브라우저·열람 시각은 저장하지 않음(감사에는 링크·판 id·만료 일수·이름 유무만). 철회·만료·새 판·프로필 숨김·계정 비활성이면 다음 요청부터 404. 철회·만료된 행은 자동으로 지우지 않음. 토큰이 경로에 있어 프록시 접근 로그에 남을 수 있으니 로그에서 토큰을 보면 그 링크를 철회 | 본인 지우기 즉시(열 수 없는 링크만), `account-purge`(삭제 장부 `portfolio_share_links`) |
 | 유사 막힘 임베딩(E-05) | 공개 막힘 카드가 지금 게시 중인 동안(벡터·내용 해시만, 글 없음). 철회·제한·새 버전에서 빠진 카드·운영 조치로 가린 카드는 worker가 지우고, 그 전에도 읽기는 요청마다 거름. 엠바고 중에는 남지만 읽지 않음. 검색어는 저장하지 않음. 공급자 쪽 입력 보존은 Voyage 계약을 따름 | `publication.withdrawn`·`publication.published`·`moderation.action` 처리 때, `account-purge`(공개와 함께 삭제) |
 | 로그 피드백 댓글(E-10) | 과제(팀 기록)가 있는 동안. 작성자가 지우면 본문을 비우고 자리는 남김(`deleted`), owner 숨김은 행 그대로(작성자·owner만 봄). 팀 안에서만 읽고 공개 스냅샷·검색·케이스에는 들어가지 않음. 감사에는 댓글·로그 id만 | 본인 지우기 즉시(본문), `account-purge`(본문을 비운 행으로 남김, 삭제 장부 `log_comments`; 혼자만 쓴 과제는 과제와 함께 행 삭제) |
+| AI 회고 인터뷰(E-12) | 질문·답변은 초안을 만드는 순간 삭제(초안만 남음). 세션·승인 전 초안(본인만)은 승인·버리기로 마지막 초안을 처리하면 즉시, 아니어도 만든 지 7일 뒤 삭제. 켜기를 끄면 즉시 삭제. 승인한 초안은 일반 빌드 로그(출처 `AI 초안`)로 남음. 켜기 행(`ai_retro_opt_ins`)은 본인이 끄거나 탈퇴할 때까지. 사용량(`ai_usage_daily`)은 날짜·기능·모델별 토큰·횟수만(사람·내용 없음), 파일럿 기간 + 1년(비용 근거). 서버 로그에 프롬프트·출력 없음. Anthropic 쪽 보존은 조직 데이터 보존 설정(ZDR 여부)을 따름(§4.12) | 처리 즉시(웹), `ai-retro-sessions` 매시(만료), `account-purge`(초안·세션·켜기 삭제), 사용량은 수동 `delete from ai_usage_daily where day < '<보존 시작일>'` |
 | 탈퇴 계정 자료 | 요청 뒤 7일(유예) | `account-purge` 30분마다 |
 | 이름 표시 방식 변경 이력·커뮤니티 알림 | 이력은 공간이 있는 동안(행을 지우지 않음, 탈퇴 때 예약·취소한 사람만 비움), 알림은 받는 사람이 탈퇴할 때까지 | 탈퇴 정리 때. 예약 적용은 `name-mode-changes` 매분 |
 | 소셜 링크 | 사용자가 지우거나 탈퇴할 때까지. verified 링크는 `social-link-recheck`(매시, 링크마다 하루 한 번, 한 번에 100개)가 다시 확인해 되돌림 링크가 없으면(404·410 포함) lost, 가져오기 3번 연속 실패면 lost. 감사에는 주소를 남기지 않음 | 탈퇴 정리 때 삭제 |

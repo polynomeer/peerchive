@@ -17,7 +17,7 @@ const { data: members, refresh: refreshMembers } = await useFetch<MemberDto[]>(
 const isOwner = computed(() => project.value?.myRole === 'owner')
 // 스터디 기록(C-08): 멤버는 스터디 방에서 파생되므로 이 화면에서 초대·역할·나가기·소유권 이전을 하지 않습니다.
 const isStudy = computed(() => project.value?.kind === 'study')
-// GitHub App 설정이 있을 때만 저장소 연결 칸을 보여 줍니다(E-11).
+// GitHub App 설정이 있을 때만 저장소 연결 칸을 보여 줍니다(E-11). AI 회고 인터뷰도 AI 설정이 있을 때만(E-12).
 const { flags: features, ensure: ensureFeatures } = useFeatures()
 onMounted(() => void ensureFeatures())
 const manageMembers = computed(() => isOwner.value && !isStudy.value)
@@ -319,6 +319,9 @@ const formatDate = (iso: string) => new Date(iso).toLocaleString('ko-KR', { date
       />
 
       <CheckinSection :project-id="project.id" :can-write="canEdit" :me-id="me?.id ?? null" />
+
+      <!-- AI 회고 인터뷰(E-12): 서버에 AI가 설정되어 있을 때만. 학생이 과제마다 켜야 씁니다. -->
+      <AiRetroSection v-if="features.ai" :project-id="project.id" :members="members" :retro="retro" />
 
       <TasksSection :project-id="project.id" :can-write="canEdit" :members="members" :retro="retro" />
 

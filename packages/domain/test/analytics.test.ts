@@ -17,7 +17,9 @@ const hex = (n: number) => n.toString(16).padStart(64, '0')
 
 describe('analytics allowlist', () => {
   it('covers the DELIVERY_PLAN §6 events plus login_succeeded, affiliation_verified the C-02·C-03 space events, the C-04 post events, the C-06 moderation events, the C-07 recruitment events, the C-09 transfer events, the C-08 study_record_enabled event and the C-10 community_author_lookup event', () => {
-    expect(ANALYTICS_EVENT_NAMES).toHaveLength(52)
+    expect(ANALYTICS_EVENT_NAMES).toHaveLength(54)
+    // E-12(ADR 0057): AI 회고 인터뷰 이벤트 2개.
+    expect(ANALYTICS_EVENT_NAMES).toEqual(expect.arrayContaining(['ai_retro_drafts_proposed', 'ai_retro_draft_resolved']))
     expect(ANALYTICS_EVENT_NAMES).toContain('community_author_lookup')
     // A-07(§6.2 P2): 졸업생·토픽·기관 이벤트 6개(affiliation_verified는 C-01부터 있고 method만 더함).
     expect(ANALYTICS_EVENT_NAMES).toEqual(

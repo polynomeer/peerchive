@@ -1081,6 +1081,43 @@ export interface CheckinSaveDto {
   log: LogDto | null
 }
 
+/** AI 회고 인터뷰(E-12, ADR 0057)의 로그 초안 하나(승인 전, 본인만). payload는 빌드 로그 태그별 구조화 필드와 같은 모양입니다. */
+export interface AiRetroDraftDto {
+  id: string
+  tag: 'progress' | 'stuck' | 'decision' | 'validation' | 'retro'
+  body: string
+  payload: LogPayload
+}
+
+/** 진행 중인 인터뷰(본인만). 질문·답변은 초안을 만들면 서버에서 지웁니다. */
+export interface AiRetroSessionDto {
+  id: string
+  status: 'active' | 'drafted'
+  /** 지금까지 한 질문 수. 답을 보낼 때 `questionNo`로 그대로 돌려줍니다(동시 요청 확인). */
+  questionCount: number
+  /** 질문과 답(마지막 질문은 답이 null). 초안을 만든 뒤에는 빈 배열입니다. */
+  turns: Array<{ q: string; a: string | null }>
+  expiresAt: string
+}
+
+/** GET /projects/:id/ai-retro — AI 회고 인터뷰 상태(본인). */
+export interface AiRetroStateDto {
+  /** 이 과제에서 AI 회고 인터뷰를 켰는지(기본 꺼짐). */
+  optedIn: boolean
+  /** 쓸 수 있는 역할인지(owner/editor — 승인한 초안이 빌드 로그가 되므로). */
+  canUse: boolean
+  session: AiRetroSessionDto | null
+  drafts: AiRetroDraftDto[]
+  /** 방금 인터뷰를 정리했지만 남길 만한 초안이 없었을 때 true(세션은 지움). */
+  noDrafts?: boolean
+}
+
+/** POST /projects/:id/ai-retro/drafts/:draftId/approve — 승인으로 만든 로그와 남은 상태. */
+export interface AiRetroApproveDto {
+  log: LogDto
+  state: AiRetroStateDto
+}
+
 /** GET /me/checkins — 대시보드 "이번 주 체크인". */
 export interface MyCheckinStatusDto {
   week: string
@@ -2117,6 +2154,11 @@ export interface FeatureFlagsDto {
   semanticStuck: boolean
   /** E-11 GitHub App 연동. 플래그가 아니라 GITHUB_APP_* 설정 여섯 개가 모두 있을 때만 true. */
   github: boolean
+  /**
+   * E-12 AI 기능(AI 회고 인터뷰). 플래그가 아니라 서버에 AI 공급자가 설정되어 있을 때만 true(PEERCHIVE_AI_ENABLED=on + ANTHROPIC_API_KEY).
+   * 실제로 쓰려면 학생이 과제마다 따로 켜야 합니다(`AiRetroStateDto.optedIn`).
+   */
+  ai: boolean
 }
 
 /** 대학이 아닌 기관(검색·운영자 생성 결과). */

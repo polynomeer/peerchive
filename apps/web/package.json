@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@pdf-lib/fontkit": "1.1.1",
+    "@peerchive/ai": "workspace:*",
     "@peerchive/bot-protocol": "workspace:*",
     "@peerchive/db": "workspace:*",
     "@peerchive/domain": "workspace:*",

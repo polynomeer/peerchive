@@ -15,6 +15,7 @@ import path, { join, relative } from 'node:path'
 import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { createFakeAiProvider } from '@peerchive/ai'
 import { artifactVersions, artifacts, eq, logEntries, logRevisions, publicationCandidates, tasks, type DbExecutor } from '@peerchive/db'
 import { type ObjectStorage, createFilesystemStorage } from '@peerchive/files'
 import {
@@ -27,6 +28,16 @@ import {
   retryArtifactScan,
 } from '../server/modules/artifacts/artifacts'
 import { saveMyCheckin, getMyCheckin, listCheckins, myCheckinStatus } from '../server/modules/checkins/checkins'
+import { setAiProviderForTesting } from '../server/modules/ai/ai'
+import {
+  answerAiRetro,
+  approveAiRetroDraft,
+  discardAiRetroDraft,
+  discardAiRetroSession,
+  getAiRetroState,
+  setAiRetroOptIn,
+  startAiRetroSession,
+} from '../server/modules/ai/retro-interview'
 import { createCourse, createSchool } from '../server/modules/catalog/catalog'
 import { acceptSpaceInvitation, createSpaceInvitation } from '../server/modules/community/invitations'
 import { createStudyRoomInternal } from '../server/modules/community/spaces'
@@ -127,6 +138,14 @@ const ROUTES: Record<string, string> = {
   'projects/[id]/github/install.post.ts': 'startInstall',
   'projects/[id]/github/link.post.ts': 'linkRepository',
   'projects/[id]/github/items.get.ts': 'listGithubCandidates',
+  // E-12 AI 회고 인터뷰(ADR 0057): 본인 상태·초안만, 승인 로그는 로그처럼 멤버 참조로 가립니다.
+  'projects/[id]/ai-retro/index.get.ts': 'getAiRetroState',
+  'projects/[id]/ai-retro/opt-in.put.ts': 'setAiRetroOptIn',
+  'projects/[id]/ai-retro/session.post.ts': 'startAiRetroSession',
+  'projects/[id]/ai-retro/session.delete.ts': 'discardAiRetroSession',
+  'projects/[id]/ai-retro/answers.post.ts': 'answerAiRetro',
+  'projects/[id]/ai-retro/drafts/[draftId]/approve.post.ts': 'approveAiRetroDraft',
+  'projects/[id]/ai-retro/drafts/[draftId].delete.ts': 'discardAiRetroDraft',
   'logs/[id]/index.get.ts': 'getLog',
   'logs/[id]/revisions/index.get.ts': 'listLogRevisions',
   'logs/[id]/revisions/index.post.ts': 'reviseLog',
@@ -446,6 +465,27 @@ describe.skipIf(!databaseUrl)('study member refs (PostgreSQL)', () => {
       await hit('projects/[id]/github/link.post.ts', () => linkRepository(tx, A, projectId, { repoId: 1 }, githubCtx))
       await hit('projects/[id]/github/items.get.ts', () => listGithubCandidates(tx, A, projectId))
       await hit('projects/[id]/github/index.delete.ts', () => unlinkRepository(tx, A, projectId, githubCtx))
+
+      // AI 회고 인터뷰(E-12): 가짜 공급자로 켜고 → 시작 → 일찍 정리 → 초안 승인·버리기 → 세션 버리기. 응답은 본인 것뿐입니다.
+      const fakeAi = createFakeAiProvider()
+      fakeAi.respond = (call) =>
+        call.feature === 'retro_interview.drafts'
+          ? { data: { drafts: ['progress', 'retro', 'retro'].map((tag) => ({ tag, body: `${tag} 초안`, stuck: null, decision: null, validation: null })) } }
+          : { data: { finish: false, next_question: '다음?' } }
+      setAiProviderForTesting(fakeAi)
+      try {
+        await hit('projects/[id]/ai-retro/opt-in.put.ts', () => setAiRetroOptIn(tx, A, projectId, { enabled: true }, at(13)))
+        await hit('projects/[id]/ai-retro/session.post.ts', () => startAiRetroSession(tx, A, projectId, at(13)))
+        const drafted = (await hit('projects/[id]/ai-retro/answers.post.ts', () => answerAiRetro(tx, A, projectId, { questionNo: 1, answer: '정리', finish: true }, at(13))))!
+        await hit('projects/[id]/ai-retro/index.get.ts', () => getAiRetroState(tx, A, projectId, at(13)))
+        await hit('projects/[id]/ai-retro/drafts/[draftId]/approve.post.ts', () => approveAiRetroDraft(tx, A, projectId, drafted.drafts[0]!.id, {}, at(13)))
+        await hit('projects/[id]/ai-retro/drafts/[draftId].delete.ts', () => discardAiRetroDraft(tx, A, projectId, drafted.drafts[1]!.id, at(13)))
+        await hit('projects/[id]/ai-retro/session.delete.ts', () => discardAiRetroSession(tx, A, projectId, at(13)))
+        // 기록의 다른 멤버 이름·id는 AI에도 보내지 않습니다.
+        for (const secret of [b.userId, c.userId, b.displayName, c.displayName]) expect(fakeAi.sentText()).not.toContain(secret)
+      } finally {
+        setAiProviderForTesting(undefined)
+      }
 
       // 공개: 선택지 → 후보(노출 방식 키) → B 거절 → 게시 막힘(당사자 키) → 미동의자 제외 → 동의 → 게시 → 동의 철회 → 철회
       const state = (await hit('projects/[id]/publication.get.ts', () => getPublicationState(tx, A, projectId, at(14))))!

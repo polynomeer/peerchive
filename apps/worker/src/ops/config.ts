@@ -28,6 +28,7 @@ export const OPS_TASK_NAMES = [
   'social-link-recheck',
   'certificate-files',
   'course-term-prompts',
+  'ai-retro-sessions',
 ] as const
 export type OpsTaskName = (typeof OPS_TASK_NAMES)[number]
 
@@ -52,6 +53,8 @@ export const DEFAULT_CRONS: Record<OpsTaskName, string> = {
   'certificate-files': '*/10 * * * *',
   // 학기 종료 알림(E-01, ADR 0046): 종료 시각이 지난 과목 등록마다 한 번 화면 안 알림(선배 노트·공개 제안)을 만듭니다.
   'course-term-prompts': '53 * * * *',
+  // AI 회고 인터뷰(E-12, ADR 0057): 만든 지 7일 지난 세션(질문·답변)과 그 초안을 지웁니다(웹도 읽을 때 지움). AI가 꺼져 있어도 남은 행을 지웁니다.
+  'ai-retro-sessions': '19 * * * *',
 }
 
 export const OPS_TIMEZONE = 'Asia/Seoul'
