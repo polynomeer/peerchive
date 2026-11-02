@@ -86,6 +86,8 @@ export interface CaseSentenceDraft {
   /** reflection은 한계·회고 구역에서만, 출처 없이 둘 수 있는 본인 회고("본인 회고"로 표시). */
   kind: CaseSentenceKind
   citations: CaseCitation[]
+  /** AI 다듬기(E-14, ADR 0059) 제안을 받아들여 아직 고치지 않은 문장. 출처가 없으면 "본인 회고"여도 게시를 막습니다. */
+  aiGenerated?: boolean
 }
 
 export interface CaseSectionDraft {
@@ -539,13 +541,16 @@ export function normalizeCaseSections(raw: unknown, snapshot: CaseSnapshot, rele
   return { ok: true, sections: caseSectionOrder(jobTarget).map((key) => ({ key, sentences: byKey.get(key) ?? [] })) }
 }
 
-/** 게시를 막는 출처 없는 문장(한계·회고 구역의 reflection은 예외). 구역 키와 그 구역 안의 순서. */
+/**
+ * 게시를 막는 출처 없는 문장(한계·회고 구역의 reflection은 예외 — 단 AI 다듬기로 받아들인 문장(aiGenerated)은 예외 없음, E-14).
+ * 구역 키와 그 구역 안의 순서.
+ */
 export function findUncitedSentences(sections: readonly CaseSectionDraft[]): Array<{ section: CaseSection; index: number }> {
   const out: Array<{ section: CaseSection; index: number }> = []
   for (const s of sections) {
     s.sentences.forEach((sentence, index) => {
       if (sentence.citations.length > 0) return
-      if (sentence.kind === 'reflection' && s.key === REFLECTION_SECTION) return
+      if (sentence.kind === 'reflection' && s.key === REFLECTION_SECTION && !sentence.aiGenerated) return
       out.push({ section: s.key, index })
     })
   }

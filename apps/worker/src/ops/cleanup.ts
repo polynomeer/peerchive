@@ -307,6 +307,13 @@ export async function cleanupAiMeetingDrafts(db: DbExecutor, deps: CleanupDeps, 
   return deleteInBatches(db, t('ai_meeting_drafts'), sql`expires_at < ${now.toISOString()}::timestamptz`, deps.batchSize)
 }
 
+/**
+ * AI 케이스 다듬기(E-14, ADR 0059): expires_at이 지난 다듬기 제안을 지웁니다(케이스 문장은 그대로). 글은 로그에 남기지 않고 개수만.
+ */
+export async function cleanupAiCasePolish(db: DbExecutor, deps: CleanupDeps, now: Date): Promise<TaskOutcome> {
+  return deleteInBatches(db, t('case_ai_polish_proposals'), sql`expires_at < ${now.toISOString()}::timestamptz`, deps.batchSize)
+}
+
 export type CleanupTask = (db: DbExecutor, deps: CleanupDeps, now: Date) => Promise<TaskOutcome>
 
 export const CLEANUP_TASKS: Record<Exclude<OpsTaskName, 'account-purge' | 'name-mode-changes' | 'social-link-recheck' | 'certificate-files' | 'course-term-prompts'>, CleanupTask> = {
@@ -322,6 +329,7 @@ export const CLEANUP_TASKS: Record<Exclude<OpsTaskName, 'account-purge' | 'name-
   'affiliation-codes': cleanupAffiliationCodes,
   'ai-retro-sessions': cleanupAiRetroSessions,
   'ai-meeting-drafts': cleanupAiMeetingDrafts,
+  'ai-case-polish': cleanupAiCasePolish,
 }
 
 /**

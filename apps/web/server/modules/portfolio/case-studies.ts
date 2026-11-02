@@ -13,6 +13,8 @@
  *   `confirmWarnings: true` 없이는 409 `checks_unconfirmed`. 고정한 release를 더 이상 제공하지 않으면 409 `unavailable`.
  * - 읽기 상태: 고정 release가 철회·대체·차단되면 읽는 즉시 unavailable로 봅니다(worker 표시를 기다리지 않음).
  * - 운영 조치로 숨긴 케이스(hidden_at, T-15)는 공개 경로에 나오지 않고 게시가 409 `hidden`입니다(고치기는 됨, 이의제기로 되돌리면 다시 게시 가능).
+ * - AI 다듬기(E-14, ADR 0059, ai/case-polish.ts): 받아들인 문장은 aiGenerated, 케이스는 generator `ai`. 편집 저장은 글이 같은 AI 문장의 표시를
+ *   이어 붙이고(`carryAiGenerated`), 케이스 version이 바뀌므로 남은 다듬기 제안을 지웁니다. AI 문장은 출처가 없으면 "본인 회고"여도 게시를 막습니다.
  */
 import { z } from 'zod'
 import {
@@ -22,6 +24,7 @@ import {
   type CaseSectionDraft,
   type CaseSnapshot,
   caseStudyCheckItems,
+  carryAiGenerated,
   citationLabel,
   citationPath,
   clipText,
@@ -31,7 +34,7 @@ import {
   canLinkReleaseToPortfolio,
   runPublicationChecks,
 } from '@peerchive/domain'
-import { and, caseStudies, desc, eq, ne, projects, publicationCandidates, publications, sql, type DbExecutor } from '@peerchive/db'
+import { and, caseAiPolishProposals, caseStudies, desc, eq, ne, projects, publicationCandidates, publications, sql, type DbExecutor } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
 import { servableReleaseSql } from '../course-hub/public-scope'
 import { type Actor, ServiceError, conflict, invalid, notFound, rateLimited } from '../errors'
@@ -129,6 +132,7 @@ function sectionDtos(sections: readonly CaseSectionDraft[], snapshot: CaseSnapsh
     sentences: s.sentences.map((sentence) => ({
       text: sentence.text,
       kind: sentence.kind,
+      ai: sentence.aiGenerated === true,
       citations: sentence.citations.map((c) => ({
         ...c,
         label: snapshot ? citationLabel(snapshot, c) : null,
@@ -149,7 +153,7 @@ function memberLabel(row: CaseStudyWithRelease): string {
   return row.snapshot.members.find((m) => m.key === row.caseStudy.memberKey)?.label ?? '팀원'
 }
 
-async function toDto(db: DbExecutor, row: CaseStudyWithRelease, userId: string, now: Date): Promise<CaseStudyDto> {
+export async function toDto(db: DbExecutor, row: CaseStudyWithRelease, userId: string, now: Date): Promise<CaseStudyDto> {
   const { status, reason } = effectiveStatus(row)
   const available = status !== 'unavailable'
   const sections = (await loadSections(db, [row.caseStudy])).get(row.caseStudy.id) ?? []
@@ -161,7 +165,7 @@ async function toDto(db: DbExecutor, row: CaseStudyWithRelease, userId: string, 
     status,
     unavailableReason: reason,
     version: cs.version,
-    generator: 'template',
+    generator: cs.generator === 'ai' ? 'ai' : 'template',
     source: {
       slug: row.slug,
       path: `/p/${row.slug}`,
@@ -185,7 +189,7 @@ async function toDto(db: DbExecutor, row: CaseStudyWithRelease, userId: string, 
   }
 }
 
-async function loadOwn(db: DbExecutor, actor: Actor, caseStudyId: unknown, now: Date, lock = false): Promise<CaseStudyWithRelease> {
+export async function loadOwn(db: DbExecutor, actor: Actor, caseStudyId: unknown, now: Date, lock = false): Promise<CaseStudyWithRelease> {
   if (!isUuid(caseStudyId)) throw notFound()
   const id = caseStudyId.toLowerCase()
   if (lock) await db.select({ id: caseStudies.id }).from(caseStudies).where(eq(caseStudies.id, id)).for('update')
@@ -332,7 +336,7 @@ export async function listCaseStudySources(db: DbExecutor, actor: Actor, now = n
 
 // ── 편집·게시 ────────────────────────────────────────────────────────────
 
-function assertEditable(row: CaseStudyWithRelease): void {
+export function assertEditable(row: CaseStudyWithRelease): void {
   if (effectiveStatus(row).status === 'unavailable') throw conflict('unavailable')
 }
 
@@ -353,7 +357,8 @@ export async function updateCaseStudy(db: DbExecutor, actor: Actor, caseStudyId:
     if (input.sections !== undefined) {
       const result = normalizeCaseSections(input.sections, asCaseSnapshot(row.snapshot), cs.releaseVersion, cs.jobTarget)
       if (!result.ok) throw invalid(result.fields)
-      sections = result.sections
+      // AI 다듬기로 받아들인 문장은 글이 그대로인 동안만 AI 문장으로 남습니다(E-14).
+      sections = carryAiGenerated((await loadSections(tx, [cs])).get(cs.id) ?? [], result.sections)
     }
     const wasPublished = cs.status === 'published'
     await tx
@@ -366,6 +371,8 @@ export async function updateCaseStudy(db: DbExecutor, actor: Actor, caseStudyId:
       })
       .where(eq(caseStudies.id, cs.id))
     if (sections) await replaceSentences(tx, cs.id, sections)
+    // version이 바뀌었으므로 이전 version에 묶인 AI 다듬기 제안은 쓸 수 없습니다(E-14).
+    await tx.delete(caseAiPolishProposals).where(eq(caseAiPolishProposals.caseStudyId, cs.id))
     await recordAudit(tx, {
       actorId: actor.userId,
       action: 'case_study.update',

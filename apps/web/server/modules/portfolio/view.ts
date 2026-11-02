@@ -94,6 +94,7 @@ export async function buildPortfolioView(db: DbExecutor, model: EditionModel, no
       releaseVersion: cs.releaseVersion,
       termLabel: row.termLabel,
       selfLabel: row.snapshot.members.find((m) => m.key === cs.memberKey)?.label ?? '팀원',
+      generator: cs.generator === 'ai' ? 'ai' : 'template',
       sections: (sections.get(cs.id) ?? [])
         .filter((s) => s.sentences.length > 0)
         .map((s) => ({

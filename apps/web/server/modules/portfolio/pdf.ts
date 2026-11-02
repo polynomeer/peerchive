@@ -13,7 +13,7 @@
  */
 import { PDFDocument, PDFString, rgb, type PDFFont, type PDFPage, type RGB } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
-import { INTERVIEW_PUBLIC_HEADING, REFLECTION_LABEL, SOCIAL_LINK_PROVIDER_LABELS, SOCIAL_LINK_VERIFIED_LABEL, SOCIAL_LINK_VERIFIED_NOTE } from '@peerchive/domain'
+import { AI_CASE_POLISH_NOTE, INTERVIEW_PUBLIC_HEADING, REFLECTION_LABEL, SOCIAL_LINK_PROVIDER_LABELS, SOCIAL_LINK_VERIFIED_LABEL, SOCIAL_LINK_VERIFIED_NOTE } from '@peerchive/domain'
 import type { PublicPortfolioProfileDto } from '../../../shared/types/api'
 
 /** A4(pt). */
@@ -252,7 +252,7 @@ export async function renderPortfolioPdf(profile: PublicPortfolioProfileDto, opt
   for (const c of cases) {
     if (!c.available) continue
     w.heading(c.title, 11.5)
-    w.text([`${c.jobTargetLabel} 관점`, c.termLabel, `공개 버전 v${c.releaseVersion}`, `사례 속 본인 표시: ${c.selfLabel}`].filter(Boolean).join(' · '), { size: 8.5, color: MUTED })
+    w.text([`${c.jobTargetLabel} 관점`, c.termLabel, `공개 버전 v${c.releaseVersion}`, `사례 속 본인 표시: ${c.selfLabel}`, c.generator === 'ai' ? AI_CASE_POLISH_NOTE : null].filter(Boolean).join(' · '), { size: 8.5, color: MUTED })
     w.text(`원본 공개 사례: ${abs(c.path)}`, { size: 8.5, color: LINK, link: abs(c.path) })
     for (const section of c.sections) {
       w.text(section.label, { size: 10, before: 5 })

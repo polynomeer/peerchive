@@ -2,7 +2,8 @@
  * 포트폴리오 판 (T-14, PROOFU_EVOLUTION_PLAN §10.1·§10.4, SYSTEM_DESIGN §6.5 PortfolioEdition·PortfolioItem·CompetencyEvidence, ADR 0014).
  *
  * - 판은 만들 때마다 새 version이며 **바꾸지 않습니다**. 새 판을 만들면 그 판이 지금 판(current)이 되고 이전 판은 남지만 공개하지 않습니다.
- * - 대표 케이스: 내 것, 게시 중, 고정 release를 지금 제공 가능, 최대 5개(아니면 422).
+ * - 대표 케이스: 내 것, 게시 중, 고정 release를 지금 제공 가능, 최대 5개(아니면 422). 출처 없는 문장이 있는 케이스(게시 뒤 생길 수는 없지만
+ *   AI 다듬기 문장 규칙(E-14, ADR 0059)을 서버에서 한 번 더 지킴)도 422 `featuredCaseStudyIds.N: uncited_sentences`(+sentences[{caseIndex, section, index}]).
  * - 역량 × 근거: 행 = 역량(직무 프리셋 또는 직접 입력, 최대 12), 칸 = 대표 케이스. 근거는 그 케이스가 **인용한** 스냅샷 항목만 고를 수 있고
  *   (아니면 422 not_cited), 프리셋 행에 근거를 주지 않으면 프리셋 종류 규칙으로 채웁니다(@peerchive/domain suggestCompetencyEvidence).
  *   점수·수준 필드는 없고 칸은 읽을 때 종류별 개수로 셉니다.
@@ -24,6 +25,7 @@ import {
   type CaseCitation,
   competencyLabelKey,
   editionCheckItems,
+  findUncitedSentences,
   runPublicationChecks,
   suggestCompetencyEvidence,
 } from '@peerchive/domain'
@@ -43,7 +45,7 @@ import {
 } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
 import { emitAnalytics } from '../analytics/analytics'
-import { type Actor, conflict, invalid, rateLimited } from '../errors'
+import { type Actor, ServiceError, conflict, invalid, rateLimited } from '../errors'
 import { type RateLimitRule, hitRateLimit } from '../security/rate-limit'
 import { parseInput } from '../validation'
 import { findMyPersona } from '../social/personas'
@@ -151,6 +153,14 @@ async function resolveEdition(db: DbExecutor, actor: Actor, persona: PersonaRow,
   }
   // 케이스마다 인용한 항목(요약 제외) — 근거는 이 안에서만 고릅니다.
   const sections = await loadSections(db, rows.map((r) => r.caseStudy))
+  for (const [i, id] of featured.entries()) {
+    const uncited = findUncitedSentences(sections.get(id) ?? [])
+    if (uncited.length > 0) {
+      throw new ServiceError('VALIDATION', 'uncited_sentences', { [`featuredCaseStudyIds.${i}`]: 'uncited_sentences' }, {
+        sentences: uncited.map((u) => ({ caseIndex: i, section: u.section, index: u.index })),
+      })
+    }
+  }
   const cited = new Map<string, Array<Pick<CaseCitation, 'kind' | 'key'>>>()
   for (const id of featured) {
     const list = (sections.get(id) ?? []).flatMap((s) => s.sentences.flatMap((x) => x.citations)).filter((c) => c.kind !== 'summary')

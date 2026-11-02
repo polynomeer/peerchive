@@ -15,6 +15,7 @@ import {
   aiRetroDrafts,
   aiRetroOptIns,
   aiRetroSessions,
+  caseAiPolishProposals,
   discordChannelBindings,
   analyticsEvents,
   and,
@@ -394,6 +395,8 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       .insert(caseStudies)
       .values({ userId: U.id, publicationId: teamPub.publication.id, releaseId: teamPub.release.id, releaseVersion: 1, memberKey: 'm_a', selfAnonymous: false, jobTarget: 'backend', title: '내 케이스' })
       .returning()
+    // AI 케이스 다듬기(E-14): 받아들이지 않은 제안(케이스보다 먼저 지워져야 함, 외래 키).
+    await tx.insert(caseAiPolishProposals).values({ caseStudyId: caseStudy!.id, userId: U.id, baseVersion: 1, suggestions: [{ section: 'decisions', index: 0, text: 'AI 제안', citations: [], uncited: true }], expiresAt: NOW })
     await tx.insert(portfolioEditions).values([
       { userId: U.id, personaId: realPersona!.id, version: 1, headline: '포트폴리오' },
       { userId: U.id, personaId: displayPersona!.id, version: 1, headline: '표시명 판' },
@@ -445,6 +448,7 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         ai_retro_opt_ins: 2,
         ai_meeting_consents: 2,
         ai_meeting_drafts: 2,
+        case_ai_polish_proposals: 1,
         signals: 1,
         analytics_events: 1,
         senior_notes: 1,
@@ -490,6 +494,7 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         [seniorNotes, eq(seniorNotes.authorId, w.U.id)],
         [usefulnessSignals, eq(usefulnessSignals.seniorNoteId, w.note.id)],
         [caseStudies, eq(caseStudies.userId, w.U.id)],
+        [caseAiPolishProposals, eq(caseAiPolishProposals.userId, w.U.id)],
         [portfolioEditions, eq(portfolioEditions.userId, w.U.id)],
         [analyticsEvents, eq(analyticsEvents.actorHash, hashSubject(ANALYTICS_PEPPER, w.U.id))],
         [institutionAffiliations, eq(institutionAffiliations.userId, w.U.id)],

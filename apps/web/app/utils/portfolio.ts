@@ -2,6 +2,7 @@
  * 케이스 스터디·포트폴리오 판 화면 도우미(T-14). 상태는 색이 아니라 글자로 보여 줍니다.
  */
 import {
+  AI_CASE_POLISH_NOTE,
   CASE_JOB_TARGETS,
   CASE_JOB_TARGET_LABELS,
   CASE_SECTION_LABELS,
@@ -19,6 +20,7 @@ import {
 import type { CaseCitationRef, CaseStudyStatus, CaseUnavailableReason, PublicSnapshot } from '~~/shared/types/api'
 
 export {
+  AI_CASE_POLISH_NOTE,
   CASE_JOB_TARGETS,
   CASE_JOB_TARGET_LABELS,
   CASE_SECTION_LABELS,
@@ -59,6 +61,10 @@ export const PORTFOLIO_ERROR_MESSAGES: Record<string, string> = {
   not_published: '게시 중인 케이스가 아닙니다.',
   limit_reached: '케이스 스터디를 더 만들 수 없습니다.',
   rate_limited: '잠시 뒤 다시 시도하세요(요청이 너무 많습니다).',
+  ai_unavailable: 'AI가 지금 답하지 못했습니다. 케이스는 그대로입니다. 잠시 뒤 다시 시도하세요.',
+  ai_declined: 'AI가 이 내용을 다듬지 않기로 했습니다. 케이스는 그대로입니다.',
+  nothing_to_polish: '다듬을 문장이 없습니다("본인 회고"는 다듬지 않습니다).',
+  no_proposal: '다듬기 제안이 없거나 만료되었습니다. 다시 다듬어 보세요.',
 }
 
 export function portfolioErrorMessage(code: string): string {
@@ -76,6 +82,7 @@ export const PORTFOLIO_FIELD_MESSAGES: Record<string, string> = {
   not_cited: '그 케이스가 인용한 항목만 근거로 고를 수 있습니다.',
   duplicate: '같은 이름이 두 번 들어 있습니다.',
   anonymous_study: '익명 스터디 방의 기록은 포트폴리오(케이스 스터디)에 연결할 수 없습니다.',
+  uncited_sentences: '출처 없는 문장이 있는 케이스는 대표로 고를 수 없습니다. 케이스에서 출처를 붙이거나 지우세요.',
 }
 
 export const fieldText = (code: string | undefined) => (code ? (PORTFOLIO_FIELD_MESSAGES[code] ?? fieldMessage(code)) : undefined)

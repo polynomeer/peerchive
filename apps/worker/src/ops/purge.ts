@@ -28,6 +28,7 @@ import {
   aiMeetingConsents,
   aiMeetingDrafts,
   aiRetroDrafts,
+  caseAiPolishProposals,
   aiRetroOptIns,
   aiRetroSessions,
   PUBLICATION_WITHDRAWN_TOPIC,
@@ -353,6 +354,8 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
     // 본인이 제안한 회의 채널은 팀의 설정이라 남깁니다(사용자 행은 지우지 않으므로 외래 키는 그대로).
     c.add('ai_meeting_consents', (await tx.delete(aiMeetingConsents).where(eq(aiMeetingConsents.userId, userId)).returning({ id: aiMeetingConsents.userId })).length)
     c.add('ai_meeting_drafts', (await tx.delete(aiMeetingDrafts).where(eq(aiMeetingDrafts.requestedBy, userId)).returning({ id: aiMeetingDrafts.id })).length)
+    // AI 케이스 다듬기(E-14, ADR 0059): 본인 케이스의 받아들이지 않은 다듬기 제안(케이스 행보다 먼저, 외래 키).
+    c.add('case_ai_polish_proposals', (await tx.delete(caseAiPolishProposals).where(eq(caseAiPolishProposals.userId, userId)).returning({ id: caseAiPolishProposals.id })).length)
     // 이번 학기 과목 등록(E-01): 본인만 보던 행이라 남길 이유가 없습니다(학기 종료 알림 시각 포함).
     c.add('course_registrations', (await tx.delete(courseRegistrations).where(eq(courseRegistrations.userId, userId)).returning({ id: courseRegistrations.id })).length)
     // 과목 허브 알림 신청·닫음(E-02): 본인만 보던 행.

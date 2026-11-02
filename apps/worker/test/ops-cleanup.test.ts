@@ -11,6 +11,8 @@ import {
   affiliationCodes,
   aiMeetingChannels,
   aiMeetingDrafts,
+  caseAiPolishProposals,
+  caseStudies,
   aiRetroDrafts,
   aiRetroSessions,
   artifactVersions,
@@ -31,6 +33,8 @@ import {
   magicLinkTokens,
   outboxEvents,
   projects,
+  publicationCandidates,
+  publications,
   rateLimitBuckets,
   roomAlbumPhotos,
   schools,
@@ -46,6 +50,7 @@ import { createFilesystemStorage, newQuarantineKey, type ObjectKey, type ObjectS
 import {
   RETENTION,
   cleanupAffiliationCodes,
+  cleanupAiCasePolish,
   cleanupAiMeetingDrafts,
   cleanupAiRetroSessions,
   cleanupDiscordCodes,
@@ -419,6 +424,49 @@ describe.skipIf(!url)('ops cleanup tasks (PostgreSQL)', () => {
       expect(outcome.affected).toBe(2)
       expect(await tx.select({ id: aiMeetingDrafts.id }).from(aiMeetingDrafts).where(inArray(aiMeetingDrafts.id, [old1!.id, old2!.id, live!.id]))).toEqual([{ id: live!.id }])
       expect(await tx.select().from(aiMeetingChannels).where(eq(aiMeetingChannels.id, channel!.id))).toHaveLength(1)
+    })
+  })
+
+  it('AI case polish (E-14): deletes polish proposals past expires_at, leaving live ones and the case study', async () => {
+    await rollback(async (tx) => {
+      const { userId, projectId } = await userAndProject(tx)
+      const [pub] = await tx.insert(publications).values({ projectId, slug: `cp-${id().slice(0, 8)}`, level: 'summary', status: 'published', accessEpoch: 1, createdBy: userId }).returning()
+      const [release] = await tx
+        .insert(publicationCandidates)
+        .values({
+          publicationId: pub!.id,
+          projectId,
+          version: 1,
+          level: 'summary',
+          status: 'published',
+          snapshot: { title: '공개 제목' },
+          manifest: { v: 1 },
+          manifestHash: 'e'.repeat(64),
+          selection: {},
+          createdBy: userId,
+          releaseNo: 1,
+          publishedAt: ago(DAY),
+        })
+        .returning()
+      const kase = async () =>
+        (
+          await tx
+            .insert(caseStudies)
+            .values({ userId, publicationId: pub!.id, releaseId: release!.id, releaseVersion: 1, memberKey: 'm_a', selfAnonymous: false, jobTarget: 'backend', title: '케이스' })
+            .returning()
+        )[0]!
+      const [c1, c2] = [await kase(), await kase()]
+      const [old, live] = await tx
+        .insert(caseAiPolishProposals)
+        .values([
+          { caseStudyId: c1.id, userId, baseVersion: 1, expiresAt: ago(HOUR) },
+          { caseStudyId: c2.id, userId, baseVersion: 1, expiresAt: new Date(NOW.getTime() + DAY) },
+        ])
+        .returning()
+      const outcome = await cleanupAiCasePolish(tx, deps(1), NOW)
+      expect(outcome.affected).toBe(1)
+      expect(await tx.select({ id: caseAiPolishProposals.id }).from(caseAiPolishProposals).where(inArray(caseAiPolishProposals.id, [old!.id, live!.id]))).toEqual([{ id: live!.id }])
+      expect(await tx.select().from(caseStudies).where(inArray(caseStudies.id, [c1.id, c2.id]))).toHaveLength(2)
     })
   })
 

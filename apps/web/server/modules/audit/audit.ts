@@ -89,6 +89,10 @@ export type AuditAction =
   | 'case_study.update'
   | 'case_study.publish'
   | 'case_study.unpublish'
+  /** E-14(ADR 0059): AI 케이스 다듬기 — 제안 만들기·받아들이기·버리기. metadata는 version·개수만(문장·근거 글 없음). */
+  | 'case_study.ai_polish'
+  | 'case_study.ai_polish_apply'
+  | 'case_study.ai_polish_discard'
   | 'portfolio_edition.create'
   | 'report.create'
   | 'report.assign'

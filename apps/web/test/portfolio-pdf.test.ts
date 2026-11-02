@@ -39,6 +39,7 @@ function profile(overrides: Partial<PublicPortfolioProfileDto> = {}): PublicPort
         releaseVersion: 2,
         termLabel: '2026년 1학기',
         selfLabel: '팀원 A',
+        generator: 'ai',
         sections: [
           {
             key: 'problem_result',
@@ -98,6 +99,8 @@ describe('portfolio PDF renderer (E-08)', () => {
       '수강신청 서버 부하 줄이기',
       '대기열을 도입해 응답 시간을 줄였습니다.',
       '[본인 회고] 다시 한다면 부하 시험을 먼저 하겠습니다.',
+      // E-14: AI로 다듬은 케이스 표시(공개 화면과 같은 문구).
+      'AI로 다듬음 · 다듬은 문장은 모두 근거 기록에 연결됨',
       '이 지원자에게 물어보면 좋은 질문',
       '[결정] 왜 캐시 대신 대기열을 택했나요?',
       '근거: 결정 · 대기열 도입',

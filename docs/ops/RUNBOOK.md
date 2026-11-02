@@ -281,6 +281,11 @@ P2 기능은 코드가 있어도 **기본으로 꺼져 있고** 이 게이트(DE
 3. **기능만 끄기**: 전체는 §3.6.2 1번(`PEERCHIVE_AI_ENABLED=off`)으로 E-12와 함께 꺼집니다. 회의 요약만 막으려면 회의 채널 제안을 지웁니다: `delete from ai_meeting_drafts; delete from ai_meeting_consents; delete from ai_meeting_channels;`(팀이 다시 제안·동의해야 함).
 4. **봇 권한 오류**("메시지 기록을 읽을 수 없어요" 안내가 반복): 그 채널에서 봇 역할의 **Read Message History**·View Channel 권한(채널별 덮어쓰기 포함)을 확인합니다.
 
+### 3.6.4 AI 케이스 다듬기 사고(E-14)
+
+1. **근거 없는 AI 문장이 공개됐다는 신고**: 게시·대표 지정은 출처 없는 문장(AI 문장은 "본인 회고"여도)이 있으면 서버가 막습니다. 케이스의 감사 기록(`case_study.ai_polish`·`ai_polish_apply`, version·개수만)과 `case_sentences.ai_generated`로 어떤 문장이 AI 문장인지 확인하고, 출처가 사실과 맞지 않으면 운영 조치(§3.2)로 케이스를 숨깁니다. 공개 화면에는 "AI로 다듬음" 표시가 붙어 있습니다.
+2. **기능만 끄기**: 전체는 §3.6.2 1번(`PEERCHIVE_AI_ENABLED=off`)으로 E-12·E-13과 함께 꺼집니다(다듬기 경로 404·버튼 없음, 템플릿 편집·게시 그대로). 남은 제안을 바로 지우려면 `delete from case_ai_polish_proposals;`(케이스 문장은 그대로). 이미 받아들인 문장·`generator = 'ai'` 표시는 학생 자료라 남깁니다.
+
 ### 3.7 정리 작업이 멈춤(`halted`)
 
 `orphan-quarantine`이 `orphan_ratio_too_high`로 멈췄다면 worker가 다른 DB나 다른 저장소를 보고 있을 수 있습니다. `DATABASE_URL`·`PEERCHIVE_STORAGE_ROOT`(s3면 `PEERCHIVE_S3_BUCKET`·`PEERCHIVE_S3_PREFIX`)를 확인하기 전에는 강제로 지우지 마세요.
@@ -602,6 +607,15 @@ select column_name from information_schema.columns where table_name = 'instituti
 - **보존**: 승인 전 초안은 처리 즉시 또는 만든 지 7일 뒤 `ai-meeting-drafts`(매시 23분, `PEERCHIVE_CRON_AI_MEETING_DRAFTS`)가 삭제, 철회·제안 거둠·채널 해제 때 그 채널 초안 삭제, 탈퇴 정리(`account-purge`: 본인 동의·본인이 요청한 초안). §8 표.
 - **회귀 테스트**: `apps/web/test/ai-meeting.integration.test.ts`(동의·철회·새 멤버, 요약 전 거절·공급자 호출 0, 모든 테이블·콘솔 원문 0건, 두 사람 승인), `apps/web/test/internal-auth.test.ts`(경로별 본문 상한), `apps/bot/test/summarize.test.ts`.
 
+### 4.14 AI 케이스 다듬기(E-14, ADR 0059)
+
+- **켜짐 조건**: §4.12의 AI 설정(`"ai":true`)뿐입니다. 새 환경 변수·플래그는 없습니다. 학생이 케이스 편집 화면에서 "AI로 다듬기"를 누를 때마다 한 번 부르며, 누르는 것이 그 한 번의 동의입니다(따로 켜 두는 설정 없음).
+- **보내는 데이터**(ADR 0059 §2): 케이스가 고정한 공개 release 스냅샷에서 운영 조치로 가린 항목을 뺀 사본 안의 공개 요약·케이스가 이미 인용한 항목·이 학생이 쓴 로그·참석한 회의·본인 역할 선언·마일스톤·이 학생이 올린 파일(최대 60개·각 300자)과 본인 회고·가린 항목 인용 문장을 뺀 지금 문장. 비공개 작업 기록·다른 release·다른 과제, 사람 이름·id·이메일, 과제 내부 이름은 보내지 않습니다.
+- **한도**: 케이스마다 하루(UTC) 5번(실패 포함), 그리고 §4.12의 사용자·전체 상한(다듬기 한 번 = AI 호출 1번). 비용은 `ai_usage_daily`의 `feature = 'case_polish.suggest'` 행으로 봅니다.
+- **게시 규칙**: 받아들인 AI 문장(`case_sentences.ai_generated`)이 출처 없이 남아 있으면 게시 409 `uncited_sentences`, 대표 케이스 지정 422 `uncited_sentences`. 한 번이라도 받아들이면 케이스 `generator = 'ai'`가 되어 공개 프로필·인쇄·PDF에 "AI로 다듬음 · 다듬은 문장은 모두 근거 기록에 연결됨"이 붙습니다(되돌리지 않음).
+- **보존**: 받아들이지 않은 제안(`case_ai_polish_proposals`)은 받아들이기·버리기·케이스 편집 즉시, 아니어도 만든 지 7일 뒤 `ai-case-polish`(매시 29분, `PEERCHIVE_CRON_AI_CASE_POLISH`)가 삭제, 탈퇴 정리(`account-purge`). §8 표.
+- **회귀 테스트**: `apps/web/test/ai-case-polish.integration.test.ts`(꺼짐 404·템플릿 흐름 그대로, 보낸 데이터 범위 밖 표지 0건, 없는 인용 → 출처 없음, 문장마다 받아들이기·게시·대표 지정 막힘·공개 표시, 거절·상한 503 저장 없음, 케이스 하루 한도), `packages/domain/test/ai-case-polish.test.ts`.
+
 ## 5. 백업 일정과 보존
 
 | 대상 | 방법 | 주기 | 보존 |
@@ -673,6 +687,7 @@ RTO 목표 4시간 대비 로컬 연습은 수 초입니다. 운영 데이터 �
 | 로그 피드백 댓글(E-10) | 과제(팀 기록)가 있는 동안. 작성자가 지우면 본문을 비우고 자리는 남김(`deleted`), owner 숨김은 행 그대로(작성자·owner만 봄). 팀 안에서만 읽고 공개 스냅샷·검색·케이스에는 들어가지 않음. 감사에는 댓글·로그 id만 | 본인 지우기 즉시(본문), `account-purge`(본문을 비운 행으로 남김, 삭제 장부 `log_comments`; 혼자만 쓴 과제는 과제와 함께 행 삭제) |
 | AI 회고 인터뷰(E-12) | 질문·답변은 초안을 만드는 순간 삭제(초안만 남음). 세션·승인 전 초안(본인만)은 승인·버리기로 마지막 초안을 처리하면 즉시, 아니어도 만든 지 7일 뒤 삭제. 켜기를 끄면 즉시 삭제. 승인한 초안은 일반 빌드 로그(출처 `AI 초안`)로 남음. 켜기 행(`ai_retro_opt_ins`)은 본인이 끄거나 탈퇴할 때까지. 사용량(`ai_usage_daily`)은 날짜·기능·모델별 토큰·횟수만(사람·내용 없음), 파일럿 기간 + 1년(비용 근거). 서버 로그에 프롬프트·출력 없음. Anthropic 쪽 보존은 조직 데이터 보존 설정(ZDR 여부)을 따름(§4.12) | 처리 즉시(웹), `ai-retro-sessions` 매시(만료), `account-purge`(초안·세션·켜기 삭제), 사용량은 수동 `delete from ai_usage_daily where day < '<보존 시작일>'` |
 | AI 회의 요약(E-13) | 디스코드 메시지 원문은 저장하지 않음(요청 처리 중 메모리에서만, 팀 밖 참여자 메시지는 AI에도 보내지 않고 개수만). 승인 전 초안(요약·결정·후속 할 일·열린 질문·참석 멤버 id·개수, 과제 멤버가 봄)은 승인·거절 즉시, 아니어도 만든 지 7일 뒤 삭제. 동의 철회·제안 거둠·채널 연결 해제 때 그 채널 초안 삭제. 승인한 초안은 일반 🗣️ 회의 로그(출처 `AI 초안`)·할 일로 남음. 회의 채널 제안·동의 행은 owner가 거두거나 채널을 해제할 때까지(동의는 본인 철회·과제에서 나감·탈퇴 때 삭제). 사용량은 E-12의 `ai_usage_daily`(기능 `meeting_summary.draft`) | 처리 즉시(웹), `ai-meeting-drafts` 매시(만료), `account-purge`(본인 동의·본인이 요청한 초안, 혼자 과제의 회의 채널 전체) |
+| AI 케이스 다듬기(E-14) | 받아들이지 않은 다듬기 제안(AI 문장·인용, 케이스 주인만 봄)은 받아들이기·버리기·케이스 편집 즉시, 아니어도 만든 지 7일 뒤 삭제. 근거 글·프롬프트는 저장하지 않음. 받아들인 문장은 케이스 문장(`ai_generated`)으로, 케이스 `generator = 'ai'` 표시와 함께 케이스가 있는 동안 남음. 사용량은 E-12의 `ai_usage_daily`(기능 `case_polish.suggest`) | 처리 즉시(웹), `ai-case-polish` 매시(만료), `account-purge`(본인 제안) |
 | 탈퇴 계정 자료 | 요청 뒤 7일(유예) | `account-purge` 30분마다 |
 | 이름 표시 방식 변경 이력·커뮤니티 알림 | 이력은 공간이 있는 동안(행을 지우지 않음, 탈퇴 때 예약·취소한 사람만 비움), 알림은 받는 사람이 탈퇴할 때까지 | 탈퇴 정리 때. 예약 적용은 `name-mode-changes` 매분 |
 | 소셜 링크 | 사용자가 지우거나 탈퇴할 때까지. verified 링크는 `social-link-recheck`(매시, 링크마다 하루 한 번, 한 번에 100개)가 다시 확인해 되돌림 링크가 없으면(404·410 포함) lost, 가져오기 3번 연속 실패면 lost. 감사에는 주소를 남기지 않음 | 탈퇴 정리 때 삭제 |

@@ -106,6 +106,7 @@ export async function loadSections(db: DbExecutor, caseStudyRows: readonly CaseS
             text: r.text,
             kind: r.kind as CaseSentenceKind,
             citations: (r.citations as unknown as CaseCitation[]).map((c) => ({ releaseVersion: c.releaseVersion, kind: c.kind, key: c.key })),
+            aiGenerated: r.aiGenerated,
           })),
       })),
     )
@@ -113,7 +114,7 @@ export async function loadSections(db: DbExecutor, caseStudyRows: readonly CaseS
   return out
 }
 
-/** 문장 전체를 바꿉니다(편집·초안 생성). */
+/** 문장 전체를 바꿉니다(편집·초안 생성·AI 다듬기 받아들이기). aiGenerated(E-14)는 문장에 있는 값 그대로 씁니다(없으면 false). */
 export async function replaceSentences(tx: DbExecutor, caseStudyId: string, sections: readonly CaseSectionDraft[]): Promise<void> {
   await tx.delete(caseSentences).where(eq(caseSentences.caseStudyId, caseStudyId))
   const values = sections.flatMap((s) =>
@@ -124,6 +125,7 @@ export async function replaceSentences(tx: DbExecutor, caseStudyId: string, sect
       text: sentence.text,
       kind: sentence.kind,
       citations: sentence.citations.map((c) => ({ releaseVersion: c.releaseVersion, kind: c.kind, key: c.key })),
+      aiGenerated: sentence.aiGenerated === true,
     })),
   )
   if (values.length > 0) await tx.insert(caseSentences).values(values)

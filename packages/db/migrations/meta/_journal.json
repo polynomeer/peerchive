@@ -379,6 +379,13 @@
       "when": 1793587695907,
       "tag": "0053_ai_meeting_summary",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1793591735053,
+      "tag": "0054_ai_case_polish",
+      "breakpoints": true
     }
   ]
 }

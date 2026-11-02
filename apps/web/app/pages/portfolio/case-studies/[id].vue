@@ -6,6 +6,8 @@
  * - 저장은 문장 전체를 보냅니다(expectedVersion). 게시된 케이스를 고치면 초안으로 돌아가 다시 게시해야 합니다.
  * - 원본 사례가 철회·대체되면 고칠 수 없고 "새 버전으로 다시 만들기"만 보입니다.
  * - 면접 준비 팩(E-06, ADR 0050)이 아래에 붙습니다: 예상 질문·비공개 답변 메모·공개로 보일 질문 고르기.
+ * - 서버에 AI가 설정되어 있으면 "AI로 다듬기"(E-14, ADR 0059)가 붙습니다. 받아들인 AI 문장은 "AI 문장"으로 표시하고, 글을 고치기 전까지는
+ *   출처가 없으면 "본인 회고"여도 게시를 막습니다(서버와 같은 규칙).
  */
 import type { CaseCitationRef, CaseSectionKey, CaseSentenceKind, CaseStudyDto, PublicationCheckDto } from '~~/shared/types/api'
 
@@ -16,11 +18,15 @@ interface DraftSentence {
   text: string
   kind: CaseSentenceKind
   citations: CaseCitationRef[]
+  /** 받아들인 AI 문장의 글(고치면 학생 문장으로 봄, E-14). */
+  aiText: string | null
 }
 
 const route = useRoute()
 const id = computed(() => String(route.params.id))
 const requestFetch = useRequestFetch()
+const { flags: features, ensure: ensureFeatures } = useFeatures()
+onMounted(() => void ensureFeatures())
 const { data, error, refresh } = await useAsyncData(() => `case-study:${id.value}`, () => requestFetch<CaseStudyDto>(`/api/v1/case-studies/${id.value}`))
 
 useHead({ title: () => (data.value ? `${data.value.title} 편집 — Peerchive` : '케이스 스터디 — Peerchive') })
@@ -34,7 +40,13 @@ function load(dto: CaseStudyDto) {
   sections.value = dto.sections.map((s) => ({
     key: s.key,
     label: s.label,
-    sentences: s.sentences.map((x) => ({ uid: ++uid, text: x.text, kind: x.kind, citations: x.citations.map(({ releaseVersion, kind, key }) => ({ releaseVersion, kind, key })) })),
+    sentences: s.sentences.map((x) => ({
+      uid: ++uid,
+      text: x.text,
+      kind: x.kind,
+      citations: x.citations.map(({ releaseVersion, kind, key }) => ({ releaseVersion, kind, key })),
+      aiText: x.ai ? x.text : null,
+    })),
   }))
   dirty.value = false
 }
@@ -43,7 +55,8 @@ watch(data, (dto) => dto && load(dto), { immediate: true })
 const options = computed(() => (data.value?.snapshot ? citationOptions(data.value.snapshot, data.value.source.releaseVersion) : []))
 const labelOf = (c: CaseCitationRef) => options.value.find((o) => citationId(o) === citationId(c))?.label ?? `${c.kind} ${c.key}`
 const available = computed(() => data.value?.status !== 'unavailable')
-const isUncited = (sectionKey: CaseSectionKey, s: DraftSentence) => s.citations.length === 0 && !(s.kind === 'reflection' && sectionKey === 'limits')
+const isAi = (s: DraftSentence) => s.aiText !== null && s.aiText === s.text.replace(/\s+/g, ' ').trim()
+const isUncited = (sectionKey: CaseSectionKey, s: DraftSentence) => s.citations.length === 0 && !(s.kind === 'reflection' && sectionKey === 'limits' && !isAi(s))
 const uncitedCount = computed(() => sections.value.reduce((n, sec) => n + sec.sentences.filter((s) => isUncited(sec.key, s)).length, 0))
 
 const touch = () => (dirty.value = true)
@@ -59,7 +72,7 @@ function remove(list: DraftSentence[], index: number) {
   touch()
 }
 function add(sectionKey: CaseSectionKey) {
-  sections.value.find((s) => s.key === sectionKey)!.sentences.push({ uid: ++uid, text: '', kind: sectionKey === 'limits' ? 'reflection' : 'evidence', citations: [] })
+  sections.value.find((s) => s.key === sectionKey)!.sentences.push({ uid: ++uid, text: '', kind: sectionKey === 'limits' ? 'reflection' : 'evidence', citations: [], aiText: null })
   touch()
 }
 const picking = reactive<Record<number, string>>({})
@@ -151,6 +164,10 @@ async function recreate() {
   }
 }
 
+function onPolishApplied(dto: CaseStudyDto) {
+  data.value = dto
+}
+
 const sentenceError = (si: number, i: number) => {
   const prefix = `sections.${si}.sentences.${i}`
   const code = Object.entries(fieldErrors.value).find(([k]) => k === prefix || k.startsWith(`${prefix}.`))?.[1]
@@ -170,7 +187,7 @@ const warningPlace = (w: PublicationCheckDto) =>
       <h1>케이스 스터디 편집</h1>
       <p class="small">
         <span class="badge">{{ CASE_STATUS_LABELS[data.status] }}</span>
-        · {{ CASE_JOB_TARGET_LABELS[data.jobTarget] }} 관점 · 템플릿 초안
+        · {{ CASE_JOB_TARGET_LABELS[data.jobTarget] }} 관점 · {{ data.generator === 'ai' ? 'AI로 다듬음' : '템플릿 초안' }}
         · 원본: <NuxtLink :to="data.source.path">{{ data.source.publicTitle || data.source.slug }}</NuxtLink> 공개 버전 v{{ data.source.releaseVersion }}
         <template v-if="data.source.selfLabel"> · 사례 속 내 표시: {{ data.source.selfLabel }}</template>
       </p>
@@ -207,6 +224,7 @@ const warningPlace = (w: PublicationCheckDto) =>
             <li v-for="(s, i) in section.sentences" :key="s.uid" class="case-edit-sentence" :class="{ uncited: isUncited(section.key, s) }">
               <label :for="`s-${s.uid}`" class="visually-hidden">{{ section.label }} {{ i + 1 }}번째 문장</label>
               <textarea :id="`s-${s.uid}`" v-model="s.text" maxlength="500" rows="2" :aria-invalid="!!sentenceError(si, i)" @input="touch" />
+              <p v-if="isAi(s)" class="small"><span class="badge">AI 문장</span></p>
               <p v-if="isUncited(section.key, s)" class="field-error small">출처 없음 — 게시하려면 출처를 붙이거나 지우세요.</p>
               <p v-if="sentenceError(si, i)" class="field-error small">{{ sentenceError(si, i) }}</p>
               <label v-if="section.key === 'limits'" class="check small">
@@ -258,6 +276,14 @@ const warningPlace = (w: PublicationCheckDto) =>
         </p>
         <p v-if="uncitedCount > 0" class="hint">출처 없는 문장이 있으면 게시할 수 없습니다.</p>
       </form>
+
+      <CaseAiPolish
+        v-if="features.ai && available"
+        :case-study-id="data.id"
+        :version="data.version"
+        :dirty="dirty"
+        @applied="onPolishApplied"
+      />
 
       <InterviewPrepPack :case-study-id="data.id" :version="data.version" />
     </template>

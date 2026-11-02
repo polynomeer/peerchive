@@ -40,6 +40,7 @@ const titleOf = (ref: string) => props.view.matrix.columns.find((c) => c.ref ===
             <span v-if="item.termLabel">{{ item.termLabel }}</span>
             <span>공개 버전 v{{ item.releaseVersion }}</span>
             <span>사례 속 본인 표시: {{ item.selfLabel }}</span>
+            <span v-if="item.generator === 'ai'" class="badge" data-testid="ai-polished">{{ AI_CASE_POLISH_NOTE }}</span>
           </p>
           <section v-for="section in item.sections" :key="section.key" class="case-section">
             <h4>{{ section.label }}</h4>

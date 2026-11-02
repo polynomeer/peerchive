@@ -2980,7 +2980,10 @@ export const caseStudies = pgTable(
     selfAnonymous: boolean('self_anonymous').notNull(),
     revealSelf: boolean('reveal_self').notNull().default(false),
     jobTarget: caseJobTarget('job_target').notNull(),
-    /** 초안 생성 방식. MVP는 template만(AI 다듬기는 P1). */
+    /**
+     * 초안 생성 방식. template(T-14 템플릿 초안) / ai(E-14, ADR 0059: 학생이 AI 다듬기 제안 문장을 하나 이상 받아들인 적이 있음).
+     * ai는 한 번 되면 template으로 돌아가지 않습니다(받아들인 문장을 고쳐도 "AI로 다듬음" 표시를 숨기지 않음).
+     */
     generator: text('generator').notNull().default('template'),
     title: text('title').notNull(),
     status: caseStudyStatus('status').notNull().default('draft'),
@@ -2998,7 +3001,7 @@ export const caseStudies = pgTable(
     index('case_studies_user_id_idx').on(t.userId),
     index('case_studies_publication_id_idx').on(t.publicationId),
     index('case_studies_release_id_idx').on(t.releaseId),
-    check('case_studies_generator_check', sql`${t.generator} in ('template')`),
+    check('case_studies_generator_check', sql`${t.generator} in ('template', 'ai')`),
     check('case_studies_title_check', sql`char_length(${t.title}) between 1 and 80`),
     check('case_studies_version_check', sql`${t.version} >= 1`),
     check('case_studies_release_version_check', sql`${t.releaseVersion} >= 1`),
@@ -3028,6 +3031,11 @@ export const caseSentences = pgTable(
     text: text('text').notNull(),
     kind: text('kind').notNull().default('evidence'),
     citations: jsonb('citations').$type<Array<Record<string, unknown>>>().notNull().default([]),
+    /**
+     * AI 다듬기(E-14, ADR 0059) 제안을 받아들인 문장인지. 글을 고치지 않은 채 남아 있는 동안만 true(편집 저장 때 서버가 글이 같은지로 이어 붙임).
+     * true인 문장은 출처가 없으면 "본인 회고"여도 게시를 막습니다.
+     */
+    aiGenerated: boolean('ai_generated').notNull().default(false),
   },
   (t) => [
     unique('case_sentences_position_key').on(t.caseStudyId, t.section, t.position),
@@ -3039,6 +3047,36 @@ export const caseSentences = pgTable(
     check('case_sentences_text_check', sql`char_length(${t.text}) between 1 and 500`),
     check('case_sentences_position_check', sql`${t.position} >= 0`),
     check('case_sentences_citations_array_check', sql`jsonb_typeof(${t.citations}) = 'array'`),
+  ],
+)
+
+/**
+ * AI 케이스 다듬기 제안(E-14, ADR 0059). 케이스 주인이 "AI로 다듬기"를 누를 때마다 하나(케이스마다 최대 하나, 새로 누르면 바꿈).
+ * 케이스 version(`base_version`)에 묶이며, 케이스를 고치거나(version이 바뀜) 받아들이기·버리기를 하면 지웁니다. 만든 지 7일(`expires_at`) 뒤
+ * worker와 다음 읽기가 지웁니다. suggestions는 [{section, index, text, citations[{kind,key}], uncited}]: 서버가 검증한 AI 문장과
+ * 보낸 근거 목록 안에 있는 인용만(없는 인용은 버리고 남은 인용이 없으면 uncited). 근거 글(스냅샷)·프롬프트는 저장하지 않습니다.
+ */
+export const caseAiPolishProposals = pgTable(
+  'case_ai_polish_proposals',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    caseStudyId: uuid('case_study_id')
+      .notNull()
+      .references(() => caseStudies.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    baseVersion: integer('base_version').notNull(),
+    suggestions: jsonb('suggestions').$type<Array<Record<string, unknown>>>().notNull().default([]),
+    createdAt: createdAt(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique('case_ai_polish_proposals_case_key').on(t.caseStudyId),
+    index('case_ai_polish_proposals_user_idx').on(t.userId),
+    index('case_ai_polish_proposals_expires_at_idx').on(t.expiresAt),
+    check('case_ai_polish_proposals_version_check', sql`${t.baseVersion} >= 1`),
+    check('case_ai_polish_proposals_suggestions_check', sql`jsonb_typeof(${t.suggestions}) = 'array'`),
   ],
 )
 

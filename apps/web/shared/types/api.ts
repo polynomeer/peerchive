@@ -1856,6 +1856,8 @@ export interface CaseCitationDto extends CaseCitationRef {
 export interface CaseSentenceDto {
   text: string
   kind: CaseSentenceKind
+  /** AI 다듬기(E-14) 제안을 받아들여 아직 고치지 않은 문장. 출처가 없으면 "본인 회고"여도 게시를 막습니다. */
+  ai: boolean
   citations: CaseCitationDto[]
 }
 
@@ -1877,6 +1879,38 @@ export interface CaseStudySourceInfo {
   revealSelf: boolean
 }
 
+export type CaseStudyGenerator = 'template' | 'ai'
+
+/** AI 다듬기 제안 문장 하나(E-14, ADR 0059). 지금 케이스의 (section, index) 문장을 바꾸는 제안입니다. */
+export interface CaseAiSuggestionDto {
+  section: CaseSectionKey
+  sectionLabel: string
+  index: number
+  /** 지금 문장(비교용). */
+  before: { text: string; citations: CaseCitationDto[] }
+  /** AI가 다듬은 문장. 인용은 서버가 보낸 근거 안에 있는 것만 남긴 것. */
+  after: { text: string; citations: CaseCitationDto[] }
+  /** 근거에 맞는 인용이 하나도 없음(강조 표시). 받아들여도 출처를 붙이거나 지우기 전에는 게시할 수 없습니다. */
+  uncited: boolean
+}
+
+/** GET·POST /case-studies/:id/ai-polish — 케이스 주인에게만. AI가 꺼져 있으면 404. */
+export interface CaseAiPolishStateDto {
+  /** 지금 케이스 version에 묶인 제안(없으면 null). */
+  proposal: { baseVersion: number; createdAt: string; expiresAt: string; suggestions: CaseAiSuggestionDto[] } | null
+  /** 오늘(UTC) 이 케이스에서 남은 다듬기 횟수. */
+  remainingToday: number
+  /** 다듬을 문장(본인 회고 제외)이 있는지. */
+  polishable: boolean
+}
+
+/** POST /case-studies/:id/ai-polish/apply 결과. */
+export interface CaseAiPolishApplyDto {
+  caseStudy: CaseStudyDto
+  accepted: number
+  rejected: number
+}
+
 /** 작성자에게만 주는 케이스 스터디(초안 포함). */
 export interface CaseStudyDto {
   id: string
@@ -1886,7 +1920,8 @@ export interface CaseStudyDto {
   status: CaseStudyStatus
   unavailableReason: CaseUnavailableReason | null
   version: number
-  generator: 'template'
+  /** template(템플릿 초안) / ai(AI 다듬기 제안을 받아들인 적이 있음, E-14 — 공개 화면에 "AI로 다듬음" 표시). */
+  generator: CaseStudyGenerator
   source: CaseStudySourceInfo
   sections: CaseSectionDto[]
   /** 게시를 막는 출처 없는 문장(구역 키·구역 안 순서). */
@@ -1978,6 +2013,8 @@ export type PublicCaseStudyDto =
       releaseVersion: number
       termLabel: string | null
       selfLabel: string
+      /** ai면 "AI로 다듬음 · 다듬은 문장은 모두 근거 기록에 연결됨" 표시(E-14, ADR 0059). 인쇄·PDF도 같은 값을 씁니다. */
+      generator: CaseStudyGenerator
       sections: Array<{ key: CaseSectionKey; label: string; sentences: PublicCaseSentenceDto[] }>
       /**
        * "이 지원자에게 물어보면 좋은 질문"(E-06, ADR 0050): 학생이 공개로 고른 면접 준비 팩 질문의 **글만**(답변 메모 없음).

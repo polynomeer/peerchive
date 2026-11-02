@@ -30,6 +30,7 @@ export const OPS_TASK_NAMES = [
   'course-term-prompts',
   'ai-retro-sessions',
   'ai-meeting-drafts',
+  'ai-case-polish',
 ] as const
 export type OpsTaskName = (typeof OPS_TASK_NAMES)[number]
 
@@ -58,6 +59,8 @@ export const DEFAULT_CRONS: Record<OpsTaskName, string> = {
   'ai-retro-sessions': '19 * * * *',
   // AI 회의 요약(E-13, ADR 0058): 만든 지 7일 지난 승인 전 회의 요약 초안을 지웁니다(웹도 읽을 때 지움). AI가 꺼져 있어도 남은 행을 지웁니다.
   'ai-meeting-drafts': '23 * * * *',
+  // AI 케이스 다듬기(E-14, ADR 0059): 만든 지 7일 지난 다듬기 제안(받아들이지 않은 AI 문장)을 지웁니다(웹도 읽을 때 무시). AI가 꺼져 있어도 남은 행을 지웁니다.
+  'ai-case-polish': '29 * * * *',
 }
 
 export const OPS_TIMEZONE = 'Asia/Seoul'
