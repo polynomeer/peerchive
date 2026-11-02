@@ -17,6 +17,7 @@
     "@peerchive/bot-protocol": "workspace:*",
     "@peerchive/db": "workspace:*",
     "@peerchive/domain": "workspace:*",
+    "@peerchive/embeddings": "workspace:*",
     "@peerchive/files": "workspace:*",
     "h3": "1.15.11",
     "nodemailer": "10.1.0",

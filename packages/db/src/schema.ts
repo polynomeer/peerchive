@@ -82,6 +82,7 @@ import {
   pgEnum,
   pgTable,
   primaryKey,
+  real,
   text,
   timestamp,
   unique,
@@ -2349,6 +2350,45 @@ export const searchDocuments = pgTable(
         or (${t.kind} = 'note' and ${t.seniorNoteId} is not null and ${t.noteVersion} is not null and ${t.publicationId} is null and ${t.releaseId} is null)
         or (${t.kind}::text = 'qa' and ${t.courseQaItemId} is not null and ${t.publicationId} is null and ${t.releaseId} is null and ${t.seniorNoteId} is null)`,
     ),
+  ],
+)
+
+// ── 유사 막힘 의미 검색 (E-05, DELIVERY_PLAN §4.4, ADR 0055) ──────────────────────────
+
+/**
+ * 공개 막힘 카드의 임베딩 = (공개, 스냅샷 로그 키). 검색 문서(search_documents)처럼 worker가 만드는 **파생 데이터**이며 공개 여부의 근거가 아닙니다.
+ * - 임베딩한 글은 그 release 스냅샷의 막힘 증상·키워드와 해결 방법뿐입니다(@peerchive/domain stuckEmbeddingSources). 글 자체는 저장하지 않고
+ *   내용 해시(`content_hash`, 모델·차원 포함)만 둡니다 — 새 release에서 글이 같으면 `release_id`만 옮기고 다시 임베딩하지 않습니다.
+ * - 읽기는 늘 `release_id` = 공개의 지금 release이고 같은 release의 막힘 검색 문서가 있으며 `servableReleaseSql`(엠바고 포함)·가린 카드 조건을
+ *   **같은 쿼리에서** 만족하는 행만 씁니다. 그래서 철회·숨김·엠바고는 정리 handler를 기다리지 않고 다음 요청부터 빠집니다.
+ * - 벡터는 단위 길이로 정규화한 `real[]`입니다(dev·test 이미지 postgres:16에 pgvector가 없음). 코사인 = 내적을 SQL에서 계산합니다.
+ *   운영에서 pgvector를 쓰게 되면 `vector(dims)` 열 + HNSW 인덱스로 옮깁니다(ADR 0055).
+ * - `stale`: 운영 조치로 같은 공개의 로그를 가리거나 해제하면 true(해결 글이 바뀌었을 수 있음). 다음 실행이 글을 다시 만들어 해시를 비교합니다.
+ */
+export const stuckEmbeddings = pgTable(
+  'stuck_embeddings',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    publicationId: uuid('publication_id')
+      .notNull()
+      .references(() => publications.id),
+    releaseId: uuid('release_id')
+      .notNull()
+      .references(() => publicationCandidates.id),
+    itemKey: text('item_key').notNull(),
+    model: text('model').notNull(),
+    dims: integer('dims').notNull(),
+    contentHash: text('content_hash').notNull(),
+    embedding: real('embedding').array().notNull(),
+    stale: boolean('stale').notNull().default(false),
+    embeddedAt: timestamp('embedded_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('stuck_embeddings_item_key').on(t.publicationId, t.itemKey),
+    index('stuck_embeddings_release_idx').on(t.releaseId),
+    check('stuck_embeddings_dims_check', sql`${t.dims} between 1 and 4096 and cardinality(${t.embedding}) = ${t.dims}`),
+    check('stuck_embeddings_hash_check', sql`char_length(${t.contentHash}) = 64`),
   ],
 )
 

@@ -118,6 +118,7 @@ import {
   reports,
   roleClaims,
   searchDocuments,
+  stuckEmbeddings,
   seniorNotes,
   completionRetros,
   sessions,
@@ -1068,6 +1069,8 @@ async function purgeSoloProject(tx: DbExecutor, projectId: string, userId: strin
   if (publication) {
     await tx.delete(searchDocuments).where(eq(searchDocuments.publicationId, publication.id))
     await tx.delete(usefulnessSignals).where(eq(usefulnessSignals.publicationId, publication.id))
+    // 유사 막힘 임베딩(E-05): 공개 막힘 글에서 만든 파생 벡터도 함께 지웁니다.
+    await tx.delete(stuckEmbeddings).where(eq(stuckEmbeddings.publicationId, publication.id))
   }
   try {
     await tx.transaction(async (sp) => {

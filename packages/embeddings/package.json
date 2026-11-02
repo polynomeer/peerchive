@@ -1,0 +1,19 @@
+{
+  "name": "@peerchive/embeddings",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Peerchive 임베딩 공급자 어댑터(E-05 유사 막힘 의미 검색): 공급자 인터페이스, Voyage AI HTTP 어댑터(fetch), 테스트 전용 결정적 가짜 공급자, 설정 해석, 벡터 정규화·내용 해시·재시도·속도 제한. 런타임 npm 의존성 없음.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "typescript": "5.9.3",
+    "vitest": "5.0.3"
+  }
+}

@@ -69,7 +69,7 @@ const matchSql = (q: string) =>
   sql`(${searchDocuments.searchText} like ${`%${escapeLike(q)}%`} or ${q} <% ${searchDocuments.searchText})`
 const scoreSql = (q: string) => sql<number>`word_similarity(${q}, ${searchDocuments.searchText})`
 
-async function courseLabels(db: DbExecutor, ids: readonly string[]): Promise<Map<string, SearchResultDto['course']>> {
+export async function courseLabels(db: DbExecutor, ids: readonly string[]): Promise<Map<string, SearchResultDto['course']>> {
   const unique = [...new Set(ids)]
   if (unique.length === 0) return new Map()
   const rows = await db

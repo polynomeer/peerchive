@@ -7,6 +7,7 @@
  *   (읽기에서 이미 빠지고, 되돌리면 그대로 다시 셈).
  * - 되돌림(reversed): 그 공개의 지금 release를 다시 색인(빠진 문서만 다시 만듦), 노트는 지금 published·version이면 다시 색인.
  * - 공개 제한(restrict)은 웹이 `publication.withdrawn`(cause restricted)도 남기므로 여기서는 할 일이 없습니다. 케이스·프로필 숨김도 파생 데이터가 없습니다.
+ * - 유사 막힘 임베딩(E-05): 로그를 가리거나 해제하면 가린 막힘 카드의 벡터를 지우고 그 공개의 나머지를 stale로 둡니다(해결 글이 바뀌었을 수 있음).
  * - 막힘 Q&A 숨기기(hide_qa, C-09): 숨겨져 있으면 검색 문서 삭제, 되돌려 published면 다시 색인.
  * 판정은 이벤트가 아니라 지금 행 상태로 하므로 늦거나 중복돼도 결과가 같습니다(idempotent).
  */
@@ -26,6 +27,7 @@ import {
 } from '@peerchive/db'
 import { handleCourseQaPublished, handleSeniorNotePublished, searchIndexHandler } from './course-hub-derived'
 import { PUBLICATION_QUEUE_OPTIONS } from './publication-events'
+import { onLogVisibilityChanged } from './stuck-embeddings'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -49,14 +51,16 @@ export async function handleModerationAction(db: DbExecutor, data: unknown): Pro
   // 지금 상태 기준: 되돌려졌으면 reversed로 처리합니다(applied 이벤트가 늦게 와도 지우지 않음).
   const reversed = action.reversedAt !== null
   if (action.kind === 'hide_item' && action.publicationId && action.itemKind === 'log' && action.itemKey) {
+    // 유사 막힘 임베딩(E-05): 가린 막힘 카드의 벡터는 지우고, 같은 공개의 나머지는 다음 동기화가 글(해결 포함)을 다시 비교하도록 stale로.
+    const embeddings = await onLogVisibilityChanged(db, action.publicationId, reversed ? null : action.itemKey)
     if (!reversed) {
       const deleted = await db
         .delete(searchDocuments)
         .where(and(eq(searchDocuments.publicationId, action.publicationId), eq(searchDocuments.kind, 'stuck'), eq(searchDocuments.itemKey, action.itemKey)))
         .returning({ id: searchDocuments.id })
-      return deleted.length
+      return deleted.length + embeddings
     }
-    return reindexPublication(db, action.publicationId)
+    return (await reindexPublication(db, action.publicationId)) + embeddings
   }
   if (action.kind === 'hide_note' && action.seniorNoteId) {
     const [note] = await db.select().from(seniorNotes).where(eq(seniorNotes.id, action.seniorNoteId)).limit(1)

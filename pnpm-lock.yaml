@@ -63,6 +63,9 @@ importers:
       '@peerchive/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@peerchive/embeddings':
+        specifier: workspace:*
+        version: link:../../packages/embeddings
       '@peerchive/files':
         specifier: workspace:*
         version: link:../../packages/files
@@ -106,6 +109,9 @@ importers:
       '@peerchive/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@peerchive/embeddings':
+        specifier: workspace:*
+        version: link:../../packages/embeddings
       '@peerchive/files':
         specifier: workspace:*
         version: link:../../packages/files
@@ -162,6 +168,18 @@ importers:
 
   packages/domain:
     devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 5.0.3
+        version: 5.0.3(@opentelemetry/api@1.9.1)(@types/node@24.19.1)(vite@8.3.2(@types/node@24.19.1)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15))
+
+  packages/embeddings:
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.1
+        version: 24.19.1
       typescript:
         specifier: 5.9.3
         version: 5.9.3

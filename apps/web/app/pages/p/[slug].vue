@@ -7,6 +7,7 @@
  * - T-13: 과목 허브 링크, 계획 포크 수와 "이 계획 포크하기"(로그인 여부는 화면이 뜬 뒤 클라이언트에서만 확인).
  * - T-15: 운영 조치로 가린 항목은 원래 자리에 "운영 조치로 가려진 항목"으로, 신고(사례 전체 또는 기록·선언·파일 하나, 로그인 후).
  * - E-04: 막힘 Q&A 플래그가 켜져 있으면 🧱 막힘 기록마다 질문 스레드 화면으로 가는 링크(플래그는 화면이 뜬 뒤 클라이언트에서만 확인).
+ * - E-05: 임베딩 공급자가 설정되어 있으면(`semanticStuck`) 🧱 막힘 기록마다 "비슷한 막힘 보기"(누르면 다른 공개 막힘을 불러옴).
  */
 import type { PlanForkResultDto, PublicPublicationDto } from '~~/shared/types/api'
 import type { ReportChoice } from '~/utils/moderation'
@@ -137,6 +138,16 @@ const fileUrl = (versionId: string) =>
         <ul class="plain">
           <li v-for="l in stuckLogs" :key="l.key">
             <NuxtLink :to="`/stuck-qa/cards/${data.slug}/${encodeURIComponent(l.key)}`">🧱 {{ l.text }}</NuxtLink>
+          </li>
+        </ul>
+      </section>
+      <section v-if="flags.semanticStuck && stuckLogs.length" aria-labelledby="similar-stuck-title" data-testid="case-similar-stuck">
+        <h2 id="similar-stuck-title">비슷한 막힘</h2>
+        <p class="small">다른 공개 사례에서 의미가 비슷한 막힘을 찾습니다. 공개된 막힘·해결 글로만 찾습니다.</p>
+        <ul class="plain">
+          <li v-for="l in stuckLogs" :key="l.key">
+            <p>🧱 {{ l.text }}</p>
+            <SimilarStuck :slug="data.slug" :item-key="l.key" />
           </li>
         </ul>
       </section>

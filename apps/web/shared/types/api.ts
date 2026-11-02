@@ -1640,6 +1640,22 @@ export interface PublicSearchDto {
   results: SearchResultDto[]
 }
 
+/**
+ * GET /public/publications/:slug/stuck/:itemKey/similar — 비슷한 공개 막힘(E-05, ADR 0055). 결과는 kind 'stuck'뿐이고 카드와 같은 필드(증상·키워드)만.
+ * `indexed: false`는 그 카드의 벡터가 아직 없음(worker 대기). 유사도 점수·내부 id는 싣지 않습니다.
+ */
+export interface SimilarStuckDto {
+  indexed: boolean
+  results: SearchResultDto[]
+}
+
+/** GET /public/search/semantic — "의미로 찾기"(E-05). 검색어는 저장하지 않습니다. */
+export interface PublicSemanticSearchDto {
+  q: string
+  courseId: string | null
+  results: SearchResultDto[]
+}
+
 // ── 케이스 스터디·포트폴리오 판·공개 프로필 (T-14, ADR 0014) ─────────────────
 // 공개 DTO는 (a) 프로필의 공개 필드, (b) 지금 제공 가능한 release 스냅샷, (c) 사용자가 케이스·판에 쓴 글에서만 만듭니다.
 // 내부 id(사용자·케이스·공개·release)·이메일은 공개 DTO에 싣지 않습니다.
@@ -2027,6 +2043,8 @@ export interface FeatureFlagsDto {
   hubStagedOpening: boolean
   /** E-04 막힘 Q&A 스레드(P1 영역, 기본 꺼짐). */
   stuckQa: boolean
+  /** E-05 유사 막힘 의미 검색. 플래그가 아니라 임베딩 공급자 설정(PEERCHIVE_EMBEDDINGS_PROVIDER + VOYAGE_API_KEY)이 있을 때만 true. */
+  semanticStuck: boolean
 }
 
 /** 대학이 아닌 기관(검색·운영자 생성 결과). */

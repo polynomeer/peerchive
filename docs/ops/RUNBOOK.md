@@ -193,9 +193,10 @@ P2 기능은 코드가 있어도 **기본으로 꺼져 있고** 이 게이트(DE
 | `PEERCHIVE_FEATURE_HUB_STAGED_OPENING=on` | P1 과목 허브 단계적 개방(E-02, [ADR 0047](../adr/0047-hub-staged-opening.md)). **P2 묶음 변수로 켜지지 않음** | `/operator/hub-opening`에서 켰을 때 준비 중이 될 과목 수 확인(이미 사례·노트가 있는 허브가 닫히는지), 기준 `PEERCHIVE_HUB_OPEN_THRESHOLD`(1~100, 기본 3) 결정(pilot 근거), 회귀 테스트 `course-hub-opening.integration.test.ts`(준비 중 응답에 내용 목록 없음·기준 도달 시 열림·병합 합산·숨김/철회/엠바고 제외·알림 한 번·선배 노트 요청·운영자 집계만) 통과 |
 | `PEERCHIVE_FEATURE_STUCK_QA=on` | P1 막힘 Q&A 스레드(E-04, [ADR 0049](../adr/0049-stuck-qa-threads.md)). **P2 묶음 변수로 켜지지 않음** | 신고 처리 담당이 §4.9(숨김·작성자 확인·답 판매 기준)를 읽었는지, 학교 인증 정책 `PEERCHIVE_HUB_REQUIRE_AFFILIATION=1`, 회귀 테스트 `stuck-qa.integration.test.ts`(허용 게이트·철회 시 404·익명 번호·DTO에 사람 id·도움됐어요 개수 없음·후배 기여 선택·신고·숨김·작성자 확인) 통과 |
 
-- 값은 `on`·`1`·`true`·`yes`만 켜짐, 그 밖은 꺼짐. web은 요청마다 읽으므로 바꾼 뒤 web을 재시작합니다. 확인: `curl -s https://<사이트>/api/v1/features` → `{"alumni":false,"topics":false,"institutions":true,"hubStagedOpening":false,"stuckQa":false}`.
+- 값은 `on`·`1`·`true`·`yes`만 켜짐, 그 밖은 꺼짐. web은 요청마다 읽으므로 바꾼 뒤 web을 재시작합니다. 확인: `curl -s https://<사이트>/api/v1/features` → `{"alumni":false,"topics":false,"institutions":true,"hubStagedOpening":false,"stuckQa":false,"semanticStuck":false}`.
 - 단계적 개방(E-02)을 끄면 다음 요청부터 모든 허브가 열리고 본인 화면 API는 404입니다. 알림 신청 행은 남고(다시 켜면 이어짐), 허브를 여닫는 수동 조작은 없습니다(기준값만 바꿈).
 - 막힘 Q&A(E-04)를 끄면 다음 요청부터 카드·스레드·글 API와 새 신고가 404이고 사례 페이지의 링크가 사라지며 포트폴리오 답변 수는 0입니다. 행은 남고(다시 켜면 그대로), 이미 받은 신고의 처리·작성자 확인·탈퇴 정리는 플래그와 무관하게 돕니다.
+- 유사 막힘 의미 검색(E-05)은 이 표의 플래그가 아니라 임베딩 공급자 설정(`PEERCHIVE_EMBEDDINGS_PROVIDER`·`VOYAGE_API_KEY`)으로 켜지고 `/api/v1/features`의 `semanticStuck`으로 보입니다. 켜기 전 확인·끄기는 §4.10.
 - 끄기(되돌리기): 변수를 지우고 재시작하면 새 경로가 다음 요청부터 404입니다. 이미 만든 소속은 그대로 active이고(다시 켜면 그대로 보임), 이미 올라온 수료증 파일은 worker가 계속 지웁니다.
 - `alumni`를 끄면 이미 만든 동문회·OB 방은 일반 방처럼 보입니다(방별 프로필 API 404, 글의 방별 이름·배지 없음). 방별 프로필 행은 지우지 않으므로 다시 켜면 그대로 보입니다. 나가기·탈퇴·익명 전환에 따른 방별 프로필 삭제는 플래그와 무관하게 돕니다(삭제 장부 종류 `room_profiles`·`room_profile_cohort_changes`·`room_profile_cohort_actors`).
 - A-02 모임 도구도 같습니다: 끄면 일정·투표·앨범·공지 읽음 API가 404, 글에 읽음 수가 없고, 행·사진 파일은 그대로 남아 다시 켜면 보입니다. 나가기·내보내기에 따른 참석 응답·공지 읽음·투표 표 삭제와 탈퇴 정리(삭제 장부 종류 `room_event_rsvps`·`notice_reads`·`room_poll_votes`·`room_album_photos`·`room_gathering_actors`)는 플래그와 무관하게 돕니다. 공지 읽음은 누가 읽었는지 보는 화면·API가 없습니다(운영자 포함, [ADR 0039](../adr/0039-alumni-events.md)).
@@ -505,6 +506,20 @@ select column_name from information_schema.columns where table_name = 'instituti
 - 점검: `select count(*) filter (where status = 'published') as live, count(*) filter (where status = 'hidden') as hidden from stuck_qa_posts;` — 숨김 비율이 늘면 제품 기획 §19 "막힘 Q&A 익명" 재검토(표시명 기본) 안건으로 올립니다.
 - 탈퇴 정리: 글은 본문을 비운 `withdrawn`(번호 유지), 도움됐어요 행 삭제, 그 사람이 켠 질문 받기는 끔(삭제 장부 `stuck_qa_posts`·`stuck_qa_helpful`·`stuck_qa_cards`).
 
+### 4.10 유사 막힘 의미 검색·임베딩 공급자(E-05, ADR 0055)
+
+기본 꺼짐. 플래그가 아니라 **공급자 설정이 있을 때만** 켜집니다(web·worker 같은 값, 바꾸면 둘 다 재시작). 꺼져 있으면 의미 검색 API 404·화면 진입점 없음·worker 일정 없음이고 키워드 검색은 그대로입니다.
+
+- **켜기**: Voyage AI 계약·키를 받은 뒤 비밀 저장소에 `VOYAGE_API_KEY`, 설정에 `PEERCHIVE_EMBEDDINGS_PROVIDER=voyage`. 모델·차원은 기본(`voyage-4-lite`, 512)을 쓰고, 바꾸려면 Voyage 문서에서 지금 모델 이름·지원 차원(256·512·1024·2048)을 확인합니다. 확인: `curl -s https://<사이트>/api/v1/features`의 `"semanticStuck":true`, worker 시작 로그 `embeddings=voyage:voyage-4-lite`, 10분 안에 `[worker] stuck embeddings … embedded=N`.
+- **켜기 전 확인**: Voyage 데이터 처리 조건(입력 보존·학습 사용 여부, 저장 지역)을 계약·개인정보 처리방침에 적었는지, 공개 사례 동의 문구가 "공개된 막힘·해결 글이 검색용으로 외부 임베딩 서비스에 전송될 수 있음"을 다루는지, 회귀 테스트 `semantic-stuck.integration.test.ts`(꺼짐 404·키워드 동일·철회·가림·엠바고 다음 요청 제외·검색어 비저장·한도)와 worker `stuck-embeddings.test.ts`(공개 글만 전송·비공개 0건·비용 상한) 통과.
+- **공급자로 보내는 데이터**: (1) worker — 지금 게시 중이고 엠바고가 없는 공개 release 스냅샷의 막힘 `증상`·`키워드`와 그 막힘을 가리키는 해결 `방법`(운영 조치로 가린 로그 제외, 글당 최대 2000자). 시도·오류 원문·본문·링크·사람 이름·비공개 작업 공간 로그·초안은 보내지 않습니다. (2) web — 사용자가 "의미로 찾기"에 적은 검색어(100자 이하). 검색어는 DB·로그·감사에 남기지 않습니다(한도 버킷에는 IP 해시만). 우리 쪽에는 벡터와 내용 해시만 남고 글은 저장하지 않습니다.
+- **비용 상한**: worker 실행당 공급자로 보내는 글 `PEERCHIVE_EMBEDDINGS_MAX_ITEMS_PER_RUN`(기본 200, 기본 일정 10분마다 → 시간당 최대 1,200개), 배치 `PEERCHIVE_EMBEDDINGS_BATCH_SIZE`(64), 분당 요청 `PEERCHIVE_EMBEDDINGS_RPM`(60). 검색어는 IP마다 분당 `PEERCHIVE_EMBEDDINGS_QUERY_PER_MINUTE`(10), 서버 전체 시간당 `PEERCHIVE_EMBEDDINGS_QUERY_PER_HOUR`(300). 같은 글은 내용 해시로 다시 임베딩하지 않지만, **모델·차원을 바꾸면 전부 다시 임베딩**하므로 바꾸기 전에 대상 수를 확인합니다: `select count(*) from stuck_embeddings;`. 공급자 대시보드의 사용량 경보를 함께 둡니다.
+- **처음 켤 때 백필**: 기존 공개 막힘이 많으면 실행마다 상한만큼 나눠 들어갑니다(로그 `deferred=N`). 빨리 채우려면 잠시 상한을 올리고 끝나면 되돌립니다.
+- **오류**: 공급자 오류는 4번 재시도 뒤 그 실행을 멈추고 다음 실행에서 이어집니다(로그 `failed=true`, 글·응답은 남기지 않음). 웹 검색어 오류는 503 `embedding_unavailable`(화면은 키워드 검색 안내). 429가 이어지면 `PEERCHIVE_EMBEDDINGS_RPM`·배치를 낮춥니다.
+- **끄기·키 유출**: `PEERCHIVE_EMBEDDINGS_PROVIDER`를 지우고 web·worker 재시작 → 다음 요청부터 404, 일정 해제. 키가 새면 Voyage에서 키를 폐기하고 새 키로 바꿉니다(벡터는 그대로 씀). 저장된 벡터까지 지우려면 `delete from stuck_embeddings;`(다시 켜면 처음부터 임베딩).
+- **철회·숨김·엠바고**: 읽기가 요청마다 지금 release·엠바고·가린 카드를 확인하므로 운영자가 벡터를 지울 필요는 없습니다. 남은 벡터는 worker가 철회·새 버전·가림 이벤트와 탈퇴 정리 때 지웁니다. 점검: `select count(*) from stuck_embeddings e join publications p on p.id = e.publication_id where p.status <> 'published' or p.current_release_id <> e.release_id;`(정리 대기 수, 늘기만 하면 outbox·worker 확인).
+- **pgvector로 옮기기(규모가 커질 때)**: 지금은 `real[]` + SQL 내적으로 지금 공개인 벡터를 모두 훑습니다(공개 막힘 수만 개까지 가정). 의미 검색 응답이 느려지면 운영 DB에 `vector` 확장 → `vector(<차원>)` 열 + HNSW 인덱스 migration → `StuckVectorIndex` 구현 교체(ADR 0055 §4).
+
 ## 5. 백업 일정과 보존
 
 | 대상 | 방법 | 주기 | 보존 |
@@ -572,6 +587,7 @@ RTO 목표 4시간 대비 로컬 연습은 수 초입니다. 운영 데이터 �
 | 막힘 Q&A 스레드(E-04) | 글은 작성자가 지우거나 탈퇴할 때까지(지우면 본문을 비우고 번호·자리는 남김), 질문 받기는 로그 작성자가 끄거나 탈퇴할 때까지, 도움됐어요는 누른 사람이 거두거나 탈퇴할 때까지. 공개가 내려가도 행은 남고 읽기는 404 | 본인 지우기 즉시, `account-purge`(삭제 장부 `stuck_qa_posts`·`stuck_qa_helpful`·`stuck_qa_cards`) |
 | 면접 준비 팩 답변 메모·공개 선택(E-06) | 본인이 지우거나 탈퇴할 때까지(메모는 본인만 봄, 감사에는 공개 선택 바꿈만 — 케이스 id·질문 키·참거짓). 케이스 인용이 바뀌어 지금 만들어지지 않는 질문의 메모도 자동으로 지우지 않고 "보관된 메모"로 남음(공개 사례 하나에 100개 한도). 원본 공개가 내려가도 행은 남고 공개 표시는 다음 요청부터 사라짐 | 본인 지우기 즉시, `account-purge`(삭제 장부 `interview_prep_entries`) |
 | 제한 공유 링크(E-07) | 주인이 지우거나 탈퇴할 때까지. 행에는 토큰 SHA-256 해시·이름(본인만 봄)·만료·철회 시각·열람 횟수만 있고 원문 토큰·보는 사람의 IP·브라우저·열람 시각은 저장하지 않음(감사에는 링크·판 id·만료 일수·이름 유무만). 철회·만료·새 판·프로필 숨김·계정 비활성이면 다음 요청부터 404. 철회·만료된 행은 자동으로 지우지 않음. 토큰이 경로에 있어 프록시 접근 로그에 남을 수 있으니 로그에서 토큰을 보면 그 링크를 철회 | 본인 지우기 즉시(열 수 없는 링크만), `account-purge`(삭제 장부 `portfolio_share_links`) |
+| 유사 막힘 임베딩(E-05) | 공개 막힘 카드가 지금 게시 중인 동안(벡터·내용 해시만, 글 없음). 철회·제한·새 버전에서 빠진 카드·운영 조치로 가린 카드는 worker가 지우고, 그 전에도 읽기는 요청마다 거름. 엠바고 중에는 남지만 읽지 않음. 검색어는 저장하지 않음. 공급자 쪽 입력 보존은 Voyage 계약을 따름 | `publication.withdrawn`·`publication.published`·`moderation.action` 처리 때, `account-purge`(공개와 함께 삭제) |
 | 로그 피드백 댓글(E-10) | 과제(팀 기록)가 있는 동안. 작성자가 지우면 본문을 비우고 자리는 남김(`deleted`), owner 숨김은 행 그대로(작성자·owner만 봄). 팀 안에서만 읽고 공개 스냅샷·검색·케이스에는 들어가지 않음. 감사에는 댓글·로그 id만 | 본인 지우기 즉시(본문), `account-purge`(본문을 비운 행으로 남김, 삭제 장부 `log_comments`; 혼자만 쓴 과제는 과제와 함께 행 삭제) |
 | 탈퇴 계정 자료 | 요청 뒤 7일(유예) | `account-purge` 30분마다 |
 | 이름 표시 방식 변경 이력·커뮤니티 알림 | 이력은 공간이 있는 동안(행을 지우지 않음, 탈퇴 때 예약·취소한 사람만 비움), 알림은 받는 사람이 탈퇴할 때까지 | 탈퇴 정리 때. 예약 적용은 `name-mode-changes` 매분 |

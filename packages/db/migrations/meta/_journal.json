@@ -351,6 +351,13 @@
       "when": 1793575313290,
       "tag": "0049_log_feedback_comments",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1793577318597,
+      "tag": "0050_stuck_embeddings",
+      "breakpoints": true
     }
   ]
 }

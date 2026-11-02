@@ -1,7 +1,7 @@
 /**
  * Peerchive worker 진입점(ADR 0004). outbox 전달, 파일 검사 작업, 공개 게시·철회 이벤트(파생 데이터 정리, ADR 0012),
  * 과목 허브 파생 데이터(검색 색인·유용성 신호·선배 노트 색인, ADR 0013), 케이스 스터디 이용 불가 표시(ADR 0014),
- * 운영 조치의 검색 문서 맞추기(ADR 0015), 페르소나 활동 투영(ADR 0035), 운영 주기 작업(만료 행·격리 파일 정리, 탈퇴 계정 정리, ADR 0016), 소셜 링크 되돌림 확인·재확인(ADR 0034)과
+ * 운영 조치의 검색 문서 맞추기(ADR 0015), 공개 막힘 임베딩 색인(공급자 설정 시, ADR 0055), 페르소나 활동 투영(ADR 0035), 운영 주기 작업(만료 행·격리 파일 정리, 탈퇴 계정 정리, ADR 0016), 소셜 링크 되돌림 확인·재확인(ADR 0034)과
  * 상태 기록(1분마다)을 처리합니다.
  *
  * 실행: `pnpm worker`(저장소 루트, 개발용) 또는 `pnpm --filter worker start`.
@@ -11,16 +11,18 @@ import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { PgBoss } from 'pg-boss'
 import { createDb, pingDb } from '@peerchive/db'
+import { parseEmbeddingLimits, resolveEmbeddingProvider } from '@peerchive/embeddings'
 import { loadWorkerConfig } from './config'
 import { registerCourseHubDerived, registerCourseQaQueues, registerSeniorNoteQueues } from './course-hub-derived'
 import { dispatchOutbox } from './dispatcher'
 import { registerModerationQueue } from './moderation-derived'
 import { registerPersonaActivityQueue } from './persona-activities'
 import { registerPortfolioDerived } from './portfolio-derived'
-import { registerPublicationQueues } from './publication-events'
+import { registerDerivedCleanup, registerPublicationQueues } from './publication-events'
 import { registerAlbumPhotoScanQueue, registerCertificateScanQueue, registerPostMediaScanQueue, registerScanQueue } from './scan-worker'
 import { registerSocialLinkQueue } from './social-links'
-import { loadOpsConfig } from './ops/config'
+import { parseStuckEmbeddingCron, registerStuckEmbeddingQueue, stuckEmbeddingsCleanupHandler } from './stuck-embeddings'
+import { OPS_TIMEZONE, loadOpsConfig } from './ops/config'
 import { registerOpsSchedules, startHeartbeat } from './ops/schedules'
 
 // 저장소 루트의 .env(로컬 전용)가 있으면 읽습니다. 이미 설정된 환경 변수가 우선합니다.
@@ -50,6 +52,8 @@ await registerPostMediaScanQueue(boss, db, { storage: config.storage, scanner: c
 registerCourseHubDerived()
 // 철회·대체된 release에 고정된 케이스 스터디를 이용 불가로 표시(T-14).
 registerPortfolioDerived()
+// 유사 막힘 임베딩(E-05): 철회·새 release 때 남은 벡터 정리는 공급자 설정과 무관하게 늘 등록합니다.
+registerDerivedCleanup(stuckEmbeddingsCleanupHandler)
 await registerPublicationQueues(boss, db)
 await registerSeniorNoteQueues(boss, db)
 // 막힘 Q&A 검색 색인·철회 정리(C-09).
@@ -62,6 +66,9 @@ if (!opsConfig.siteOrigin) console.warn('[worker] NUXT_SITE_ORIGIN is not set: s
 await registerSocialLinkQueue(boss, db, { siteOrigin: opsConfig.siteOrigin, analyticsPepper: opsConfig.analyticsPepper })
 // 운영 주기 작업(T-16): 만료 행·주인 없는 격리 파일 정리, 유예 기간이 지난 탈퇴 계정 정리.
 await registerOpsSchedules(boss, db, config.storage, opsConfig)
+// 공개 막힘 임베딩 색인(E-05): PEERCHIVE_EMBEDDINGS_PROVIDER=voyage + VOYAGE_API_KEY일 때만 일정을 둡니다(공개 스냅샷의 막힘·해결 글만 보냄).
+const embeddingProvider = resolveEmbeddingProvider(process.env)
+await registerStuckEmbeddingQueue(boss, db, embeddingProvider, parseEmbeddingLimits(process.env), parseStuckEmbeddingCron(process.env.PEERCHIVE_EMBEDDINGS_CRON), OPS_TIMEZONE)
 const stopHeartbeat = startHeartbeat(db, { production: config.production, storage: config.storage.driver, scanner: config.scanner.engine })
 
 let dispatching = false
@@ -76,7 +83,7 @@ const timer = setInterval(() => {
 }, config.dispatchIntervalMs)
 
 console.info(
-  `[worker] started (storage=${config.storage.driver}, scanner=${config.scanner.engine}, production=${config.production}, purgeGraceDays=${opsConfig.graceDays})`,
+  `[worker] started (storage=${config.storage.driver}, scanner=${config.scanner.engine}, production=${config.production}, purgeGraceDays=${opsConfig.graceDays}, embeddings=${embeddingProvider ? `${embeddingProvider.name}:${embeddingProvider.model}` : 'off'})`,
 )
 
 let stopping = false

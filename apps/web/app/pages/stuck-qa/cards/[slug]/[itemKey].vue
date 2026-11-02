@@ -4,6 +4,7 @@
  * - 막힘 로그를 쓴 사람: "질문 받기" 켜고 끄기(끄면 새 질문·답변을 받지 않고 기존 스레드는 읽기만).
  * - 학교 인증 계정: 질문으로 스레드 열기(원리·접근 위주 안내). 스레드에서는 모두 익명이고, 순서는 "도움됐어요"를 받은 답변이 많은 스레드부터.
  * - 검색엔진에 싣지 않습니다(noindex).
+ * - E-05: 임베딩 공급자가 설정되어 있으면 "비슷한 막힘"(다른 공개 막힘, 화면이 뜬 뒤 불러옴).
  */
 import type { StuckQaCardDto, StuckQaThreadDto } from '~~/shared/types/api'
 
@@ -18,6 +19,9 @@ if (import.meta.server && error.value) {
   const event = useRequestEvent()
   if (event) setResponseStatus(event, 404)
 }
+
+const { flags, ensure: ensureFeatures } = useFeatures()
+onMounted(() => void ensureFeatures())
 
 const body = ref('')
 const busy = ref(false)
@@ -92,6 +96,11 @@ async function ask() {
       </section>
       <p v-else-if="!data.viewer" class="small"><NuxtLink to="/login">로그인</NuxtLink>하면 질문할 수 있어요.</p>
       <p v-if="message" class="field-error" role="alert">{{ message }}</p>
+
+      <section v-if="flags.semanticStuck" aria-labelledby="sqa-similar">
+        <h2 id="sqa-similar">비슷한 막힘</h2>
+        <SimilarStuck :slug="data.slug" :item-key="itemKey" auto />
+      </section>
 
       <section aria-labelledby="sqa-threads">
         <h2 id="sqa-threads">질문 {{ data.threads.length }}개</h2>

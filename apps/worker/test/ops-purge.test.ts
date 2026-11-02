@@ -78,6 +78,7 @@ import {
   projects,
   publicationCandidates,
   publications,
+  stuckEmbeddings,
   roleClaims,
   seniorNotes,
   sessions,
@@ -248,6 +249,16 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
     const soloFile = await file(tx, solo.id, U.id)
     await claim(tx, solo.id, U.id, '내가 다 했음')
     const soloPub = await publish(tx, solo.id, U.id, [U.id])
+    // 유사 막힘 임베딩(E-05): 공개 막힘 글에서 만든 벡터도 함께 지워져야 공개 행을 지울 수 있습니다(외래 키).
+    await tx.insert(stuckEmbeddings).values({
+      publicationId: soloPub.publication.id,
+      releaseId: soloPub.release.id,
+      itemKey: 'l_s',
+      model: 'fake',
+      dims: 2,
+      contentHash: 'f'.repeat(64),
+      embedding: [1, 0],
+    })
 
     // 혼자 과제 2: 공개 + X의 포크 → 묘비
     const forkedSolo = await project(tx, U.id, '포크된 과제')
@@ -417,6 +428,7 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       expect(await count(tx, projects, eq(projects.id, w.solo.id))).toBe(0)
       expect(await count(tx, logEntries, eq(logEntries.id, w.soloLog.id))).toBe(0)
       expect(await count(tx, publications, eq(publications.id, w.soloPub.publication.id))).toBe(0)
+      expect(await count(tx, stuckEmbeddings, eq(stuckEmbeddings.publicationId, w.soloPub.publication.id))).toBe(0)
       expect(await storage.head(w.soloFile.key)).toBeNull()
       // 혼자 과제 2: X의 포크가 가리키므로 내용을 비운 묘비. X의 포크와 X의 과제는 그대로.
       const [forked] = await tx.select().from(projects).where(eq(projects.id, w.forkedSolo.id))
