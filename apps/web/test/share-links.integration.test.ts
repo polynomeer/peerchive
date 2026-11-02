@@ -149,7 +149,9 @@ describe.skipIf(!databaseUrl)('share links (E-07, PostgreSQL)', () => {
       expect((await listMyShareLinks(tx, f.A, at(11)))[0]!.viewCount).toBe(2)
 
       // 형식이 틀리거나 없는 토큰은 열람 수를 건드리지 않고 404.
-      for (const bad of ['short', `${link.token.slice(0, -1)}A`, 'x'.repeat(200)]) {
+      // 마지막 글자는 늘 원래와 다르게 바꿉니다(43자 토큰의 마지막 글자는 16가지뿐이라 'A'로 고정하면 1/16 확률로 원래 토큰과 같음).
+      const lastSwapped = `${link.token.slice(0, -1)}${link.token.endsWith('A') ? 'E' : 'A'}`
+      for (const bad of ['short', lastSwapped, 'x'.repeat(200)]) {
         const r = await get(bad)
         expect(r.status, bad).toBe(404)
         expect(r.headers.get('x-robots-tag')).toBe('noindex, nofollow')

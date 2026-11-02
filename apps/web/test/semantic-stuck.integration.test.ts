@@ -206,7 +206,9 @@ describe.skipIf(!databaseUrl)('E-05 semantic stuck search (PostgreSQL, fake prov
   it('query text is embedded as a query, never stored or logged, and is rate limited per IP', async () => {
     await withRollback(async (tx) => {
       const { a, b, c } = await corpus(tx)
-      const secret = `좀비 프로세스 질문 ${token()}`
+      // 고유 꼬리는 글자마다 띄어 씁니다: 가짜 공급자는 공백 낀 bigram을 세지 않으므로 무작위 꼬리가 벡터를 흔들지 않습니다
+      // (붙여 쓰면 해시 충돌로 약 0.2% 확률로 C가 앞서거나 A·B가 최소 점수 아래로 떨어짐).
+      const secret = `좀비 프로세스 질문 ${[...token()].join(' ')}`
       const logs = [vi.spyOn(console, 'log'), vi.spyOn(console, 'info'), vi.spyOn(console, 'warn'), vi.spyOn(console, 'error')]
       try {
         const ip = `ip-${token()}`
