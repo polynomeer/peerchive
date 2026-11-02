@@ -34,6 +34,10 @@ import { enableStudyRecord } from '../server/modules/community/study-records'
 import { createClaim, listClaimRevisions, listClaims, reviseClaim, setEndorsement, withdrawEndorsement } from '../server/modules/contribution/claims'
 import { getContribution, recordReportExport } from '../server/modules/contribution/ledger'
 import { createBindCode, listBindings, unbindChannel, updateBinding } from '../server/modules/discord/bindings'
+import type { GithubClient } from '../server/modules/github/client'
+import type { GithubAppConfig } from '../server/modules/github/config'
+import { getProjectGithub, linkRepository, startInstall, unlinkRepository } from '../server/modules/github/connect'
+import { listGithubCandidates } from '../server/modules/github/items'
 import { addProjectEmbargo } from '../server/modules/embargo/embargo'
 import { ServiceError } from '../server/modules/errors'
 import { createLogComment, deleteLogComment, editLogComment, listLogComments, setLogCommentHidden } from '../server/modules/logs/comments'
@@ -118,6 +122,11 @@ const ROUTES: Record<string, string> = {
   'projects/[id]/checkins/me.put.ts': 'saveMyCheckin',
   'projects/[id]/discord/bind-code.post.ts': 'createBindCode',
   'projects/[id]/discord/bindings.get.ts': 'listBindings',
+  'projects/[id]/github/index.get.ts': 'getProjectGithub',
+  'projects/[id]/github/index.delete.ts': 'unlinkRepository',
+  'projects/[id]/github/install.post.ts': 'startInstall',
+  'projects/[id]/github/link.post.ts': 'linkRepository',
+  'projects/[id]/github/items.get.ts': 'listGithubCandidates',
   'logs/[id]/index.get.ts': 'getLog',
   'logs/[id]/revisions/index.get.ts': 'listLogRevisions',
   'logs/[id]/revisions/index.post.ts': 'reviseLog',
@@ -429,6 +438,14 @@ describe.skipIf(!databaseUrl)('study member refs (PostgreSQL)', () => {
       await hit('projects/[id]/discord/bindings.get.ts', () => listBindings(tx, A, projectId))
       await hit('discord-bindings/[id].patch.ts', () => updateBinding(tx, A, crypto.randomUUID(), { summaryEnabled: false }))
       await hit('discord-bindings/[id].delete.ts', () => unbindChannel(tx, A, crypto.randomUUID(), at(13)))
+
+      // GitHub(E-11): 스터디 기록은 GitHub 연결을 쓰지 않아 모든 경로가 404입니다(GitHub API는 부르지 않음).
+      const githubCtx = { config: {} as GithubAppConfig, client: {} as GithubClient, siteOrigin: 'http://localhost:3100', now: at(13) }
+      await hit('projects/[id]/github/index.get.ts', () => getProjectGithub(tx, A, projectId, at(13)))
+      await hit('projects/[id]/github/install.post.ts', () => startInstall(tx, A, projectId, githubCtx))
+      await hit('projects/[id]/github/link.post.ts', () => linkRepository(tx, A, projectId, { repoId: 1 }, githubCtx))
+      await hit('projects/[id]/github/items.get.ts', () => listGithubCandidates(tx, A, projectId))
+      await hit('projects/[id]/github/index.delete.ts', () => unlinkRepository(tx, A, projectId, githubCtx))
 
       // 공개: 선택지 → 후보(노출 방식 키) → B 거절 → 게시 막힘(당사자 키) → 미동의자 제외 → 동의 → 게시 → 동의 철회 → 철회
       const state = (await hit('projects/[id]/publication.get.ts', () => getPublicationState(tx, A, projectId, at(14))))!

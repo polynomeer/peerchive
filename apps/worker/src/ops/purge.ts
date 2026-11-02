@@ -78,6 +78,9 @@ import {
   inArray,
   institutionAffiliations,
   integrations,
+  githubItems,
+  githubOauthStates,
+  githubRepoLinks,
   invitations,
   isNotNull,
   isNull,
@@ -235,6 +238,22 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
     const personaIds = idsOf(await tx.select({ id: personas.id }).from(personas).where(eq(personas.userId, userId)))
     c.add('identity_links', (await tx.delete(identityLinks).where(eq(identityLinks.userId, userId)).returning({ id: identityLinks.userId })).length)
     if (personaIds.length) c.add('profile', (await tx.delete(profiles).where(inArray(profiles.personaId, personaIds)).returning({ id: profiles.personaId })).length)
+    // GitHub(E-11, ADR 0056): 그 사람 GitHub 계정이 작성한 근거 후보(다른 과제 것 포함)를 지웁니다 — 선언 근거에 복사해 둔 주소·제목은 선언과 함께 팀 기록 규칙을 따릅니다.
+    // 연결 흐름의 일회용 state도 지웁니다. 계정 연결 행은 아래 integrations에서 함께 지워집니다.
+    const githubIds = (
+      await tx
+        .select({ externalId: integrations.externalId })
+        .from(integrations)
+        .where(and(eq(integrations.userId, userId), eq(integrations.provider, 'github')))
+    ).map((r) => Number(r.externalId))
+    if (githubIds.length) {
+      const itemIds = idsOf(await tx.select({ id: githubItems.id }).from(githubItems).where(inArray(githubItems.authorGithubId, githubIds)))
+      if (itemIds.length) {
+        await tx.update(claimEvidence).set({ githubItemId: null }).where(inArray(claimEvidence.githubItemId, itemIds))
+        c.add('github_items', (await tx.delete(githubItems).where(inArray(githubItems.id, itemIds)).returning({ id: githubItems.id })).length)
+      }
+    }
+    c.add('github_oauth_states', (await tx.delete(githubOauthStates).where(eq(githubOauthStates.userId, userId)).returning({ id: githubOauthStates.id })).length)
     c.add('integrations', (await tx.delete(integrations).where(eq(integrations.userId, userId)).returning({ id: integrations.id })).length)
     // 학교 메일 인증(C-01): 코드 → 소속 순서(외래 키). 이력(학교·도메인·인증 시각)도 그 사람만의 자료라 남기지 않습니다.
     const affiliationIds = idsOf(await tx.select({ id: institutionAffiliations.id }).from(institutionAffiliations).where(eq(institutionAffiliations.userId, userId)))
@@ -1026,6 +1045,11 @@ async function purgeSoloProject(tx: DbExecutor, projectId: string, userId: strin
     await tx.delete(discordChannelBindings).where(inArray(discordChannelBindings.id, bindingIds))
   }
   await tx.delete(discordCodes).where(eq(discordCodes.projectId, projectId))
+
+  // GitHub 연결(E-11): 후보 → 연결 → 일회용 state 순서(외래 키). 선언 근거는 위에서 이미 지웠습니다.
+  await tx.delete(githubItems).where(eq(githubItems.projectId, projectId))
+  await tx.delete(githubRepoLinks).where(eq(githubRepoLinks.projectId, projectId))
+  await tx.delete(githubOauthStates).where(eq(githubOauthStates.projectId, projectId))
 
   // 빌드 로그
   const entryIds = idsOf(await tx.select({ id: logEntries.id }).from(logEntries).where(eq(logEntries.projectId, projectId)))

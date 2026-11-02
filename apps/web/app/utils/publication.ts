@@ -87,6 +87,7 @@ export const CHECK_RULE_LABELS: Record<PublicationCheckRule, string> = {
   long_code: '긴 코드(과제 답 코드일 수 있음 — 저장소 링크와 핵심 발췌를 권장)',
   anonymous_name: '익명으로 고른 팀원의 이름',
   pdf_metadata: 'PDF 문서 속성에 작성자 정보가 있습니다 — 공개 전에 문서 속성을 지우고 다시 올리세요',
+  github_private: '비공개 GitHub 저장소 링크(방문자는 열 수 없고, 제목에 비공개 저장소 내용이 드러날 수 있음 — 꼭 필요한 주소·제목만 남기세요)',
 }
 
 export const CHECK_LOCATION_LABELS: Record<string, string> = {

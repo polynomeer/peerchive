@@ -82,6 +82,7 @@ import { type MemberRefs, loadMemberRefs, memberRefSchema } from '../projects/me
 import { parseInput } from '../validation'
 import { publicationNotices } from '../moderation/notices'
 import { buildManifest, canonicalHash, checkItemsFor, publicKeyFor } from './manifest'
+import { privateRepoUrlsOf } from '../github/connect'
 import { listReleases, loadPublicationSummary } from './summary'
 import {
   type SnapshotRefs,
@@ -638,6 +639,8 @@ async function createCandidateInTx(
   const checks = runPublicationChecks(checkItemsFor(snapshot, rawFileNames), {
     anonymousNames: anonymousNamesOf(source),
     pdfAuthorMetadata,
+    // E-11(ADR 0056): GitHub 후보는 스냅샷에 들어가지 않습니다. 학생이 로그 링크·글로 직접 붙인 비공개 저장소 주소만 경고합니다.
+    privateRepoUrls: await privateRepoUrlsOf(tx, project.id),
   }).filter(
     (w) => w.location.field !== 'fileName' || w.rule === 'answer_file',
   )

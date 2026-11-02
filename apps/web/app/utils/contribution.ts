@@ -40,8 +40,18 @@ export function evidenceLabel(evidence: ClaimEvidenceDto): string {
     const updated = evidence.currentRevisionNo > evidence.revisionNo ? ' (이후 수정됨)' : ''
     return `로그 ${LOG_TAG_LABELS[evidence.tag]} · ${evidence.summary || '내용 없음'}${updated}`
   }
+  if (evidence.kind === 'github') {
+    const kind = evidence.itemKind === 'pull_request' ? 'PR' : evidence.itemKind === 'commit' ? '커밋' : '링크'
+    return `GitHub ${kind}${evidence.ref ? ` ${evidence.ref}` : ''} · ${evidence.title}`
+  }
   const status = evidence.scanStatus === 'clean' ? '' : ` · ${SCAN_STATUS_LABELS[evidence.scanStatus]}`
   return `파일 · ${evidence.title} v${evidence.versionNo}${status}`
+}
+
+/** GitHub 근거 후보 한 줄(E-11). */
+export function githubItemLabel(item: { kind: 'commit' | 'pull_request'; ref: string; title: string; prState: 'open' | 'closed' | 'merged' | null }): string {
+  const state = item.prState === 'merged' ? ' · 병합됨' : item.prState === 'closed' ? ' · 닫힘' : item.prState === 'open' ? ' · 열림' : ''
+  return `${item.kind === 'pull_request' ? 'PR' : '커밋'} ${item.ref} · ${item.title}${state}`
 }
 
 /** 로그 한 줄 요약(서버 summarize와 같은 규칙: 막힘은 증상, 그 밖에는 본문 또는 대표 필드). */

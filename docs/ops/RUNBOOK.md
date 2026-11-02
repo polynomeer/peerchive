@@ -259,6 +259,12 @@ P2 기능은 코드가 있어도 **기본으로 꺼져 있고** 이 게이트(DE
 3. 노출 기간의 감사 기록(`discord.*`, `log.create` source discord) 확인. 잘못 만들어진 로그가 있으면 당사자에게 알림.
 4. 급하면 web에서 `PEERCHIVE_INTERNAL_SECRET`을 비워 내부 API를 끕니다(503).
 
+### 3.6.1 GitHub App 비밀 노출(E-11)
+
+1. GitHub App 설정에서 웹훅 비밀·client secret·private key를 새로 만들고 `GITHUB_APP_WEBHOOK_SECRET`·`GITHUB_APP_CLIENT_SECRET`·`GITHUB_APP_PRIVATE_KEY`를 교체 → web 재시작 → 이전 client secret·private key 삭제(§4.11 "비밀 교체").
+2. 노출 기간의 감사 기록(`github.repo_link`·`github.repo_unlink`·`github.identity_link`)과 GitHub App의 Recent Deliveries·설치 목록을 확인합니다. 모르는 연결이 있으면 owner에게 알리고 해제합니다.
+3. 급하면 `GITHUB_APP_ID`를 비우고 재시작해 기능을 끕니다(경로·웹훅 404).
+
 ### 3.7 정리 작업이 멈춤(`halted`)
 
 `orphan-quarantine`이 `orphan_ratio_too_high`로 멈췄다면 worker가 다른 DB나 다른 저장소를 보고 있을 수 있습니다. `DATABASE_URL`·`PEERCHIVE_STORAGE_ROOT`(s3면 `PEERCHIVE_S3_BUCKET`·`PEERCHIVE_S3_PREFIX`)를 확인하기 전에는 강제로 지우지 마세요.
@@ -519,6 +525,39 @@ select column_name from information_schema.columns where table_name = 'instituti
 - **끄기·키 유출**: `PEERCHIVE_EMBEDDINGS_PROVIDER`를 지우고 web·worker 재시작 → 다음 요청부터 404, 일정 해제. 키가 새면 Voyage에서 키를 폐기하고 새 키로 바꿉니다(벡터는 그대로 씀). 저장된 벡터까지 지우려면 `delete from stuck_embeddings;`(다시 켜면 처음부터 임베딩).
 - **철회·숨김·엠바고**: 읽기가 요청마다 지금 release·엠바고·가린 카드를 확인하므로 운영자가 벡터를 지울 필요는 없습니다. 남은 벡터는 worker가 철회·새 버전·가림 이벤트와 탈퇴 정리 때 지웁니다. 점검: `select count(*) from stuck_embeddings e join publications p on p.id = e.publication_id where p.status <> 'published' or p.current_release_id <> e.release_id;`(정리 대기 수, 늘기만 하면 outbox·worker 확인).
 - **pgvector로 옮기기(규모가 커질 때)**: 지금은 `real[]` + SQL 내적으로 지금 공개인 벡터를 모두 훑습니다(공개 막힘 수만 개까지 가정). 의미 검색 응답이 느려지면 운영 DB에 `vector` 확장 → `vector(<차원>)` 열 + HNSW 인덱스 migration → `StuckVectorIndex` 구현 교체(ADR 0055 §4).
+
+### 4.11 GitHub App 연동(E-11, ADR 0056)
+
+기본 꺼짐. 플래그가 아니라 **GitHub App 설정 여섯 개가 모두 있을 때만** 켜집니다(web만, 바꾸면 재시작). 꺼져 있으면 GitHub 경로·웹훅 모두 404이고 화면 진입점이 없으며 역할 선언·기여 장부·공개는 그대로입니다.
+
+**GitHub App 등록**(GitHub → Settings → Developer settings → GitHub Apps → New GitHub App, 조직 계정이면 조직 설정에서)
+- [ ] 이름·홈페이지 URL `https://<사이트>`. 이름의 slug(앱 주소 `github.com/apps/<slug>`)를 `GITHUB_APP_SLUG`에.
+- [ ] **Callback URL**: `https://<사이트>/api/v1/github/oauth/callback`(NUXT_SITE_ORIGIN 첫 항목과 같은 origin). "Expire user authorization tokens" 켬(기본). **"Request user authorization (OAuth) during installation"은 끔**(설치 확인은 Setup URL 뒤에 우리가 따로 요청합니다).
+- [ ] **Setup URL**: `https://<사이트>/api/v1/github/setup`, **"Redirect on update" 켬**(이미 설치된 계정에서 저장소를 더할 때도 돌아오게).
+- [ ] **Webhook**: Active, URL `https://<사이트>/api/github/webhook`, Secret = 무작위 32자 이상(`openssl rand -hex 32`) → `GITHUB_APP_WEBHOOK_SECRET`. SSL verification 켬.
+- [ ] **권한(Repository permissions)**: Metadata **Read-only**(필수), Contents **Read-only**(push 이벤트), Pull requests **Read-only**. 그 밖(Issues·Administration·Members·Email addresses 등)은 **No access**. Account permissions도 모두 No access(사용자 메일을 받지 않음).
+- [ ] **이벤트 구독(Subscribe to events)**: Push, Pull request, Repository. (Installation·Installation repositories·GitHub App authorization은 따로 고르지 않아도 옵니다.)
+- [ ] "Where can this GitHub App be installed?": 학생 개인·조직 저장소에 설치해야 하므로 **Any account**.
+- [ ] 만든 뒤: App ID → `GITHUB_APP_ID`, Client ID → `GITHUB_APP_CLIENT_ID`, "Generate a new client secret" → `GITHUB_APP_CLIENT_SECRET`, "Generate a private key"(.pem) → `GITHUB_APP_PRIVATE_KEY`(PEM 전체, 줄바꿈은 그대로 또는 `\n`). 비밀 셋(웹훅 비밀·client secret·private key)은 **비밀 저장소에만**, 내려받은 .pem은 넣은 뒤 지웁니다.
+- [ ] 확인: web 재시작 → `curl -s https://<사이트>/api/v1/features`의 `"github":true`, 시작 로그에 `[github] GitHub App integration is off`가 없음. GitHub App 화면 → Advanced → Recent Deliveries의 ping이 200(`{"status":"ignored"}`).
+- [ ] 시험: 시험용 과제에서 owner로 "GitHub 연결" → 시험 저장소 하나만 골라 설치 → 돌아와 저장소 고르기 → 프로필 설정에서 GitHub 계정 연결 → 시험 저장소에 push → 과제 화면 "멤버별 근거 후보"에 커밋 제목 첫 줄이 보임 → 저장소 연결 해제 → 후보가 사라짐.
+
+**운영**
+- 저장하는 것: 회원 GitHub 번호·로그인 이름, 연결 저장소 번호·이름·주소·비공개 여부, 커밋 SHA·PR 번호·제목 첫 줄(200자)·주소·작성자 번호·시각, 처리한 웹훅 전달 id(7일). 토큰은 저장하지 않습니다(설치 토큰은 web 프로세스 메모리에만 1시간).
+- 웹훅 실패: GitHub App → Advanced → Recent Deliveries에서 상태 확인. 401은 비밀 불일치(교체 중이면 정상), 409 `replayed`는 이미 처리한 전달(무시), 413은 1MB 넘는 push(커밋이 아주 많은 push — 후보만 빠짐), 502는 GitHub API 재확인 실패(재전달하면 다시 처리). 실패한 전달은 "Redeliver"로 다시 보낼 수 있습니다(처리에 실패한 전달은 id를 남기지 않음).
+- 점검: `select count(*) filter (where unlinked_at is null) as active, count(*) as total from github_repo_links;` · `select count(*) from github_items;` · `select count(*) from github_webhook_deliveries;`(7일 창이라 크게 늘지 않아야 함).
+- owner가 연결을 해제해도 GitHub의 앱 설치는 남습니다(다른 과제·사람이 쓸 수 있음). 설치까지 지우려면 설치한 사람이 GitHub 설정 → Applications → Installed GitHub Apps에서 지웁니다. 설치를 지우면 웹훅으로 그 설치의 모든 연결이 해제됩니다(API로 확인 뒤).
+- 비공개 저장소 내용은 공개 사례에 자동으로 들어가지 않습니다. 학생이 로그 링크로 직접 붙인 비공개 저장소 주소는 공개 전 점검 `github_private` 경고로 보입니다(게시를 막지 않음).
+
+**비밀 교체**
+- 웹훅 비밀: 새 값을 만들어 GitHub App 설정의 Webhook secret을 바꾸고 **바로** `GITHUB_APP_WEBHOOK_SECRET`을 바꿔 web 재시작. 그 사이 도착한 전달은 401로 실패하므로 Recent Deliveries에서 Redeliver합니다.
+- Client secret: GitHub App에서 새 client secret을 만들고 `GITHUB_APP_CLIENT_SECRET` 교체·재시작 → 확인 뒤 이전 secret 삭제(두 개가 함께 유효할 수 있음).
+- Private key: GitHub App에서 새 키를 만들고 `GITHUB_APP_PRIVATE_KEY` 교체·재시작 → 확인 뒤 이전 키 삭제. 메모리의 설치 토큰은 재시작으로 사라집니다.
+- 유출 의심: 위 셋을 모두 교체하고, 노출 기간의 감사 기록(`github.*`)과 Recent Deliveries를 확인합니다. 급하면 `GITHUB_APP_ID`를 비우고 재시작해 기능을 끕니다(404, 저장된 행은 그대로).
+
+**끄기**: 여섯 값 중 하나를 지우고 재시작 → 다음 요청부터 404·화면 진입점 없음·웹훅 404(GitHub는 실패로 기록). 저장된 후보까지 지우려면: `update claim_evidence set github_item_id = null where github_item_id is not null; delete from github_items;`(선언 근거의 주소·제목은 남음).
+
+**탈퇴 정리**: 계정 연결 행·그 사람 GitHub 번호가 작성한 후보(다른 과제 포함)·일회용 state 삭제, 혼자만 쓴 과제는 연결·후보까지 삭제(삭제 장부 `integrations`·`github_items`·`github_oauth_states`).
 
 ## 5. 백업 일정과 보존
 

@@ -17,6 +17,9 @@ const { data: members, refresh: refreshMembers } = await useFetch<MemberDto[]>(
 const isOwner = computed(() => project.value?.myRole === 'owner')
 // 스터디 기록(C-08): 멤버는 스터디 방에서 파생되므로 이 화면에서 초대·역할·나가기·소유권 이전을 하지 않습니다.
 const isStudy = computed(() => project.value?.kind === 'study')
+// GitHub App 설정이 있을 때만 저장소 연결 칸을 보여 줍니다(E-11).
+const { flags: features, ensure: ensureFeatures } = useFeatures()
+onMounted(() => void ensureFeatures())
 const manageMembers = computed(() => isOwner.value && !isStudy.value)
 const canEdit = computed(() => project.value?.myRole === 'owner' || project.value?.myRole === 'editor')
 
@@ -328,6 +331,8 @@ const formatDate = (iso: string) => new Date(iso).toLocaleString('ko-KR', { date
       <ContributionSection :project-id="project.id" :my-role="project.myRole" :me-id="me?.id ?? null" />
 
       <DiscordSection :project-id="project.id" :is-owner="isOwner" />
+
+      <GithubSection v-if="features.github && !isStudy" :project-id="project.id" :is-owner="isOwner" />
 
       <section class="card" aria-labelledby="members-heading">
         <h2 id="members-heading">멤버</h2>

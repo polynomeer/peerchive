@@ -45,6 +45,7 @@ import {
   threadAliases,
   consents,
   createDb,
+  claimEvidence,
   deletionLedger,
   endorsements,
   eq,
@@ -79,6 +80,9 @@ import {
   publicationCandidates,
   publications,
   stuckEmbeddings,
+  githubItems,
+  githubOauthStates,
+  githubRepoLinks,
   roleClaims,
   seniorNotes,
   sessions,
@@ -783,6 +787,69 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       const ledger = await tx.select().from(deletionLedger).where(eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, U.id)))
       expect(ledger.find((l) => l.entityKind === 'institution_staff')?.count).toBe(1)
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})
+    })
+  })
+
+  it('deletes the purged user\'s GitHub identity, items they authored and states; a solo project loses its repository link (E-11)', async () => {
+    await rollback(async (tx) => {
+      const U = await user(tx, '탈퇴깃허브', 'deleted')
+      const T = await user(tx, '남는깃허브')
+      const uGithub = 900_000_000 + Math.floor(Math.random() * 1e6)
+      const tGithub = uGithub + 1
+      await tx.insert(integrations).values([
+        { userId: U.id, provider: 'github', externalId: String(uGithub), externalLogin: 'gone-user' },
+        { userId: T.id, provider: 'github', externalId: String(tGithub), externalLogin: 'stay-user' },
+      ])
+      const team = await project(tx, T.id, 'GitHub 팀 과제', [{ userId: U.id, role: 'editor' }])
+      const solo = await project(tx, U.id, 'GitHub 혼자 과제')
+      const repoId = (n: number) => uGithub * 10 + n
+      const [teamLink, soloLink] = await tx
+        .insert(githubRepoLinks)
+        .values([
+          { projectId: team.id, installationId: 1, repoId: repoId(1), fullName: 'org/team', htmlUrl: 'https://github.com/org/team', isPrivate: true, linkedBy: T.id },
+          { projectId: solo.id, installationId: 2, repoId: repoId(2), fullName: 'me/solo', htmlUrl: 'https://github.com/me/solo', isPrivate: true, linkedBy: U.id },
+        ])
+        .returning()
+      const commit = (linkId: string, projectId: string, author: number, sha: string) => ({
+        linkId,
+        projectId,
+        kind: 'commit' as const,
+        sha,
+        title: '커밋',
+        url: `https://github.com/org/team/commit/${sha}`,
+        authorGithubId: author,
+        occurredAt: NOW,
+      })
+      const [uItem] = await tx
+        .insert(githubItems)
+        .values([
+          commit(teamLink!.id, team.id, uGithub, 'a'.repeat(40)),
+          commit(teamLink!.id, team.id, tGithub, 'b'.repeat(40)),
+          commit(soloLink!.id, solo.id, uGithub, 'c'.repeat(40)),
+        ])
+        .returning()
+      // T의 선언이 U의 커밋을 근거로 가리키는 경우(정상 흐름에서는 본인 것만이지만 참조 정리를 확인)
+      const tClaim = await claim(tx, team.id, T.id, '함께 한 일')
+      await tx.insert(claimEvidence).values({ claimRevisionId: tClaim.revisionId, position: 0, githubItemId: uItem!.id, githubUrl: uItem!.url, githubTitle: uItem!.title })
+      await tx.insert(githubOauthStates).values([
+        { purpose: 'identity', stateHash: `h-${id()}`, userId: U.id, expiresAt: NOW },
+        { purpose: 'install', stateHash: `h-${id()}`, userId: T.id, projectId: team.id, expiresAt: NOW },
+      ])
+
+      const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
+      expect(counts).toMatchObject({ integrations: 1, github_items: 2, github_oauth_states: 1, solo_projects: 1 })
+      expect(await count(tx, integrations, eq(integrations.userId, U.id))).toBe(0)
+      expect(await count(tx, integrations, eq(integrations.userId, T.id))).toBe(1)
+      expect(await count(tx, githubItems, eq(githubItems.authorGithubId, uGithub))).toBe(0)
+      expect(await count(tx, githubItems, eq(githubItems.authorGithubId, tGithub))).toBe(1)
+      expect(await count(tx, githubRepoLinks, eq(githubRepoLinks.projectId, solo.id))).toBe(0)
+      expect(await count(tx, githubRepoLinks, eq(githubRepoLinks.projectId, team.id))).toBe(1)
+      expect(await count(tx, githubOauthStates, eq(githubOauthStates.userId, T.id))).toBe(1)
+      // T의 선언 근거는 링크만 남습니다.
+      const [evidence] = await tx.select().from(claimEvidence).where(eq(claimEvidence.claimRevisionId, tClaim.revisionId))
+      expect(evidence).toMatchObject({ githubItemId: null, githubUrl: uItem!.url })
+      const ledger = await tx.select().from(deletionLedger).where(eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, U.id)))
+      expect(ledger.find((l) => l.entityKind === 'github_items')?.count).toBe(2)
     })
   })
 

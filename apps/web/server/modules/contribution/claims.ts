@@ -6,7 +6,9 @@
  * - 선언·확인은 active owner/editor/reviewer, viewer는 읽기만(쓰기 403). 읽을 수 없는 프로젝트·선언은 404(§8).
  * - 선언은 언제나 요청자 본인의 것으로 만들고, 수정은 작성자 본인만 합니다(owner도 403). 낡은 expectedRevision은
  *   409 `stale_revision` + currentRevision. 바뀐 것이 없으면 422 `{_: 'no_changes'}`.
- * - 근거(`evidence[]`, 최대 20개)는 같은 프로젝트의 빌드 로그(`{kind:'log', id}`) 또는 산출물 버전(`{kind:'artifact', id}`).
+ * - 근거(`evidence[]`, 최대 20개)는 같은 프로젝트의 빌드 로그(`{kind:'log', id}`), 산출물 버전(`{kind:'artifact', id}`) 또는
+ *   GitHub 근거 후보(`{kind:'github', id}`, E-11 ADR 0056 — 지금 연결된 저장소의 후보 중 **선언하는 본인의 GitHub 계정이 작성한 것**만, 주소·제목을 복사해 둠).
+ *   이전 revision의 GitHub 근거는 `{kind:'github', url}`로 이어받습니다(저장소 연결을 끊어 후보가 지워진 "링크만 남은 근거" 포함). 새 주소는 이렇게 넣을 수 없습니다.
  *   로그는 저장할 때 그 로그의 현재 revision으로 고정합니다. 없거나 다른 프로젝트 것은 422 `{evidence: 'not_found'}`,
  *   격리·실패 파일은 422 `{evidence: 'not_attachable'}`(이전 revision에서 이어받은 파일은 다시 보지 않음). 검사 중은 허용.
  *   수정 때 evidence를 생략하면 이전 revision의 근거를 이어받고(로그는 지금 revision으로 다시 고정), `[]`는 비웁니다.
@@ -44,7 +46,9 @@ import {
   claimRevisions,
   endorsements,
   eq,
+  githubItems,
   inArray,
+  isNotNull,
   logEntries,
   logRevisions,
   profiles,
@@ -59,6 +63,8 @@ import { emitAnalytics } from '../analytics/analytics'
 import { contentUrlFor } from '../artifacts/artifacts'
 import { type Actor, ServiceError, conflict, forbidden, invalid, notFound } from '../errors'
 import { summarize } from '../logs/logs'
+import { githubIdOf } from '../github/connect'
+import { attachableGithubItems, itemRef } from '../github/items'
 import { parseInput } from '../validation'
 import { type ProjectRow, isUuid, loadReadableProject } from '../projects/access'
 import { loadMemberRefs } from '../projects/member-refs'
@@ -81,13 +87,28 @@ const claimText = z
   .min(1, { error: 'required' })
   .max(CLAIM_TEXT_MAX, { error: 'too_long' })
 
-const evidenceItem = z.strictObject(
-  {
-    kind: z.enum(['log', 'artifact'], { error: requiredOr('invalid') }),
-    id: z.uuid({ error: requiredOr('invalid') }).transform((id) => id.toLowerCase()),
-  },
-  { error: (issue) => (issue.code === 'unrecognized_keys' ? 'unknown_key' : 'invalid') },
-)
+const evidenceItem = z
+  .strictObject(
+    {
+      kind: z.enum(['log', 'artifact', 'github'], { error: requiredOr('invalid') }),
+      id: z.uuid({ error: requiredOr('invalid') }).transform((id) => id.toLowerCase()).optional(),
+      /** GitHub 근거를 이전 revision에서 이어받을 때만(E-11). */
+      url: z.string({ error: 'invalid' }).max(500, { error: 'invalid' }).optional(),
+    },
+    { error: (issue) => (issue.code === 'unrecognized_keys' ? 'unknown_key' : 'invalid') },
+  )
+  .superRefine((item, ctx) => {
+    if (item.kind === 'github' && item.id !== undefined && item.url !== undefined) ctx.addIssue({ code: 'custom', message: 'invalid', path: ['url'] })
+    else if (item.kind !== 'github' && item.url !== undefined) ctx.addIssue({ code: 'custom', message: 'unknown_key', path: ['url'] })
+    else if (item.id === undefined && (item.kind !== 'github' || item.url === undefined)) ctx.addIssue({ code: 'custom', message: 'required', path: ['id'] })
+  })
+  .transform(
+    (item): { kind: 'log' | 'artifact' | 'github'; id: string } | { kind: 'github'; url: string } =>
+      item.id !== undefined ? { kind: item.kind, id: item.id } : { kind: 'github', url: item.url! },
+  )
+
+const evidenceItemKey = (item: { kind: string; id: string } | { kind: string; url: string }) =>
+  'id' in item ? `${item.kind}:${item.id}` : `${item.kind}:url:${item.url}`
 
 /** 근거 목록. 같은 (kind, id)는 하나로 합치고 순서를 유지합니다. */
 const evidenceSchema = z
@@ -96,7 +117,7 @@ const evidenceSchema = z
   .transform((items) => {
     const seen = new Set<string>()
     return items.filter((item) => {
-      const key = `${item.kind}:${item.id}`
+      const key = evidenceItemKey(item)
       if (seen.has(key)) return false
       seen.add(key)
       return true
@@ -135,26 +156,35 @@ export const endorsementSchema = z
 
 // ── 근거 ─────────────────────────────────────────────────────────────────
 
-/** claim_evidence에 넣을 행(position 제외). */
+/** claim_evidence에 넣을 행(position 제외). GitHub 근거는 후보 참조(지워졌으면 null)와 복사한 주소·제목. */
 type EvidenceRow =
-  | { logEntryId: string; logRevisionId: string; artifactVersionId: null }
-  | { logEntryId: null; logRevisionId: null; artifactVersionId: string }
+  | { logEntryId: string; logRevisionId: string; artifactVersionId: null; githubItemId?: null; githubUrl?: null; githubTitle?: null }
+  | { logEntryId: null; logRevisionId: null; artifactVersionId: string; githubItemId?: null; githubUrl?: null; githubTitle?: null }
+  | { logEntryId: null; logRevisionId: null; artifactVersionId: null; githubItemId: string | null; githubUrl: string; githubTitle: string }
 
 const evidenceKey = (row: EvidenceRow) =>
-  row.artifactVersionId ? `a:${row.artifactVersionId}` : `l:${row.logEntryId}:${row.logRevisionId}`
+  row.githubUrl ? `g:${row.githubUrl}` : row.artifactVersionId ? `a:${row.artifactVersionId}` : `l:${row.logEntryId}:${row.logRevisionId}`
 
 /**
  * 근거 검사 후 저장할 행. 로그는 지금 revision으로 고정합니다. previousVersionIds(이전 revision의 파일)는 상태를 다시 보지 않습니다.
+ * GitHub 후보(id)는 지금 연결된 저장소의 같은 과제 후보이고 작성자가 선언하는 사람(claimantId)의 GitHub 계정일 때만, 주소(url)는
+ * 이전 revision에 있던 GitHub 근거일 때만 받습니다. 어긋나면 `not_found`.
  */
 async function resolveEvidence(
   db: DbExecutor,
   projectId: string,
+  claimantId: string,
   items: readonly ClaimEvidenceInput[],
-  previousVersionIds: readonly string[] = [],
+  previous: { versionIds?: readonly string[]; githubRows?: readonly EvidenceRow[] } = {},
 ): Promise<EvidenceRow[]> {
   if (items.length === 0) return []
-  const logIds = items.filter((item) => item.kind === 'log').map((item) => item.id)
-  const versionIds = items.filter((item) => item.kind === 'artifact').map((item) => item.id)
+  const previousVersionIds = previous.versionIds ?? []
+  const withId = items.filter((item): item is { kind: 'log' | 'artifact' | 'github'; id: string } => 'id' in item)
+  const logIds = withId.filter((item) => item.kind === 'log').map((item) => item.id)
+  const versionIds = withId.filter((item) => item.kind === 'artifact').map((item) => item.id)
+  const githubIds = withId.filter((item) => item.kind === 'github').map((item) => item.id)
+  const githubById = githubIds.length ? await attachableGithubItems(db, projectId, await githubIdOf(db, claimantId), githubIds) : new Map()
+  const previousGithub = new Map((previous.githubRows ?? []).filter((row) => row.githubUrl).map((row) => [row.githubUrl!, row]))
   const [logs, versions] = await Promise.all([
     logIds.length > 0
       ? db
@@ -174,6 +204,16 @@ async function resolveEvidence(
   const versionById = new Map(versions.map((row) => [row.id, row]))
 
   return items.map((item): EvidenceRow => {
+    if (!('id' in item)) {
+      const kept = previousGithub.get(item.url)
+      if (!kept?.githubUrl) throw invalid({ evidence: 'not_found' })
+      return { logEntryId: null, logRevisionId: null, artifactVersionId: null, githubItemId: kept.githubItemId ?? null, githubUrl: kept.githubUrl, githubTitle: kept.githubTitle! }
+    }
+    if (item.kind === 'github') {
+      const found = githubById.get(item.id)
+      if (!found) throw invalid({ evidence: 'not_found' })
+      return { logEntryId: null, logRevisionId: null, artifactVersionId: null, githubItemId: found.id, githubUrl: found.url, githubTitle: found.title }
+    }
     if (item.kind === 'log') {
       const log = logById.get(item.id)
       // 작성 트랜잭션 도중(아직 revision 없음)인 로그는 없는 것으로 봅니다.
@@ -208,11 +248,11 @@ async function evidenceRowsByRevision(db: DbExecutor, revisionIds: readonly stri
     .where(inArray(claimEvidence.claimRevisionId, [...revisionIds]))
     .orderBy(asc(claimEvidence.claimRevisionId), asc(claimEvidence.position))
   for (const row of rows) {
-    const item = (
-      row.artifactVersionId
+    const item: EvidenceRow = row.githubUrl
+      ? { logEntryId: null, logRevisionId: null, artifactVersionId: null, githubItemId: row.githubItemId, githubUrl: row.githubUrl, githubTitle: row.githubTitle ?? row.githubUrl }
+      : row.artifactVersionId
         ? { logEntryId: null, logRevisionId: null, artifactVersionId: row.artifactVersionId }
         : { logEntryId: row.logEntryId!, logRevisionId: row.logRevisionId!, artifactVersionId: null }
-    ) satisfies EvidenceRow
     result.set(row.claimRevisionId, [...(result.get(row.claimRevisionId) ?? []), item])
   }
   return result
@@ -256,6 +296,20 @@ async function evidenceByRevision(db: DbExecutor, revisionIds: readonly string[]
       .innerJoin(artifacts, eq(artifacts.id, artifactVersions.artifactId))
       .where(inArray(claimEvidence.claimRevisionId, ids)),
   ])
+  const github = await db
+    .select({
+      claimRevisionId: claimEvidence.claimRevisionId,
+      position: claimEvidence.position,
+      url: claimEvidence.githubUrl,
+      title: claimEvidence.githubTitle,
+      itemId: githubItems.id,
+      kind: githubItems.kind,
+      sha: githubItems.sha,
+      number: githubItems.number,
+    })
+    .from(claimEvidence)
+    .leftJoin(githubItems, eq(githubItems.id, claimEvidence.githubItemId))
+    .where(and(inArray(claimEvidence.claimRevisionId, ids), isNotNull(claimEvidence.githubUrl)))
   const push = (revisionId: string, position: number, dto: ClaimEvidenceDto) =>
     result.set(revisionId, [...(result.get(revisionId) ?? []), { position, dto }])
   for (const row of logs) {
@@ -279,6 +333,16 @@ async function evidenceByRevision(db: DbExecutor, revisionIds: readonly string[]
       versionNo: version.versionNo,
       scanStatus: version.scanStatus,
       contentUrl: version.scanStatus === 'clean' ? contentUrlFor(version.artifactId, version.id) : null,
+    })
+  }
+  for (const row of github) {
+    push(row.claimRevisionId, row.position, {
+      kind: 'github',
+      itemId: row.itemId,
+      itemKind: row.kind,
+      ref: row.kind ? itemRef({ kind: row.kind, sha: row.sha, number: row.number }) : null,
+      url: row.url!,
+      title: row.title ?? row.url!,
     })
   }
   return new Map([...result].map(([id, list]) => [id, list.sort((a, b) => a.position - b.position).map((e) => e.dto)]))
@@ -501,7 +565,7 @@ export async function createClaim(
       .from(roleClaims)
       .where(and(eq(roleClaims.projectId, project.id), eq(roleClaims.userId, actor.userId)))
     if ((count?.n ?? 0) >= CLAIM_LIMIT_PER_MEMBER) throw conflict('limit_reached', { limit: CLAIM_LIMIT_PER_MEMBER })
-    const evidence = await resolveEvidence(tx, project.id, input.evidence)
+    const evidence = await resolveEvidence(tx, project.id, actor.userId, input.evidence)
 
     const [claim] = await tx
       .insert(roleClaims)
@@ -551,12 +615,19 @@ export async function reviseClaim(
     const previousRows = (await evidenceRowsByRevision(tx, [current.id])).get(current.id) ?? []
     const requested: ClaimEvidenceInput[] =
       input.evidence === undefined
-        ? previousRows.map((row) =>
-            row.artifactVersionId ? { kind: 'artifact', id: row.artifactVersionId } : { kind: 'log', id: row.logEntryId! },
+        ? previousRows.map((row): ClaimEvidenceInput =>
+            row.githubUrl
+              ? { kind: 'github', url: row.githubUrl }
+              : row.artifactVersionId
+                ? { kind: 'artifact', id: row.artifactVersionId }
+                : { kind: 'log', id: row.logEntryId! },
           )
         : (input.evidence ?? [])
     const previousVersionIds = previousRows.flatMap((row) => (row.artifactVersionId ? [row.artifactVersionId] : []))
-    const evidence = await resolveEvidence(tx, project.id, requested, previousVersionIds)
+    const evidence = await resolveEvidence(tx, project.id, claim.userId, requested, {
+      versionIds: previousVersionIds,
+      githubRows: previousRows.filter((row) => row.githubUrl),
+    })
     const text = input.text ?? current.text
     const sameEvidence =
       evidence.length === previousRows.length && evidence.every((row, i) => evidenceKey(row) === evidenceKey(previousRows[i]!))
@@ -583,10 +654,11 @@ export async function reviseClaim(
   })
 }
 
-/** 선언 근거 이벤트(종류별 개수만). */
-async function emitClaimEvidence(tx: DbExecutor, actor: Actor, projectId: string, evidence: ReadonlyArray<{ artifactVersionId?: string | null }>) {
+/** 선언 근거 이벤트(종류별 개수만). GitHub 근거는 따로 세지 않습니다(허용 목록 props 그대로). */
+async function emitClaimEvidence(tx: DbExecutor, actor: Actor, projectId: string, evidence: ReadonlyArray<{ artifactVersionId?: string | null; logEntryId?: string | null }>) {
   const files = evidence.filter((e) => e.artifactVersionId).length
-  await emitAnalytics(tx, { name: 'evidence_attached', actorId: actor.userId, projectId, props: { target: 'claim', files, logs: evidence.length - files } })
+  const logs = evidence.filter((e) => e.logEntryId).length
+  await emitAnalytics(tx, { name: 'evidence_attached', actorId: actor.userId, projectId, props: { target: 'claim', files, logs } })
 }
 
 // ── 확인·철회 ────────────────────────────────────────────────────────────

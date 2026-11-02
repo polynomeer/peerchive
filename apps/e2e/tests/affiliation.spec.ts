@@ -80,7 +80,7 @@ test('C-01: 학교 메일 인증(틀린 코드 포함) → 졸업생 표시 → 
 test('I-01: P2 기관 플래그가 꺼져 있으면(기본) 기관 인증 진입점이 없고 새 API는 404, 학교 메일 인증 화면은 그대로', async ({ newUser }) => {
   const user = await newUser('p2off')
   const flags = await (await user.api.raw('GET', '/api/v1/features')).json()
-  expect(flags).toEqual({ alumni: false, topics: false, institutions: false, hubStagedOpening: false, stuckQa: false, semanticStuck: false })
+  expect(flags).toEqual({ alumni: false, topics: false, institutions: false, hubStagedOpening: false, stuckQa: false, semanticStuck: false, github: false })
   for (const [method, path, body] of [
     ['GET', '/api/v1/institutions?q=캠프', undefined],
     ['POST', '/api/v1/me/affiliations/invite-code', { code: 'AAAA-BBBB-CCCC', standing: 'student' }],

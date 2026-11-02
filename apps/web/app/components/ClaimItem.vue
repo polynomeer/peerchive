@@ -115,6 +115,7 @@ const endorsementText = (status: EndorsementStatus) => (status === 'confirmed' ?
     <ul v-if="claim.evidence.length" class="chips plain-inline claim-evidence" aria-label="근거">
       <li v-for="(evidence, i) in claim.evidence" :key="i" class="chip">
         <a v-if="evidence.kind === 'artifact' && evidence.contentUrl" :href="evidence.contentUrl" target="_blank" rel="noopener">{{ evidenceLabel(evidence) }}</a>
+        <a v-else-if="evidence.kind === 'github'" :href="evidence.url" target="_blank" rel="noopener noreferrer">{{ evidenceLabel(evidence) }}</a>
         <span v-else>{{ evidenceLabel(evidence) }}</span>
       </li>
     </ul>

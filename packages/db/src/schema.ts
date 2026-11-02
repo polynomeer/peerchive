@@ -59,6 +59,9 @@
  * A-03(0036 migration): 동문회·OB 방의 멤버 명부 동의(directory_entries, 동의한 멤버만 행·철회·나가기 시 즉시 삭제). 결정은 ADR 0040.
  * I-02(0041 migration): 기관 운영진(institution_staff: 운영자가 지정·해제, 기관당 사람마다 열린 행 하나)과 기수 방(community_spaces.cohort_id,
  * 사용자 방만, 기수마다 보관되지 않은 방 하나). 결정은 ADR 0044.
+ * E-11(0051 migration): GitHub App 연동 — 회원 GitHub 계정(integrations.external_login), 일회용 state(github_oauth_states),
+ * 과제 공간 ↔ 저장소 연결(github_repo_links), 커밋·PR 근거 후보(github_items, 최소 필드), 웹훅 재전송 방지(github_webhook_deliveries),
+ * 선언 근거 종류 github(claim_evidence.github_*). 결정은 ADR 0056.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -1655,19 +1658,34 @@ export const claimEvidence = pgTable(
     /** 고정한 로그 revision. 그 로그(log_entry_id)의 revision인지는 애플리케이션이 확인합니다. */
     logRevisionId: uuid('log_revision_id').references(() => logRevisions.id),
     artifactVersionId: uuid('artifact_version_id').references(() => artifactVersions.id),
+    /**
+     * GitHub 근거(E-11, ADR 0056): 근거 후보(github_items)를 고를 때 그 항목의 주소·제목을 복사해 둡니다. 저장소 연결을 끊으면 후보 행은 지워지고
+     * github_item_id만 null이 되어 "링크만 남은 근거"가 됩니다. 팀 안에서만 보이며 공개 스냅샷에는 넣지 않습니다(ADR 0011 허용 목록 밖).
+     */
+    githubItemId: uuid('github_item_id').references((): AnyPgColumn => githubItems.id),
+    githubUrl: text('github_url'),
+    githubTitle: text('github_title'),
   },
   (t) => [
     primaryKey({ name: 'claim_evidence_pkey', columns: [t.claimRevisionId, t.position] }),
     unique('claim_evidence_log_entry_key').on(t.claimRevisionId, t.logEntryId),
     unique('claim_evidence_artifact_version_key').on(t.claimRevisionId, t.artifactVersionId),
+    unique('claim_evidence_github_url_key').on(t.claimRevisionId, t.githubUrl),
     index('claim_evidence_log_entry_id_idx').on(t.logEntryId),
     index('claim_evidence_artifact_version_id_idx').on(t.artifactVersionId),
+    index('claim_evidence_github_item_id_idx').on(t.githubItemId),
     check('claim_evidence_position_check', sql`${t.position} between 0 and 19`),
-    // 로그 근거(entry + 그 entry의 revision)와 파일 근거 중 정확히 하나.
+    // 로그 근거(entry + 그 entry의 revision), 파일 근거, GitHub 근거(주소·제목) 중 정확히 하나.
     check(
       'claim_evidence_kind_check',
-      sql`(${t.logEntryId} is not null and ${t.logRevisionId} is not null and ${t.artifactVersionId} is null)
-        or (${t.logEntryId} is null and ${t.logRevisionId} is null and ${t.artifactVersionId} is not null)`,
+      sql`(${t.logEntryId} is not null and ${t.logRevisionId} is not null and ${t.artifactVersionId} is null and ${t.githubUrl} is null)
+        or (${t.logEntryId} is null and ${t.logRevisionId} is null and ${t.artifactVersionId} is not null and ${t.githubUrl} is null)
+        or (${t.logEntryId} is null and ${t.logRevisionId} is null and ${t.artifactVersionId} is null and ${t.githubUrl} is not null)`,
+    ),
+    check(
+      'claim_evidence_github_check',
+      sql`(${t.githubUrl} is null and ${t.githubTitle} is null and ${t.githubItemId} is null)
+        or (${t.githubUrl} ~ '^https://github[.]com/' and char_length(${t.githubUrl}) <= 500 and ${t.githubTitle} is not null and char_length(${t.githubTitle}) between 1 and 200)`,
     ),
   ],
 )
@@ -1722,7 +1740,8 @@ export const outboxEvents = pgTable(
 
 /**
  * 외부 계정 연결. 디스코드는 사용자 id(snowflake)만 저장하고 토큰은 받지 않습니다(봇 토큰 하나로 동작).
- * 해제는 revoked_at을 채우며, 연결 중인(revoked_at null) 행은 (공급자, 외부 id)와 (사용자, 공급자)마다 하나입니다.
+ * GitHub(E-11, ADR 0056)는 GitHub App user-to-server OAuth로 확인한 사용자 id(external_id)와 로그인 이름만 저장하고 토큰은 저장하지 않습니다.
+ * GitHub 연결 해제는 행을 지웁니다. 디스코드 해제는 revoked_at을 채우며, 연결 중인(revoked_at null) 행은 (공급자, 외부 id)와 (사용자, 공급자)마다 하나입니다.
  */
 export const integrations = pgTable(
   'integrations',
@@ -1733,10 +1752,14 @@ export const integrations = pgTable(
       .references(() => users.id),
     provider: integrationProvider('provider').notNull(),
     externalId: text('external_id').notNull(),
+    /** GitHub 로그인 이름(E-11, push 커밋의 작성자 username을 회원에 맞출 때만 씀). 디스코드는 늘 null. */
+    externalLogin: text('external_login'),
     linkedAt: timestamp('linked_at', { withTimezone: true }).notNull().defaultNow(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
   },
   (t) => [
+    check('integrations_external_login_check', sql`${t.externalLogin} is null or (${t.provider}::text = 'github' and char_length(${t.externalLogin}) between 1 and 39)`),
+    index('integrations_github_login_idx').on(sql`lower(${t.externalLogin})`).where(sql`${t.externalLogin} is not null`),
     uniqueIndex('integrations_provider_external_active_key')
       .on(t.provider, t.externalId)
       .where(sql`${t.revokedAt} is null`),
@@ -5011,4 +5034,145 @@ export const communityPostMedia = pgTable(
     check('community_post_media_sha256_check', sql`${t.sha256} is null or ${t.sha256} ~ '^[0-9a-f]{64}$'`),
     check('community_post_media_clean_check', sql`${t.scanStatus}::text <> 'clean' or (${t.metadataStripped} and ${t.mediaType} is not null)`),
   ],
+)
+
+// ── GitHub App 연동 (E-11, DELIVERY_PLAN §4.4, PROOFU_EVOLUTION_PLAN §7, ADR 0056) ──────────────────────
+
+/** 일회용 state의 용도: 회원 계정 연결, 앱 설치 시작, 설치 후 사용자 확인(OAuth), 확인된 저장소 고르기. */
+export const githubStatePurpose = pgEnum('github_state_purpose', ['identity', 'install', 'install_verify', 'select'])
+export const githubItemKind = pgEnum('github_item_kind', ['commit', 'pull_request'])
+export const githubPrState = pgEnum('github_pr_state', ['open', 'closed', 'merged'])
+
+/** 고르기 단계에 보여 줄 저장소(설치한 사용자가 GitHub에서 접근할 수 있고 앱 설치에도 들어 있는 것). */
+export interface GithubRepoChoice {
+  id: number
+  fullName: string
+  htmlUrl: string
+  private: boolean
+}
+
+/**
+ * GitHub 연결 흐름의 일회용 state. 원문은 GitHub로 보내는 주소에만 싣고 SHA-256 해시만 저장합니다. 사용자(와 과제)에 묶이고 10분(고르기 30분)·한 번만.
+ * - identity: 회원 GitHub 계정 연결(과제 없음). install: 앱 설치 페이지로 보낼 때(과제). install_verify: 설치 뒤 돌아온 installation id를 사용자 OAuth로 확인할 때.
+ * - select: 확인을 마친 저장소 목록(repos)을 owner가 고를 때까지 보관합니다. 토큰은 어디에도 저장하지 않습니다.
+ */
+export const githubOauthStates = pgTable(
+  'github_oauth_states',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    purpose: githubStatePurpose('purpose').notNull(),
+    stateHash: text('state_hash').notNull().unique(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    projectId: uuid('project_id').references(() => projects.id),
+    installationId: bigint('installation_id', { mode: 'number' }),
+    repos: jsonb('repos').$type<GithubRepoChoice[]>(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('github_oauth_states_user_id_idx').on(t.userId),
+    index('github_oauth_states_project_id_idx').on(t.projectId),
+    check('github_oauth_states_project_check', sql`(${t.purpose}::text = 'identity') = (${t.projectId} is null)`),
+    check('github_oauth_states_installation_check', sql`(${t.purpose}::text in ('install_verify', 'select')) = (${t.installationId} is not null)`),
+    check('github_oauth_states_repos_check', sql`(${t.purpose}::text = 'select') = (${t.repos} is not null)`),
+  ],
+)
+
+/**
+ * 과제 공간 ↔ GitHub 저장소 연결. 과제마다 연결 중인 저장소 하나, 저장소도 한 과제에만 연결합니다(해제 전까지).
+ * 해제는 unlinked_at·이유를 채우고 그 연결의 근거 후보(github_items)를 지웁니다. 행은 남겨 공개 전 점검이 "비공개 저장소였던 주소"를 알아보게 합니다
+ * (저장소 이름·주소·비공개 여부만, 내용 없음).
+ */
+export const githubRepoLinks = pgTable(
+  'github_repo_links',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    installationId: bigint('installation_id', { mode: 'number' }).notNull(),
+    repoId: bigint('repo_id', { mode: 'number' }).notNull(),
+    fullName: text('full_name').notNull(),
+    htmlUrl: text('html_url').notNull(),
+    isPrivate: boolean('is_private').notNull(),
+    linkedBy: uuid('linked_by')
+      .notNull()
+      .references(() => users.id),
+    linkedAt: timestamp('linked_at', { withTimezone: true }).notNull().defaultNow(),
+    unlinkedAt: timestamp('unlinked_at', { withTimezone: true }),
+    /** owner·uninstalled(앱 제거·정지)·repo_removed(설치에서 빠짐·삭제)·project_purged. */
+    unlinkReason: text('unlink_reason'),
+  },
+  (t) => [
+    uniqueIndex('github_repo_links_project_active_key')
+      .on(t.projectId)
+      .where(sql`${t.unlinkedAt} is null`),
+    uniqueIndex('github_repo_links_repo_active_key')
+      .on(t.repoId)
+      .where(sql`${t.unlinkedAt} is null`),
+    index('github_repo_links_installation_idx').on(t.installationId),
+    check('github_repo_links_html_url_check', sql`${t.htmlUrl} ~ '^https://github[.]com/' and char_length(${t.htmlUrl}) <= 300`),
+    check('github_repo_links_full_name_check', sql`char_length(${t.fullName}) between 3 and 200`),
+    check(
+      'github_repo_links_unlink_check',
+      sql`(${t.unlinkedAt} is null and ${t.unlinkReason} is null)
+        or (${t.unlinkedAt} is not null and ${t.unlinkReason} in ('owner', 'uninstalled', 'repo_removed', 'project_purged'))`,
+    ),
+  ],
+)
+
+/**
+ * 커밋·PR 근거 후보(최소 필드): 커밋 SHA 또는 PR 번호, 첫 줄 제목(200자), 주소, 작성자 GitHub 사용자 id, 시각, PR 상태.
+ * 파일 내용·diff·메일 주소·작성자 이름은 받지 않습니다. 과제 멤버만 읽고(비공개 저장소 포함), 자동 확정·집계·공개 스냅샷에 쓰지 않습니다.
+ * 작성자를 회원에 맞출 수 없는 커밋은 저장하지 않습니다. 저장소 연결을 끊으면 지웁니다.
+ */
+export const githubItems = pgTable(
+  'github_items',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    linkId: uuid('link_id')
+      .notNull()
+      .references(() => githubRepoLinks.id),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    kind: githubItemKind('kind').notNull(),
+    sha: text('sha'),
+    number: integer('number'),
+    title: text('title').notNull(),
+    url: text('url').notNull(),
+    authorGithubId: bigint('author_github_id', { mode: 'number' }).notNull(),
+    prState: githubPrState('pr_state'),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+    /** PR의 updated_at(늦게 온 이전 이벤트가 새 상태를 덮지 않게). */
+    sourceUpdatedAt: timestamp('source_updated_at', { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    unique('github_items_link_sha_key').on(t.linkId, t.sha),
+    unique('github_items_link_number_key').on(t.linkId, t.number),
+    index('github_items_project_author_idx').on(t.projectId, t.authorGithubId, t.occurredAt),
+    index('github_items_author_idx').on(t.authorGithubId),
+    check(
+      'github_items_kind_check',
+      sql`(${t.kind}::text = 'commit' and ${t.sha} ~ '^[0-9a-f]{40}([0-9a-f]{24})?$' and ${t.number} is null and ${t.prState} is null)
+        or (${t.kind}::text = 'pull_request' and ${t.sha} is null and ${t.number} > 0 and ${t.prState} is not null)`,
+    ),
+    check('github_items_title_check', sql`char_length(${t.title}) between 1 and 200`),
+    check('github_items_url_check', sql`${t.url} ~ '^https://github[.]com/' and char_length(${t.url}) <= 500`),
+  ],
+)
+
+/** 처리한 웹훅 전달 id(X-GitHub-Delivery, 7일 기억). 처리와 같은 트랜잭션에 넣어 실패한 전달은 GitHub의 재전달로 다시 받을 수 있습니다. */
+export const githubWebhookDeliveries = pgTable(
+  'github_webhook_deliveries',
+  {
+    deliveryId: text('delivery_id').primaryKey(),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('github_webhook_deliveries_received_at_idx').on(t.receivedAt)],
 )

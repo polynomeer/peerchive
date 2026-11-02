@@ -3,6 +3,7 @@ import {
   LONG_CODE_LINES,
   findAnonymousNames,
   findEmails,
+  findPrivateRepoRefs,
   findPhoneNumbers,
   findPrivateUrls,
   findResidentIds,
@@ -194,5 +195,33 @@ describe('runPublicationChecks', () => {
   it('masks short values completely', () => {
     expect(maskSample('abc')).toBe('***')
     expect(maskSample('2019123456', 2, 0)).toBe('20********')
+  })
+})
+
+describe('private GitHub repository links (E-11)', () => {
+  const repos = ['https://github.com/team/capstone']
+
+  it('matches the repository itself and paths under it, ignoring case', () => {
+    expect(findPrivateRepoRefs('https://github.com/team/capstone', repos)).toEqual(['team/capstone'])
+    expect(findPrivateRepoRefs('커밋 https://github.com/Team/Capstone/commit/abc 참고', repos)).toEqual(['team/capstone'])
+    expect(findPrivateRepoRefs('(https://github.com/team/capstone/pull/3)', repos)).toEqual(['team/capstone'])
+  })
+
+  it('does not match other repositories with a longer name or no repositories', () => {
+    expect(findPrivateRepoRefs('https://github.com/team/capstone-public', repos)).toEqual([])
+    expect(findPrivateRepoRefs('https://github.com/other/capstone', repos)).toEqual([])
+    expect(findPrivateRepoRefs('https://github.com/team/capstone', [])).toEqual([])
+  })
+
+  it('warns on log links and text but not on file names', () => {
+    const items: CheckItem[] = [
+      { kind: 'url', location: { kind: 'log', key: 'l1', field: 'links.0.url' }, value: 'https://github.com/team/capstone/pull/7' },
+      { kind: 'text', location: { kind: 'log', key: 'l2', field: 'body' }, value: '저장소 https://github.com/team/capstone 에서' },
+      { kind: 'file_name', location: { kind: 'artifact', key: 'v1', field: 'fileName' }, value: 'https://github.com/team/capstone' },
+    ]
+    const warnings = runPublicationChecks(items, { privateRepoUrls: repos }).filter((w) => w.rule === 'github_private')
+    expect(warnings.map((w) => w.location.key)).toEqual(['l1', 'l2'])
+    expect(warnings[0]!.sample).toBe('team/capstone')
+    expect(runPublicationChecks(items).some((w) => w.rule === 'github_private')).toBe(false)
   })
 })

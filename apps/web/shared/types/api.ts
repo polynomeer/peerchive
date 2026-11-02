@@ -841,6 +841,19 @@ export type ClaimEvidenceDto =
       /** clean일 때만. */
       contentUrl: string | null
     }
+  | {
+      /**
+       * GitHub 커밋·PR(E-11, ADR 0056). 고를 때 복사한 주소·제목이며 팀 안에서만 보입니다(공개 스냅샷에 넣지 않음).
+       * 저장소 연결을 끊어 후보가 지워졌으면 `itemId`·`itemKind`·`ref`가 null인 "링크만 남은 근거"입니다.
+       */
+      kind: 'github'
+      itemId: string | null
+      itemKind: GithubItemKind | null
+      /** 커밋은 SHA 앞 7자리, PR은 `#번호`. */
+      ref: string | null
+      url: string
+      title: string
+    }
 
 /** 확인·이의 한 건. 같은 프로젝트 멤버에게만 줍니다. 이메일 없음. */
 export interface EndorsementDto {
@@ -942,6 +955,62 @@ export interface ContributionDto {
 /** 본인 연동 상태. 디스코드 사용자 id는 끝 4자리만 보여 줍니다. */
 export interface IntegrationsDto {
   discord: { linked: boolean; linkedAt: string | null; externalIdHint: string | null }
+}
+
+// ── GitHub App 연동 (E-11, ADR 0056) ──────────────────────────────────────
+
+export type GithubItemKind = 'commit' | 'pull_request'
+export type GithubPrState = 'open' | 'closed' | 'merged'
+
+/** 본인 GitHub 계정 연결 상태(GitHub App 설정이 없으면 경로가 404). 저장하는 것은 GitHub 사용자 번호·로그인 이름뿐입니다. */
+export interface GithubIdentityDto {
+  linked: boolean
+  login: string | null
+  linkedAt: string | null
+}
+
+/** GitHub로 보낼 주소(state 포함, 10분·한 번만). 화면은 이 주소로 이동합니다. */
+export interface GithubRedirectDto {
+  url: string
+}
+
+export interface GithubRepoChoiceDto {
+  id: number
+  fullName: string
+  private: boolean
+}
+
+/** 과제의 GitHub 저장소 연결(멤버만). */
+export interface ProjectGithubDto {
+  link: { fullName: string; htmlUrl: string; private: boolean; linkedAt: string } | null
+  /** owner에게만: 설치·사용자 확인을 마치고 고르기를 기다리는 저장소(30분 안에 하나 고름). */
+  pendingChoices: GithubRepoChoiceDto[] | null
+  /** 연결·해제는 owner만. */
+  canManage: boolean
+  /** 내 GitHub 계정이 연결되어 있는지(내 커밋·PR이 근거 후보가 되려면 필요). */
+  identityLinked: boolean
+}
+
+/** 근거 후보 하나(최소 필드: 내용·diff 없음). */
+export interface GithubItemDto {
+  id: string
+  kind: GithubItemKind
+  /** 커밋은 SHA 앞 7자리, PR은 `#번호`. */
+  ref: string
+  /** 커밋 메시지 첫 줄·PR 제목(200자에서 자름). */
+  title: string
+  url: string
+  occurredAt: string
+  prState: GithubPrState | null
+}
+
+/**
+ * GET /projects/:id/github/items — 멤버별 근거 후보(최근 30개씩). 자동으로 확정·집계되지 않고, 본인이 역할 선언 근거로 고르거나
+ * 로그 링크로 붙일 때만 쓰입니다. GitHub 계정을 연결하지 않은 멤버는 `identityLinked: false`·빈 목록입니다.
+ */
+export interface GithubCandidatesDto {
+  linked: boolean
+  members: Array<{ member: LogAuthorDto; identityLinked: boolean; items: GithubItemDto[] }>
 }
 
 /** 일회용 코드(10분, 한 번만). 원문은 이 응답에서 한 번만 받습니다. */
@@ -1167,6 +1236,7 @@ export type PublicationCheckRule =
   | 'long_code'
   | 'anonymous_name'
   | 'pdf_metadata'
+  | 'github_private'
 
 export interface PublicationCheckDto {
   rule: PublicationCheckRule
@@ -2045,6 +2115,8 @@ export interface FeatureFlagsDto {
   stuckQa: boolean
   /** E-05 유사 막힘 의미 검색. 플래그가 아니라 임베딩 공급자 설정(PEERCHIVE_EMBEDDINGS_PROVIDER + VOYAGE_API_KEY)이 있을 때만 true. */
   semanticStuck: boolean
+  /** E-11 GitHub App 연동. 플래그가 아니라 GITHUB_APP_* 설정 여섯 개가 모두 있을 때만 true. */
+  github: boolean
 }
 
 /** 대학이 아닌 기관(검색·운영자 생성 결과). */

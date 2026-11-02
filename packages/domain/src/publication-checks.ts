@@ -19,6 +19,7 @@ export const PUBLICATION_CHECK_RULES = [
   'long_code',
   'anonymous_name',
   'pdf_metadata',
+  'github_private',
 ] as const
 export type PublicationCheckRule = (typeof PUBLICATION_CHECK_RULES)[number]
 
@@ -55,6 +56,11 @@ export interface CheckOptions {
    * (pdfAuthorSample). 파일을 고쳐 쓰지 않으므로 학생이 문서 속성을 지우고 다시 올리도록 경고합니다.
    */
   pdfAuthorMetadata?: ReadonlyArray<{ artifactVersionId: string; sample: string }>
+  /**
+   * 이 과제에 연결했던(지금·이전) **비공개** GitHub 저장소의 주소(`https://github.com/owner/repo`, E-11 ADR 0056). 공개될 링크·글이 이 저장소를
+   * 가리키면 `github_private`로 경고합니다(공개 페이지 방문자는 열 수 없고, 제목이 비공개 저장소의 내용일 수 있음).
+   */
+  privateRepoUrls?: readonly string[]
 }
 
 /** 긴 코드로 보는 줄 수(이상). 과제 답 코드일 수 있어 저장소 링크 + 핵심 발췌를 권합니다(§15 "코드 전문"). */
@@ -223,6 +229,32 @@ export function findAnonymousNames(text: string, names: readonly string[]): stri
   })
 }
 
+/**
+ * 글·URL 안에서 비공개 저장소 주소(`https://github.com/owner/repo` 자체 또는 그 아래 경로)를 찾아 `owner/repo`를 돌려줍니다(대소문자 무시, E-11).
+ * `owner/repo-other`처럼 이름이 이어지는 다른 저장소는 맞추지 않습니다.
+ */
+export function findPrivateRepoRefs(text: string, repoUrls: readonly string[]): string[] {
+  if (repoUrls.length === 0) return []
+  const lower = text.toLowerCase()
+  const found: string[] = []
+  for (const raw of repoUrls) {
+    const base = raw.replace(/\/+$/, '').toLowerCase()
+    if (!base.startsWith('https://github.com/')) continue
+    let from = 0
+    for (;;) {
+      const at = lower.indexOf(base, from)
+      if (at < 0) break
+      const next = lower[at + base.length]
+      if (next === undefined || /[\/?#\s)\]>"'.,]/.test(next)) {
+        found.push(base.slice('https://github.com/'.length))
+        break
+      }
+      from = at + base.length
+    }
+  }
+  return found
+}
+
 // ── 실행 ─────────────────────────────────────────────────────────────────
 
 function hostOf(raw: string): string {
@@ -239,6 +271,7 @@ function hostOf(raw: string): string {
  * - url: 사설 URL(+ 메일·전화가 URL에 박힌 경우)
  * - file_name: 문제지·답안 이름, 익명 이름, 전화·메일·학번
  * - options.pdfAuthorMetadata: PDF 문서 속성의 작성자 정보(`pdf_metadata`, 위치는 그 파일의 `metadata`)
+ * - options.privateRepoUrls: text·url에서 비공개 GitHub 저장소 주소(`github_private`, 표본은 `owner/repo`)
  */
 export function runPublicationChecks(items: readonly CheckItem[], options: CheckOptions = {}): CheckWarning[] {
   const warnings: CheckWarning[] = []
@@ -250,6 +283,7 @@ export function runPublicationChecks(items: readonly CheckItem[], options: Check
     warnings.push({ rule, location, sample })
   }
   const anonymousNames = options.anonymousNames ?? []
+  const privateRepoUrls = options.privateRepoUrls ?? []
 
   for (const { kind, location, value } of items) {
     if (!value) continue
@@ -258,6 +292,7 @@ export function runPublicationChecks(items: readonly CheckItem[], options: Check
     for (const v of findEmails(value)) push('email', location, maskSample(v, 2, 4))
     for (const v of findStudentIds(value)) push('student_id', location, maskSample(v, 2, 0))
     for (const name of findAnonymousNames(value, anonymousNames)) push('anonymous_name', location, maskSample(name, 1, 0))
+    if (kind !== 'file_name') for (const repo of findPrivateRepoRefs(value, privateRepoUrls)) push('github_private', location, repo)
     if (kind === 'url') {
       if (isPrivateUrl(value)) push('private_url', location, hostOf(value))
     } else if (kind === 'text') {

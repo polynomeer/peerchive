@@ -4,8 +4,10 @@
  * - 새 선언(claim 없음)과 수정(claim 있음)이 함께 씁니다. 수정은 항상 새 버전이며, 저장 전에 "받은 확인이 새 버전에
  *   이어지지 않는다"는 안내를 버튼 바로 위에 글로 보여 줍니다(버튼의 aria-describedby로도 연결).
  * - 근거 후보: 이 과제의 로그(최근 200개, 제목·태그로 거르기)와 파일 버전(사용 가능·검사 중만, 격리·실패는 고를 수 없음).
+ * - E-11: GitHub 저장소가 연결되어 있으면 내 GitHub 계정이 작성한 커밋·PR 후보(최근 30개)도 고를 수 있습니다. 고른 것만 근거가 되고 자동으로 붙지 않습니다.
+ *   저장소 연결이 끊겨 후보가 사라진 근거는 "링크만 남은 근거"로 보이며 체크를 풀면 다음 버전에서 빠집니다.
  */
-import type { ClaimDto, LogDto, LogPageDto, LogTag } from '~~/shared/types/api'
+import type { ClaimDto, GithubCandidatesDto, GithubItemDto, LogDto, LogPageDto, LogTag } from '~~/shared/types/api'
 
 const props = defineProps<{ projectId: string; idPrefix: string; claim?: ClaimDto | null }>()
 const emit = defineEmits<{ saved: [claim: ClaimDto]; cancel: [] }>()
@@ -16,7 +18,10 @@ const editing = computed(() => !!props.claim)
 const text = ref(props.claim?.text ?? '')
 const logIds = ref<string[]>(props.claim?.evidence.flatMap((e) => (e.kind === 'log' ? [e.logId] : [])) ?? [])
 const versionIds = ref<string[]>(props.claim?.evidence.flatMap((e) => (e.kind === 'artifact' ? [e.versionId] : [])) ?? [])
-const selectedCount = computed(() => logIds.value.length + versionIds.value.length)
+const githubIds = ref<string[]>(props.claim?.evidence.flatMap((e) => (e.kind === 'github' && e.itemId ? [e.itemId] : [])) ?? [])
+const keptGithub = props.claim?.evidence.flatMap((e) => (e.kind === 'github' && !e.itemId ? [{ url: e.url, title: e.title }] : [])) ?? []
+const keptGithubUrls = ref<string[]>(keptGithub.map((e) => e.url))
+const selectedCount = computed(() => logIds.value.length + versionIds.value.length + githubIds.value.length + keptGithubUrls.value.length)
 const errors = ref<Record<string, string>>({})
 const failure = ref<string | null>(null)
 const saving = ref(false)
@@ -66,8 +71,33 @@ const logChoices = computed(() => {
 })
 const full = computed(() => selectedCount.value >= CLAIM_EVIDENCE_MAX)
 
+// ── GitHub 후보(E-11) ──
+const { flags, ensure: ensureFeatures } = useFeatures()
+const githubItems = ref<GithubItemDto[]>([])
+const githubLinked = ref(false)
+async function loadGithub() {
+  await ensureFeatures()
+  if (!flags.value.github) return
+  try {
+    const result = await $fetch<GithubCandidatesDto>(`/api/v1/projects/${props.projectId}/github/items`, { query: { mine: 1 } })
+    githubLinked.value = result.linked
+    githubItems.value = result.members[0]?.items ?? []
+  } catch {
+    githubItems.value = []
+  }
+}
+const previousGithub = props.claim?.evidence.flatMap((e) => (e.kind === 'github' && e.itemId ? [e] : [])) ?? []
+const githubChoices = computed(() => {
+  const known = new Set(githubItems.value.map((item) => item.id))
+  const extra = previousGithub
+    .filter((e) => !known.has(e.itemId!))
+    .map((e): GithubItemDto => ({ id: e.itemId!, kind: e.itemKind ?? 'commit', ref: e.ref ?? '', title: e.title, url: e.url, occurredAt: '', prState: null }))
+  return [...extra, ...githubItems.value]
+})
+
 onMounted(() => {
   void loadLogs()
+  void loadGithub()
   if (!artifacts.loaded.value) void artifacts.refresh()
 })
 
@@ -80,6 +110,8 @@ async function save() {
   const evidence = [
     ...logIds.value.map((logId) => ({ kind: 'log' as const, id: logId })),
     ...versionIds.value.map((versionId) => ({ kind: 'artifact' as const, id: versionId })),
+    ...githubIds.value.map((itemId) => ({ kind: 'github' as const, id: itemId })),
+    ...keptGithubUrls.value.map((url) => ({ kind: 'github' as const, url })),
   ]
   try {
     const saved = props.claim
@@ -92,6 +124,7 @@ async function save() {
       text.value = ''
       logIds.value = []
       versionIds.value = []
+      githubIds.value = []
     }
     emit('saved', saved)
   } catch (e) {
@@ -167,6 +200,22 @@ async function save() {
           <span>{{ option.label }} <span class="muted">· {{ SCAN_STATUS_LABELS[option.scanStatus] }}</span></span>
         </label>
       </div>
+
+      <template v-if="githubLinked || githubChoices.length || keptGithub.length">
+        <h4 class="claim-evidence-heading">GitHub 커밋·PR</h4>
+        <p class="hint">내 GitHub 계정으로 작성한 것만 후보로 보입니다. 고른 것만 근거가 되며 팀 안에서만 보이고 공개 사례에는 들어가지 않습니다.</p>
+        <p v-if="githubLinked && githubChoices.length === 0" class="muted">아직 후보가 없습니다(GitHub 계정을 연결했는지 확인하세요).</p>
+        <div v-if="githubChoices.length || keptGithub.length" class="claim-evidence-list" role="group" aria-label="GitHub 근거">
+          <label v-for="item in githubChoices" :key="item.id" class="check">
+            <input v-model="githubIds" type="checkbox" :value="item.id" :disabled="full && !githubIds.includes(item.id)" />
+            <span>{{ githubItemLabel(item) }}</span>
+          </label>
+          <label v-for="kept in keptGithub" :key="kept.url" class="check">
+            <input v-model="keptGithubUrls" type="checkbox" :value="kept.url" />
+            <span>{{ kept.title }} <span class="muted">· 링크만 남은 근거(저장소 연결 해제됨)</span></span>
+          </label>
+        </div>
+      </template>
     </fieldset>
 
     <p v-if="editing" :id="id('reset-warning')" class="notice claim-reset-warning">

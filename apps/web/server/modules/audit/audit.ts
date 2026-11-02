@@ -184,6 +184,11 @@ export type AuditAction =
   | 'log_comment.delete'
   | 'log_comment.hide'
   | 'log_comment.unhide'
+  // E-11(ADR 0056): GitHub 계정 연결·해제(회원), 저장소 연결·해제(owner, 웹훅의 설치 제거는 행위자 없이). 연결 id·저장소 id·이유·비공개 여부만(이름·주소·토큰 없음).
+  | 'github.identity_link'
+  | 'github.identity_unlink'
+  | 'github.repo_link'
+  | 'github.repo_unlink'
   // A-06(ADR 0043): 수료 회고 쓰기·철회. 회고 id와 방식·넓혀졌는지 같은 플래그만(기관·기수·글 없음). 익명 회고는 행위자 없이.
   | 'completion_retro.create'
   | 'completion_retro.withdraw'
@@ -265,6 +270,7 @@ export async function recordAudit(
       | 'interview_prep_entry'
       | 'share_link'
       | 'log_comment'
+      | 'github_repo_link'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

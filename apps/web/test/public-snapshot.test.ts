@@ -218,6 +218,9 @@ function source(overrides: Partial<SnapshotSource> = {}): SnapshotSource {
     logEntryId: null,
     logRevisionId: null,
     artifactVersionId: null,
+    githubItemId: null,
+    githubUrl: null,
+    githubTitle: null,
     ...row,
   })
   const revA = claimRev(claimA, 'API 입력 검증과 오류 처리 담당')
@@ -320,6 +323,12 @@ function source(overrides: Partial<SnapshotSource> = {}): SnapshotSource {
           evidence(revA.id, 0, { logEntryId: L_SOLUTION, logRevisionId: solution.currentRevisionId }),
           evidence(revA.id, 1, { logEntryId: L_UNSELECTED, logRevisionId: `${L_UNSELECTED.slice(0, -2)}r1` }),
           evidence(revA.id, 2, { artifactVersionId: V1 }),
+          // E-11: GitHub 근거(비공개 저장소 커밋 주소·제목)는 공개 스냅샷에 들어가지 않습니다.
+          evidence(revA.id, 3, {
+            githubItemId: '00000000-0000-4000-8000-0000000009a1',
+            githubUrl: `https://github.com/team/${S('GITHUB_REPO')}/commit/abc`,
+            githubTitle: S('GITHUB_COMMIT_TITLE'),
+          }),
         ],
       },
       { claim: claimC, revision: revC, endorsements: [], evidence: [] },

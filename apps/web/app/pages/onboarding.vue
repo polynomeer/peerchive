@@ -6,6 +6,9 @@ useHead({ title: '프로필 — Peerchive' })
 
 const { me } = useAuth()
 const isNew = computed(() => !me.value?.profile)
+// GitHub App 설정이 있을 때만 GitHub 연결 칸을 보여 줍니다(E-11).
+const { flags: features, ensure: ensureFeatures } = useFeatures()
+onMounted(() => void ensureFeatures())
 // 첫 저장(온보딩) 후에는 과제 목록으로 이동합니다.
 const isNewBeforeSave = isNew.value
 
@@ -164,6 +167,7 @@ const described = (field: string, hint?: string) =>
       <p><NuxtLink to="/settings/affiliations">학교 메일 인증 관리</NuxtLink></p>
     </section>
     <DiscordLinkSection v-if="!isNew" />
+    <GithubLinkSection v-if="!isNew && features.github" />
     <AnalyticsPreferenceSection v-if="!isNew" />
   </div>
 </template>
