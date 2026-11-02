@@ -4,6 +4,7 @@
  * - 네트워크 오류·5xx면 한 번 더 보냅니다(새 nonce로 다시 서명, 본문은 같음). 서버는 interaction·메시지 id로
  *   중복을 막으므로 다시 보내도 로그는 하나입니다.
  * - 401(서명)·422(형식)·그 밖의 4xx는 다시 보내지 않고 ApiUnavailableError로 알립니다(사용자에게는 일반 안내만).
+ * - 회의 요약(`meetingSummary`, E-13)은 AI 호출이 겹치지 않게 재시도하지 않습니다.
  */
 import {
   type AckNoticeRequest,
@@ -13,6 +14,10 @@ import {
   type ClaimNoticesResponse,
   INTERNAL_PATHS,
   type LinkRequest,
+  type MeetingCheckRequest,
+  type MeetingCheckResponse,
+  type MeetingSummaryRequest,
+  type MeetingSummaryResponse,
   type LinkResponse,
   type LogRequest,
   type LogResponse,
@@ -43,6 +48,8 @@ export interface PeerchiveApi {
   decidePin(input: PinDecisionRequest): Promise<PinDecisionResponse>
   claimNotices(): Promise<ClaimNoticesResponse>
   ackNotice(input: AckNoticeRequest): Promise<AckNoticeResponse>
+  meetingCheck(input: MeetingCheckRequest): Promise<MeetingCheckResponse>
+  meetingSummary(input: MeetingSummaryRequest): Promise<MeetingSummaryResponse>
 }
 
 export function createPeerchiveApi(options: {
@@ -56,10 +63,10 @@ export function createPeerchiveApi(options: {
   const doFetch: FetchLike = options.fetch ?? ((url, init) => fetch(url, init))
   const retries = options.retries ?? 1
 
-  async function post<T>(path: string, payload: unknown): Promise<T> {
+  async function post<T>(path: string, payload: unknown, maxRetries = retries): Promise<T> {
     const body = JSON.stringify(payload ?? {})
     let lastStatus: number | null = null
-    for (let attempt = 0; attempt <= retries; attempt++) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const headers = {
         'content-type': 'application/json',
         ...signRequest(options.secret, { method: 'POST', path, body }, { now: options.now?.() }),
@@ -84,5 +91,8 @@ export function createPeerchiveApi(options: {
     decidePin: (input) => post(INTERNAL_PATHS.pinDecision, input),
     claimNotices: () => post(INTERNAL_PATHS.claimNotices, {}),
     ackNotice: (input) => post(INTERNAL_PATHS.ackNotice, input),
+    meetingCheck: (input) => post(INTERNAL_PATHS.meetingCheck, input),
+    // 회의 요약은 AI를 부르므로 재시도하지 않습니다(서버가 interaction id로 중복을 막지만, 첫 요청이 아직 처리 중일 수 있음).
+    meetingSummary: (input) => post(INTERNAL_PATHS.meetingSummary, input, 0),
   }
 }

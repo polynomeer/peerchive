@@ -6,8 +6,18 @@
  * - 📌: 봇 메시지·봇 반응·DM 채널은 무시합니다. 연결되지 않은 채널(not_bound)이면 아무 말도 하지 않습니다.
  *   남의 메시지면 작성자에게 승인/거절 버튼이 달린 DM을 보냅니다.
  * - 예약 알림: tick()이 서버에서 보낼 알림을 받아 채널에 올리고 결과를 ack합니다.
+ * - `/summarize`(E-13, ADR 0058): 먼저 서버에 확인(AI 설정·연결·권한·팀 전원 동의)하고, 된다고 할 때만 채널의 최근 메시지를 읽습니다.
+ *   봇 메시지·시스템 메시지와 **팀 밖 참여자(서버가 알려 준 동의한 팀원 디스코드 id 밖의 작성자) 메시지**는 빼고(개수만), 첨부는 개수만,
+ *   메시지는 2000자로 자르고, 본문 합계·요청 크기 상한에 맞게 오래된 것부터 덜어 한 번 보냅니다. 서버도 팀 밖 메시지를 다시 거릅니다.
+ *   읽은 메시지는 이 함수의 메모리에만 있고 저장하거나 로그로 남기지 않습니다.
  */
-import type { DiscordLogTag } from '@peerchive/bot-protocol'
+import {
+  type DiscordLogTag,
+  MEETING_LIMITS,
+  MEETING_SUMMARY_MAX_BODY_BYTES,
+  type MeetingMessage,
+  type MeetingSummaryRequest,
+} from '@peerchive/bot-protocol'
 import { ApiUnavailableError, type PeerchiveApi } from './api-client'
 import {
   PIN_EMOJI,
@@ -21,6 +31,7 @@ import type {
   ButtonEvent,
   CommandEvent,
   DiscordGateway,
+  FetchedMessage,
   InteractionReply,
   ModalField,
   ModalSubmitEvent,
@@ -29,6 +40,10 @@ import type {
 import {
   GENERIC_ERROR,
   HELP,
+  MEETING_NO_ACCESS,
+  MEETING_NO_MESSAGES,
+  meetingCheckMessage,
+  meetingSummaryMessage,
   approvalRequestMessage,
   bindMessage,
   decisionMessage,
@@ -40,6 +55,46 @@ import {
 export interface HandlerOptions {
   siteUrl: string
   log?: (message: string) => void
+  /** 지금 시각(테스트용). */
+  now?: () => Date
+}
+
+/** 요청 크기 여유(바이트): 서명 헤더는 본문 밖이지만 JSON 틀이 조금씩 달라질 수 있어 남겨 둡니다. */
+const BODY_MARGIN_BYTES = 2048
+
+/**
+ * 읽은 메시지 → 회의 요약 요청 메시지(오래된 것부터). 봇·시스템 메시지는 빼고(수만 셈), `memberDiscordIds`(동의한 팀원) 밖의 작성자
+ * 메시지는 본문을 담지 않고 `excludedMessages`로 개수만 보내며, 본문은 2000자로 자르고,
+ * 본문 합계 40,000자·요청 본문 256KB 안에 들도록 **오래된 메시지부터** 덜어 냅니다(최근 대화를 남김).
+ */
+export function meetingPayload(
+  fetched: FetchedMessage[],
+  base: Omit<MeetingSummaryRequest, 'messages' | 'skippedBotMessages' | 'excludedMessages'>,
+  memberDiscordIds: readonly string[],
+): MeetingSummaryRequest {
+  const members = new Set(memberDiscordIds)
+  let skippedBotMessages = 0
+  let excludedMessages = 0
+  const messages: MeetingMessage[] = []
+  for (const m of [...fetched].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())) {
+    if (m.authorIsBot || m.isSystem) {
+      skippedBotMessages++
+      continue
+    }
+    if (!members.has(m.authorId)) {
+      excludedMessages++
+      continue
+    }
+    if (!m.content.trim() && m.attachmentCount === 0) continue
+    const content = m.content.length > MEETING_LIMITS.messageChars ? m.content.slice(0, MEETING_LIMITS.messageChars) : m.content
+    messages.push({ authorId: m.authorId, content, attachmentCount: Math.min(m.attachmentCount, 100), createdAt: m.createdAt.toISOString() })
+  }
+  while (messages.length > MEETING_LIMITS.maxMessages) messages.shift()
+  let total = messages.reduce((n, m) => n + m.content.length, 0)
+  while (total > MEETING_LIMITS.totalChars && messages.length > 0) total -= messages.shift()!.content.length
+  const request = (): MeetingSummaryRequest => ({ ...base, messages, skippedBotMessages, excludedMessages })
+  while (messages.length > 0 && Buffer.byteLength(JSON.stringify(request()), 'utf8') > MEETING_SUMMARY_MAX_BODY_BYTES - BODY_MARGIN_BYTES) messages.shift()
+  return request()
 }
 
 const message = (content: string): InteractionReply => ({ type: 'message', content })
@@ -106,7 +161,31 @@ export function createHandlers(api: PeerchiveApi, options: HandlerOptions) {
     return message(logMessage(res, tag, options.siteUrl))
   }
 
-  async function handleCommand(event: CommandEvent): Promise<InteractionReply> {
+  /** `/summarize`: 확인 → (된다면) 최근 메시지 읽기 → 요약 요청. 조건이 맞지 않으면 메시지를 읽지 않습니다. */
+  async function summarize(
+    event: CommandEvent & { guildId: string },
+    windowHours: number,
+    count: number,
+    gateway: Pick<DiscordGateway, 'fetchRecentMessages'>,
+  ): Promise<InteractionReply> {
+    const who = { guildId: event.guildId, channelId: event.channelId, discordUserId: event.userId }
+    const check = await api.meetingCheck(who)
+    const refusal = meetingCheckMessage(check, options.siteUrl)
+    if (refusal) return message(refusal)
+    const now = options.now?.() ?? new Date()
+    const since = new Date(now.getTime() - windowHours * 60 * 60 * 1000)
+    const fetched = await gateway.fetchRecentMessages(event.channelId, { since, limit: count })
+    if (!fetched) return message(MEETING_NO_ACCESS)
+    const payload = meetingPayload(
+      fetched,
+      { interactionId: event.interactionId, ...who, windowStart: since.toISOString(), windowEnd: now.toISOString() },
+      check.memberDiscordIds ?? [],
+    )
+    if (payload.messages.length === 0) return message(MEETING_NO_MESSAGES)
+    return message(meetingSummaryMessage(await api.meetingSummary(payload), options.siteUrl))
+  }
+
+  async function handleCommand(event: CommandEvent, gateway?: Pick<DiscordGateway, 'fetchRecentMessages'>): Promise<InteractionReply> {
     const parsed = parseCommand(event.name, event.subcommand, event.options)
     if (parsed.kind === 'invalid') return message(INVALID_COMMAND[parsed.reason] ?? GENERIC_ERROR)
     if (parsed.kind === 'help') return message(HELP)
@@ -115,6 +194,10 @@ export function createHandlers(api: PeerchiveApi, options: HandlerOptions) {
     }
     if (!event.guildId) return message('서버 채널에서만 쓸 수 있는 명령이에요.')
     const guildId = event.guildId
+    if (parsed.kind === 'summarize') {
+      if (!gateway) return message(GENERIC_ERROR)
+      return guarded(() => summarize({ ...event, guildId }, parsed.windowHours, parsed.count, gateway), message(GENERIC_ERROR))
+    }
     if (parsed.kind === 'bind') {
       return guarded(
         async () =>
@@ -230,7 +313,7 @@ export type BotHandlers = ReturnType<typeof createHandlers>
 
 /** 어댑터에 handler를 연결합니다. */
 export function wireGateway(gateway: DiscordGateway, handlers: BotHandlers): void {
-  gateway.onCommand((event) => handlers.handleCommand(event))
+  gateway.onCommand((event) => handlers.handleCommand(event, gateway))
   gateway.onModalSubmit((event) => handlers.handleModalSubmit(event))
   gateway.onButton((event) => handlers.handleButton(event))
   gateway.onReactionAdd((event) => handlers.handleReaction(event, gateway))

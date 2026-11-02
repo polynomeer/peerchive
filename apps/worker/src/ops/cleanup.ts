@@ -299,6 +299,14 @@ export async function cleanupAiRetroSessions(db: DbExecutor, deps: CleanupDeps, 
   return { affected: drafts.affected + sessions.affected, batches: drafts.batches + sessions.batches }
 }
 
+/**
+ * AI 회의 요약(E-13, ADR 0058): expires_at이 지난 승인 전 회의 요약 초안을 지웁니다. 초안에는 메시지 원문이 없지만(요약·결정·후속 할 일만)
+ * 승인하지 않은 AI 글을 오래 두지 않습니다. 글은 로그에 남기지 않고 개수만.
+ */
+export async function cleanupAiMeetingDrafts(db: DbExecutor, deps: CleanupDeps, now: Date): Promise<TaskOutcome> {
+  return deleteInBatches(db, t('ai_meeting_drafts'), sql`expires_at < ${now.toISOString()}::timestamptz`, deps.batchSize)
+}
+
 export type CleanupTask = (db: DbExecutor, deps: CleanupDeps, now: Date) => Promise<TaskOutcome>
 
 export const CLEANUP_TASKS: Record<Exclude<OpsTaskName, 'account-purge' | 'name-mode-changes' | 'social-link-recheck' | 'certificate-files' | 'course-term-prompts'>, CleanupTask> = {
@@ -313,6 +321,7 @@ export const CLEANUP_TASKS: Record<Exclude<OpsTaskName, 'account-purge' | 'name-
   outbox: cleanupOutbox,
   'affiliation-codes': cleanupAffiliationCodes,
   'ai-retro-sessions': cleanupAiRetroSessions,
+  'ai-meeting-drafts': cleanupAiMeetingDrafts,
 }
 
 /**

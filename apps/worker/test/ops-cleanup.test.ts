@@ -9,6 +9,8 @@ import { Readable } from 'node:stream'
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   affiliationCodes,
+  aiMeetingChannels,
+  aiMeetingDrafts,
   aiRetroDrafts,
   aiRetroSessions,
   artifactVersions,
@@ -44,6 +46,7 @@ import { createFilesystemStorage, newQuarantineKey, type ObjectKey, type ObjectS
 import {
   RETENTION,
   cleanupAffiliationCodes,
+  cleanupAiMeetingDrafts,
   cleanupAiRetroSessions,
   cleanupDiscordCodes,
   cleanupInternalNonces,
@@ -392,6 +395,30 @@ describe.skipIf(!url)('ops cleanup tasks (PostgreSQL)', () => {
       expect(outcome.affected).toBeGreaterThanOrEqual(4)
       expect(await tx.select().from(aiRetroSessions).where(inArray(aiRetroSessions.id, [old!.id, live!.id]))).toMatchObject([{ id: live!.id }])
       expect(await tx.select().from(aiRetroDrafts).where(eq(aiRetroDrafts.sessionId, old!.id))).toEqual([])
+    })
+  })
+
+  it('AI meeting summary (E-13): deletes meeting drafts past expires_at, leaving live ones and the channel', async () => {
+    await rollback(async (tx) => {
+      const { userId, projectId } = await userAndProject(tx)
+      const [binding] = await tx.insert(discordChannelBindings).values({ projectId, guildId: 'g', channelId: `c-${id()}`, boundBy: userId }).returning()
+      const [channel] = await tx.insert(aiMeetingChannels).values({ bindingId: binding!.id, projectId, proposedBy: userId }).returning()
+      const draft = (expiresAt: Date) => ({
+        projectId,
+        meetingChannelId: channel!.id,
+        requestedBy: userId,
+        interactionId: `i-${id()}`,
+        summary: '요약',
+        messageCount: 3,
+        windowStart: ago(DAY),
+        windowEnd: ago(HOUR),
+        expiresAt,
+      })
+      const [old1, old2, live] = await tx.insert(aiMeetingDrafts).values([draft(ago(HOUR)), draft(ago(DAY)), draft(new Date(NOW.getTime() + DAY))]).returning()
+      const outcome = await cleanupAiMeetingDrafts(tx, deps(1), NOW)
+      expect(outcome.affected).toBe(2)
+      expect(await tx.select({ id: aiMeetingDrafts.id }).from(aiMeetingDrafts).where(inArray(aiMeetingDrafts.id, [old1!.id, old2!.id, live!.id]))).toEqual([{ id: live!.id }])
+      expect(await tx.select().from(aiMeetingChannels).where(eq(aiMeetingChannels.id, channel!.id))).toHaveLength(1)
     })
   })
 

@@ -6,6 +6,7 @@
  * - 한 채널은 한 프로젝트에만 연결됩니다(다른 프로젝트가 이미 쓰면 `channel_taken`). 서버(guild)·채널 id만 저장합니다.
  * - 목록은 프로젝트 멤버가 보고, 주간 요약 켜기·해제는 owner만(아니면 403). 읽을 수 없는 프로젝트·연결은 404.
  * - 해제하면 그 채널의 승인 대기 📌 요청을 만료 처리하고 저장했던 메시지 내용을 지웁니다.
+ *   AI 회의 채널 제안·동의·승인 전 회의 요약 초안(E-13, ADR 0058)도 함께 지웁니다.
  */
 import { z } from 'zod'
 import type { Membership } from '@peerchive/domain'
@@ -20,6 +21,7 @@ import {
   type DbExecutor,
 } from '@peerchive/db'
 import type { BindResponse } from '@peerchive/bot-protocol'
+import { deleteMeetingChannelRows } from '../ai/meeting-channels'
 import { recordAudit } from '../audit/audit'
 import { type Actor, forbidden, notFound, sqlState } from '../errors'
 import { findMembership, isUuid, loadReadableProject } from '../projects/access'
@@ -126,6 +128,7 @@ export async function unbindChannel(db: DbExecutor, actor: Actor, bindingId: unk
       .update(discordPinRequests)
       .set({ status: 'expired', content: null, decidedAt: now })
       .where(and(eq(discordPinRequests.bindingId, binding.id), eq(discordPinRequests.status, 'pending')))
+    await deleteMeetingChannelRows(tx, binding.id)
     await recordAudit(tx, {
       actorId: actor.userId,
       action: 'discord.unbind',

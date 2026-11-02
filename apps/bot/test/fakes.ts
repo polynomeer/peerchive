@@ -7,6 +7,8 @@ import {
   HEADER_SIGNATURE,
   HEADER_TIMESTAMP,
   type LogRequest,
+  type MeetingCheckResponse,
+  type MeetingSummaryRequest,
   type PinRequest,
   verifySignature,
 } from '@peerchive/bot-protocol'
@@ -16,6 +18,7 @@ import type {
   CommandEvent,
   DirectMessage,
   DiscordGateway,
+  FetchedMessage,
   InteractionReply,
   ModalSubmitEvent,
   ReactionEvent,
@@ -30,6 +33,9 @@ export class FakeGateway implements DiscordGateway {
   posts: Array<{ channelId: string; content: string }> = []
   blockedDms = new Set<string>()
   unreachableChannels = new Set<string>()
+  /** 채널별 메시지(회의 요약). 읽은 요청을 `fetches`에 남깁니다. */
+  channelMessages = new Map<string, FetchedMessage[]>()
+  fetches: Array<{ channelId: string; since: Date; limit: number }> = []
 
   onCommand(handler: (e: CommandEvent) => Promise<InteractionReply>) {
     this.command = handler
@@ -53,6 +59,12 @@ export class FakeGateway implements DiscordGateway {
     this.posts.push({ channelId, content })
     return String(900000 + this.posts.length)
   }
+  async fetchRecentMessages(channelId: string, options: { since: Date; limit: number }) {
+    this.fetches.push({ channelId, ...options })
+    if (this.unreachableChannels.has(channelId)) return null
+    const all = (this.channelMessages.get(channelId) ?? []).filter((m) => m.createdAt.getTime() >= options.since.getTime())
+    return all.slice(-options.limit)
+  }
   async start() {}
   async stop() {}
 }
@@ -70,6 +82,9 @@ export class FakeServer {
   linked = new Set<string>(['111111'])
   bound = new Set<string>(['555555'])
   pending = new Map<string, { author: string; messageId: string }>()
+  /** 회의 요약 확인 결과(기본 ready)·요약 결과(기본 drafted). */
+  meetingCheckStatus: MeetingCheckResponse['status'] = 'ready'
+  summaries: MeetingSummaryRequest[] = []
   notices: Array<{ id: string; channelId: string; kind: 'checkin_reminder'; isoWeek: string; content: string; delivered?: boolean }> = []
 
   fetch: FetchLike = async (url, init) => {
@@ -134,6 +149,21 @@ export class FakeServer {
       if (body.decision === 'reject') return { status: 'rejected' }
       this.logs.set(`m:${pending.messageId}`, { tag: 'progress', text: '', author: pending.author })
       return { status: 'approved', logUrl: `${SITE}/projects/p1#log-x` }
+    }
+    if (path.endsWith('/meeting-summaries/check')) {
+      return {
+        status: this.meetingCheckStatus,
+        ...(this.meetingCheckStatus === 'no_consent' && { missingConsents: 2 }),
+        ...(this.meetingCheckStatus === 'ready' && { memberDiscordIds: [...this.linked].sort() }),
+        projectUrl: `${SITE}/projects/p1#ai-meeting`,
+      }
+    }
+    if (path.endsWith('/meeting-summaries')) {
+      const req = body as unknown as MeetingSummaryRequest
+      if (this.meetingCheckStatus !== 'ready') return { status: this.meetingCheckStatus }
+      const duplicate = this.summaries.some((s) => s.interactionId === req.interactionId)
+      if (!duplicate) this.summaries.push(req)
+      return { status: duplicate ? 'duplicate' : 'drafted', draftUrl: `${SITE}/projects/p1#ai-meeting` }
     }
     if (path.endsWith('/link')) return { status: body.code === 'ABCDEFGHJK' ? 'linked' : 'invalid_code' }
     if (path.endsWith('/bind')) return { status: 'bound', projectTitle: '캡스톤', projectUrl: `${SITE}/projects/p1` }

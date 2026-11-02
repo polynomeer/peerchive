@@ -3,7 +3,7 @@
  */
 import { createApp, defineEventHandler, toWebHandler } from 'h3'
 import { describe, expect, it } from 'vitest'
-import { signRequest } from '@peerchive/bot-protocol'
+import { MEETING_SUMMARY_MAX_BODY_BYTES, signRequest } from '@peerchive/bot-protocol'
 import { createCsrfMiddleware, parseAllowedOrigins } from '../server/modules/security/csrf'
 import {
   MAX_INTERNAL_BODY_BYTES,
@@ -17,7 +17,7 @@ const SECRET = 'f3a9c1e07b5d42868a1e9c3b7d0f6a25e8b4c2d19f7a6e30'
 const ORIGIN = 'http://localhost:3000'
 const PATH = '/api/internal/discord/logs'
 
-function appWith(options: { secret?: string | null; now?: Date } = {}) {
+function appWith(options: { secret?: string | null; now?: Date; maxBodyBytes?: number } = {}) {
   const app = createApp()
   const seen: unknown[] = []
   const store = memoryNonceStore()
@@ -35,6 +35,7 @@ function appWith(options: { secret?: string | null; now?: Date } = {}) {
         getSecret: () => (options.secret === undefined ? SECRET : options.secret),
         getNonceStore: () => store,
         now: () => options.now ?? new Date(),
+        ...(options.maxBodyBytes && { maxBodyBytes: options.maxBodyBytes }),
       },
       async (event, body) => {
         seen.push({ body, auth: event.context.auth })
@@ -84,6 +85,23 @@ describe('internal API HMAC handler', () => {
     const res = await call({ headers: signed({ body: big }), body: big })
     expect(res.status).toBe(413)
     expect(seen).toHaveLength(0)
+  })
+
+  it('a route can raise its own body cap (meeting summary 256KB, E-13) while the default stays 64KB; signature and nonce still apply', async () => {
+    const mid = JSON.stringify({ interactionId: '1', messages: [{ content: '가'.repeat(40_000) }] })
+    expect(Buffer.byteLength(mid)).toBeGreaterThan(MAX_INTERNAL_BODY_BYTES)
+    // 기본 상한(64KB) 경로는 거부.
+    expect((await appWith().call({ headers: signed({ body: mid }), body: mid })).status).toBe(413)
+    const meeting = appWith({ maxBodyBytes: MEETING_SUMMARY_MAX_BODY_BYTES })
+    const headers = signed({ body: mid })
+    expect((await meeting.call({ headers, body: mid })).status).toBe(200)
+    // 같은 nonce 재전송·서명 없는 요청은 여전히 401.
+    expect((await meeting.call({ headers, body: mid })).status).toBe(401)
+    expect((await meeting.call({ body: mid })).status).toBe(401)
+    // 256KB를 넘으면 서명을 보기 전에 413.
+    const huge = JSON.stringify({ interactionId: '1', text: 'x'.repeat(MEETING_SUMMARY_MAX_BODY_BYTES) })
+    expect((await meeting.call({ headers: signed({ body: huge }), body: huge })).status).toBe(413)
+    expect(meeting.seen).toHaveLength(1)
   })
 
   it('rejects a wrong secret, tampered body, other path and clock skew', async () => {

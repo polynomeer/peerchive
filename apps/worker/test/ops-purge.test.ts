@@ -9,9 +9,13 @@ import { Readable } from 'node:stream'
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   affiliationCodes,
+  aiMeetingChannels,
+  aiMeetingConsents,
+  aiMeetingDrafts,
   aiRetroDrafts,
   aiRetroOptIns,
   aiRetroSessions,
+  discordChannelBindings,
   analyticsEvents,
   and,
   artifactVersions,
@@ -341,6 +345,40 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       { sessionId: uSession!.id, projectId: team.id, userId: U.id, position: 1, tag: 'retro', body: 'U의 AI 회고 초안' },
     ])
     void tSession
+    // AI 회의 요약(E-13): 팀 채널(T가 제안, U·T 동의, U·T가 요청한 초안 하나씩)과 혼자 과제 채널(U 제안·동의·초안 — 과제와 함께 삭제).
+    const meetingDraft = (projectId: string, meetingChannelId: string, requestedBy: string) => ({
+      projectId,
+      meetingChannelId,
+      requestedBy,
+      interactionId: `${Date.now()}${Math.floor(Math.random() * 1e9)}`,
+      summary: '회의 요약',
+      messageCount: 2,
+      windowStart: NOW,
+      windowEnd: NOW,
+      expiresAt,
+    })
+    const [teamBinding, soloBinding] = await tx
+      .insert(discordChannelBindings)
+      .values([
+        { projectId: team.id, guildId: '1001', channelId: `${Date.now()}1`, boundBy: T.id },
+        { projectId: solo.id, guildId: '1001', channelId: `${Date.now()}2`, boundBy: U.id },
+      ])
+      .returning()
+    const [teamMeeting, soloMeeting] = await tx
+      .insert(aiMeetingChannels)
+      .values([
+        { bindingId: teamBinding!.id, projectId: team.id, proposedBy: T.id },
+        { bindingId: soloBinding!.id, projectId: solo.id, proposedBy: U.id },
+      ])
+      .returning()
+    await tx.insert(aiMeetingConsents).values([
+      { meetingChannelId: teamMeeting!.id, userId: U.id },
+      { meetingChannelId: teamMeeting!.id, userId: T.id },
+      { meetingChannelId: soloMeeting!.id, userId: U.id },
+    ])
+    await tx
+      .insert(aiMeetingDrafts)
+      .values([meetingDraft(team.id, teamMeeting!.id, U.id), meetingDraft(team.id, teamMeeting!.id, T.id), meetingDraft(solo.id, soloMeeting!.id, U.id)])
     const teamPub = await publish(tx, team.id, U.id, [U.id, T.id])
 
     // 과목 허브·포트폴리오
@@ -405,6 +443,8 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         ai_retro_drafts: 2,
         ai_retro_sessions: 1,
         ai_retro_opt_ins: 2,
+        ai_meeting_consents: 2,
+        ai_meeting_drafts: 2,
         signals: 1,
         analytics_events: 1,
         senior_notes: 1,
@@ -443,6 +483,10 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         [aiRetroSessions, eq(aiRetroSessions.userId, w.U.id)],
         [aiRetroOptIns, eq(aiRetroOptIns.userId, w.U.id)],
         [aiRetroOptIns, eq(aiRetroOptIns.projectId, w.solo.id)],
+        [aiMeetingConsents, eq(aiMeetingConsents.userId, w.U.id)],
+        [aiMeetingDrafts, eq(aiMeetingDrafts.requestedBy, w.U.id)],
+        [aiMeetingDrafts, eq(aiMeetingDrafts.projectId, w.solo.id)],
+        [aiMeetingChannels, eq(aiMeetingChannels.projectId, w.solo.id)],
         [seniorNotes, eq(seniorNotes.authorId, w.U.id)],
         [usefulnessSignals, eq(usefulnessSignals.seniorNoteId, w.note.id)],
         [caseStudies, eq(caseStudies.userId, w.U.id)],
@@ -456,6 +500,10 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       // 팀원 T의 AI 회고 켜기·세션은 그대로.
       expect(await count(tx, aiRetroSessions, eq(aiRetroSessions.userId, w.T.id))).toBe(1)
       expect(await count(tx, aiRetroOptIns, and(eq(aiRetroOptIns.userId, w.T.id), eq(aiRetroOptIns.projectId, w.team.id))!)).toBe(1)
+      // 팀 회의 채널(T가 제안)·T의 동의·T가 요청한 초안은 그대로.
+      expect(await count(tx, aiMeetingChannels, eq(aiMeetingChannels.projectId, w.team.id))).toBe(1)
+      expect(await count(tx, aiMeetingConsents, eq(aiMeetingConsents.userId, w.T.id))).toBe(1)
+      expect(await count(tx, aiMeetingDrafts, eq(aiMeetingDrafts.requestedBy, w.T.id))).toBe(1)
       // U와 무관한 X → T 팔로우·X의 T 뮤트는 그대로.
       expect(await count(tx, follows, eq(follows.followeePersonaId, w.tPersonaId))).toBe(1)
       expect(await count(tx, mutes, eq(mutes.mutedPersonaId, w.tPersonaId))).toBe(1)

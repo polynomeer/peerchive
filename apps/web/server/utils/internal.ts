@@ -14,10 +14,13 @@ export function internalSecret(): string | null {
   return secret
 }
 
-/** /api/internal handler 래퍼: HMAC 서명·nonce 확인 후 JSON 본문을 넘깁니다. 세션 쿠키는 보지 않습니다. */
-export function defineInternalApiHandler<T>(handler: (event: H3Event, body: unknown) => Promise<T>) {
+/**
+ * /api/internal handler 래퍼: HMAC 서명·nonce 확인 후 JSON 본문을 넘깁니다. 세션 쿠키는 보지 않습니다.
+ * `maxBodyBytes`는 기본 64KB보다 큰 본문이 필요한 경로(회의 요약, E-13)만 넘깁니다.
+ */
+export function defineInternalApiHandler<T>(handler: (event: H3Event, body: unknown) => Promise<T>, options: { maxBodyBytes?: number } = {}) {
   return createInternalHandler(
-    { getSecret: internalSecret, getNonceStore: () => dbNonceStore(requireDb()), mapError: toHttpError },
+    { getSecret: internalSecret, getNonceStore: () => dbNonceStore(requireDb()), mapError: toHttpError, ...options },
     handler,
   )
 }

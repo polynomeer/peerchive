@@ -71,6 +71,9 @@ export const ANALYTICS_EVENT_NAMES = [
   // E-12(ADR 0057): AI 회고 인터뷰. 개수·태그·결정·플래그만(질문·답변·초안 글·모델 이름 없음).
   'ai_retro_drafts_proposed',
   'ai_retro_draft_resolved',
+  // E-13(ADR 0058): AI 회의 요약. 개수·결정·플래그만(메시지·요약 글 없음).
+  'ai_meeting_draft_proposed',
+  'ai_meeting_draft_resolved',
 ] as const
 export type AnalyticsEventName = (typeof ANALYTICS_EVENT_NAMES)[number]
 
@@ -202,6 +205,10 @@ export const ANALYTICS_PROP_SPECS: Readonly<Record<AnalyticsEventName, Readonly<
   ai_retro_drafts_proposed: { drafts: count(5), questions: count(10, 1), endedEarly: bool },
   // 초안 하나를 승인·버림 — 태그·결정·승인 전에 고쳤는지.
   ai_retro_draft_resolved: { decision: enumOf(['approved', 'discarded']), tag: enumOf(LOG_TAGS), edited: bool },
+  // E-13(ADR 0058): 회의 채널 대화를 요약해 초안을 만듦 — 보낸 메시지 수·결정·후속 할 일 수(메시지·요약 글 없음).
+  ai_meeting_draft_proposed: { messages: count(200), decisions: count(20), followUps: count(20) },
+  // 초안 하나를 승인·거절 — 승인 때 만든 할 일 수·승인 전에 고쳤는지.
+  ai_meeting_draft_resolved: { decision: enumOf(['approved', 'rejected']), tasks: count(20), edited: bool },
 }
 
 /** A-07(ADR 0045): 시 단위 시각으로 기록하는 P2 이벤트(affiliation_verified는 C-01부터 있던 이벤트라 시각을 그대로 둠). */

@@ -70,6 +70,18 @@ export type InteractionReply =
   /** 버튼이 달린 메시지(승인 요청 DM)를 이 내용으로 바꾸고 버튼을 없앱니다. */
   | { type: 'update'; content: string }
 
+/** 채널에서 읽은 메시지(회의 요약용, E-13). 봇은 이것을 메모리에서만 다루고 서버로 한 번 보낸 뒤 버립니다. */
+export interface FetchedMessage {
+  id: string
+  authorId: string
+  authorIsBot: boolean
+  /** 입장·고정 알림 같은 시스템 메시지. */
+  isSystem: boolean
+  content: string
+  attachmentCount: number
+  createdAt: Date
+}
+
 export interface DirectMessage {
   content: string
   buttons?: ButtonSpec[]
@@ -84,6 +96,11 @@ export interface DiscordGateway {
   sendDirectMessage(userId: string, message: DirectMessage): Promise<boolean>
   /** 채널에 글을 올리고 메시지 id를 돌려줍니다. 채널에 접근할 수 없으면 null. */
   postChannelMessage(channelId: string, content: string): Promise<string | null>
+  /**
+   * 채널의 최근 메시지를 `since` 이후로 최대 `limit`개(오래된 것부터) 읽습니다(회의 요약, E-13). 채널에 접근할 수 없거나
+   * 메시지 기록 읽기 권한(Read Message History)이 없으면 null.
+   */
+  fetchRecentMessages(channelId: string, options: { since: Date; limit: number }): Promise<FetchedMessage[] | null>
   start(): Promise<void>
   stop(): Promise<void>
 }

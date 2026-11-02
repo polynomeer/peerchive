@@ -65,6 +65,9 @@
  * E-12(0052 migration): AI 회고 인터뷰 — 학생별·과제별 사용 동의(ai_retro_opt_ins), 인터뷰 세션(ai_retro_sessions: 질문·답변은 초안을 만들면 비우고,
  * 초안을 다 처리하거나 7일이 지나면 행째 삭제), 승인 전 로그 초안(ai_retro_drafts, 본인만), 날짜·기능·모델별 토큰 집계(ai_usage_daily, 사람·내용 없음),
  * 분석 이벤트 ai_retro_drafts_proposed·ai_retro_draft_resolved. 승인한 초안은 로그 source `ai` + revision ai_generated·approved_at. 결정은 ADR 0057.
+ * E-13(0053 migration): AI 회의 요약 — owner가 제안한 회의 채널(ai_meeting_channels, 연결된 디스코드 채널마다 하나), 멤버별 동의(ai_meeting_consents,
+ * 지금 active 멤버 전원이 동의해야 요약), 승인 전 🗣️ 회의 로그 초안(ai_meeting_drafts: 요약·결정·후속 할 일만 — 디스코드 메시지 원문은 어디에도 저장하지 않음,
+ * 7일 상한), 분석 이벤트 ai_meeting_draft_proposed·ai_meeting_draft_resolved. 결정은 ADR 0058.
  *
  * 원칙
  * - 외래 키는 기본 `no action`입니다. 공동 기록·동의·철회의 파급을 먼저 계산해야 하므로
@@ -353,6 +356,9 @@ export const analyticsEventName = pgEnum('analytics_event_name', [
   // E-12(ADR 0057): AI 회고 인터뷰. 개수·태그·결정·플래그만(질문·답변·초안 글 없음).
   'ai_retro_drafts_proposed',
   'ai_retro_draft_resolved',
+  // E-13(ADR 0058): AI 회의 요약. 개수·결정·플래그만(메시지·요약 글 없음).
+  'ai_meeting_draft_proposed',
+  'ai_meeting_draft_resolved',
 ])
 /** 기관 종류(C-01은 university만, I-01에서 나머지, SYSTEM_DESIGN §6.7.2, ADR 0018·0037). */
 export const institutionKind = pgEnum('institution_kind', ['university', 'bootcamp', 'training_program', 'club_federation'])
@@ -2049,6 +2055,97 @@ export const aiUsageDaily = pgTable(
   (t) => [
     primaryKey({ name: 'ai_usage_daily_pkey', columns: [t.day, t.feature, t.model] }),
     check('ai_usage_daily_feature_check', sql`char_length(${t.feature}) between 1 and 64`),
+  ],
+)
+
+// ── AI 회의 요약 (E-13, ADR 0058) ───────────────────────────────────────
+
+/**
+ * 회의 채널 제안: 과제 owner가 연결된 디스코드 채널(discord_channel_bindings)을 "AI가 요약해도 되는 회의 채널"로 제안한 것. 채널마다 하나.
+ * 행이 있어도 **지금 active 멤버 전원**의 동의(ai_meeting_consents)가 있어야 요약합니다. 제안을 거두거나 채널 연결을 해제하면 행·동의·초안을 지웁니다.
+ */
+export const aiMeetingChannels = pgTable(
+  'ai_meeting_channels',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    bindingId: uuid('binding_id')
+      .notNull()
+      .references(() => discordChannelBindings.id),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    proposedBy: uuid('proposed_by')
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [unique('ai_meeting_channels_binding_key').on(t.bindingId), index('ai_meeting_channels_project_idx').on(t.projectId)],
+)
+
+/**
+ * 회의 채널 요약 동의(멤버마다 한 행). 행이 있으면 동의. 철회하면 행을 지우고(그 채널의 승인 전 초안도 지움), 과제에서 나가거나 내보내지면 지웁니다.
+ * 요약 가능 여부는 "지금 active 멤버 전원에게 행이 있는가"로 매번 계산하므로 새로 들어온 멤버는 동의하기 전까지 요약을 막습니다.
+ */
+export const aiMeetingConsents = pgTable(
+  'ai_meeting_consents',
+  {
+    meetingChannelId: uuid('meeting_channel_id')
+      .notNull()
+      .references(() => aiMeetingChannels.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ name: 'ai_meeting_consents_pkey', columns: [t.meetingChannelId, t.userId] }), index('ai_meeting_consents_user_idx').on(t.userId)],
+)
+
+/**
+ * 승인 전 🗣️ 회의 로그 초안. **디스코드 메시지 원문은 저장하지 않습니다**: AI가 만든 요약·결정·후속 할 일·열린 질문(표지를 이름으로 되돌린 글)과
+ * 개수만 둡니다. 팀 밖 참여자의 메시지는 AI에 보내지도 않고 개수(`external_count`)만 남깁니다. 과제 멤버가 보고, owner/editor가 고쳐서 승인하면 같은 트랜잭션에서 로그(source `ai`)를 만들고 이 행을 지웁니다. 거절은 행만 지웁니다.
+ * `interaction_id`(디스코드 명령 id)로 같은 요청의 재전송을 한 번만 처리합니다. 만든 지 7일(`expires_at`) 뒤 worker가 지웁니다.
+ */
+export const aiMeetingDrafts = pgTable(
+  'ai_meeting_drafts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    meetingChannelId: uuid('meeting_channel_id')
+      .notNull()
+      .references(() => aiMeetingChannels.id),
+    requestedBy: uuid('requested_by')
+      .notNull()
+      .references(() => users.id),
+    interactionId: text('interaction_id').notNull(),
+    summary: text('summary').notNull().default(''),
+    decisions: jsonb('decisions').$type<string[]>().notNull().default([]),
+    followUps: jsonb('follow_ups').$type<Array<{ text: string; ownerId: string | null; due: string | null }>>().notNull().default([]),
+    openQuestions: jsonb('open_questions').$type<string[]>().notNull().default([]),
+    /** 말한 멤버(사용자 id). */
+    attendees: jsonb('attendees').$type<string[]>().notNull().default([]),
+    /**
+     * 보내지 않고 뺀 팀 밖 참여자(연결 안 함·멤버 아님) 메시지 수. 열 이름 `external_count`는 0053 migration 그대로입니다
+     * (뜻은 "제외한 팀 밖 메시지 수", 팀 밖 사람의 수나 이름은 저장하지 않음).
+     */
+    excludedMessages: integer('external_count').notNull().default(0),
+    attachmentsOmitted: integer('attachments_omitted').notNull().default(0),
+    messageCount: integer('message_count').notNull(),
+    windowStart: timestamp('window_start', { withTimezone: true }).notNull(),
+    windowEnd: timestamp('window_end', { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique('ai_meeting_drafts_interaction_key').on(t.interactionId),
+    index('ai_meeting_drafts_project_idx').on(t.projectId),
+    index('ai_meeting_drafts_channel_idx').on(t.meetingChannelId),
+    index('ai_meeting_drafts_requested_by_idx').on(t.requestedBy),
+    index('ai_meeting_drafts_expires_at_idx').on(t.expiresAt),
+    check('ai_meeting_drafts_summary_check', sql`char_length(${t.summary}) <= 2000`),
+    check('ai_meeting_drafts_arrays_check', sql`jsonb_typeof(${t.decisions}) = 'array' and jsonb_typeof(${t.followUps}) = 'array' and jsonb_typeof(${t.openQuestions}) = 'array' and jsonb_typeof(${t.attendees}) = 'array'`),
+    check('ai_meeting_drafts_counts_check', sql`${t.messageCount} between 1 and 200 and ${t.excludedMessages} >= 0 and ${t.attachmentsOmitted} >= 0`),
   ],
 )
 

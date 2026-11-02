@@ -3,6 +3,7 @@
  *
  * 필요한 intents: Guilds, GuildMessages, GuildMessageReactions, MessageContent(특권 intent — 📌 메시지 본문을 읽기 위해).
  * 봇은 메시지 생성 이벤트를 듣지 않습니다. 본문은 📌이 달린 메시지를 그때 한 번 읽을 뿐 저장하지 않습니다(서버로 전달만).
+ * `/summarize`(E-13)는 서버가 팀 전원 동의를 확인한 뒤에만 그 채널의 최근 메시지를 REST로 읽습니다(Read Message History 권한 필요).
  *
  * 주의: 이 파일은 실제 디스코드 애플리케이션 없이 타입 검사만 했습니다(ADR 0009 한계). 동작 확인은 apps/bot/README.md 참고.
  */
@@ -27,6 +28,7 @@ import type {
   ButtonSpec,
   CommandEvent,
   DiscordGateway,
+  FetchedMessage,
   InteractionReply,
   ModalSubmitEvent,
   ReactionEvent,
@@ -109,7 +111,10 @@ export function createDiscordGateway(token: string, log: (line: string) => void 
         const sub = interaction.options.getSubcommand(false)
         const data = sub ? (interaction.options.data[0]?.options ?? []) : interaction.options.data
         const options: Record<string, string | undefined> = {}
-        for (const opt of data) if (typeof opt.value === 'string') options[opt.name] = opt.value
+        for (const opt of data) {
+          if (typeof opt.value === 'string') options[opt.name] = opt.value
+          else if (typeof opt.value === 'number') options[opt.name] = String(opt.value)
+        }
         const channel = interaction.channel
         await respond(
           interaction,
@@ -197,6 +202,40 @@ export function createDiscordGateway(token: string, log: (line: string) => void 
         if (!channel?.isSendable()) return null
         const sent = await channel.send({ content, allowedMentions: NO_MENTIONS })
         return sent.id
+      } catch {
+        return null
+      }
+    },
+    async fetchRecentMessages(channelId, { since, limit }) {
+      try {
+        const channel = await client.channels.fetch(channelId)
+        if (!channel || !channel.isTextBased() || channel.isDMBased()) return null
+        const out: FetchedMessage[] = []
+        let before: string | undefined
+        // REST는 한 번에 100개, 최신순입니다. since보다 오래된 메시지를 만나면 멈춥니다.
+        while (out.length < limit) {
+          const page = await channel.messages.fetch({ limit: Math.min(100, limit - out.length), ...(before && { before }), cache: false })
+          let reachedOld = false
+          for (const m of page.values()) {
+            if (m.createdTimestamp < since.getTime()) {
+              reachedOld = true
+              break
+            }
+            out.push({
+              id: m.id,
+              authorId: m.author.id,
+              authorIsBot: m.author.bot,
+              isSystem: m.system,
+              content: m.content,
+              attachmentCount: m.attachments.size,
+              createdAt: m.createdAt,
+            })
+            if (out.length >= limit) break
+          }
+          before = page.last()?.id
+          if (reachedOld || page.size < 100 || !before) break
+        }
+        return out.reverse()
       } catch {
         return null
       }

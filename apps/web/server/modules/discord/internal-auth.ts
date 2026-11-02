@@ -69,9 +69,11 @@ export interface InternalHandlerOptions {
   now?: () => Date
   /** 서비스 오류를 HTTP 오류로 바꾸는 함수(server/utils/http.ts의 toHttpError). */
   mapError?: (error: unknown) => unknown
+  /** 이 경로의 본문 상한(바이트, 기본 MAX_INTERNAL_BODY_BYTES). 회의 요약(E-13)만 올립니다. */
+  maxBodyBytes?: number
 }
 
-/** 내부 API 본문 상한. 봇 요청은 로그 본문(≤5000자) 수준이라 64KB면 충분합니다. */
+/** 내부 API 본문 상한. 봇 요청은 로그 본문(≤5000자) 수준이라 64KB면 충분합니다(회의 요약 경로만 `maxBodyBytes`로 256KB, ADR 0058). */
 export const MAX_INTERNAL_BODY_BYTES = 64 * 1024
 
 const tooLarge = () =>
@@ -100,10 +102,11 @@ export function createInternalHandler<T>(
     // 서명한 경로는 원래 요청 경로입니다(라우터가 접두어를 떼어 낸 event.path가 아니라).
     const path = event.node.req.originalUrl || event.path
     // 서명 확인 전에 읽는 본문이므로 크기를 먼저 제한합니다(인증 없는 큰 요청으로 메모리를 쓰지 않게).
+    const maxBytes = options.maxBodyBytes ?? MAX_INTERNAL_BODY_BYTES
     const declared = Number(getRequestHeader(event, 'content-length') ?? '0')
-    if (!Number.isFinite(declared) || declared > MAX_INTERNAL_BODY_BYTES) throw tooLarge()
+    if (!Number.isFinite(declared) || declared > maxBytes) throw tooLarge()
     const body = (await readRawBody(event, 'utf8')) ?? ''
-    if (Buffer.byteLength(body, 'utf8') > MAX_INTERNAL_BODY_BYTES) throw tooLarge()
+    if (Buffer.byteLength(body, 'utf8') > maxBytes) throw tooLarge()
     const check = verifySignature(
       secret,
       {

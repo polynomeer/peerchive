@@ -1118,6 +1118,71 @@ export interface AiRetroApproveDto {
   state: AiRetroStateDto
 }
 
+/** AI 회의 요약(E-13, ADR 0058): 회의 채널 하나의 동의 현황. */
+export interface AiMeetingChannelDto {
+  /** 디스코드 채널 연결 id(discord_channel_bindings). */
+  bindingId: string
+  label: string | null
+  channelId: string
+  /** 회의 채널로 제안됐으면 그 정보, 아니면 null. */
+  meeting: {
+    id: string
+    proposedAt: string
+    proposedBy: { userId: string; displayName: string }
+    /** 지금 active 멤버 전원과 각자의 동의 여부. */
+    members: Array<{ userId: string; displayName: string; agreed: boolean }>
+    /** 전원 동의(요약 가능). 새 멤버가 들어오면 그 사람이 동의할 때까지 false. */
+    allAgreed: boolean
+    myConsent: boolean
+  } | null
+}
+
+export interface AiMeetingFollowUpDto {
+  text: string
+  ownerId: string | null
+  ownerName: string | null
+  due: string | null
+}
+
+/** 승인 전 🗣️ 회의 로그 초안. 디스코드 메시지 원문은 없습니다(요약·결정·후속 할 일·개수만). */
+export interface AiMeetingDraftDto {
+  id: string
+  channelLabel: string | null
+  requestedBy: { userId: string; displayName: string }
+  createdAt: string
+  expiresAt: string
+  windowStart: string
+  windowEnd: string
+  messageCount: number
+  summary: string
+  decisions: string[]
+  followUps: AiMeetingFollowUpDto[]
+  openQuestions: string[]
+  attendees: Array<{ userId: string; displayName: string }>
+  /** 보내지 않고 뺀 팀 밖 참여자 메시지 수. */
+  excludedMessages: number
+  attachmentsOmitted: number
+  /** 승인 화면에 채울 회의 로그 기본값(본문·참석자·결정·후속 할 일 줄). */
+  logInput: { body: string; payload: { attendees: string[]; decisions: string[]; followUps: string[] } }
+  /** 내가 승인할 수 있는지(owner/editor, 요청자 본인은 다른 owner/editor가 없을 때만). */
+  canApprove: boolean
+  /** 내가 거절할 수 있는지(owner/editor). */
+  canReject: boolean
+}
+
+export interface AiMeetingStateDto {
+  channels: AiMeetingChannelDto[]
+  drafts: AiMeetingDraftDto[]
+  /** 회의 채널을 제안·거둘 수 있는지(owner, 스터디 기록 제외). */
+  canPropose: boolean
+}
+
+export interface AiMeetingApproveDto {
+  log: LogDto
+  tasks: TaskDto[]
+  state: AiMeetingStateDto
+}
+
 /** GET /me/checkins — 대시보드 "이번 주 체크인". */
 export interface MyCheckinStatusDto {
   week: string

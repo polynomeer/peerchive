@@ -14,6 +14,7 @@ import {
   type ProjectRole,
 } from '@peerchive/domain'
 import { and, asc, eq, sql, profiles, projectMembers, projects, users, type DbExecutor } from '@peerchive/db'
+import { deleteMeetingConsentsOf } from '../ai/meeting-channels'
 import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, forbidden, invalid, notFound } from '../errors'
 import { parseInput } from '../validation'
@@ -120,6 +121,8 @@ export async function removeMember(
       .update(projectMembers)
       .set({ status: 'removed', updatedAt: new Date() })
       .where(and(eq(projectMembers.projectId, project.id), eq(projectMembers.userId, target.userId)))
+    // AI 회의 채널 동의(E-13): 다시 들어오면 새로 동의해야 합니다.
+    await deleteMeetingConsentsOf(tx, project.id, target.userId)
     await recordAudit(tx, {
       actorId: actor.userId,
       action: 'member.remove',
@@ -142,6 +145,7 @@ export async function leaveProject(db: DbExecutor, actor: Actor, projectId: unkn
       .update(projectMembers)
       .set({ status: 'left', updatedAt: new Date() })
       .where(and(eq(projectMembers.projectId, project.id), eq(projectMembers.userId, actor.userId)))
+    await deleteMeetingConsentsOf(tx, project.id, actor.userId)
     await recordAudit(tx, {
       actorId: actor.userId,
       action: 'member.leave',

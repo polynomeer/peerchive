@@ -323,6 +323,9 @@ const formatDate = (iso: string) => new Date(iso).toLocaleString('ko-KR', { date
       <!-- AI 회고 인터뷰(E-12): 서버에 AI가 설정되어 있을 때만. 학생이 과제마다 켜야 씁니다. -->
       <AiRetroSection v-if="features.ai" :project-id="project.id" :members="members" :retro="retro" />
 
+      <!-- AI 회의 요약(E-13): 서버에 AI가 설정되어 있을 때만, 스터디 기록 제외. 회의 채널은 팀원 전원이 동의해야 요약합니다. -->
+      <AiMeetingSection v-if="features.ai && !isStudy" :project-id="project.id" :members="members ?? []" />
+
       <TasksSection :project-id="project.id" :can-write="canEdit" :members="members" :retro="retro" />
 
       <ArtifactsSection :project-id="project.id" :can-write="canEdit" />

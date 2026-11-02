@@ -274,6 +274,13 @@ P2 기능은 코드가 있어도 **기본으로 꺼져 있고** 이 게이트(DE
 4. **AI가 부적절한 초안·질문을 냄**: 초안은 학생 승인 전에는 어디에도 저장·공개되지 않습니다. 승인된 로그는 일반 로그와 같이 신고·운영 조치(§3.2)로 다룹니다. 반복되면 1번으로 끄고 프롬프트(`server/modules/ai/retro-interview.ts`)를 고칩니다. 질문·답변 원문은 서버 로그에 없으므로 학생 화면 캡처로만 재현합니다.
 5. **400이 계속됨**(`[ai] … unavailable (400)` 경고): 모델 id·beta 헤더가 조직에서 막혔을 수 있습니다. `PEERCHIVE_AI_FALLBACKS=off`로 서버 쪽 거절 대체를 끄고 재시작해 보고, 그래도 400이면 `PEERCHIVE_AI_MODEL`을 확인합니다.
 
+### 3.6.3 AI 회의 요약 사고(E-13)
+
+1. **팀원이 동의하지 않은 대화가 요약됐다는 신고**: 해당 과제의 감사 기록(`ai_meeting.channel_propose`·`consent`·`consent_revoke`·`draft_create`, 시각·사용자 id·개수만)으로 요약 시점에 전원 동의였는지 확인합니다. 초안이 남아 있으면 `delete from ai_meeting_drafts where project_id = '<과제 id>';`(로그 없음). 이미 승인된 회의 로그는 일반 로그처럼 작성자·owner가 고치거나 운영 조치(§3.2)로 숨깁니다. 대화 원문은 서버에 없으므로 재현은 디스코드 채널에서만 합니다.
+2. **채널에 팀 밖 사람이 있었음**: 팀 밖 참여자(연결 안 함·이 과제 active 멤버 아님)의 메시지는 봇이 빼고 서버가 다시 걸러 AI에 보내지 않습니다(초안에 "팀 밖 참여자 메시지 N개 제외"). 팀원 메시지에 인용된 글·`[외부]` 멘션만 들어갑니다. 그래도 문제가 되면 owner에게 제안을 거두게 합니다(`PUT …/ai-meetings/channels/:bindingId {enabled:false}` — 동의·초안 삭제).
+3. **기능만 끄기**: 전체는 §3.6.2 1번(`PEERCHIVE_AI_ENABLED=off`)으로 E-12와 함께 꺼집니다. 회의 요약만 막으려면 회의 채널 제안을 지웁니다: `delete from ai_meeting_drafts; delete from ai_meeting_consents; delete from ai_meeting_channels;`(팀이 다시 제안·동의해야 함).
+4. **봇 권한 오류**("메시지 기록을 읽을 수 없어요" 안내가 반복): 그 채널에서 봇 역할의 **Read Message History**·View Channel 권한(채널별 덮어쓰기 포함)을 확인합니다.
+
 ### 3.7 정리 작업이 멈춤(`halted`)
 
 `orphan-quarantine`이 `orphan_ratio_too_high`로 멈췄다면 worker가 다른 DB나 다른 저장소를 보고 있을 수 있습니다. `DATABASE_URL`·`PEERCHIVE_STORAGE_ROOT`(s3면 `PEERCHIVE_S3_BUCKET`·`PEERCHIVE_S3_PREFIX`)를 확인하기 전에는 강제로 지우지 마세요.
@@ -583,6 +590,18 @@ select column_name from information_schema.columns where table_name = 'instituti
 - **보존**: 질문·답변은 초안을 만드는 순간 비움, 세션·초안은 처리 즉시 또는 만든 지 7일 뒤 `ai-retro-sessions`(매시 19분, `PEERCHIVE_CRON_AI_RETRO_SESSIONS`)가 삭제, 켜기를 끄면 즉시 삭제, 탈퇴 정리(`account-purge`). §8 표.
 - **SDK 버전**: `@anthropic-ai/sdk` 0.135.0(저장소 규칙상 공개 14일 지난 버전). 1.x로 올릴 때는 `packages/ai/test/ai.test.ts`(요청 모양·오류 분류)로 확인합니다.
 
+### 4.13 AI 회의 요약(E-13, ADR 0058)
+
+- **켜짐 조건**: §4.12의 AI 설정(`"ai":true`) + 디스코드 봇(`apps/bot/README.md`, web·bot 같은 `PEERCHIVE_INTERNAL_SECRET`) + 과제 owner가 과제 화면 "AI 회의 요약 (선택)"에서 연결된 채널을 회의 채널로 제안 + 그 과제의 **active 멤버 전원**이 같은 화면에서 동의. 새 환경 변수는 없습니다. 명령을 바꿨으므로 배포 때 `pnpm --filter bot register-commands`를 한 번 실행해 `/summarize`를 등록합니다.
+- **디스코드 권한**: 회의 채널에서 봇 역할에 **View Channel**·**Read Message History**(`/summarize`가 최근 메시지를 REST로 읽음)가 있어야 합니다(기존 초대 권한 `68608`에 이미 포함, 채널별 덮어쓰기 주의). 메시지 본문을 읽으므로 **Message Content Intent**(이미 켜 둠)가 필요합니다. 새 intent·권한은 없습니다.
+- **동의 의미**(사용자 안내·문의 대응용): 동의는 "지금 active 멤버 전원"으로 매번 계산합니다. 누구든 철회하면 다음 요청부터 요약하지 않고 그 채널의 승인 전 초안이 지워집니다. 새 멤버가 들어오면 그 사람이 동의할 때까지 요약하지 않습니다(봇이 "아직 N명" 안내). 나가거나 내보내진 멤버의 동의는 지워집니다.
+- **보내는 데이터**(ADR 0058 §4): 고른 범위(최대 24시간)의 최근 메시지 최대 200개(합계 40,000자) 본문, 회의 날짜, 사람 표지(팀원 `[M1]`, 팀원 메시지 속 팀 밖 사람 멘션은 번호 없는 `[외부]`). **동의한 팀원(디스코드 계정 연결 + 지금 active 멤버)이 쓴 메시지만** 보냅니다. 팀 밖 참여자·연결하지 않은 팀원의 메시지는 봇이 빼고 서버가 다시 걸러 개수만 초안에 남깁니다("팀 밖 참여자 메시지 N개 제외"). 디스코드 id·이름, Peerchive 이름·id, 과제 이름, 첨부·봇 메시지는 보내지 않습니다. 팀원이 디스코드 계정을 연결해야 그 사람의 말이 요약에 들어간다고 안내합니다.
+- **원문 미저장**: 내부 API(`/api/internal/discord/meeting-summaries`, 이 경로만 본문 256KB)는 메시지를 메모리에서만 다룹니다. 서버 로그에는 경로·실패 이유·`[ai] meeting_summary.draft: <종류>`만 남고, DB에는 초안(요약·결정·후속 할 일·열린 질문·개수)만 남습니다. 리버스 프록시의 요청 본문 로깅·본문 크기 제한(256KB 이상 허용)을 확인하세요 — 프록시가 본문을 로그로 남기면 이 보장이 깨집니다.
+- **한도**: 과제마다 하루(UTC) 5번(봇 안내 `rate_limited`), 승인 대기 초안 3개, 그리고 §4.12의 사용자·전체 상한(요약 한 번 = AI 호출 1번). 비용은 `ai_usage_daily`의 `feature = 'meeting_summary.draft'` 행으로 봅니다.
+- **승인 규칙**: 요약을 요청한 사람이 아닌 owner/editor 한 명이 고쳐 승인합니다(쓰기 멤버가 요청자 혼자면 본인 승인 가능). 승인하면 🗣️ 회의 로그(`AI 초안`)와 고른 할 일이 만들어지고, 거절하면 아무것도 남지 않습니다.
+- **보존**: 승인 전 초안은 처리 즉시 또는 만든 지 7일 뒤 `ai-meeting-drafts`(매시 23분, `PEERCHIVE_CRON_AI_MEETING_DRAFTS`)가 삭제, 철회·제안 거둠·채널 해제 때 그 채널 초안 삭제, 탈퇴 정리(`account-purge`: 본인 동의·본인이 요청한 초안). §8 표.
+- **회귀 테스트**: `apps/web/test/ai-meeting.integration.test.ts`(동의·철회·새 멤버, 요약 전 거절·공급자 호출 0, 모든 테이블·콘솔 원문 0건, 두 사람 승인), `apps/web/test/internal-auth.test.ts`(경로별 본문 상한), `apps/bot/test/summarize.test.ts`.
+
 ## 5. 백업 일정과 보존
 
 | 대상 | 방법 | 주기 | 보존 |
@@ -653,6 +672,7 @@ RTO 목표 4시간 대비 로컬 연습은 수 초입니다. 운영 데이터 �
 | 유사 막힘 임베딩(E-05) | 공개 막힘 카드가 지금 게시 중인 동안(벡터·내용 해시만, 글 없음). 철회·제한·새 버전에서 빠진 카드·운영 조치로 가린 카드는 worker가 지우고, 그 전에도 읽기는 요청마다 거름. 엠바고 중에는 남지만 읽지 않음. 검색어는 저장하지 않음. 공급자 쪽 입력 보존은 Voyage 계약을 따름 | `publication.withdrawn`·`publication.published`·`moderation.action` 처리 때, `account-purge`(공개와 함께 삭제) |
 | 로그 피드백 댓글(E-10) | 과제(팀 기록)가 있는 동안. 작성자가 지우면 본문을 비우고 자리는 남김(`deleted`), owner 숨김은 행 그대로(작성자·owner만 봄). 팀 안에서만 읽고 공개 스냅샷·검색·케이스에는 들어가지 않음. 감사에는 댓글·로그 id만 | 본인 지우기 즉시(본문), `account-purge`(본문을 비운 행으로 남김, 삭제 장부 `log_comments`; 혼자만 쓴 과제는 과제와 함께 행 삭제) |
 | AI 회고 인터뷰(E-12) | 질문·답변은 초안을 만드는 순간 삭제(초안만 남음). 세션·승인 전 초안(본인만)은 승인·버리기로 마지막 초안을 처리하면 즉시, 아니어도 만든 지 7일 뒤 삭제. 켜기를 끄면 즉시 삭제. 승인한 초안은 일반 빌드 로그(출처 `AI 초안`)로 남음. 켜기 행(`ai_retro_opt_ins`)은 본인이 끄거나 탈퇴할 때까지. 사용량(`ai_usage_daily`)은 날짜·기능·모델별 토큰·횟수만(사람·내용 없음), 파일럿 기간 + 1년(비용 근거). 서버 로그에 프롬프트·출력 없음. Anthropic 쪽 보존은 조직 데이터 보존 설정(ZDR 여부)을 따름(§4.12) | 처리 즉시(웹), `ai-retro-sessions` 매시(만료), `account-purge`(초안·세션·켜기 삭제), 사용량은 수동 `delete from ai_usage_daily where day < '<보존 시작일>'` |
+| AI 회의 요약(E-13) | 디스코드 메시지 원문은 저장하지 않음(요청 처리 중 메모리에서만, 팀 밖 참여자 메시지는 AI에도 보내지 않고 개수만). 승인 전 초안(요약·결정·후속 할 일·열린 질문·참석 멤버 id·개수, 과제 멤버가 봄)은 승인·거절 즉시, 아니어도 만든 지 7일 뒤 삭제. 동의 철회·제안 거둠·채널 연결 해제 때 그 채널 초안 삭제. 승인한 초안은 일반 🗣️ 회의 로그(출처 `AI 초안`)·할 일로 남음. 회의 채널 제안·동의 행은 owner가 거두거나 채널을 해제할 때까지(동의는 본인 철회·과제에서 나감·탈퇴 때 삭제). 사용량은 E-12의 `ai_usage_daily`(기능 `meeting_summary.draft`) | 처리 즉시(웹), `ai-meeting-drafts` 매시(만료), `account-purge`(본인 동의·본인이 요청한 초안, 혼자 과제의 회의 채널 전체) |
 | 탈퇴 계정 자료 | 요청 뒤 7일(유예) | `account-purge` 30분마다 |
 | 이름 표시 방식 변경 이력·커뮤니티 알림 | 이력은 공간이 있는 동안(행을 지우지 않음, 탈퇴 때 예약·취소한 사람만 비움), 알림은 받는 사람이 탈퇴할 때까지 | 탈퇴 정리 때. 예약 적용은 `name-mode-changes` 매분 |
 | 소셜 링크 | 사용자가 지우거나 탈퇴할 때까지. verified 링크는 `social-link-recheck`(매시, 링크마다 하루 한 번, 한 번에 100개)가 다시 확인해 되돌림 링크가 없으면(404·410 포함) lost, 가져오기 3번 연속 실패면 lost. 감사에는 주소를 남기지 않음 | 탈퇴 정리 때 삭제 |

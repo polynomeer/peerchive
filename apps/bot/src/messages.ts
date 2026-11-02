@@ -1,7 +1,15 @@
 /**
  * 봇이 보내는 안내 문장. 실패는 이유를 자세히 밝히지 않습니다(다른 사람의 연결·멤버 여부가 드러나지 않게).
  */
-import type { BindResponse, LinkResponse, LogResponse, PinDecisionResponse, PinResponse } from '@peerchive/bot-protocol'
+import type {
+  BindResponse,
+  LinkResponse,
+  LogResponse,
+  MeetingCheckResponse,
+  MeetingSummaryResponse,
+  PinDecisionResponse,
+  PinResponse,
+} from '@peerchive/bot-protocol'
 import { TAG_LABELS } from './commands'
 
 export const GENERIC_ERROR = '지금은 Peerchive에 연결할 수 없어요. 잠시 뒤 다시 시도해 주세요.'
@@ -15,7 +23,8 @@ export const HELP = [
   '2. 과제 owner가 과제 화면 → 디스코드 연결에서 코드를 만들고, 기록할 채널에서 `/peerchive bind 코드`',
   '3. 연결된 채널에서 `/log 태그 내용` 또는 메시지에 📌 반응',
   '   · 내 메시지에 📌 → 바로 🔨 진행 로그 · 남의 메시지에 📌 → 작성자가 승인해야 저장',
-  '봇은 연결된 채널에서 명령·📌을 단 메시지만 읽고, 다른 대화는 저장하지 않습니다.',
+  '4. (AI가 켜진 서버) owner가 웹에서 회의 채널로 제안하고 팀원 전원이 동의한 채널에서 `/summarize` → 🗣️ 회의 로그 초안(팀원 승인 후 저장)',
+  '봇은 연결된 채널에서 명령·📌을 단 메시지만 읽고, 다른 대화는 저장하지 않습니다. `/summarize`도 최근 대화를 한 번 읽어 요약할 뿐 원문을 저장하지 않습니다.',
 ].join('\n')
 
 export function linkMessage(res: LinkResponse): string {
@@ -151,3 +160,54 @@ export function decisionMessage(res: PinDecisionResponse): string {
       return '찾을 수 없는 요청이에요.'
   }
 }
+
+// ── AI 회의 요약(E-13) ──
+
+/** 요약할 수 없는 이유(확인·요약 공통). null이면 이유가 아님. */
+function meetingRefusalMessage(res: { status: string; missingConsents?: number; projectUrl?: string }, siteUrl: string): string | null {
+  const where = res.projectUrl ?? siteUrl
+  switch (res.status) {
+    case 'ai_disabled':
+      return '이 Peerchive 서버에는 AI 기능이 켜져 있지 않아 회의를 요약할 수 없어요. 아무것도 보내지 않았어요.'
+    case 'not_bound':
+      return '이 채널은 Peerchive 과제에 연결되어 있지 않아요. 과제 owner가 `/peerchive bind 코드`로 연결할 수 있어요.'
+    case 'not_linked':
+      return linkGuide(siteUrl)
+    case 'not_writer':
+      return '이 채널의 과제에서 회의를 요약할 수 없어요(과제의 편집 권한이 필요해요).'
+    case 'not_meeting_channel':
+      return `이 채널은 회의 채널로 지정되지 않았어요. 과제 owner가 웹에서 제안하고 팀원 전원이 동의해야 요약할 수 있어요: ${where}`
+    case 'no_consent':
+      return `팀원 전원이 이 채널의 회의 요약에 동의하지 않았어요${res.missingConsents ? `(아직 ${res.missingConsents}명)` : ''}. 아무것도 읽거나 보내지 않았어요. 웹에서 동의할 수 있어요: ${where}`
+    case 'drafts_pending':
+      return `승인을 기다리는 회의 요약 초안이 많아요. 웹에서 먼저 승인하거나 거절해 주세요: ${where}`
+    default:
+      return null
+  }
+}
+
+export function meetingCheckMessage(res: MeetingCheckResponse, siteUrl: string): string | null {
+  return res.status === 'ready' ? null : meetingRefusalMessage(res, siteUrl)
+}
+
+export function meetingSummaryMessage(res: MeetingSummaryResponse, siteUrl: string): string {
+  switch (res.status) {
+    case 'drafted':
+      return `🗣️ 회의 로그 초안을 만들었어요. 팀원(owner/editor)이 웹에서 확인·수정해 승인해야 저장돼요(7일). 대화 원문은 저장하지 않았어요. ${res.draftUrl ?? ''}`.trim()
+    case 'duplicate':
+      return `이미 처리한 요청이에요(초안은 하나만 만들어요). ${res.draftUrl ?? ''}`.trim()
+    case 'empty':
+      return '요약할 메시지가 없어요(봇 메시지·첨부만 있는 메시지는 빼요). 범위를 넓혀 다시 시도해 주세요.'
+    case 'rate_limited':
+      return '오늘 이 과제(또는 내 계정)의 AI 요약 한도를 다 썼어요. 내일 다시 시도해 주세요.'
+    case 'ai_declined':
+      return 'AI가 이 대화를 요약하지 않았어요. 웹에서 🗣️ 회의 로그를 직접 남겨 주세요.'
+    case 'ai_unavailable':
+      return '지금은 AI가 응답하지 않아요. 잠시 뒤 다시 시도해 주세요. 아무것도 저장하지 않았어요.'
+    default:
+      return meetingRefusalMessage(res, siteUrl) ?? GENERIC_ERROR
+  }
+}
+
+export const MEETING_NO_ACCESS = '이 채널의 메시지 기록을 읽을 수 없어요. 봇에 "메시지 기록 보기(Read Message History)" 권한이 있는지 서버 관리자에게 확인해 주세요.'
+export const MEETING_NO_MESSAGES = '이 범위에 요약할 메시지가 없어요(봇 메시지와, 디스코드를 연결해 동의한 팀원이 아닌 사람의 메시지는 빼요). 아무것도 보내지 않았어요.'

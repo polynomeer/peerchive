@@ -3,8 +3,9 @@
  *
  * - `/peerchive link 코드` · `/peerchive bind 코드` · `/peerchive help`
  * - `/log 태그 내용 [시간]` — 태그 선택지는 한국어(진행/막힘/해결/결정/회의/검증/회고), 값은 서버 enum.
+ * - `/summarize [범위] [개수]` — 팀 전원이 동의한 회의 채널의 최근 대화를 AI가 🗣️ 회의 로그 초안으로 요약(E-13, ADR 0058).
  */
-import type { DiscordLogTag, DiscordTimeBucket } from '@peerchive/bot-protocol'
+import { type DiscordLogTag, type DiscordTimeBucket, MEETING_LIMITS } from '@peerchive/bot-protocol'
 
 export const PIN_EMOJI = '📌'
 export const TEXT_MAX = 2000
@@ -40,7 +41,10 @@ export const TIME_CHOICES: Array<{ name: string; value: DiscordTimeBucket }> = [
   { name: '하루 이상', value: 'day_plus' },
 ]
 
+export const WINDOW_CHOICES = MEETING_LIMITS.windowHours.map((h) => ({ name: `최근 ${h}시간`, value: String(h) }))
+
 const STRING = 3
+const INTEGER = 4
 const SUB_COMMAND = 1
 /** 서버 채널에서만(길드 설치, 길드 컨텍스트). */
 const GUILD_ONLY = { contexts: [0], integration_types: [0] }
@@ -76,6 +80,22 @@ export const COMMAND_DEFINITIONS = [
       { type: STRING, name: 'time', description: '막힌 시간(🧱 막힘, 선택)', required: false, choices: TIME_CHOICES },
     ],
   },
+  {
+    name: 'summarize',
+    description: '팀 전원이 동의한 회의 채널의 최근 대화를 AI가 🗣️ 회의 로그 초안으로 요약합니다(팀원 승인 후 저장).',
+    ...GUILD_ONLY,
+    options: [
+      { type: STRING, name: 'window', description: '최근 몇 시간(기본 2시간)', required: false, choices: WINDOW_CHOICES },
+      {
+        type: INTEGER,
+        name: 'count',
+        description: `최대 메시지 수(기본 ${MEETING_LIMITS.defaultMessages}, 최대 ${MEETING_LIMITS.maxMessages})`,
+        required: false,
+        min_value: 1,
+        max_value: MEETING_LIMITS.maxMessages,
+      },
+    ],
+  },
 ] as const
 
 export type ParsedCommand =
@@ -83,6 +103,7 @@ export type ParsedCommand =
   | { kind: 'bind'; code: string }
   | { kind: 'help' }
   | { kind: 'log'; tag: DiscordLogTag; text: string; timeBucket: DiscordTimeBucket | null }
+  | { kind: 'summarize'; windowHours: number; count: number }
   | { kind: 'invalid'; reason: 'unknown_command' | 'missing_code' | 'unknown_tag' | 'empty_text' | 'text_too_long' }
 
 export function parseTag(value: string | undefined): DiscordLogTag | null {
@@ -109,6 +130,13 @@ export function parseCommand(name: string, subcommand: string | null, options: R
     if (text.length > TEXT_MAX) return { kind: 'invalid', reason: 'text_too_long' }
     const timeBucket = TIME_CHOICES.find((c) => c.value === options.time)?.value ?? null
     return { kind: 'log', tag, text, timeBucket }
+  }
+  if (name === 'summarize') {
+    const hours = Number(options.window)
+    const windowHours = (MEETING_LIMITS.windowHours as readonly number[]).includes(hours) ? hours : MEETING_LIMITS.defaultWindowHours
+    const rawCount = Number(options.count)
+    const count = Number.isInteger(rawCount) && rawCount >= 1 ? Math.min(rawCount, MEETING_LIMITS.maxMessages) : MEETING_LIMITS.defaultMessages
+    return { kind: 'summarize', windowHours, count }
   }
   return { kind: 'invalid', reason: 'unknown_command' }
 }

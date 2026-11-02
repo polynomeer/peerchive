@@ -24,6 +24,9 @@
  * 저장소 파일은 행을 지운 뒤 커밋 직전에 지웁니다(파일 삭제가 실패하면 트랜잭션 전체가 되돌아가 다음 주기에 다시 시도).
  */
 import {
+  aiMeetingChannels,
+  aiMeetingConsents,
+  aiMeetingDrafts,
   aiRetroDrafts,
   aiRetroOptIns,
   aiRetroSessions,
@@ -346,6 +349,10 @@ export async function purgeAccount(db: DbExecutor, deps: PurgeDeps, userId: stri
     c.add('ai_retro_drafts', (await tx.delete(aiRetroDrafts).where(eq(aiRetroDrafts.userId, userId)).returning({ id: aiRetroDrafts.id })).length)
     c.add('ai_retro_sessions', (await tx.delete(aiRetroSessions).where(eq(aiRetroSessions.userId, userId)).returning({ id: aiRetroSessions.id })).length)
     c.add('ai_retro_opt_ins', (await tx.delete(aiRetroOptIns).where(eq(aiRetroOptIns.userId, userId)).returning({ id: aiRetroOptIns.userId })).length)
+    // AI 회의 요약(E-13, ADR 0058): 본인의 회의 채널 동의와, 본인이 요청한 승인 전 회의 요약 초안(팀원 대화 요약 — 승인되지 않은 AI 글).
+    // 본인이 제안한 회의 채널은 팀의 설정이라 남깁니다(사용자 행은 지우지 않으므로 외래 키는 그대로).
+    c.add('ai_meeting_consents', (await tx.delete(aiMeetingConsents).where(eq(aiMeetingConsents.userId, userId)).returning({ id: aiMeetingConsents.userId })).length)
+    c.add('ai_meeting_drafts', (await tx.delete(aiMeetingDrafts).where(eq(aiMeetingDrafts.requestedBy, userId)).returning({ id: aiMeetingDrafts.id })).length)
     // 이번 학기 과목 등록(E-01): 본인만 보던 행이라 남길 이유가 없습니다(학기 종료 알림 시각 포함).
     c.add('course_registrations', (await tx.delete(courseRegistrations).where(eq(courseRegistrations.userId, userId)).returning({ id: courseRegistrations.id })).length)
     // 과목 허브 알림 신청·닫음(E-02): 본인만 보던 행.
@@ -1047,6 +1054,13 @@ async function purgeSoloProject(tx: DbExecutor, projectId: string, userId: strin
   await tx.delete(aiRetroDrafts).where(eq(aiRetroDrafts.projectId, projectId))
   await tx.delete(aiRetroSessions).where(eq(aiRetroSessions.projectId, projectId))
   await tx.delete(aiRetroOptIns).where(eq(aiRetroOptIns.projectId, projectId))
+  // AI 회의 요약(E-13): 초안 → 동의 → 회의 채널(외래 키, 채널 연결보다 먼저).
+  await tx.delete(aiMeetingDrafts).where(eq(aiMeetingDrafts.projectId, projectId))
+  const meetingChannelIds = idsOf(await tx.select({ id: aiMeetingChannels.id }).from(aiMeetingChannels).where(eq(aiMeetingChannels.projectId, projectId)))
+  if (meetingChannelIds.length) {
+    await tx.delete(aiMeetingConsents).where(inArray(aiMeetingConsents.meetingChannelId, meetingChannelIds))
+    await tx.delete(aiMeetingChannels).where(inArray(aiMeetingChannels.id, meetingChannelIds))
+  }
 
   // 디스코드 연결
   const bindingIds = idsOf(await tx.select({ id: discordChannelBindings.id }).from(discordChannelBindings).where(eq(discordChannelBindings.projectId, projectId)))

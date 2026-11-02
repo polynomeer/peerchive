@@ -52,6 +52,14 @@ export type AuditAction =
   | 'ai_retro.draft_approve'
   | 'ai_retro.draft_discard'
   | 'ai_retro.session_discard'
+  /** E-13(ADR 0058): AI 회의 요약 — 회의 채널 제안·거둠, 멤버 동의·철회, 초안 생성·승인·거절. metadata는 개수·플래그만(메시지·요약 글 없음). */
+  | 'ai_meeting.channel_propose'
+  | 'ai_meeting.channel_withdraw'
+  | 'ai_meeting.consent'
+  | 'ai_meeting.consent_revoke'
+  | 'ai_meeting.draft_create'
+  | 'ai_meeting.draft_approve'
+  | 'ai_meeting.draft_reject'
   | 'school.create'
   | 'school.merge'
   | 'course.create'
@@ -279,6 +287,8 @@ export async function recordAudit(
       | 'github_repo_link'
       | 'ai_retro_session'
       | 'ai_retro_draft'
+      | 'ai_meeting_channel'
+      | 'ai_meeting_draft'
     targetId?: string | null
     projectId?: string | null
     metadata?: Record<string, string | number | boolean | null>

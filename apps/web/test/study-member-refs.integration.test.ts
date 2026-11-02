@@ -38,6 +38,7 @@ import {
   setAiRetroOptIn,
   startAiRetroSession,
 } from '../server/modules/ai/retro-interview'
+import { approveMeetingDraft, getAiMeetingState, rejectMeetingDraft, setMeetingChannel, setMeetingConsent } from '../server/modules/ai/meeting-summary'
 import { createCourse, createSchool } from '../server/modules/catalog/catalog'
 import { acceptSpaceInvitation, createSpaceInvitation } from '../server/modules/community/invitations'
 import { createStudyRoomInternal } from '../server/modules/community/spaces'
@@ -146,6 +147,12 @@ const ROUTES: Record<string, string> = {
   'projects/[id]/ai-retro/answers.post.ts': 'answerAiRetro',
   'projects/[id]/ai-retro/drafts/[draftId]/approve.post.ts': 'approveAiRetroDraft',
   'projects/[id]/ai-retro/drafts/[draftId].delete.ts': 'discardAiRetroDraft',
+  // E-13 AI 회의 요약(ADR 0058): 스터디 기록에서는 쓰지 않아 모든 경로가 404입니다(동의 목록·초안이 실명·id를 싣기 때문).
+  'projects/[id]/ai-meetings/index.get.ts': 'getAiMeetingState',
+  'projects/[id]/ai-meetings/channels/[bindingId].put.ts': 'setMeetingChannel',
+  'projects/[id]/ai-meetings/channels/[bindingId]/consent.put.ts': 'setMeetingConsent',
+  'projects/[id]/ai-meetings/drafts/[draftId]/approve.post.ts': 'approveMeetingDraft',
+  'projects/[id]/ai-meetings/drafts/[draftId].delete.ts': 'rejectMeetingDraft',
   'logs/[id]/index.get.ts': 'getLog',
   'logs/[id]/revisions/index.get.ts': 'listLogRevisions',
   'logs/[id]/revisions/index.post.ts': 'reviseLog',
@@ -481,6 +488,17 @@ describe.skipIf(!databaseUrl)('study member refs (PostgreSQL)', () => {
         await hit('projects/[id]/ai-retro/drafts/[draftId]/approve.post.ts', () => approveAiRetroDraft(tx, A, projectId, drafted.drafts[0]!.id, {}, at(13)))
         await hit('projects/[id]/ai-retro/drafts/[draftId].delete.ts', () => discardAiRetroDraft(tx, A, projectId, drafted.drafts[1]!.id, at(13)))
         await hit('projects/[id]/ai-retro/session.delete.ts', () => discardAiRetroSession(tx, A, projectId, at(13)))
+        // AI 회의 요약(E-13): 스터디 기록은 모든 경로 404.
+        for (const [route, run] of [
+          ['projects/[id]/ai-meetings/index.get.ts', () => getAiMeetingState(tx, A, projectId, at(13))],
+          ['projects/[id]/ai-meetings/channels/[bindingId].put.ts', () => setMeetingChannel(tx, A, projectId, crypto.randomUUID(), { enabled: true }, at(13))],
+          ['projects/[id]/ai-meetings/channels/[bindingId]/consent.put.ts', () => setMeetingConsent(tx, A, projectId, crypto.randomUUID(), { agree: true }, at(13))],
+          ['projects/[id]/ai-meetings/drafts/[draftId]/approve.post.ts', () => approveMeetingDraft(tx, A, projectId, crypto.randomUUID(), {}, at(13))],
+          ['projects/[id]/ai-meetings/drafts/[draftId].delete.ts', () => rejectMeetingDraft(tx, A, projectId, crypto.randomUUID(), at(13))],
+        ] as const) {
+          await hit(route, run as () => Promise<unknown>)
+          expect(bodies.at(-1), route).toEqual([route, JSON.stringify({ code: 'NOT_FOUND' })])
+        }
         // 기록의 다른 멤버 이름·id는 AI에도 보내지 않습니다.
         for (const secret of [b.userId, c.userId, b.displayName, c.displayName]) expect(fakeAi.sentText()).not.toContain(secret)
       } finally {
