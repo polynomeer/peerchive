@@ -7,6 +7,7 @@ import {
   canReadSpace,
   canWriteBoard,
   canReact,
+  canKeepAlumniReadOnly,
   countsAsAlumniHistory,
   readsByAlumniHistory,
 } from '../src'
@@ -45,6 +46,13 @@ describe('A-04 alumni verification history', () => {
     expect(countsAsAlumniHistory({ standing: 'alumni', status: 'pending', verifiedAt: null })).toBe(false)
     expect(countsAsAlumniHistory({ standing: 'alumni', status: 'expired', verifiedAt: null })).toBe(false)
     expect(countsAsAlumniHistory({ standing: 'student', status: 'expired', verifiedAt: VERIFIED })).toBe(false)
+  })
+
+  it('only a verified active alumni row may move to read-only (ADR 0060 D-04)', () => {
+    expect(canKeepAlumniReadOnly({ standing: 'alumni', status: 'active', verifiedAt: VERIFIED })).toBe(true)
+    expect(canKeepAlumniReadOnly({ standing: 'alumni', status: 'active', verifiedAt: null })).toBe(false)
+    expect(canKeepAlumniReadOnly({ standing: 'student', status: 'active', verifiedAt: VERIFIED })).toBe(false)
+    expect(canKeepAlumniReadOnly({ standing: 'alumni', status: 'expired', verifiedAt: VERIFIED })).toBe(false)
   })
 
   it('opens only the alumni and free (lounge) boards of that official school page, read-only', () => {

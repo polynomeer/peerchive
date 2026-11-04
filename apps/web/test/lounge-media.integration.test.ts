@@ -11,8 +11,10 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { communityPostMedia, eq, institutionAffiliations, operators, outboxEvents, type DbExecutor } from '@peerchive/db'
+import { countsAsAlumniHistory } from '@peerchive/domain'
+import { and, auditEvents, communityPostMedia, eq, institutionAffiliations, operators, outboxEvents, type DbExecutor } from '@peerchive/db'
 import { POST_MEDIA_SCAN_QUEUE, createFilesystemStorage, createSignatureOnlyScanner, readAll, scanPostMedia, type ObjectStorage } from '@peerchive/files'
+import { removeAffiliation, stopUsingAlumniEmail } from '../server/modules/affiliation/affiliations'
 import { createSchool } from '../server/modules/catalog/catalog'
 import { deleteLoungeMedia, openLoungeMedia, requestLoungeMediaUpload, uploadLoungeMedia } from '../server/modules/community/lounge-media'
 import { hideCommunityItemInTx } from '../server/modules/community/moderation'
@@ -99,6 +101,7 @@ async function world(tx: DbExecutor) {
   }
   return {
     op: { userId: op.id },
+    schoolId: school.id,
     page,
     lounge: board('free'),
     alumniBoard: board('alumni'),
@@ -299,6 +302,49 @@ describe.skipIf(!databaseUrl)('A-04 lounge media and alumni reading (PostgreSQL)
       await expectServiceError(setReaction(tx, g, 'post', loungePost.id, true, at(5)), 'NOT_FOUND')
       // active 졸업생 인증(메일이 아직 유지)은 기존대로 모든 게시판을 읽고 씁니다.
       expect((await getSpaceDetail(tx, w.reader, w.page.slug, at(5))).access).toBe('member')
+    })
+  })
+
+  it('D-04: stopping school email use keeps reading only, end to end; release (revoked) is unchanged; flag off is 404', async () => {
+    await withRollback(async (tx) => {
+      const w = await world(tx)
+      const post = await createPost(tx, w.reader, w.alumniBoard.id, { title: '졸업생 근황', body: '본문' }, at(1))
+      const g = { userId: (await createUser(tx)).id }
+      const { id } = await verifiedAffiliation(tx, g.userId, w.schoolId, { standing: 'alumni' })
+      expect((await getSpaceDetail(tx, g, w.page.slug, at(2))).access).toBe('member')
+
+      // 남의 소속·플래그 꺼짐은 404, 재학생은 409.
+      await expectServiceError(stopUsingAlumniEmail(tx, w.reader, id, at(2)), 'NOT_FOUND')
+      setFeatureEnvForTesting({})
+      await expectServiceError(stopUsingAlumniEmail(tx, g, id, at(2)), 'NOT_FOUND')
+      setFeatureEnvForTesting(ON)
+      const studentUser = { userId: (await createUser(tx)).id }
+      const student = await verifiedAffiliation(tx, studentUser.userId, w.schoolId)
+      await expectServiceError(stopUsingAlumniEmail(tx, studentUser, student.id, at(2)), 'CONFLICT', 'not_alumni_active')
+
+      const before = (await tx.select().from(institutionAffiliations).where(eq(institutionAffiliations.id, id)))[0]!
+      expect((await stopUsingAlumniEmail(tx, g, id, at(3))).status).toBe('expired')
+      const [row] = await tx.select().from(institutionAffiliations).where(eq(institutionAffiliations.id, id))
+      expect(row).toMatchObject({ status: 'expired', emailHash: null, verifiedAt: before.verifiedAt })
+      expect(countsAsAlumniHistory(row!)).toBe(true)
+      // 멱등. 감사에는 id·학교만.
+      await stopUsingAlumniEmail(tx, g, id, at(4))
+      const audits = await tx.select().from(auditEvents).where(and(eq(auditEvents.targetId, id), eq(auditEvents.action, 'affiliation.alumni_read_only')))
+      expect(audits).toHaveLength(1)
+      expect(audits[0]!.metadata).toEqual({ schoolId: w.schoolId })
+
+      // 읽기는 유지, 쓰기는 거부.
+      expect((await getSpaceDetail(tx, g, w.page.slug, at(5))).access).toBe('alumni_history')
+      expect((await listBoardPosts(tx, g, w.alumniBoard.id, {}, at(5))).items.map((p) => p.id)).toEqual([post.id])
+      await expectServiceError(createPost(tx, g, w.alumniBoard.id, { title: '쓰기', body: '본문' }, at(5)), 'NOT_FOUND')
+      await expectServiceError(createComment(tx, g, post.id, { body: '댓글' }, at(5)), 'NOT_FOUND')
+
+      // 기존 해제는 그대로 전체 해제(이력으로 세지 않음).
+      const r = { userId: (await createUser(tx)).id }
+      const released = await verifiedAffiliation(tx, r.userId, w.schoolId, { standing: 'alumni' })
+      expect((await removeAffiliation(tx, r, released.id, at(6))).status).toBe('revoked')
+      await expectServiceError(listBoardPosts(tx, r, w.alumniBoard.id, {}, at(6)), 'NOT_FOUND')
+      await expectServiceError(stopUsingAlumniEmail(tx, r, released.id, at(6)), 'CONFLICT', 'not_alumni_active')
     })
   })
 

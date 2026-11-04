@@ -12,6 +12,8 @@
  * 3. `PATCH /me/affiliations/:id {standing?, departmentLabel?}`: 재학생 → 졸업생만. `DELETE /me/affiliations/:id`: 해제(revoked, 메일 해시 삭제, 이력 유지).
  * 운영자: `POST /operator/affiliations/:id/revoke {reason}`(감사), `GET /operator/affiliations?schoolId=|userId=`(사용자 id·학교·도메인·상태만).
  *
+ * 4. `POST /me/affiliations/:id/stop-using-email`(P2 alumni 플래그 뒤, ADR 0060 D-04): 졸업생이 학교 메일을 더 쓰지 않을 때 active → expired. 메일 해시를 지우고
+ *    인증 시각은 남겨 졸업생 게시판·라운지를 읽기만 합니다(countsAsAlumniHistory). 쓰려면 다시 인증합니다.
  * 졸업 뒤 학교 메일이 없어져도 active를 유지합니다(주기적 재인증 없음). 과목 허브 작성 자격은 active 행으로 판정합니다(`activeAffiliationSchoolIds`).
  */
 import { createHmac, randomInt } from 'node:crypto'
@@ -25,6 +27,7 @@ import {
   COHORT_APPROVALS_REQUIRED,
   affiliationBadgeLabel,
   canChangeStanding,
+  canKeepAlumniReadOnly,
   decideCodeAttempt,
   normalizeAffiliationCode,
   normalizeDepartmentLabel,
@@ -51,6 +54,7 @@ import { recordAudit } from '../audit/audit'
 import { loadCanonicalSchool } from '../catalog/catalog'
 import { requireOperator } from '../catalog/operators'
 import { type Actor, ServiceError, conflict, gone, invalid, notFound, rateLimited, sqlState } from '../errors'
+import { requireFeature } from '../features'
 import { describeMailError, type MailTransport } from '../identity/mail'
 import { isUuid } from '../projects/access'
 import { constantTimeEqualHex } from '../security/tokens'
@@ -479,6 +483,29 @@ export async function removeAffiliation(db: DbExecutor, actor: Actor, affiliatio
       targetType: 'affiliation',
       targetId: row.id,
       metadata: { schoolId: row.schoolId, wasActive: row.status === 'active' },
+    })
+    return toDto(tx, updated!)
+  })
+}
+
+/**
+ * POST /me/affiliations/:id/stop-using-email — 졸업생 본인이 학교 메일을 더 쓰지 않음(ADR 0060 D-04). active + verified_at 있는 졸업생 소속만: expired로 바꾸고
+ * 메일 해시를 지우고 verified_at을 남깁니다. 그 뒤로는 졸업생 게시판·라운지 읽기만 됩니다. 이미 이렇게 끝난 행은 그대로 200(멱등).
+ * 플래그 꺼짐·남의 소속 404, 그 밖의 행 409 `not_alumni_active`. 전체 해제는 그대로 DELETE(revoked)입니다.
+ */
+export async function stopUsingAlumniEmail(db: DbExecutor, actor: Actor, affiliationId: unknown, now = new Date()): Promise<AffiliationDto> {
+  requireFeature('alumni')
+  return db.transaction(async (tx) => {
+    const row = await loadOwn(tx, actor, affiliationId)
+    if (row.status === 'expired' && row.standing === 'alumni' && row.verifiedAt) return toDto(tx, row)
+    if (!canKeepAlumniReadOnly(row)) throw conflict('not_alumni_active')
+    const [updated] = await tx.update(institutionAffiliations).set(closedFields('expired', now)).where(eq(institutionAffiliations.id, row.id)).returning()
+    await recordAudit(tx, {
+      actorId: actor.userId,
+      action: 'affiliation.alumni_read_only',
+      targetType: 'affiliation',
+      targetId: row.id,
+      metadata: { schoolId: row.schoolId },
     })
     return toDto(tx, updated!)
   })

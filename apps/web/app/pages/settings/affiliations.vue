@@ -143,6 +143,20 @@ async function saveEdit(item: AffiliationDto) {
     busy.value = null
   }
 }
+async function stopUsingEmail(item: AffiliationDto) {
+  if (!window.confirm(`${item.school.name} 학교 메일을 더 쓰지 않을까요? 졸업생 게시판과 라운지는 계속 읽을 수 있지만, 글쓰기와 그 학교 방·과목 허브 쓰기는 다시 인증해야 합니다.`)) return
+  busy.value = item.id
+  notice.value = null
+  try {
+    await $fetch(`/api/v1/me/affiliations/${item.id}/stop-using-email`, { method: 'POST' })
+    notice.value = { kind: 'ok', text: '읽기만 유지합니다. 다시 쓰려면 새 학교 메일로 인증하세요.' }
+    await refresh()
+  } catch (error) {
+    notice.value = { kind: 'error', text: affiliationErrorMessage(apiError(error).code) }
+  } finally {
+    busy.value = null
+  }
+}
 async function remove(item: AffiliationDto) {
   const question =
     item.status === 'active'
@@ -363,7 +377,14 @@ const instReady = computed(() =>
               <button type="submit" :disabled="busy === item.id">저장</button>
               <button type="button" class="danger" :disabled="busy === item.id" @click="remove(item)">인증 해제</button>
             </p>
+            <template v-if="flags.alumni && item.standing === 'alumni' && item.verifiedAt">
+              <p class="hint" :id="`read-only-${item.id}`">학교 메일을 더 쓰지 않는다면 인증 이력만 남기고 읽기만 유지할 수 있습니다. 졸업생 게시판·라운지는 계속 읽고, 쓰기는 다시 인증해야 합니다. 메일 해시는 지웁니다.</p>
+              <p class="actions">
+                <button type="button" class="secondary" :disabled="busy === item.id" :aria-describedby="`read-only-${item.id}`" data-testid="stop-using-email" @click="stopUsingEmail(item)">학교 메일을 더 쓰지 않음</button>
+              </p>
+            </template>
           </form>
+          <p v-else-if="item.status === 'expired' && item.standing === 'alumni' && item.verifiedAt && flags.alumni" class="hint" data-testid="alumni-read-only">읽기만 유지 중입니다. 쓰려면 아래에서 다시 인증하세요.</p>
         </li>
       </ul>
       <p v-else class="muted">아직 인증한 학교가 없습니다.</p>

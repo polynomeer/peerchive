@@ -217,3 +217,8 @@ export function affiliationBadgeLabel(schoolName: string, standing: AffiliationS
 export function countsAsAlumniHistory(row: { standing: AffiliationStanding; status: AffiliationStatus; verifiedAt: Date | null }): boolean {
   return row.standing === 'alumni' && row.verifiedAt !== null && (row.status === 'active' || row.status === 'expired')
 }
+
+/** "학교 메일을 더 쓰지 않음"(ADR 0060 D-04)을 고를 수 있는 소속: 한 번 인증된 active 졸업생. 결과는 expired + verified_at 유지라 countsAsAlumniHistory가 참으로 남습니다. */
+export function canKeepAlumniReadOnly(row: { standing: AffiliationStanding; status: AffiliationStatus; verifiedAt: Date | null }): boolean {
+  return row.standing === 'alumni' && row.status === 'active' && row.verifiedAt !== null
+}

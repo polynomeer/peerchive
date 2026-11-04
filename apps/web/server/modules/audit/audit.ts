@@ -107,6 +107,7 @@ export type AuditAction =
   | 'affiliation.verify'
   | 'affiliation.update'
   | 'affiliation.remove'
+  | 'affiliation.alumni_read_only'
   | 'affiliation.revoke'
   | 'school_email_domain.add'
   | 'school_email_domain.remove'

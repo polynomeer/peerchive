@@ -73,6 +73,7 @@ export const AFFILIATION_ERROR_MESSAGES: Record<string, string> = {
   code_unavailable: '이 코드는 더 쓸 수 없습니다. 코드를 다시 받으세요.',
   email_in_use: '이 학교 메일은 이미 다른 계정에서 인증되었습니다. 한 메일 주소로는 한 계정만 인증할 수 있습니다.',
   not_editable: '해제되었거나 만료된 인증은 고칠 수 없습니다.',
+  not_alumni_active: '인증된 졸업생 소속에서만 고를 수 있습니다.',
   not_found: '찾을 수 없습니다. 학교를 다시 고르세요.',
   // I-01(ADR 0037)
   invite_code_invalid: '초대 코드가 맞지 않습니다. 받은 코드를 다시 확인하세요.',
