@@ -48,10 +48,11 @@ export function nextTerm(term: TermRef): TermRef {
   }
 }
 
-/** 등록할 수 있는 학기: 지금 학기와 다음 학기(학기 초·직전 등록). */
-export function registrableTerms(now: Date): [TermRef, TermRef] {
+/** 등록할 수 있는 학기: 지금 학기와 이후 두 학기(ADR 0060 D-06: 11~12월 겨울 계절학기 다음의 봄학기도 등록할 수 있게). */
+export function registrableTerms(now: Date): [TermRef, TermRef, TermRef] {
   const current = currentTerm(now)
-  return [current, nextTerm(current)]
+  const next = nextTerm(current)
+  return [current, next, nextTerm(next)]
 }
 
 export function isRegistrableTerm(term: TermRef, now: Date): boolean {

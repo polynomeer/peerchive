@@ -1,0 +1,1 @@
+ALTER TYPE "public"."analytics_event_name" ADD VALUE 'course_registered' BEFORE 'ai_retro_drafts_proposed';

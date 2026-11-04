@@ -354,6 +354,7 @@ export const analyticsEventName = pgEnum('analytics_event_name', [
   'topic_post_created',
   'completion_retro_published',
   // E-12(ADR 0057): AI 회고 인터뷰. 개수·태그·결정·플래그만(질문·답변·초안 글 없음).
+  'course_registered',
   'ai_retro_drafts_proposed',
   'ai_retro_draft_resolved',
   // E-13(ADR 0058): AI 회의 요약. 개수·결정·플래그만(메시지·요약 글 없음).

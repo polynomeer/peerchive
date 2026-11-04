@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 이번 학기 과목 등록·관리(E-01, PROOFU_EVOLUTION_PLAN §8.7, ADR 0046).
- * - 학교 검색 → 과목 검색 → 학기(지금 학기·다음 학기) → 등록. 카탈로그에 있는 과목만 고릅니다(크롤링·계정 연동 없음).
+ * - 학교 검색 → 과목 검색 → 학기(지금 학기와 이후 두 학기) → 등록. 카탈로그에 있는 과목만 고릅니다(크롤링·계정 연동 없음).
  *   찾는 과목이 없으면 과제 만들기 화면의 과목 고르기에서 먼저 추가합니다.
  * - 등록한 과목은 나만 봅니다. 공개 프로필·검색·피드에는 나오지 않습니다. 지우면 바로 사라집니다.
  */
@@ -107,7 +107,7 @@ async function remove(r: CourseRegistrationDto) {
   }
 }
 
-const PHASE_LABELS = { current: '이번 학기', upcoming: '다음 학기', ended: '끝난 학기' } as const
+const PHASE_LABELS = { current: '이번 학기', upcoming: '이후 학기', ended: '끝난 학기' } as const
 </script>
 
 <template>
@@ -162,7 +162,7 @@ const PHASE_LABELS = { current: '이번 학기', upcoming: '다음 학기', ende
           <label for="reg-term">학기</label>
           <select id="reg-term" v-model="termKey">
             <option v-for="t in data?.registrableTerms ?? []" :key="`${t.year}:${t.semester}`" :value="`${t.year}:${t.semester}`">
-              {{ t.label }}{{ t.current ? ' (지금 학기)' : ' (다음 학기)' }}
+              {{ t.label }}{{ t.current ? ' (지금 학기)' : ' (이후 학기)' }}
             </option>
           </select>
         </div>

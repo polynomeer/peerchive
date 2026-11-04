@@ -65,7 +65,7 @@ const courseName = (r: CourseRegistrationDto) => `${r.course.title}${r.course.co
         <p>
           <strong>{{ courseName(r) }}</strong>
           <span class="muted"> · {{ r.school.name }} · {{ r.termLabel }}</span>
-          <span v-if="r.phase === 'upcoming'" class="badge">다음 학기</span>
+          <span v-if="r.phase === 'upcoming'" class="badge">이후 학기</span>
         </p>
         <p class="actions" :aria-label="`${r.course.title} 바로 가기`">
           <NuxtLink :to="`/c/${r.course.id}`">과목 허브</NuxtLink>

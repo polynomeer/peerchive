@@ -393,6 +393,13 @@
       "when": 1793804486690,
       "tag": "0055_poll_final_tally",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1793806228101,
+      "tag": "0056_course_registered_event",
+      "breakpoints": true
     }
   ]
 }

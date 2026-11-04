@@ -2,11 +2,12 @@
  * 이번 학기 과목 등록 (E-01, PROOFU_EVOLUTION_PLAN §8.7, DELIVERY_PLAN §4.4 E-01, ADR 0046).
  *
  * - 등록은 학교·과목 검색(T-10 카탈로그)으로 고른 **이미 있는 과목**만 받습니다(크롤링·계정 연동 없음). 병합된 과목 id면 정본으로 등록합니다.
- *   학기는 지금 학기·다음 학기만(@peerchive/domain registrableTerms, 아니면 422 `term: not_registrable`). 그 학기의 개설 학기 행이 없으면
+ *   학기는 지금 학기와 이후 두 학기만(ADR 0060 D-06, @peerchive/domain registrableTerms, 아니면 422 `term: not_registrable`). 그 학기의 개설 학기 행이 없으면
  *   카탈로그 규칙 그대로 만듭니다(`ensureCourseTermUnattributed`: 종료 시각은 서버 계산, 만든 사람·감사 actor는 남기지 않음).
  * - 같은 (사용자, 개설 학기)는 하나(409 `already_registered`), 학기당 15개(409 `limit_reached`), 사용자별 시간당 60회(429).
  * - **본인만 봅니다**: 목록·지우기·알림 닫기 모두 본인 행만(남의 id는 404). 공개 프로필·검색·페르소나·피드·추천·운영자 경로는 이 모듈을 import하지
- *   않습니다(S-02 경계 테스트). 감사 기록·분석 이벤트도 남기지 않습니다(운영자가 사람별 등록을 볼 길을 만들지 않음).
+ *   않습니다(S-02 경계 테스트). 감사 기록을 남기지 않습니다(운영자가 사람별 등록을 볼 길을 만들지 않음). 파일럿 지표용 분석 이벤트 `course_registered`는
+ *   **사용자 키·과목 없이** 시 단위 시각과 학기 종류만 남깁니다(ADR 0060 D-06). 지우기는 아무것도 남기지 않습니다.
  * - 과제 공간 만들기 미리 채우기: `POST /projects {courseRegistrationId}`가 이 모듈의 `registrationTermForProject`로 등록의 개설 학기를 찾아
  *   기존 과제 만들기(학기 연결 + 엠바고 단조 규칙)에 넘깁니다.
  * - 학기가 끝나면 worker(`course-term-prompts`)가 등록마다 한 번 `post_term_prompted_at`을 채우고, 홈이 "선배 노트를 남겨 주세요"·"공개할까요?"를
@@ -37,6 +38,7 @@ import {
   sql,
   type DbExecutor,
 } from '@peerchive/db'
+import { emitP2Analytics } from '../analytics/analytics'
 import { ensureCourseTermUnattributed, loadCanonicalCourse, loadCanonicalTerm, toCourseDto, toCourseTermDto, toSchoolDto } from '../catalog/catalog'
 import { type Actor, conflict, invalid, notFound, rateLimited, sqlState } from '../errors'
 import { isUuid } from '../projects/access'
@@ -143,19 +145,19 @@ export async function listMyCourseRegistrations(db: DbExecutor, actor: Actor, no
       a.course.title.localeCompare(b.course.title, 'ko') ||
       a.id.localeCompare(b.id),
   )
-  const [current, next] = registrableTerms(now)
+  const [current, ...later] = registrableTerms(now)
   return {
     items,
     registrableTerms: [
       { ...current, label: termRefLabel(current), current: true },
-      { ...next, label: termRefLabel(next), current: false },
+      ...later.map((t) => ({ ...t, label: termRefLabel(t), current: false })),
     ],
   }
 }
 
 /**
  * POST /me/course-registrations {courseId, year, semester} — 201 + 등록.
- * 422: 형식·`term: not_registrable`(지금·다음 학기가 아님)·`courseId: not_found`(카탈로그에 없는 과목). 409 `already_registered`·`limit_reached`. 429.
+ * 422: 형식·`term: not_registrable`(지금·이후 두 학기가 아님)·`courseId: not_found`(카탈로그에 없는 과목). 409 `already_registered`·`limit_reached`. 429.
  */
 export async function registerCourse(db: DbExecutor, actor: Actor, rawInput: unknown, now = new Date()): Promise<CourseRegistrationDto> {
   const input = parseInput(registerCourseSchema, rawInput)
@@ -193,6 +195,7 @@ export async function registerCourse(db: DbExecutor, actor: Actor, rawInput: unk
     if (!row) throw new Error('course registration insert failed')
     const [dto] = await toDtos(tx, actor, [row], now)
     if (!dto) throw new Error('course registration dto failed')
+    await emitP2Analytics(tx, { name: 'course_registered', actorId: actor.userId, unlinked: true, props: { semester: input.semester }, now })
     return dto
   })
 }

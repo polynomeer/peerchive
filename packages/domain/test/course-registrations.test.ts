@@ -34,19 +34,22 @@ describe('currentTerm / registrableTerms (E-01, Asia/Seoul calendar)', () => {
     }
   })
 
-  it('only the current and the next term are registrable', () => {
+  it('the current term and the next two terms are registrable (ADR 0060 D-06)', () => {
     const now = d('2026-11-02T09:00:00Z')
     expect(registrableTerms(now)).toEqual([
       { year: 2026, semester: 'fall' },
       { year: 2026, semester: 'winter' },
+      { year: 2027, semester: 'spring' },
     ])
     expect(isRegistrableTerm({ year: 2026, semester: 'fall' }, now)).toBe(true)
     expect(isRegistrableTerm({ year: 2026, semester: 'winter' }, now)).toBe(true)
-    expect(isRegistrableTerm({ year: 2027, semester: 'spring' }, now)).toBe(false)
+    expect(isRegistrableTerm({ year: 2027, semester: 'spring' }, now)).toBe(true)
+    expect(isRegistrableTerm({ year: 2027, semester: 'summer' }, now)).toBe(false)
     expect(isRegistrableTerm({ year: 2026, semester: 'spring' }, now)).toBe(false)
     expect(registrableTerms(d('2027-02-20T00:00:00Z'))).toEqual([
       { year: 2026, semester: 'winter' },
       { year: 2027, semester: 'spring' },
+      { year: 2027, semester: 'summer' },
     ])
     expect(termRefLabel({ year: 2026, semester: 'fall' })).toBe('2026년 2학기')
   })

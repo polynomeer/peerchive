@@ -41,6 +41,7 @@ export const ANALYTICS_EVENT_NAMES = [
   'community_auto_hidden',
   'community_sanction_issued',
   'recruitment_created',
+  'course_registered',
   'application_submitted',
   'recruitment_closed',
   'archive_transfer_requested',
@@ -100,6 +101,8 @@ const count = (max: number, min = 0): AnalyticsPropSpec => ({ kind: 'int', min, 
  * 모든 키는 선택입니다(없어도 됨). 목록 밖 키는 거부합니다.
  */
 export const ANALYTICS_PROP_SPECS: Readonly<Record<AnalyticsEventName, Readonly<Record<string, AnalyticsPropSpec>>>> = {
+  // E-01(ADR 0060 D-06): 과목 등록 수. 사용자 키·과목 id 없이 학기 종류만.
+  course_registered: { semester: enumOf(['spring', 'summer', 'fall', 'winter']) },
   // origin study: 스터디 방이 기록을 켜서 만든 내부 과제(C-08). 스터디 기록의 로그는 log_saved에 origin study를 붙입니다(방·과제 id 없음).
   project_created: { kind: enumOf(['individual', 'team', 'study']), retro: bool, withCourse: bool, origin: enumOf(['web', 'fork', 'recruitment', 'study']) },
   log_saved: { tag: enumOf(LOG_TAGS), source: enumOf(LOG_SOURCES), revision: bool, origin: enumOf(['study']) },

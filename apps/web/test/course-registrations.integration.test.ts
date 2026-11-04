@@ -6,7 +6,7 @@
  */
 import { afterAll, describe, expect, it } from 'vitest'
 import { semesterEndsAt } from '@peerchive/domain'
-import { auditEvents, courseRegistrations, courseTerms, eq, operators, or, personas, sql, type DbExecutor } from '@peerchive/db'
+import { analyticsEvents, auditEvents, courseRegistrations, courseTerms, eq, operators, or, personas, sql, type DbExecutor } from '@peerchive/db'
 import { createPostTermPrompts } from '../../worker/src/ops/course-term-prompts'
 import { createCourse, createSchool } from '../server/modules/catalog/catalog'
 import { mergeCourse } from '../server/modules/catalog/merge'
@@ -25,6 +25,7 @@ import { getProject } from '../server/modules/projects/projects'
 import { getFeed, getFollowSuggestions } from '../server/modules/social/feed'
 import { followProfile } from '../server/modules/social/follows'
 import { closeTestDb, createUser, databaseUrl, expectServiceError, withRollback } from './helpers'
+import { setAnalyticsEnvForTesting } from '../server/modules/analytics/analytics'
 
 const T0 = new Date('2026-11-02T09:00:00Z') // 2026년 2학기 진행 중 → 등록 가능: 2026 2학기·2026 겨울
 const FALL_END = semesterEndsAt(2026, 'fall')
@@ -70,7 +71,7 @@ describe.skipIf(!databaseUrl)('E-01 course registration (PostgreSQL)', () => {
       await expectServiceError(registerCourse(tx, me, { courseId: w.os.id, year: 2026, semester: 'fall' }, T0), 'CONFLICT', 'already_registered')
       const past = await expectServiceError(registerCourse(tx, me, { courseId: w.os.id, year: 2026, semester: 'spring' }, T0), 'VALIDATION')
       expect(past.fields).toEqual({ term: 'not_registrable' })
-      await expectServiceError(registerCourse(tx, me, { courseId: w.os.id, year: 2027, semester: 'spring' }, T0), 'VALIDATION')
+      await expectServiceError(registerCourse(tx, me, { courseId: w.os.id, year: 2027, semester: 'summer' }, T0), 'VALIDATION')
       const missing = await expectServiceError(registerCourse(tx, me, { courseId: crypto.randomUUID(), year: 2026, semester: 'fall' }, T0), 'VALIDATION')
       expect(missing.fields).toEqual({ courseId: 'not_found' })
       await expectServiceError(registerCourse(tx, me, { courseId: 'nope', year: 2026, semester: 'fall' }, T0), 'VALIDATION')
@@ -80,6 +81,7 @@ describe.skipIf(!databaseUrl)('E-01 course registration (PostgreSQL)', () => {
       expect(mine.registrableTerms).toEqual([
         { year: 2026, semester: 'fall', label: '2026년 2학기', current: true },
         { year: 2026, semester: 'winter', label: '2026년 겨울 계절학기', current: false },
+        { year: 2027, semester: 'spring', label: '2027년 1학기', current: false },
       ])
       // 다른 사람: 목록 0건, 지우기·알림 닫기 404.
       expect((await listMyCourseRegistrations(tx, other, T0)).items).toEqual([])
@@ -180,6 +182,31 @@ describe.skipIf(!databaseUrl)('E-01 course registration (PostgreSQL)', () => {
       // 다른 과목 허브에는 0.
       expect((await getPublicCourseHub(tx, w.net.id, T0)).enrollment).toBeNull()
     })
+  })
+
+  // ADR 0060 D-06: 등록 수는 사용자 키 없는 이벤트로만 셉니다.
+  it('registering emits one unlinked course_registered event with no user or course; removing emits nothing', async () => {
+    setAnalyticsEnvForTesting({ NODE_ENV: 'test', PEERCHIVE_ANALYTICS_PEPPER: 'd06-test-pepper-0123456789abcdef' })
+    try {
+      await withRollback(async (tx) => {
+        const w = await world(tx)
+        const me = { userId: (await createUser(tx)).id }
+        const events = () => tx.select().from(analyticsEvents).where(sql`${analyticsEvents.name} = 'course_registered' and ${analyticsEvents.occurredAt} >= ${new Date(T0.getTime() - 3600_000).toISOString()}::timestamptz and ${analyticsEvents.occurredAt} <= ${T0.toISOString()}::timestamptz`)
+        const before = (await events()).length
+        const reg = await registerCourse(tx, me, { courseId: w.os.id, year: 2026, semester: 'fall' }, T0)
+        const after = await events()
+        expect(after).toHaveLength(before + 1)
+        const event = after.find((e) => e.props && (e.props as { semester?: string }).semester === 'fall')!
+        expect(event).toMatchObject({ actorHash: null, projectHash: null, props: { semester: 'fall' } })
+        expect(event.occurredAt.getTime() % 3600_000).toBe(0)
+        expect(JSON.stringify(event)).not.toContain(w.os.id)
+        expect(JSON.stringify(event)).not.toContain(me.userId)
+        await removeCourseRegistration(tx, me, reg.id, T0)
+        expect(await events()).toHaveLength(before + 1)
+      })
+    } finally {
+      setAnalyticsEnvForTesting(null)
+    }
   })
 
   it('registrations never reach the public profile, search, feed, follow suggestions or operator audit records', async () => {
