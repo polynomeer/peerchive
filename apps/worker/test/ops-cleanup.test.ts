@@ -41,6 +41,9 @@ import {
   sessions,
   sql,
   uploadIntents,
+  personas,
+  portfolioEditions,
+  portfolioShareLinks,
   users,
   workerHeartbeats,
   type Database,
@@ -53,6 +56,7 @@ import {
   cleanupAiCasePolish,
   cleanupAiMeetingDrafts,
   cleanupAiRetroSessions,
+  cleanupShareLinks,
   cleanupDiscordCodes,
   cleanupInternalNonces,
   cleanupMagicLinkTokens,
@@ -486,6 +490,49 @@ describe.skipIf(!url)('ops cleanup tasks (PostgreSQL)', () => {
       await expect(runRecordedTask(tx, 'outbox', async () => Promise.reject(Object.assign(new Error('x'), { code: '57014' })))).rejects.toThrow()
       const [failed] = await tx.select().from(workerHeartbeats).where(eq(workerHeartbeats.name, 'task:outbox'))
       expect(failed!.details).toEqual({ status: 'error', error: '57014' })
+    })
+  })
+
+  // ADR 0060 D-09: 끝난 지 90일 지난 공유 링크 행만 지웁니다.
+  it('share links: deletes rows ended over 90 days ago (revoked, expired or edition replaced); keeps live and recently ended rows', async () => {
+    await rollback(async (tx) => {
+      const [u] = await tx.insert(users).values({ displayName: '공유', privateEmail: `share-${crypto.randomUUID()}@example.test` }).returning()
+      const [persona] = await tx.insert(personas).values({ userId: u!.id, kind: 'real', handle: `s-${crypto.randomUUID().slice(0, 12)}` }).returning()
+      const edition = async (version: number, status: 'current' | 'superseded', createdAt: Date) =>
+        (await tx.insert(portfolioEditions).values({ userId: u!.id, personaId: persona!.id, version, status, createdAt }).returning())[0]!.id
+      const DAYS = (n: number) => n * DAY
+      const replacedLongAgo = await edition(1, 'superseded', ago(DAYS(300)))
+      const replacedRecently = await edition(2, 'superseded', ago(DAYS(200)))
+      await edition(3, 'superseded', ago(DAYS(91)))
+      const current = await edition(4, 'current', ago(DAYS(10)))
+      const link = async (editionId: string, over: { expiresAt: Date; revokedAt?: Date; createdAt?: Date }) => {
+        const [row] = await tx
+          .insert(portfolioShareLinks)
+          .values({ userId: u!.id, editionId, tokenHash: crypto.randomUUID().replace(/-/g, '').repeat(2), createdAt: ago(DAYS(400)), ...over })
+          .returning({ id: portfolioShareLinks.id })
+        return row!.id
+      }
+      const future = new Date(NOW.getTime() + DAYS(30))
+      const gone = [
+        await link(current, { expiresAt: future, revokedAt: ago(DAYS(91)) }),
+        await link(current, { expiresAt: ago(DAYS(91)) }),
+        await link(replacedLongAgo, { expiresAt: future }),
+        // version 3이 91일 전에 나와 version 2의 링크도 끝난 지 90일이 넘었습니다.
+        await link(replacedRecently, { expiresAt: future }),
+      ]
+      const kept = [
+        await link(current, { expiresAt: future }),
+        await link(current, { expiresAt: future, revokedAt: ago(DAYS(89)) }),
+        await link(current, { expiresAt: ago(DAYS(89)) }),
+      ]
+      const fifth = await edition(5, 'superseded', ago(DAYS(89)))
+      kept.push(await link(fifth, { expiresAt: future }))
+      await edition(6, 'superseded', ago(DAYS(89)))
+
+      const outcome = await cleanupShareLinks(tx, deps(2), NOW)
+      expect(outcome.affected).toBeGreaterThanOrEqual(gone.length)
+      const left = (await tx.select({ id: portfolioShareLinks.id }).from(portfolioShareLinks).where(inArray(portfolioShareLinks.id, [...gone, ...kept]))).map((r) => r.id)
+      expect(left.sort()).toEqual([...kept].sort())
     })
   })
 })

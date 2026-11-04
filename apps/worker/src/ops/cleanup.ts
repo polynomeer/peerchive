@@ -59,6 +59,8 @@ export const RETENTION = {
   affiliationCodeRetentionMs: DAY_MS,
   /** 기수 승인 요청(I-01)은 30일 안에 승인을 다 받지 못하면 expired로 바꿉니다(@peerchive/domain COHORT_APPROVAL_TTL_MS). */
   cohortApprovalPendingMs: 30 * DAY_MS,
+  /** 제한 공유 링크(E-07, ADR 0060 D-09): 철회·만료·판 교체로 끝난 행은 90일 뒤 지웁니다. */
+  shareLinkEndedMs: 90 * DAY_MS,
 } as const
 
 /** 한 번의 실행에서 최대 배치 수(그 뒤는 다음 주기). */
@@ -314,6 +316,23 @@ export async function cleanupAiCasePolish(db: DbExecutor, deps: CleanupDeps, now
   return deleteInBatches(db, t('case_ai_polish_proposals'), sql`expires_at < ${now.toISOString()}::timestamptz`, deps.batchSize)
 }
 
+/**
+ * 제한 공유 링크(E-07, ADR 0060 D-09): 끝난 지 90일 지난 행을 지웁니다(토큰 해시를 무기한 두지 않음). 끝난 시각은 철회 시각, 만료 시각, 판 교체 시각 중 가장 이른 것입니다.
+ * 판 교체 시각은 저장돼 있지 않으므로 그 판보다 새 판(같은 페르소나, 더 큰 version)이 만들어진 시각으로 봅니다.
+ */
+export async function cleanupShareLinks(db: DbExecutor, deps: CleanupDeps, now: Date): Promise<TaskOutcome> {
+  const cutoff = sql`${new Date(now.getTime() - RETENTION.shareLinkEndedMs).toISOString()}::timestamptz`
+  return deleteInBatches(
+    db,
+    t('portfolio_share_links'),
+    sql`revoked_at < ${cutoff} or expires_at < ${cutoff} or edition_id in (
+      select e.id from portfolio_editions e
+      join portfolio_editions newer on newer.persona_id = e.persona_id and newer.version > e.version
+      where e.status <> 'current' and newer.created_at < ${cutoff})`,
+    deps.batchSize,
+  )
+}
+
 export type CleanupTask = (db: DbExecutor, deps: CleanupDeps, now: Date) => Promise<TaskOutcome>
 
 export const CLEANUP_TASKS: Record<Exclude<OpsTaskName, 'account-purge' | 'name-mode-changes' | 'social-link-recheck' | 'certificate-files' | 'course-term-prompts'>, CleanupTask> = {
@@ -330,6 +349,7 @@ export const CLEANUP_TASKS: Record<Exclude<OpsTaskName, 'account-purge' | 'name-
   'ai-retro-sessions': cleanupAiRetroSessions,
   'ai-meeting-drafts': cleanupAiMeetingDrafts,
   'ai-case-polish': cleanupAiCasePolish,
+  'share-links': cleanupShareLinks,
 }
 
 /**

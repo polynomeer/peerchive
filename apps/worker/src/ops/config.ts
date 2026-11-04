@@ -31,6 +31,7 @@ export const OPS_TASK_NAMES = [
   'ai-retro-sessions',
   'ai-meeting-drafts',
   'ai-case-polish',
+  'share-links',
 ] as const
 export type OpsTaskName = (typeof OPS_TASK_NAMES)[number]
 
@@ -61,6 +62,8 @@ export const DEFAULT_CRONS: Record<OpsTaskName, string> = {
   'ai-meeting-drafts': '23 * * * *',
   // AI 케이스 다듬기(E-14, ADR 0059): 만든 지 7일 지난 다듬기 제안(받아들이지 않은 AI 문장)을 지웁니다(웹도 읽을 때 무시). AI가 꺼져 있어도 남은 행을 지웁니다.
   'ai-case-polish': '29 * * * *',
+  // 제한 공유 링크(E-07, ADR 0060 D-09): 철회·만료·판 교체로 끝난 지 90일 지난 링크 행을 지웁니다.
+  'share-links': '43 4 * * *',
 }
 
 export const OPS_TIMEZONE = 'Asia/Seoul'

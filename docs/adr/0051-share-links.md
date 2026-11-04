@@ -10,6 +10,7 @@ E-07은 DELIVERY_PLAN §4.4 P1 보완 백로그 항목입니다: "포트폴리�
 - SYSTEM_DESIGN §6.5 `ShareGrant (P1) | edition_id, token_hash, expires_at, revoked_at | 원문 토큰 저장 안 함`, 공개 범위 절의 P1 `restricted-share`(만료·철회 가능한 토큰 링크, 링크만 알면 누구나 보는 `unlisted`와 다름).
 - ADR 0014(T-14: 판은 만들 때마다 새 version이고 바꾸지 않음, 이전 판은 남지만 공개하지 않음, 공개 읽기는 요청마다 release 제공 가능 여부 확인. 한계에 "공유 토큰(ShareGrant, P1) 없음"), 0012(공개 조회 공통 handler: no-store·nosniff·no-referrer·noindex 기본·운영 스위치), 0021(C-05 robots.txt), 0028(S-01 페르소나·연결 플래그, 표시명 판에는 대표 케이스 없음), 0031(S-03 공개 범위), 0033(S-04 차단), 0050(E-06 실명 대표 케이스의 "물어보면 좋은 질문").
 - 토큰 규칙은 매직링크·초대와 같습니다(`security/tokens`: CSPRNG 32바이트 base64url, DB에는 SHA-256 hex, 해시로 직접 조회).
+- 변경: D-09: 철회·만료·판 교체로 끝난 링크 행은 90일 뒤 worker가 지웁니다 ([ADR 0060](0060-open-question-decisions.md)).
 
 ## 결정
 
