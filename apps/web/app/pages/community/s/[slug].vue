@@ -154,6 +154,21 @@ async function archive() {
   }
 }
 
+// ── 플래그가 꺼진 동문회 방에 남은 내 정보(ADR 0060 D-02) ──
+async function removeLeftover(path: 'directory/me' | 'room-profile') {
+  busy.value = 'leftover'
+  notice.value = null
+  try {
+    await $fetch(`/api/v1/community/spaces/${slug.value}/${path}`, { method: 'DELETE' })
+    notice.value = { kind: 'ok', text: '지웠습니다.' }
+    await refresh()
+  } catch (e) {
+    fail(e)
+  } finally {
+    busy.value = null
+  }
+}
+
 // ── 게시판 ──
 const newBoard = reactive({ kind: 'general' as BoardKind, title: '' })
 async function addBoard() {
@@ -423,6 +438,14 @@ const isMe = (m: SpaceMemberDto) => m.userId === me.value?.id
           <NuxtLink :to="`/community/room-profiles/${space.slug}`">방별 프로필·신분 배지</NuxtLink>
           <span class="small muted"> — 이 방 멤버에게만 보입니다.</span>
         </p>
+        <section v-if="space.leftoverAlumniData?.directoryEntry || space.leftoverAlumniData?.roomProfile" aria-labelledby="leftover-alumni" data-testid="leftover-alumni">
+          <h2 id="leftover-alumni">이 방에 남은 내 정보</h2>
+          <p class="hint">동문회 기능은 지금 꺼져 있고 다른 멤버에게 보이지 않습니다. 원하면 지금 지울 수 있습니다.</p>
+          <p class="actions">
+            <button v-if="space.leftoverAlumniData.directoryEntry" type="button" class="secondary" :disabled="busy === 'leftover'" @click="removeLeftover('directory/me')">멤버 명부 동의 철회</button>
+            <button v-if="space.leftoverAlumniData.roomProfile" type="button" class="secondary" :disabled="busy === 'leftover'" @click="removeLeftover('room-profile')">방별 프로필 지우기</button>
+          </p>
+        </section>
         <p v-if="space.myMembership" class="actions">
           <button type="button" class="secondary" :disabled="busy === 'leave'" @click="leave">{{ space.myMembership.role === 'owner' ? '방장 넘기고 나가기' : '나가기' }}</button>
         </p>

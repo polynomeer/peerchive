@@ -3082,6 +3082,11 @@ export interface SpaceDetailDto extends SpaceSummaryDto {
   capacity: number | null
   capacityRequested: number | null
   createdAt: string
+  /**
+   * alumni 플래그가 꺼진 동문회·OB 방의 active 멤버에게만: 지울 수 있는 내 명부 항목·방별 프로필이 있는지(ADR 0060 D-02).
+   * 플래그가 켜져 있으면 없습니다(명부·프로필 화면에서 지움).
+   */
+  leftoverAlumniData?: { directoryEntry: boolean; roomProfile: boolean }
 }
 
 export interface SpaceMemberDto {

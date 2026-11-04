@@ -75,7 +75,6 @@ describe.skipIf(!databaseUrl)('A-01 alumni rooms and room profiles (PostgreSQL)'
       await expectServiceError(createRoom(tx, w.owner, { name: '새 동문 방', nameMode: 'display', template: 'alumni' }, T0), 'NOT_FOUND')
       await expectServiceError(listRoomProfiles(tx, w.member, room.slug, at(3)), 'NOT_FOUND')
       await expectServiceError(putMyRoomProfile(tx, w.member, room.slug, { displayName: 'x' }, at(3)), 'NOT_FOUND')
-      await expectServiceError(deleteMyRoomProfile(tx, w.member, room.slug, at(3)), 'NOT_FOUND')
       await expectServiceError(setMemberCohort(tx, w.owner, room.slug, mine!.id, { cohortLabel: '1기' }, at(3)), 'NOT_FOUND')
       await expectServiceError(listCohortHistory(tx, w.member, room.slug, mine!.id, at(3)), 'NOT_FOUND')
       // 기존 방은 그대로: 일반 방처럼 보이고 글에도 방별 이름·배지가 없음(고정한 표시명 페르소나 이름).
@@ -84,6 +83,12 @@ describe.skipIf(!databaseUrl)('A-01 alumni rooms and room profiles (PostgreSQL)'
       const read = await getPost(tx, w.owner, post.id, at(3))
       expect(read.author.label).toBe('페르소나멤버')
       expect(read.author.roomProfile).toBeUndefined()
+      // 내 프로필 삭제는 플래그와 무관(ADR 0060 D-02). 멤버 아님은 404, 멱등.
+      await expectServiceError(deleteMyRoomProfile(tx, w.outsider, room.slug, at(3)), 'NOT_FOUND')
+      expect((await getSpaceDetail(tx, w.member, room.slug, at(3))).leftoverAlumniData).toEqual({ directoryEntry: false, roomProfile: true })
+      expect(await deleteMyRoomProfile(tx, w.member, room.slug, at(3))).toMatchObject({ mine: null, profiles: [], writable: false })
+      expect(await tx.select().from(roomProfiles).where(eq(roomProfiles.id, mine!.id))).toHaveLength(0)
+      await deleteMyRoomProfile(tx, w.member, room.slug, at(3))
       // 일반 방은 템플릿 없이 그대로 만들어짐.
       expect((await createRoom(tx, w.owner, { name: '일반 방', nameMode: 'display' }, T0)).template).toBe('general')
       await expectServiceError(createRoom(tx, w.owner, { name: '이상한 방', nameMode: 'display', template: 'bogus' }, T0), 'VALIDATION')

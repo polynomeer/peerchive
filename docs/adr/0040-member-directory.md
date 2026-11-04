@@ -9,6 +9,7 @@ A-03은 DELIVERY_PLAN §4.3 P2 백로그의 세 번째 졸업생 공간 항목�
 
 - SYSTEM_DESIGN §6.7.2 DirectoryEntry: `space_id, user_id, cohort_label?, current_work?, interests[], contact_method?, consented_at, withdrawn_at?` — 동의한 멤버만 행, 항목별로 비울 수 있음, 철회·탈퇴 시 즉시 행 삭제, 내보내기 API·CSV·PDF·일괄 조회 없음, 페이지당 개수 제한과 조회 rate limit, 방 밖 검색·추천·PersonaActivity에 쓰지 않음. §8.4: 멤버 명부 보기는 같은 방 멤버만 “동의한 멤버의 동의 항목만”, 방장·admin도 같음(내보내기 불가), 운영자는 조치 목적만. 명부는 방 탈퇴 시 삭제.
 - ADR 0038(A-01): alumni 템플릿·방별 프로필, 이름 규칙(실명 방 실명 고정, 표시명 방 방별 이름, 익명 방에는 방별 프로필 없음). ADR 0039(A-02): `loadAlumniRoom`(플래그 → 읽을 수 있는 공간 → alumni 방 → active 멤버, 아니면 404)·`roomMemberNames`·나가기 정리. ADR 0037 §1: P2 플래그 `alumni`, 꺼지면 404. ADR 0021·0029: 커뮤니티 구역 표는 공개·social 경로가 읽지 않음 + S-02 속성 테스트.
+- 변경: D-02: 플래그가 꺼져 있어도 명부 동의 철회는 동작합니다 ([ADR 0060](0060-open-question-decisions.md)).
 
 ## 결정
 

@@ -70,11 +70,12 @@ import {
 import { emitAnalytics, emitP2Analytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
 import { type Actor, ServiceError, conflict, forbidden, invalid, notFound, rateLimited, sqlState } from '../errors'
-import { requireFeature } from '../features'
+import { isFeatureOn, requireFeature } from '../features'
 import { hitRateLimit } from '../security/rate-limit'
 import { loadScheduledChange, nameModeNow } from './name-modes'
 import { unreadNoticeCount } from './notices'
-import { effectiveTemplate } from './room-profiles'
+import { hasDirectoryEntry } from './member-directory'
+import { effectiveTemplate, hasRoomProfile } from './room-profiles'
 import { isUuid } from '../projects/access'
 import { parseInput } from '../validation'
 import {
@@ -221,7 +222,18 @@ async function detailFor(db: DbExecutor, ctx: SpaceContext, access: SpaceDetailD
     capacity: official ? null : ctx.space.row.capacity,
     capacityRequested: official || access === 'preview' ? null : ctx.space.row.capacityRequested,
     createdAt: ctx.space.row.createdAt.toISOString(),
+    ...(await leftoverAlumniData(db, ctx)),
   }
+}
+
+/** 플래그가 꺼진 동문회·OB 방에 남아 있는 내 명부 항목·방별 프로필(ADR 0060 D-02: 플래그와 무관하게 지울 수 있어야 함). */
+async function leftoverAlumniData(db: DbExecutor, ctx: SpaceContext): Promise<Pick<SpaceDetailDto, 'leftoverAlumniData'>> {
+  if (ctx.space.row.template !== 'alumni' || isFeatureOn('alumni') || ctx.membership?.status !== 'active') return {}
+  const [directoryEntry, roomProfile] = [
+    await hasDirectoryEntry(db, ctx.space.row.id, ctx.membership.userId),
+    await hasRoomProfile(db, ctx.space.row.id, ctx.membership.userId),
+  ]
+  return { leftoverAlumniData: { directoryEntry, roomProfile } }
 }
 
 // ── 읽기 ─────────────────────────────────────────────────────────────────

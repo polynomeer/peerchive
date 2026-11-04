@@ -1,7 +1,7 @@
 /**
  * 동문회·OB 방의 방별 프로필·신분 배지·기수 이력 (A-01, PROOFU_EVOLUTION_PLAN §8.9.9, SYSTEM_DESIGN §6.7.2 RoomProfile, DELIVERY_PLAN §4.3, ADR 0038).
  *
- * - 모든 경로는 P2 `alumni` 플래그 뒤에 있습니다(requireFeature, 꺼져 있으면 404). 플래그가 꺼지면 이미 만든 alumni 방은 일반 방처럼 보이고
+ * - 내 프로필 삭제를 뺀 모든 경로는 P2 `alumni` 플래그 뒤에 있습니다(requireFeature, 꺼져 있으면 404, 삭제는 ADR 0060 D-02). 플래그가 꺼지면 이미 만든 alumni 방은 일반 방처럼 보이고
  *   (effectiveTemplate), 글·댓글에도 방별 이름·배지를 붙이지 않습니다.
  * - 방 멤버만(loadReadableSpace → canReadSpace, 아니면 404). 운영자도 멤버가 아니면 404. alumni 방이 아니면 404, 지금 효력이 있는 방식이
  *   익명이면 409 `room_profiles_unavailable`.
@@ -138,6 +138,16 @@ export async function roomProfileNames(db: DbExecutor, space: { id: string; temp
   return new Map(rows.flatMap((r) => (r.displayName ? [[r.userId, r.displayName] as const] : [])))
 }
 
+/** 내 방별 프로필이 있는지(값은 읽지 않음). 플래그가 꺼진 방의 공간 상세가 삭제 버튼을 보여 줄 때 씁니다(ADR 0060 D-02). */
+export async function hasRoomProfile(db: DbExecutor, spaceId: string, userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: roomProfiles.id })
+    .from(roomProfiles)
+    .where(and(eq(roomProfiles.spaceId, spaceId), eq(roomProfiles.userId, userId)))
+    .limit(1)
+  return !!row
+}
+
 function nameOf(mode: 'real' | 'display', row: { profile: ProfileRow; realName: string | null }): string {
   if (mode === 'real') return row.realName?.trim() || REAL_NAME_MISSING_LABEL
   return row.profile.displayName ?? ROOM_PROFILE_NAME_MISSING_LABEL
@@ -222,17 +232,20 @@ export async function putMyRoomProfile(db: DbExecutor, actor: Actor, ref: unknow
   return listRoomProfiles(db, actor, slug, now)
 }
 
-/** DELETE /community/spaces/:slug/room-profile — 내 방별 프로필과 내 기수 이력을 지웁니다. 없으면 그대로(멱등). 보관된 방에서도 지울 수 있습니다. */
+/**
+ * DELETE /community/spaces/:slug/room-profile — 내 방별 프로필과 내 기수 이력을 지웁니다. 없으면 그대로(멱등). 보관된 방에서도 지울 수 있습니다.
+ * 플래그가 꺼져 있어도 됩니다(ADR 0060 D-02). 멤버 아님·alumni 아님은 404. 플래그가 꺼져 있으면 목록을 읽을 수 없으므로 빈 상태를 돌려줍니다.
+ */
 export async function deleteMyRoomProfile(db: DbExecutor, actor: Actor, ref: unknown, now = new Date()): Promise<RoomProfilesDto> {
-  const slug = await db.transaction(async (tx) => {
-    requireFeature('alumni')
+  const space = await db.transaction(async (tx) => {
     const ctx = await loadReadableSpace(tx, actor, ref, true, now)
-    if (ctx.space.row.template !== 'alumni') throw notFound()
+    if (ctx.space.row.template !== 'alumni' || ctx.membership?.status !== 'active') throw notFound()
     const removed = await deleteRoomProfileInTx(tx, ctx.space.row.id, actor.userId)
     if (removed) await recordAudit(tx, { actorId: actor.userId, action: 'community.room_profile_delete', targetType: 'community_space', targetId: ctx.space.row.id, metadata: { cause: 'self' } })
-    return ctx.space.row.slug
+    return ctx.space.row
   })
-  return listRoomProfiles(db, actor, slug, now)
+  if (isFeatureOn('alumni')) return listRoomProfiles(db, actor, space.slug, now)
+  return { nameMode: space.currentNameMode === 'real' ? 'real' : 'display', canEditCohort: false, writable: false, mine: null, profiles: [] }
 }
 
 async function loadTargetProfile(db: DbExecutor, spaceId: string, profileId: unknown, lock: boolean): Promise<ProfileRow> {

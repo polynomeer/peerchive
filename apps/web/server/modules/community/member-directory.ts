@@ -1,7 +1,7 @@
 /**
  * 동문회·OB 방의 멤버 명부 동의 (A-03, PROOFU_EVOLUTION_PLAN §8.9.9, SYSTEM_DESIGN §6.7.2 DirectoryEntry·§8.4, DELIVERY_PLAN §4.3·§5.3 X, ADR 0040).
  *
- * - 모든 경로는 P2 `alumni` 플래그 뒤(requireFeature, 꺼져 있으면 404)이고 **alumni 템플릿 방의 active 멤버만**(loadAlumniRoom, 아니면 404 —
+ * - 동의 철회를 뺀 모든 경로는 P2 `alumni` 플래그 뒤(requireFeature, 꺼져 있으면 404, 철회는 ADR 0060 D-02)이고 **alumni 템플릿 방의 active 멤버만**(loadAlumniRoom, 아니면 404 —
  *   운영자도 멤버가 아니면 404). 지금 효력이 있는 이름 표시 방식이 익명이면 보기·동의는 409 `directory_unavailable`(철회는 됨).
  * - **동의한 멤버만 행이 있습니다**(`PUT …/directory/me {consent: true, …}`). 항목은 모두 선택이고 각각 비울 수 있습니다.
  * - **철회(`DELETE …/directory/me`)·방 나가기·내보내기는 같은 트랜잭션에서 행을 바로 지웁니다**(deleteDirectoryEntryInTx). 탈퇴는 worker purge,
@@ -20,7 +20,7 @@ import { emitP2Analytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, invalid, rateLimited } from '../errors'
 import { hitRateLimit } from '../security/rate-limit'
-import { type AlumniRoom, assertRoomWritable, loadAlumniRoom, roomMemberNames } from './alumni-room'
+import { type AlumniRoom, assertRoomWritable, loadAlumniRoom, loadAlumniRoomMembership, roomMemberNames } from './alumni-room'
 import type { DirectoryEntryDto, DirectoryPageDto, MyDirectoryEntryDto } from '../../../shared/types/api'
 
 type EntryRow = typeof directoryEntries.$inferSelect
@@ -147,11 +147,11 @@ export async function putMyDirectoryEntry(db: DbExecutor, actor: Actor, ref: unk
 
 /**
  * DELETE /community/spaces/:slug/directory/me — 동의 철회: 내 명부 행을 바로 지웁니다. 없으면 그대로(멱등).
- * 보관된 방·익명 방에서도, 쓰기 제한 중에도 됩니다(플래그 꺼짐·멤버 아님·alumni 아님은 404).
+ * 보관된 방·익명 방에서도, 쓰기 제한 중에도, 플래그가 꺼져 있어도 됩니다(ADR 0060 D-02). 멤버 아님·alumni 아님은 404.
  */
 export async function withdrawMyDirectoryEntry(db: DbExecutor, actor: Actor, ref: unknown, now = new Date()): Promise<MyDirectoryEntryDto & { withdrawn: boolean }> {
   return db.transaction(async (tx) => {
-    const room = await loadAlumniRoom(tx, actor, ref, true, now)
+    const room = await loadAlumniRoomMembership(tx, actor, ref, true, now)
     const withdrawn = await deleteDirectoryEntryInTx(tx, room.ctx.space.row.id, actor.userId)
     if (withdrawn) {
       await recordAudit(tx, { actorId: actor.userId, action: 'community.directory_withdraw', targetType: 'community_space', targetId: room.ctx.space.row.id, metadata: { cause: 'self' } })
@@ -159,6 +159,16 @@ export async function withdrawMyDirectoryEntry(db: DbExecutor, actor: Actor, ref
     }
     return { entry: null, withdrawn }
   })
+}
+
+/** 내 명부 행이 있는지(값은 읽지 않음). 플래그가 꺼진 방의 공간 상세가 철회 버튼을 보여 줄 때 씁니다(ADR 0060 D-02). */
+export async function hasDirectoryEntry(db: DbExecutor, spaceId: string, userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ userId: directoryEntries.userId })
+    .from(directoryEntries)
+    .where(and(eq(directoryEntries.spaceId, spaceId), eq(directoryEntries.userId, userId)))
+    .limit(1)
+  return !!row
 }
 
 /** 방을 나가거나 내보내질 때(같은 트랜잭션, 플래그와 무관하게)·철회할 때: 그 사람의 그 방 명부 행을 지웁니다. 지운 행이 있으면 true. */

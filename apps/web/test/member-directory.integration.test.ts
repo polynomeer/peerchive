@@ -15,7 +15,7 @@ import { DIRECTORY_PAGE_VIEW_LIMIT, listDirectory, putMyDirectoryEntry, withdraw
 import { changeMemberRole, joinSpace, leaveSpace, removeMember } from '../server/modules/community/memberships'
 import { scheduleNameModeChange } from '../server/modules/community/name-modes'
 import { putMyRoomProfile } from '../server/modules/community/room-profiles'
-import { archiveSpaceInTx, createRoom } from '../server/modules/community/spaces'
+import { archiveSpaceInTx, createRoom, getSpaceDetail } from '../server/modules/community/spaces'
 import { setFeatureEnvForTesting } from '../server/modules/features'
 import { updateRealName } from '../server/modules/identity/profiles'
 import { closeTestDb, createUser, databaseUrl, expectServiceError, insertDisplayPersona, verifiedAffiliation, withRollback } from './helpers'
@@ -148,7 +148,7 @@ describe.skipIf(!databaseUrl)('A-03 member directory consent (PostgreSQL)', () =
     })
   })
 
-  it('members of alumni rooms only: non-members, unknown rooms, general rooms → 404; flag off → 404; anonymous rooms → 409 and switching to anonymous deletes rows', async () => {
+  it('members of alumni rooms only: non-members, unknown rooms, general rooms → 404; flag off → 404 except withdrawal; anonymous rooms → 409 and switching to anonymous deletes rows', async () => {
     await withRollback(async (tx) => {
       const w = await world(tx)
       const room = await alumniRoom(tx, w, 'display')
@@ -165,13 +165,23 @@ describe.skipIf(!databaseUrl)('A-03 member directory consent (PostgreSQL)', () =
       await expectServiceError(listDirectory(tx, w.member, general.slug, {}, at(2)), 'NOT_FOUND')
       await expectServiceError(putMyDirectoryEntry(tx, w.member, general.slug, { ...CONSENT }, at(2)), 'NOT_FOUND')
 
-      // 플래그 꺼짐: 모든 경로 404, 행은 남음(다시 켜면 보임).
+      // 플래그 꺼짐: 읽기·쓰기 404, 행은 남음(다시 켜면 보임).
       setFeatureEnvForTesting({})
       await expectServiceError(listDirectory(tx, w.member, room.slug, {}, at(3)), 'NOT_FOUND')
       await expectServiceError(putMyDirectoryEntry(tx, w.member, room.slug, { ...CONSENT }, at(3)), 'NOT_FOUND')
-      await expectServiceError(withdrawMyDirectoryEntry(tx, w.member, room.slug, at(3)), 'NOT_FOUND')
       expect(await rowsOf(tx, room.slug)).toHaveLength(1)
+      // 동의 철회는 플래그와 무관(ADR 0060 D-02), 멤버 확인은 그대로. 공간 상세가 남은 항목을 알려 주어 화면에서 지울 수 있습니다.
+      expect((await getSpaceDetail(tx, w.member, room.slug, at(3))).leftoverAlumniData).toEqual({ directoryEntry: true, roomProfile: false })
+      expect((await getSpaceDetail(tx, w.owner, room.slug, at(3))).leftoverAlumniData).toEqual({ directoryEntry: false, roomProfile: false })
+      await expectServiceError(withdrawMyDirectoryEntry(tx, w.outsider, room.slug, at(3)), 'NOT_FOUND')
+      await expectServiceError(withdrawMyDirectoryEntry(tx, w.member, general.slug, at(3)), 'NOT_FOUND')
+      expect(await withdrawMyDirectoryEntry(tx, w.member, room.slug, at(3))).toEqual({ entry: null, withdrawn: true })
+      expect(await rowsOf(tx, room.slug)).toHaveLength(0)
+      expect((await withdrawMyDirectoryEntry(tx, w.member, room.slug, at(3))).withdrawn).toBe(false)
+      expect((await getSpaceDetail(tx, w.member, room.slug, at(3))).leftoverAlumniData).toEqual({ directoryEntry: false, roomProfile: false })
       setFeatureEnvForTesting(ON)
+      expect((await getSpaceDetail(tx, w.member, room.slug, at(3))).leftoverAlumniData).toBeUndefined()
+      await putMyDirectoryEntry(tx, w.member, room.slug, { ...CONSENT }, at(3))
       // 나가기 삭제는 플래그와 무관.
       setFeatureEnvForTesting({})
       await leaveSpace(tx, w.member, room.slug, at(3))

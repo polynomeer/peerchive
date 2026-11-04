@@ -10,6 +10,7 @@ A-01은 DELIVERY_PLAN §4.3 P2 백로그의 졸업생 공간 첫 항목입니다
 - PROOFU_EVOLUTION_PLAN §8.9.9: 동문회·OB 방은 사용자 방(§8.9.4)의 템플릿. 방마다 다른 이름·사진(“12기 김지민”), 신분 배지 `현역`·`OB`·`n기`·`졸업생`, 기수는 자기 신고이고 운영진이 수정 가능. 이름 표시 기본값은 실명 또는 표시명이며 익명은 권장하지 않음.
 - SYSTEM_DESIGN §6.7.2 RoomProfile: `space_id, user_id, display_name?, avatar_version_id?, badges[](current/ob/alumni/cohort), cohort_label?, bio?` — 방 멤버에게만 보이고 Persona·PersonaActivity·공개 프로필과 연결하지 않음. `real` 방은 이름 고정·사진·배지·소개만 방별, `display` 방은 이름도 방별, `anonymous` 방에는 만들지 않음. §6.7.2 "공간 종류 확장": 사용자 방에 `template(none/alumni)`.
 - ADR 0019(공간·멤버십), 0020·0030(작성 시점 이름 표시 방식 고정, 표시명 = 표시명 페르소나, 계정 표시 이름을 커뮤니티에 쓰지 않음), 0021(커뮤니티 경계: 스키마 "커뮤니티" 구역의 표는 공개 경로가 읽지 않음), 0028·0029(페르소나, social 모듈·DB 역할은 커뮤니티 표에 닿지 않음 + 속성 기반 회귀 테스트), 0037 §1(P2 플래그 `alumni`, 꺼지면 404).
+- 변경: D-02: 플래그가 꺼져 있어도 내 방별 프로필 삭제는 동작합니다 ([ADR 0060](0060-open-question-decisions.md)).
 
 ## 결정
 

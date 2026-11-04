@@ -25,6 +25,11 @@ export interface AlumniRoom {
 /** 플래그 → 읽을 수 있는 공간 → active 멤버 → alumni 템플릿. 아니면 404. */
 export async function loadAlumniRoom(db: DbExecutor, actor: Actor, ref: unknown, lock: boolean, now: Date): Promise<AlumniRoom> {
   requireFeature('alumni')
+  return loadAlumniRoomMembership(db, actor, ref, lock, now)
+}
+
+/** 플래그를 보지 않는 loadAlumniRoom: 동의 철회처럼 기능 개방과 무관해야 하는 경로만 씁니다(ADR 0060 D-02). 멤버 확인은 같습니다. */
+export async function loadAlumniRoomMembership(db: DbExecutor, actor: Actor, ref: unknown, lock: boolean, now: Date): Promise<AlumniRoom> {
   const ctx = await loadReadableSpace(db, actor, ref, lock, now)
   if (ctx.space.row.template !== 'alumni' || ctx.space.row.kind !== 'user_room') throw notFound()
   if (ctx.membership?.status !== 'active') throw notFound()
