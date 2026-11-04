@@ -14,6 +14,7 @@
  */
 import { z } from 'zod'
 import { asRoomNameMode, planStudyRecordSync } from '@peerchive/domain'
+import { deleteRetroDataOf } from '../ai/retro-cleanup'
 import { and, communitySpaces, courses, eq, projectMembers, projects, spaceMemberships, sql, studyRecords, type DbExecutor } from '@peerchive/db'
 import { emitAnalytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
@@ -44,6 +45,8 @@ export async function syncStudyRecordInTx(tx: DbExecutor, spaceId: string, now: 
       .update(projectMembers)
       .set({ role: u.role, status: u.status, updatedAt: now })
       .where(and(eq(projectMembers.projectId, record.projectId), eq(projectMembers.userId, u.userId)))
+    // 방을 떠나 기록에서도 나간 멤버의 AI 회고 자료는 팀 과제와 같게 바로 지웁니다(ADR 0060 D-10).
+    if (u.status !== 'active') await deleteRetroDataOf(tx, record.projectId, u.userId)
   }
   if (plan.inserts.length) {
     await tx.insert(projectMembers).values(plan.inserts.map((i) => ({ projectId: record.projectId, userId: i.userId, role: i.role, status: 'active' as const, createdAt: now, updatedAt: now })))

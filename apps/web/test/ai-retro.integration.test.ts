@@ -37,6 +37,7 @@ import { ServiceError } from '../server/modules/errors'
 import { saveMyCheckin } from '../server/modules/checkins/checkins'
 import { createLog, getLog } from '../server/modules/logs/logs'
 import { acceptInvitation, createInvitation } from '../server/modules/projects/invitations'
+import { leaveProject, removeMember } from '../server/modules/projects/members'
 import { createProject } from '../server/modules/projects/projects'
 import { createCandidate, previewCandidate } from '../server/modules/publication/candidates'
 import { closeTestDb, createUser, databaseUrl, days, expectServiceError, minutes, withRollback } from './helpers'
@@ -481,6 +482,38 @@ describe.skipIf(!databaseUrl)('AI retro interview (PostgreSQL, fake AI provider)
       await expectServiceError(discardAiRetroSession(tx, actor, project.id, at(6)), 'NOT_FOUND')
       // 새 인터뷰를 다시 시작할 수 있습니다.
       expect((await startAiRetroSession(tx, actor, project.id, at(7))).session!.questionCount).toBe(1)
+    })
+  })
+
+  // ADR 0060 D-10: 팀을 나가거나 내보내지면 그 사람의 그 과제 AI 회고 자료는 같은 트랜잭션에서 지웁니다.
+  it('leaving or being removed deletes that member’s retro session, drafts and opt-in for that project only', async () => {
+    await withRollback(async (tx) => {
+      const { owner, editor, project } = await team(tx)
+      const other = await createProject(tx, { userId: editor.id }, { title: '다른 과제', kind: 'individual' })
+      const rows = async (table: typeof aiRetroOptIns | typeof aiRetroSessions | typeof aiRetroDrafts, userId: string, projectId: string) =>
+        (await tx.select().from(table).where(and(eq(table.userId, userId), eq(table.projectId, projectId)))).length
+      // 나가는 사람: 초안까지 있는 세션. 남는 사람·다른 과제의 행은 그대로.
+      await interviewToDrafts(tx, fake, { userId: editor.id }, project.id)
+      await setAiRetroOptIn(tx, { userId: owner.id }, project.id, { enabled: true }, at(0))
+      await startAiRetroSession(tx, { userId: owner.id }, project.id, at(0))
+      await setAiRetroOptIn(tx, { userId: editor.id }, other.id, { enabled: true }, at(0))
+      for (const table of [aiRetroOptIns, aiRetroSessions, aiRetroDrafts]) expect(await rows(table, editor.id, project.id)).toBeGreaterThan(0)
+
+      await leaveProject(tx, { userId: editor.id }, project.id)
+      for (const table of [aiRetroOptIns, aiRetroSessions, aiRetroDrafts]) expect(await rows(table, editor.id, project.id)).toBe(0)
+      expect(await rows(aiRetroOptIns, editor.id, other.id)).toBe(1)
+      expect(await rows(aiRetroOptIns, owner.id, project.id)).toBe(1)
+      expect(await rows(aiRetroSessions, owner.id, project.id)).toBe(1)
+
+      // 내보내기도 같습니다.
+      const removed = await createUser(tx, { displayName: '내보낼사람' })
+      const { token } = await createInvitation(tx, { userId: owner.id }, project.id, { role: 'editor' }, at(0))
+      await acceptInvitation(tx, { userId: removed.id }, { token }, at(0))
+      await setAiRetroOptIn(tx, { userId: removed.id }, project.id, { enabled: true }, at(0))
+      await startAiRetroSession(tx, { userId: removed.id }, project.id, at(0))
+      await removeMember(tx, { userId: owner.id }, project.id, removed.id)
+      expect(await rows(aiRetroOptIns, removed.id, project.id)).toBe(0)
+      expect(await rows(aiRetroSessions, removed.id, project.id)).toBe(0)
     })
   })
 

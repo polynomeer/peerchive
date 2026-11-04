@@ -10,7 +10,7 @@
  * 각 테스트는 rollback 트랜잭션 안에서 자기가 만든 학교·사용자만 봅니다.
  */
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
-import { analyticsEvents, auditEvents, communitySpaces, eq, hashSubject, projectMembers, projects, studyRecords, type DbExecutor } from '@peerchive/db'
+import { aiRetroOptIns, analyticsEvents, auditEvents, communitySpaces, eq, hashSubject, projectMembers, projects, studyRecords, type DbExecutor } from '@peerchive/db'
 import { removeAffiliation } from '../server/modules/affiliation/affiliations'
 import { analyticsPepper, setAnalyticsEnvForTesting } from '../server/modules/analytics/analytics'
 import { listArtifacts } from '../server/modules/artifacts/artifacts'
@@ -171,7 +171,10 @@ describe.skipIf(!databaseUrl)('C-08 study records (PostgreSQL)', () => {
       expect(await roleOf(tx, projectId, w.owner.userId)).toBe('active:editor')
 
       // 방장이 나가면 승계(가장 오래된 admin(이전 방장) → 없으면 가장 오래된 멤버) → 과제 owner도 승계자
+      // ADR 0060 D-10: 방을 떠나 기록에서 나간 멤버의 AI 회고 켜기 행도 같은 트랜잭션에서 지웁니다.
+      await tx.insert(aiRetroOptIns).values({ projectId, userId: w.a.userId })
       await leaveSpace(tx, w.a, w.room.slug, at(9))
+      expect(await tx.select().from(aiRetroOptIns).where(eq(aiRetroOptIns.userId, w.a.userId))).toEqual([])
       expect(await ownerOf(tx, projectId)).toBe(w.owner.userId)
       expect(await roleOf(tx, projectId, w.owner.userId)).toBe('active:owner')
       expect(await roleOf(tx, projectId, w.a.userId)).toBe('left:editor')
