@@ -48,7 +48,7 @@ export function memberRefConfigProblems(env: Env = currentEnv()): string[] {
     : [`${MEMBER_REF_PEPPER_ENV} is missing or weak (production requires a random secret of 32+ characters, e.g. openssl rand -hex 32)`]
 }
 
-function memberRefPepper(): string {
+export function memberRefPepper(): string {
   const pepper = resolvePepper(currentEnv(), MEMBER_REF_PEPPER_ENV)
   if (!pepper) throw new Error(`${MEMBER_REF_PEPPER_ENV} is not configured`)
   return pepper

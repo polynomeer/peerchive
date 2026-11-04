@@ -29,6 +29,8 @@ import { createOfficialPage, restrictSpace } from '../server/modules/community/o
 import { archiveSpace, createRoom, getSpaceDetail, listMySpaces, updateSpace } from '../server/modules/community/spaces'
 import { getMe, getPublicProfile, updateRealName } from '../server/modules/identity/profiles'
 import { closeTestDb, createUser, databaseUrl, expectServiceError, insertDisplayPersona, minutes, verifiedAffiliation, withRollback } from './helpers'
+import { memberRef } from './helpers-space-member-ref'
+import { spaceMemberRefKey } from '../server/modules/community/space-member-refs'
 
 const T0 = new Date('2026-11-03T09:00:00Z')
 const at = (n: number) => new Date(T0.getTime() + minutes(n))
@@ -58,12 +60,12 @@ async function room(tx: DbExecutor, nameMode: 'real' | 'display' | 'anonymous' =
   const created = await createRoom(tx, O!, { name: `동기방 ${token()}`, nameMode, joinPolicy: 'open' }, T0)
   const slug = created.slug
   for (const u of [A!, M!, L!, R!]) await joinSpace(tx, u, slug, at(1))
-  await changeMemberRole(tx, O!, slug, A!.userId, { role: 'admin' }, at(2))
+  await changeMemberRole(tx, O!, slug, await memberRef(tx, slug, A!.userId), { role: 'admin' }, at(2))
   await leaveSpace(tx, L!, slug, at(2))
-  await removeMember(tx, O!, slug, R!.userId, at(2))
+  await removeMember(tx, O!, slug, await memberRef(tx, slug, R!.userId), at(2))
   await updateSpace(tx, O!, slug, { joinPolicy: 'approval' })
   await joinSpace(tx, X!, slug, at(3))
-  await rejectMember(tx, O!, slug, X!.userId, at(3))
+  await rejectMember(tx, O!, slug, await memberRef(tx, slug, X!.userId), at(3))
   await joinSpace(tx, P!, slug, at(3))
   if (joinPolicy !== 'approval') await updateSpace(tx, O!, slug, { joinPolicy })
   const [row] = await tx.select().from(communitySpaces).where(eq(communitySpaces.slug, slug))
@@ -207,7 +209,7 @@ describe.skipIf(!databaseUrl)('name mode changes (PostgreSQL)', () => {
       // 승인 대기 중인 사람(소개)도 예약을 봄
       expect(await getSpaceDetail(tx, r.P, r.slug, at(1))).toMatchObject({ access: 'preview', pendingNameModeChange: { toMode: 'anonymous' } })
       // 예약 뒤 승인된 새 멤버: 알림은 없고 배너(상세)로 봄
-      await approveMember(tx, r.O, r.slug, r.P.userId, at(2))
+      await approveMember(tx, r.O, r.slug, await memberRef(tx, r.slug, r.P.userId), at(2))
       expect(await getSpaceDetail(tx, r.P, r.slug, at(3))).toMatchObject({ access: 'member', pendingNameModeChange: { toMode: 'anonymous' } })
       expect(await tx.select().from(communityNotices).where(eq(communityNotices.userId, r.P.userId))).toEqual([])
       // 멤버는 이력을 봄, 비멤버는 404
@@ -300,7 +302,11 @@ describe.skipIf(!databaseUrl)('name mode changes (PostgreSQL)', () => {
   describe('member list names (D-01)', () => {
     const roster = async (tx: DbExecutor, slug: string, viewer: { userId: string }, now?: Date) => {
       const list = await listMembers(tx, viewer, slug, now)
-      return { list, byId: new Map([...list.members, ...list.pending].map((m) => [m.userId, m])), json: JSON.stringify(list) }
+      const [space] = await tx.select({ id: communitySpaces.id }).from(communitySpaces).where(eq(communitySpaces.slug, slug))
+      const all = [...list.members, ...list.pending]
+      // 실제 사용자 id로 찾되, 표시명·익명 방에서는 방별 키로 나옵니다.
+      const byId = { get: (userId: string) => all.find((m) => m.userId === userId || m.userId === spaceMemberRefKey(space!.id, userId)) }
+      return { list, byId, json: JSON.stringify(list) }
     }
 
     it('display room: persona name or the missing label; no account name or real handle in the JSON', async () => {
@@ -317,9 +323,10 @@ describe.skipIf(!databaseUrl)('name mode changes (PostgreSQL)', () => {
         for (const { handle } of handles) expect(json).not.toContain(handle)
         // 운영진(admin) 시야도 같고, 승인·역할 변경·방장 이전은 이름과 무관하게 그대로 동작합니다.
         expect((await roster(tx, r.slug, r.A)).byId.get(r.M.userId)?.displayName).toBe('페르소나이름')
-        await approveMember(tx, r.O, r.slug, r.P.userId, at(4))
-        const transferred = await changeMemberRole(tx, r.O, r.slug, r.M.userId, { role: 'owner' }, at(5))
-        expect(transferred.members.find((m) => m.userId === r.M.userId)).toMatchObject({ role: 'owner', displayName: '페르소나이름' })
+        await approveMember(tx, r.O, r.slug, await memberRef(tx, r.slug, r.P.userId), at(4))
+        const mRef = await memberRef(tx, r.slug, r.M.userId)
+        const transferred = await changeMemberRole(tx, r.O, r.slug, mRef, { role: 'owner' }, at(5))
+        expect(transferred.members.find((m) => m.userId === mRef)).toMatchObject({ role: 'owner', displayName: '페르소나이름' })
       })
     })
 
@@ -341,6 +348,48 @@ describe.skipIf(!databaseUrl)('name mode changes (PostgreSQL)', () => {
         expect(list.members.every((m) => m.handle === null)).toBe(true)
         expect(json).not.toContain('페르소나이름')
         expect(json).not.toContain('방장')
+      })
+    })
+
+    // ADR 0060 D-01 보완: 사용자 id는 과제·실명 방 응답과 같은 값이라, 그대로 두면 표시명을 실명과 맞춰 볼 수 있습니다.
+    for (const mode of ['display', 'anonymous'] as const) {
+      it(`${mode} room: other members' account ids never leave the list, and management takes only the room key`, async () => {
+        await withRollback(async (tx) => {
+          const r = await room(tx, mode)
+          const { list, json } = await roster(tx, r.slug, r.O)
+          for (const u of [r.A, r.M, r.P]) expect(json).not.toContain(u.userId)
+          expect(json).toContain(r.O.userId) // 본인은 그대로(화면의 "나" 판정)
+          expect(new Set(list.members.map((m) => m.userId)).size).toBe(list.members.length)
+          // 다른 사람의 실제 id로는 그 사람이 멤버인지 떠볼 수 없습니다(멤버·비멤버 모두 404).
+          await expectServiceError(removeMember(tx, r.O, r.slug, r.M.userId, at(4)), 'NOT_FOUND')
+          await expectServiceError(removeMember(tx, r.O, r.slug, r.N.userId, at(4)), 'NOT_FOUND')
+          await expectServiceError(approveMember(tx, r.O, r.slug, r.P.userId, at(4)), 'NOT_FOUND')
+          await expectServiceError(changeMemberRole(tx, r.O, r.slug, r.M.userId, { role: 'moderator' }, at(4)), 'NOT_FOUND')
+          // 모르는 키도 404. 다른 방의 키는 이 방에서 통하지 않습니다.
+          await expectServiceError(removeMember(tx, r.O, r.slug, 'rm_0000000000000000', at(4)), 'NOT_FOUND')
+          const other = await createRoom(tx, r.M, { name: `다른방 ${token()}`, nameMode: mode, joinPolicy: 'open' }, at(4))
+          await joinSpace(tx, r.A, other.slug, at(4))
+          const otherRef = await memberRef(tx, other.slug, r.A.userId, at(5))
+          expect(otherRef).not.toBe(await memberRef(tx, r.slug, r.A.userId, at(5)))
+          await expectServiceError(removeMember(tx, r.O, r.slug, otherRef, at(5)), 'NOT_FOUND')
+          // 목록의 값 그대로 관리합니다. 본인 id의 기존 오류도 그대로입니다.
+          const row = list.members.find((m) => m.role === 'member')!
+          const after = await removeMember(tx, r.O, r.slug, row.userId, at(6))
+          expect(after.members.map((m) => m.userId)).not.toContain(row.userId)
+          await expectServiceError(removeMember(tx, r.O, r.slug, r.O.userId, at(6)), 'CONFLICT', 'use_leave')
+        })
+      })
+    }
+
+    it('real room keeps account ids, and a due change to display switches to room keys', async () => {
+      await withRollback(async (tx) => {
+        const r = await room(tx, 'real')
+        expect((await roster(tx, r.slug, r.O)).json).toContain(r.M.userId)
+        await expectServiceError(removeMember(tx, r.O, r.slug, 'rm_0000000000000000', at(4)), 'NOT_FOUND')
+        await scheduleNameModeChange(tx, r.O, r.slug, { toMode: 'display' }, at(10))
+        const effective = new Date(at(10).getTime() + NAME_MODE_CHANGE_DELAY_MS)
+        expect((await roster(tx, r.slug, r.O, effective)).json).not.toContain(r.M.userId)
+        await expectServiceError(removeMember(tx, r.O, r.slug, r.M.userId, effective), 'NOT_FOUND')
       })
     })
 

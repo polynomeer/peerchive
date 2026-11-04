@@ -19,6 +19,7 @@ import { archiveSpaceInTx, createRoom, getSpaceDetail } from '../server/modules/
 import { setFeatureEnvForTesting } from '../server/modules/features'
 import { updateRealName } from '../server/modules/identity/profiles'
 import { closeTestDb, createUser, databaseUrl, expectServiceError, insertDisplayPersona, verifiedAffiliation, withRollback } from './helpers'
+import { memberRef } from './helpers-space-member-ref'
 
 const T0 = new Date('2026-11-01T03:00:00Z')
 const at = (minutes: number) => new Date(T0.getTime() + minutes * 60_000)
@@ -43,7 +44,7 @@ type World = Awaited<ReturnType<typeof world>>
 async function alumniRoom(tx: DbExecutor, w: World, nameMode: 'real' | 'display' | 'anonymous', template: 'alumni' | 'general' = 'alumni') {
   const room = await createRoom(tx, w.owner, { name: `명부 ${nameMode} ${crypto.randomUUID().slice(0, 6)}`, nameMode, joinPolicy: 'open', ...(template === 'alumni' && { template }) }, T0)
   for (const p of [w.admin, w.member, w.quiet]) await joinSpace(tx, p, room.slug, T0)
-  await changeMemberRole(tx, w.owner, room.slug, w.admin.userId, { role: 'admin' }, T0)
+  await changeMemberRole(tx, w.owner, room.slug, await memberRef(tx, room.slug, w.admin.userId), { role: 'admin' }, T0)
   return room
 }
 
@@ -132,8 +133,8 @@ describe.skipIf(!databaseUrl)('A-03 member directory consent (PostgreSQL)', () =
       expect(await withdrawMyDirectoryEntry(tx, w.quiet, room.slug, at(2))).toEqual({ entry: null, withdrawn: true })
       expect(await withdrawMyDirectoryEntry(tx, w.quiet, room.slug, at(3))).toEqual({ entry: null, withdrawn: false })
       await leaveSpace(tx, w.member, room.slug, at(4))
-      await changeMemberRole(tx, w.owner, room.slug, w.admin.userId, { role: 'member' }, at(4))
-      await removeMember(tx, w.owner, room.slug, w.admin.userId, at(5))
+      await changeMemberRole(tx, w.owner, room.slug, await memberRef(tx, room.slug, w.admin.userId), { role: 'member' }, at(4))
+      await removeMember(tx, w.owner, room.slug, await memberRef(tx, room.slug, w.admin.userId), at(5))
       expect((await rowsOf(tx, room.slug)).map((r) => r.userId)).toEqual([w.owner.userId])
       // 철회 기록은 원인만.
       const withdrawals = await tx.select().from(auditEvents).where(and(eq(auditEvents.action, 'community.directory_withdraw'), eq(auditEvents.actorId, w.quiet.userId)))

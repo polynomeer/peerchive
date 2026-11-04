@@ -70,6 +70,7 @@ import { enableStudyRecord, getStudyRecord } from '../server/modules/community/s
 import { createRobotsHandler, robotsTxt } from '../server/modules/security/robots'
 import type { ServiceError } from '../server/modules/errors'
 import { closeTestDb, createUser, databaseUrl, expectServiceError, insertDisplayPersona, minutes, verifiedAffiliation, withRollback } from './helpers'
+import { memberRef } from './helpers-space-member-ref'
 
 const ROOT = resolve(__dirname, '../../..')
 const WEB = resolve(__dirname, '..')
@@ -565,7 +566,7 @@ async function world(tx: DbExecutor): Promise<World> {
     }
   }
   for (const slug of [listed.slug, unlisted.slug, invite.slug]) {
-    await removeMember(tx, owner, slug, removed.userId, at(4))
+    await removeMember(tx, owner, slug, await memberRef(tx, slug, removed.userId), at(4))
     await leaveSpace(tx, left, slug, at(4))
   }
   // 이름 표시 방식 예약(멤버 전원 알림) → 인증 해제 뒤 알림의 공간 이름이 사라지는지

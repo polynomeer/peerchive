@@ -23,6 +23,7 @@ import { createRoom } from '../server/modules/community/spaces'
 import { setFeatureEnvForTesting } from '../server/modules/features'
 import { updateRealName } from '../server/modules/identity/profiles'
 import { closeTestDb, createUser, databaseUrl, expectServiceError, insertDisplayPersona, verifiedAffiliation, withRollback } from './helpers'
+import { memberRef } from './helpers-space-member-ref'
 
 const T0 = new Date('2026-11-01T03:00:00Z')
 const at = (minutes: number) => new Date(T0.getTime() + minutes * 60_000)
@@ -91,8 +92,8 @@ type World = Awaited<ReturnType<typeof world>>
 async function room(tx: DbExecutor, w: World, nameMode: 'real' | 'display' | 'anonymous', template: 'alumni' | 'general' = 'alumni') {
   const r = await createRoom(tx, w.owner, { name: `모임 ${nameMode} ${crypto.randomUUID().slice(0, 6)}`, nameMode, joinPolicy: 'open', template }, T0)
   for (const p of [w.admin, w.moderator, w.member, w.member2]) await joinSpace(tx, p, r.slug, T0)
-  await changeMemberRole(tx, w.owner, r.slug, w.admin.userId, { role: 'admin' }, T0)
-  await changeMemberRole(tx, w.owner, r.slug, w.moderator.userId, { role: 'moderator' }, T0)
+  await changeMemberRole(tx, w.owner, r.slug, await memberRef(tx, r.slug, w.admin.userId), { role: 'admin' }, T0)
+  await changeMemberRole(tx, w.owner, r.slug, await memberRef(tx, r.slug, w.moderator.userId), { role: 'moderator' }, T0)
   return r
 }
 
@@ -401,7 +402,7 @@ describe.skipIf(!databaseUrl)('A-02 alumni room events, notice reads, polls and 
       expect(await counts(early.id, at(21))).toEqual([0, 2, 1])
       expect(await counts(timed.id, at(21))).toEqual([0, 2, 1])
       expect(await counts(open.id, at(21))).toEqual([0, 1, 1])
-      await removeMember(tx, w.owner, r.slug, w.member2.userId, at(22))
+      await removeMember(tx, w.owner, r.slug, await memberRef(tx, r.slug, w.member2.userId), at(22))
       expect(await tally(open.id)).toBeNull()
       expect(await counts(open.id, at(23))).toEqual([0, 0, 1])
       expect(await counts(early.id, at(23))).toEqual([0, 2, 1])
@@ -438,7 +439,7 @@ describe.skipIf(!databaseUrl)('A-02 alumni room events, notice reads, polls and 
       expect((await getPost(tx, w.owner, notice.id, at(3))).noticeReads?.count).toBe(2)
 
       await leaveSpace(tx, w.member, r.slug, at(3))
-      await removeMember(tx, w.owner, r.slug, w.member2.userId, at(3))
+      await removeMember(tx, w.owner, r.slug, await memberRef(tx, r.slug, w.member2.userId), at(3))
       for (const p of [w.member, w.member2]) {
         expect(await tx.select().from(roomEventRsvps).where(eq(roomEventRsvps.userId, p.userId))).toHaveLength(0)
         expect(await tx.select().from(noticeReads).where(eq(noticeReads.userId, p.userId))).toHaveLength(0)

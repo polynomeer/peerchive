@@ -32,6 +32,7 @@ import { getPublicPublication } from '../server/modules/publication/public-read'
 import { publishCandidate } from '../server/modules/publication/releases'
 import { createTask, listTasks } from '../server/modules/tasks/tasks'
 import { closeTestDb, createUser, databaseUrl, expectServiceError, minutes, verifiedAffiliation, withRollback } from './helpers'
+import { memberRef } from './helpers-space-member-ref'
 
 const T0 = new Date('2026-11-06T09:00:00Z')
 const at = (n: number) => new Date(T0.getTime() + minutes(n))
@@ -142,7 +143,7 @@ describe.skipIf(!databaseUrl)('C-08 study records (PostgreSQL)', () => {
       await expectServiceError(createLog(tx, c, projectId, { tag: 'progress', body: '나간 뒤', links: [] }, at(4)), 'NOT_FOUND')
 
       // 내보내기 → removed → 404, 새 초대로 다시 들어오면 같은 행이 active로 돌아옴
-      await removeSpaceMember(tx, w.owner, w.room.slug, w.b.userId, at(5))
+      await removeSpaceMember(tx, w.owner, w.room.slug, await memberRef(tx, w.room.slug, w.b.userId), at(5))
       expect(await roleOf(tx, projectId, w.b.userId)).toBe('removed:editor')
       await expectServiceError(listLogs(tx, w.b, projectId, {}), 'NOT_FOUND')
       await w.invite(w.b, 6)
@@ -151,7 +152,7 @@ describe.skipIf(!databaseUrl)('C-08 study records (PostgreSQL)', () => {
       expect(rows.filter((r) => r.userId === w.b.userId)).toHaveLength(1)
 
       // 방 역할 admin → 과제는 그대로 editor
-      await changeSpaceRole(tx, w.owner, w.room.slug, w.a.userId, { role: 'admin' }, at(7))
+      await changeSpaceRole(tx, w.owner, w.room.slug, await memberRef(tx, w.room.slug, w.a.userId), { role: 'admin' }, at(7))
       expect(await roleOf(tx, projectId, w.a.userId)).toBe('active:editor')
 
       // 과제 쪽 멤버 관리는 409 study_managed(원천은 방 하나)
@@ -165,7 +166,7 @@ describe.skipIf(!databaseUrl)('C-08 study records (PostgreSQL)', () => {
       expect(await roleOf(tx, projectId, w.a.userId)).toBe('active:editor')
 
       // 방장 넘기기(역할 owner) → 과제 owner도 바뀜, 이전 방장은 editor
-      await changeSpaceRole(tx, w.owner, w.room.slug, w.a.userId, { role: 'owner' }, at(8))
+      await changeSpaceRole(tx, w.owner, w.room.slug, await memberRef(tx, w.room.slug, w.a.userId), { role: 'owner' }, at(8))
       expect(await ownerOf(tx, projectId)).toBe(w.a.userId)
       expect(await roleOf(tx, projectId, w.a.userId)).toBe('active:owner')
       expect(await roleOf(tx, projectId, w.owner.userId)).toBe('active:editor')
@@ -211,7 +212,7 @@ describe.skipIf(!databaseUrl)('C-08 study records (PostgreSQL)', () => {
       const removed = await student(tx, w.school.id, '내보낸사람')
       for (const p of [left, removed]) await w.invite(p, 4)
       await leaveSpace(tx, left, w.room.slug, at(5))
-      await removeSpaceMember(tx, w.owner, w.room.slug, removed.userId, at(5))
+      await removeSpaceMember(tx, w.owner, w.room.slug, await memberRef(tx, w.room.slug, removed.userId), at(5))
       // 학교 인증을 해제한 멤버(방 멤버십은 그대로): C-05처럼 다음 요청부터 404
       await removeAffiliation(tx, w.b, w.b.affiliationId, at(6))
       const actors = {

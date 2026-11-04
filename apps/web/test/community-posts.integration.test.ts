@@ -58,6 +58,7 @@ import { getPublicPortfolioProfile } from '../server/modules/portfolio/public-pr
 import { hitRateLimit } from '../server/modules/security/rate-limit'
 import type { CommunityCommentDto, CommunityPostDto } from '../shared/types/api'
 import { closeTestDb, createUser, databaseUrl, expectServiceError, insertDisplayPersona, minutes, verifiedAffiliation, withRollback } from './helpers'
+import { memberRef } from './helpers-space-member-ref'
 
 const T0 = new Date('2026-11-05T09:00:00Z')
 const at = (n: number) => new Date(T0.getTime() + minutes(n))
@@ -156,7 +157,7 @@ describe.skipIf(!databaseUrl)('C-04 community posts (PostgreSQL)', () => {
       const post = await createPost(tx, M, r.boardId, { title: '첫 글', body: '안녕하세요' }, at(3))
       expect(post).toMatchObject({ title: '첫 글', body: '안녕하세요', nameMode: 'display', author: { kind: 'display', label: '멤버1', mine: true } })
       await expectServiceError(createPost(tx, M, notice.id, { title: '공지', body: '멤버 공지' }, at(3)), 'FORBIDDEN', 'write_not_allowed')
-      await changeMemberRole(tx, r.O, r.slug, N.userId, { role: 'moderator' }, at(3))
+      await changeMemberRole(tx, r.O, r.slug, await memberRef(tx, r.slug, N.userId), { role: 'moderator' }, at(3))
       const noticePost = await createPost(tx, N, notice.id, { title: '공지', body: '모더레이터 공지' }, at(4))
       // 공지 글에도 멤버가 댓글을 씀
       expect(flat(await createComment(tx, M, noticePost.id, { body: '확인했습니다' }, at(5)))).toHaveLength(1)

@@ -11,6 +11,7 @@
  * - 멤버 목록은 owner·admin만 봅니다(이름·핸들·역할·가입 시각). 공식 페이지에는 멤버 목록이 없습니다.
  *   이름은 지금 효력이 있는 방식을 따릅니다(ADR 0060 D-01): real은 계정 이름·실명 handle, display는 방별 이름 → 표시명 페르소나 → `표시명 없음`,
  *   익명 방은 모두 `익명 멤버`. display·익명 방에서는 계정 이름과 실명 handle을 내보내지 않습니다.
+ *   이런 방에서는 다른 사람의 사용자 id도 방별 키로 바꾸고, 관리 경로도 그 키만 받습니다(space-member-refs.ts).
  * 공간 행 → 멤버십 순서로 잠급니다(정원·승계 경쟁 방지).
  * 스터디 기록(C-08, ADR 0026)이 켜진 방이면 멤버십을 바꾼 같은 트랜잭션에서 과제 멤버십을 다시 계산합니다(syncStudyRecordInTx).
  */
@@ -38,6 +39,7 @@ import { deleteGatheringDataInTx } from './alumni-room'
 import { deleteDirectoryEntryInTx } from './member-directory'
 import { loadScheduledChange, nameModeNow } from './name-modes'
 import { deleteRoomProfileInTx, roomProfileNames } from './room-profiles'
+import { resolveSpaceMemberRef, spaceMemberRefKey } from './space-member-refs'
 import { archiveSpaceInTx, assertCanManage, toSpaceSummary } from './spaces'
 import { syncStudyRecordInTx } from './study-records'
 import type { JoinResultDto, SpaceMemberDto, SpaceMembersDto } from '../../../shared/types/api'
@@ -183,7 +185,7 @@ export async function leaveSpace(
 
 // ── 관리 ─────────────────────────────────────────────────────────────────
 
-async function memberDtos(db: DbExecutor, space: SpaceContext['space']['row'], mode: NameMode, rows: MembershipRow[]): Promise<SpaceMemberDto[]> {
+async function memberDtos(db: DbExecutor, space: SpaceContext['space']['row'], mode: NameMode, viewerId: string, rows: MembershipRow[]): Promise<SpaceMemberDto[]> {
   if (rows.length === 0) return []
   const userIds = rows.map((r) => r.userId)
   const people = await db
@@ -199,7 +201,7 @@ async function memberDtos(db: DbExecutor, space: SpaceContext['space']['row'], m
   const byId = new Map(people.map((p) => [p.id, p]))
   const personaNames = new Map(displayPersonas.map((p) => [p.userId, p.displayName]))
   return rows.map((r) => ({
-    userId: r.userId,
+    userId: mode === 'real' || r.userId === viewerId ? r.userId : spaceMemberRefKey(space.id, r.userId),
     ...spaceMemberName(mode, {
       accountName: byId.get(r.userId)?.displayName ?? '',
       realHandle: byId.get(r.userId)?.handle ?? null,
@@ -228,15 +230,20 @@ export async function listMembers(db: DbExecutor, actor: Actor, ref: unknown, no
     .where(and(eq(spaceMemberships.spaceId, ctx.space.row.id), inArray(spaceMemberships.status, ['active', 'pending'])))
     .orderBy(asc(spaceMemberships.joinedAt), asc(spaceMemberships.requestedAt), asc(spaceMemberships.createdAt))
   const { mode } = nameModeNow(ctx.space.row.currentNameMode, await loadScheduledChange(db, ctx.space.row.id), now)
-  const dtos = await memberDtos(db, ctx.space.row, mode, rows)
+  const dtos = await memberDtos(db, ctx.space.row, mode, actor.userId, rows)
   return {
     members: dtos.filter((d) => d.status === 'active').sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role]),
     pending: dtos.filter((d) => d.status === 'pending'),
   }
 }
 
-async function loadTarget(tx: DbExecutor, ctx: SpaceContext, userId: unknown): Promise<MembershipRow> {
-  if (!isUuid(userId)) throw notFound()
+/** 관리 대상 멤버십. 실명 방은 사용자 id, 표시명·익명 방은 방별 키 또는 본인 id만 받습니다(space-member-refs.ts). */
+async function loadTarget(tx: DbExecutor, ctx: SpaceContext, actor: Actor, ref: unknown, now: Date): Promise<MembershipRow> {
+  if (typeof ref !== 'string') throw notFound()
+  const { mode } = nameModeNow(ctx.space.row.currentNameMode, await loadScheduledChange(tx, ctx.space.row.id), now)
+  const value = ref.trim().toLowerCase()
+  const userId = mode === 'real' || value === actor.userId.toLowerCase() ? value : await resolveSpaceMemberRef(tx, ctx.space.row.id, value)
+  if (!userId || !isUuid(userId)) throw notFound()
   const target = await findMembership(tx, ctx.space.row.id, userId.toLowerCase(), true)
   if (!target) throw notFound()
   return target
@@ -247,7 +254,7 @@ export async function approveMember(db: DbExecutor, actor: Actor, ref: unknown, 
   await db.transaction(async (tx) => {
     const ctx = await loadReadableSpace(tx, actor, ref, true)
     assertCanManage(ctx, 'review_requests')
-    const target = await loadTarget(tx, ctx, userId)
+    const target = await loadTarget(tx, ctx, actor, userId, now)
     if (target.status !== 'pending') throw conflict('not_pending')
     if (!hasRoomFor(ctx.facts)) throw conflict('space_full')
     await tx
@@ -271,7 +278,7 @@ export async function rejectMember(db: DbExecutor, actor: Actor, ref: unknown, u
   await db.transaction(async (tx) => {
     const ctx = await loadReadableSpace(tx, actor, ref, true)
     assertCanManage(ctx, 'review_requests')
-    const target = await loadTarget(tx, ctx, userId)
+    const target = await loadTarget(tx, ctx, actor, userId, now)
     if (target.status !== 'pending') throw conflict('not_pending')
     await tx.update(spaceMemberships).set({ status: 'removed', endedAt: now, updatedAt: now }).where(eq(spaceMemberships.id, target.id))
     await recordAudit(tx, { actorId: actor.userId, action: 'community.member_reject', targetType: 'community_space', targetId: ctx.space.row.id, metadata: {} })
@@ -284,7 +291,7 @@ export async function removeMember(db: DbExecutor, actor: Actor, ref: unknown, u
   await db.transaction(async (tx) => {
     const ctx = await loadReadableSpace(tx, actor, ref, true)
     assertCanManage(ctx, 'remove_members')
-    const target = await loadTarget(tx, ctx, userId)
+    const target = await loadTarget(tx, ctx, actor, userId, now)
     if (target.userId === actor.userId) throw conflict('use_leave')
     if (target.status !== 'active') throw conflict('not_active_member')
     if (!canRemoveSpaceMember(ctx.membership!.role, target.role)) throw forbidden()
@@ -309,7 +316,7 @@ export async function changeMemberRole(db: DbExecutor, actor: Actor, ref: unknow
   await db.transaction(async (tx) => {
     const ctx = await loadReadableSpace(tx, actor, ref, true)
     assertCanManage(ctx, 'change_roles')
-    const target = await loadTarget(tx, ctx, userId)
+    const target = await loadTarget(tx, ctx, actor, userId, now)
     if (target.userId === actor.userId) throw conflict('self')
     if (target.status !== 'active') throw conflict('not_active_member')
     if (target.role === role) return

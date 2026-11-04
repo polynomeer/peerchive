@@ -50,6 +50,7 @@ import { createProject } from '../server/modules/projects/projects'
 import { hitRateLimit } from '../server/modules/security/rate-limit'
 import type { CommunityPostDto } from '../shared/types/api'
 import { closeTestDb, createUser, databaseUrl, days, expectServiceError, minutes, verifiedAffiliation, withRollback } from './helpers'
+import { memberRef } from './helpers-space-member-ref'
 
 const T0 = new Date('2026-11-05T09:00:00Z')
 const at = (n: number) => new Date(T0.getTime() + minutes(n))
@@ -250,7 +251,7 @@ describe.skipIf(!databaseUrl)('C-06 community moderation (PostgreSQL)', () => {
       const { op, schoolId } = await school(tx)
       const r = await room(tx, schoolId, 3)
       const [A, M, N] = r.people as [Person, Person, Person]
-      await changeMemberRole(tx, r.O, r.slug, M.userId, { role: 'moderator' }, at(2))
+      await changeMemberRole(tx, r.O, r.slug, await memberRef(tx, r.slug, M.userId), { role: 'moderator' }, at(2))
       const post = await createPost(tx, A, r.boardId, { title: '익명 글', body: '본문' }, at(3))
       const thread = await createComment(tx, A, post.id, { body: '익명 댓글' }, at(3))
       const commentId = thread.comments[0]!.id

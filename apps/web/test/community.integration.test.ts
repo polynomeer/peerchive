@@ -65,6 +65,7 @@ import { searchPublic } from '../server/modules/course-hub/search'
 import { getReportDetail, resolveReport } from '../server/modules/moderation/operator'
 import { createReport } from '../server/modules/moderation/reports'
 import { closeTestDb, createUser, databaseUrl, expectServiceError, minutes, verifiedAffiliation, withRollback } from './helpers'
+import { memberRef } from './helpers-space-member-ref'
 
 const T0 = new Date('2026-11-03T09:00:00Z')
 const at = (n: number) => new Date(T0.getTime() + minutes(n))
@@ -264,13 +265,13 @@ describe.skipIf(!databaseUrl)('community spaces (PostgreSQL)', () => {
       expect(await getSpaceDetail(tx, a, approval.slug)).toMatchObject({ access: 'preview', joinAction: 'pending' })
       await expectServiceError(joinSpace(tx, a, approval.slug), 'CONFLICT', 'already_pending')
       await joinSpace(tx, b, approval.slug, at(2))
-      await expectServiceError(approveMember(tx, a, approval.slug, b.userId), 'NOT_FOUND') // 대기 중인 사람은 방을 읽지 못함
-      const afterApprove = await approveMember(tx, owner, approval.slug, a.userId, at(3))
-      expect(afterApprove.members.map((m) => m.userId)).toContain(a.userId)
-      await expectServiceError(approveMember(tx, a, approval.slug, b.userId), 'FORBIDDEN') // 일반 멤버
-      const afterReject = await rejectMember(tx, owner, approval.slug, b.userId, at(3))
+      await expectServiceError(approveMember(tx, a, approval.slug, await memberRef(tx, approval.slug, b.userId)), 'NOT_FOUND') // 대기 중인 사람은 방을 읽지 못함
+      const afterApprove = await approveMember(tx, owner, approval.slug, await memberRef(tx, approval.slug, a.userId), at(3))
+      expect(afterApprove.members.map((m) => m.userId)).toContain(await memberRef(tx, approval.slug, a.userId))
+      await expectServiceError(approveMember(tx, a, approval.slug, await memberRef(tx, approval.slug, b.userId)), 'FORBIDDEN') // 일반 멤버
+      const afterReject = await rejectMember(tx, owner, approval.slug, await memberRef(tx, approval.slug, b.userId), at(3))
       expect(afterReject.pending).toEqual([])
-      await expectServiceError(approveMember(tx, owner, approval.slug, b.userId), 'CONFLICT', 'not_pending')
+      await expectServiceError(approveMember(tx, owner, approval.slug, await memberRef(tx, approval.slug, b.userId)), 'CONFLICT', 'not_pending')
       // 거절된 사람은 소개도 404, 스스로 다시 요청할 수 없음(403 removed)
       await expectServiceError(getSpaceDetail(tx, b, approval.slug), 'NOT_FOUND')
       await expectServiceError(joinSpace(tx, b, approval.slug), 'FORBIDDEN', 'removed')
@@ -320,9 +321,9 @@ describe.skipIf(!databaseUrl)('community spaces (PostgreSQL)', () => {
       await expectServiceError(acceptSpaceInvitation(tx, b, { token: t }, at(2)), 'CONFLICT', 'space_full')
       await updateSpace(tx, owner, room.slug, { joinPolicy: 'approval' }, at(3))
       expect(await joinSpace(tx, c, room.slug, at(3))).toMatchObject({ status: 'pending' })
-      await expectServiceError(approveMember(tx, owner, room.slug, c.userId, at(4)), 'CONFLICT', 'space_full')
+      await expectServiceError(approveMember(tx, owner, room.slug, await memberRef(tx, room.slug, c.userId), at(4)), 'CONFLICT', 'space_full')
       await leaveSpace(tx, a, room.slug, at(5))
-      await approveMember(tx, owner, room.slug, c.userId, at(6))
+      await approveMember(tx, owner, room.slug, await memberRef(tx, room.slug, c.userId), at(6))
     })
   })
 
@@ -336,8 +337,8 @@ describe.skipIf(!databaseUrl)('community spaces (PostgreSQL)', () => {
       await joinSpace(tx, adm1, room.slug, at(2))
       await joinSpace(tx, adm2, room.slug, at(3))
       await joinSpace(tx, m2, room.slug, at(4))
-      await changeMemberRole(tx, owner, room.slug, adm2.userId, { role: 'admin' }, at(5))
-      await changeMemberRole(tx, owner, room.slug, adm1.userId, { role: 'admin' }, at(6))
+      await changeMemberRole(tx, owner, room.slug, await memberRef(tx, room.slug, adm2.userId), { role: 'admin' }, at(5))
+      await changeMemberRole(tx, owner, room.slug, await memberRef(tx, room.slug, adm1.userId), { role: 'admin' }, at(6))
 
       expect(await leaveSpace(tx, owner, room.slug, at(7))).toEqual({ left: true, succession: 'transferred' })
       const roleOf = async (userId: string) =>
@@ -378,29 +379,29 @@ describe.skipIf(!databaseUrl)('community spaces (PostgreSQL)', () => {
       const [adm, mod, mem] = [await student(tx, f.schoolId), await student(tx, f.schoolId), await student(tx, f.schoolId)]
       const room = await createRoom(tx, owner, roomInput(), T0)
       for (const [i, who] of [adm, mod, mem].entries()) await joinSpace(tx, who, room.slug, at(i + 1))
-      await changeMemberRole(tx, owner, room.slug, adm.userId, { role: 'admin' }, at(5))
-      await changeMemberRole(tx, owner, room.slug, mod.userId, { role: 'moderator' }, at(5))
-      await expectServiceError(changeMemberRole(tx, adm, room.slug, mem.userId, { role: 'moderator' }), 'FORBIDDEN')
-      await expectServiceError(changeMemberRole(tx, owner, room.slug, owner.userId, { role: 'member' }), 'CONFLICT', 'self')
-      await expectServiceError(changeMemberRole(tx, owner, room.slug, mem.userId, { role: 'king' }), 'VALIDATION')
+      await changeMemberRole(tx, owner, room.slug, await memberRef(tx, room.slug, adm.userId), { role: 'admin' }, at(5))
+      await changeMemberRole(tx, owner, room.slug, await memberRef(tx, room.slug, mod.userId), { role: 'moderator' }, at(5))
+      await expectServiceError(changeMemberRole(tx, adm, room.slug, await memberRef(tx, room.slug, mem.userId), { role: 'moderator' }), 'FORBIDDEN')
+      await expectServiceError(changeMemberRole(tx, owner, room.slug, await memberRef(tx, room.slug, owner.userId), { role: 'member' }), 'CONFLICT', 'self')
+      await expectServiceError(changeMemberRole(tx, owner, room.slug, await memberRef(tx, room.slug, mem.userId), { role: 'king' }), 'VALIDATION')
       await expectServiceError(listMembers(tx, mod, room.slug), 'FORBIDDEN')
       expect((await getSpaceDetail(tx, mod, room.slug)).permissions).toMatchObject({ moderate: true, manage: false, invite: false })
       expect((await getSpaceDetail(tx, adm, room.slug)).permissions).toMatchObject({ manage: true, invite: true, changeRoles: false, archive: false })
       // admin은 moderator·member만 내보냄
-      await expectServiceError(removeMember(tx, adm, room.slug, owner.userId), 'FORBIDDEN')
-      await changeMemberRole(tx, owner, room.slug, mem.userId, { role: 'admin' }, at(6))
-      await expectServiceError(removeMember(tx, adm, room.slug, mem.userId), 'FORBIDDEN')
-      await changeMemberRole(tx, owner, room.slug, mem.userId, { role: 'member' }, at(6))
-      const after = await removeMember(tx, adm, room.slug, mem.userId, at(7))
-      expect(after.members.map((m) => m.userId)).not.toContain(mem.userId)
+      await expectServiceError(removeMember(tx, adm, room.slug, await memberRef(tx, room.slug, owner.userId)), 'FORBIDDEN')
+      await changeMemberRole(tx, owner, room.slug, await memberRef(tx, room.slug, mem.userId), { role: 'admin' }, at(6))
+      await expectServiceError(removeMember(tx, adm, room.slug, await memberRef(tx, room.slug, mem.userId)), 'FORBIDDEN')
+      await changeMemberRole(tx, owner, room.slug, await memberRef(tx, room.slug, mem.userId), { role: 'member' }, at(6))
+      const after = await removeMember(tx, adm, room.slug, await memberRef(tx, room.slug, mem.userId), at(7))
+      expect(after.members.map((m) => m.userId)).not.toContain(await memberRef(tx, room.slug, mem.userId))
       await expectServiceError(getSpaceDetail(tx, mem, room.slug), 'NOT_FOUND') // 내보내진 사람은 소개도 404
       await expectServiceError(joinSpace(tx, mem, room.slug), 'FORBIDDEN', 'removed')
-      await expectServiceError(removeMember(tx, adm, room.slug, adm.userId), 'CONFLICT', 'use_leave')
+      await expectServiceError(removeMember(tx, adm, room.slug, await memberRef(tx, room.slug, adm.userId)), 'CONFLICT', 'use_leave')
       // 소유권 이전
-      const list = await changeMemberRole(tx, owner, room.slug, mod.userId, { role: 'owner' }, at(8))
+      const list = await changeMemberRole(tx, owner, room.slug, await memberRef(tx, room.slug, mod.userId), { role: 'owner' }, at(8))
       const roles = Object.fromEntries(list.members.map((m) => [m.userId, m.role])) as Record<string, SpaceRole>
-      expect(roles[mod.userId]).toBe('owner')
-      expect(roles[owner.userId]).toBe('admin')
+      expect(roles[await memberRef(tx, room.slug, mod.userId)]).toBe('owner')
+      expect(roles[owner.userId]).toBe('admin') // 보는 사람 본인은 id 그대로
       expect(list.members.filter((m) => m.role === 'owner')).toHaveLength(1)
       // 멤버 목록에 이메일 없음
       expect(JSON.stringify(list)).not.toContain('@example.test')

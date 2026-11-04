@@ -54,6 +54,7 @@ import { decideAppeal, getReportDetail, listReportGroups, resolveReport } from '
 import { createReport } from '../server/modules/moderation/reports'
 import { closeTestDb, createUser, databaseUrl, expectServiceError, insertDisplayPersona, verifiedAffiliation, withRollback } from './helpers'
 import type { RoomItemKind } from '../shared/types/api'
+import { memberRef } from './helpers-space-member-ref'
 
 const T0 = new Date('2026-11-01T03:00:00Z')
 const at = (minutes: number) => new Date(T0.getTime() + minutes * 60_000)
@@ -86,7 +87,7 @@ type World = Awaited<ReturnType<typeof world>>
 async function alumniRoom(tx: DbExecutor, w: World, nameMode: 'real' | 'display' | 'anonymous', minute = 0) {
   const room = await createRoom(tx, w.owner, { name: `동문 ${nameMode} ${rand()}`, nameMode, joinPolicy: 'open', template: 'alumni' }, at(minute))
   for (const p of [w.admin, w.member, w.quiet]) await joinSpace(tx, p, room.slug, at(minute))
-  await changeMemberRole(tx, w.owner, room.slug, w.admin.userId, { role: 'admin' }, at(minute))
+  await changeMemberRole(tx, w.owner, room.slug, await memberRef(tx, room.slug, w.admin.userId), { role: 'admin' }, at(minute))
   return room
 }
 

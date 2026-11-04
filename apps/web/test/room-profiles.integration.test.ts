@@ -22,6 +22,7 @@ import { createRoom, getSpaceDetail, listMySpaces } from '../server/modules/comm
 import { setFeatureEnvForTesting } from '../server/modules/features'
 import { updateRealName } from '../server/modules/identity/profiles'
 import { closeTestDb, createUser, databaseUrl, expectServiceError, insertDisplayPersona, verifiedAffiliation, withRollback } from './helpers'
+import { memberRef } from './helpers-space-member-ref'
 
 const T0 = new Date('2026-11-01T03:00:00Z')
 const at = (minutes: number) => new Date(T0.getTime() + minutes * 60_000)
@@ -52,7 +53,7 @@ async function alumniRoom(tx: DbExecutor, w: World, nameMode: 'real' | 'display'
   const room = await createRoom(tx, w.owner, { name: `동문 ${nameMode} ${crypto.randomUUID().slice(0, 6)}`, nameMode, joinPolicy: 'open', template: 'alumni', ...extra }, T0)
   await joinSpace(tx, w.admin, room.slug, T0)
   await joinSpace(tx, w.member, room.slug, T0)
-  await changeMemberRole(tx, w.owner, room.slug, w.admin.userId, { role: 'admin' }, T0)
+  await changeMemberRole(tx, w.owner, room.slug, await memberRef(tx, room.slug, w.admin.userId), { role: 'admin' }, T0)
   return room
 }
 
@@ -163,7 +164,7 @@ describe.skipIf(!databaseUrl)('A-01 alumni rooms and room profiles (PostgreSQL)'
       const mod = await createUser(tx)
       await verifiedAffiliation(tx, mod.id, w.schoolId)
       await joinSpace(tx, { userId: mod.id }, room.slug, T0)
-      await changeMemberRole(tx, w.owner, room.slug, mod.id, { role: 'moderator' }, T0)
+      await changeMemberRole(tx, w.owner, room.slug, await memberRef(tx, room.slug, mod.id), { role: 'moderator' }, T0)
       await putMyRoomProfile(tx, w.member, room.slug, { cohortLabel: '11기' }, at(1))
       await putMyRoomProfile(tx, w.member, room.slug, { cohortLabel: '11기', bio: '바꾼 소개' }, at(2)) // 기수 그대로 → 이력 없음
       await putMyRoomProfile(tx, w.owner, room.slug, { badges: ['ob'] }, at(2))
@@ -256,8 +257,8 @@ describe.skipIf(!databaseUrl)('A-01 alumni rooms and room profiles (PostgreSQL)'
       expect(await count(w.member.userId)).toEqual({ profiles: 1, history: 1 })
       await leaveSpace(tx, w.member, room.slug, at(2))
       expect(await count(w.member.userId)).toEqual({ profiles: 0, history: 0 })
-      await changeMemberRole(tx, w.owner, room.slug, w.admin.userId, { role: 'member' }, at(2))
-      await removeMember(tx, w.owner, room.slug, w.admin.userId, at(3))
+      await changeMemberRole(tx, w.owner, room.slug, await memberRef(tx, room.slug, w.admin.userId), { role: 'member' }, at(2))
+      await removeMember(tx, w.owner, room.slug, await memberRef(tx, room.slug, w.admin.userId), at(3))
       expect(await count(w.admin.userId)).toEqual({ profiles: 0, history: 0 })
       // 내 프로필 지우기는 멱등.
       const cleared = await deleteMyRoomProfile(tx, w.owner, room.slug, at(4))

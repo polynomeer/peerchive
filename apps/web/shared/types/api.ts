@@ -3090,6 +3090,7 @@ export interface SpaceDetailDto extends SpaceSummaryDto {
 }
 
 export interface SpaceMemberDto {
+  /** 실명 방은 사용자 id. 표시명·익명 방에서 다른 멤버는 방별 키(`rm_…`, ADR 0060 D-01 보완). 관리 경로에는 이 값을 그대로 보냅니다. */
   userId: string
   displayName: string
   handle: string | null
