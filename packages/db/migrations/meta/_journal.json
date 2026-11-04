@@ -407,6 +407,13 @@
       "when": 1793806463663,
       "tag": "0057_hub_opened_at",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1793806913327,
+      "tag": "0058_activity_cards_cohort_rule",
+      "breakpoints": true
     }
   ]
 }
