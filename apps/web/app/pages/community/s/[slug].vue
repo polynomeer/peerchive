@@ -552,7 +552,7 @@ const isMe = (m: SpaceMemberDto) => m.userId === me.value?.id
             <h3>가입 요청</h3>
             <ul class="plain">
               <li v-for="m in members.pending" :key="m.userId" class="row">
-                <span>{{ m.displayName }}<template v-if="m.handle"> @{{ m.handle }}</template></span>
+                <span>{{ m.displayName }}<template v-if="m.handle"> @{{ m.handle }}</template><template v-else-if="m.requestedAt"> · {{ formatDateTime(m.requestedAt) }} 요청</template></span>
                 <button type="button" :disabled="busy === m.userId" :aria-label="`${m.displayName} 승인`" @click="memberAction(m, 'approve')">승인</button>
                 <button type="button" class="secondary" :disabled="busy === m.userId" :aria-label="`${m.displayName} 거절`" @click="memberAction(m, 'reject')">거절</button>
               </li>
@@ -560,7 +560,7 @@ const isMe = (m: SpaceMemberDto) => m.userId === me.value?.id
           </template>
           <ul class="plain">
             <li v-for="m in members.members" :key="m.userId" class="row">
-              <span>{{ m.displayName }}<template v-if="m.handle"> @{{ m.handle }}</template> · {{ SPACE_ROLE_LABELS[m.role] }}</span>
+              <span>{{ m.displayName }}<template v-if="m.handle"> @{{ m.handle }}</template> · {{ SPACE_ROLE_LABELS[m.role] }}<template v-if="!m.handle && m.joinedAt"> · {{ formatDateTime(m.joinedAt) }} 가입</template></span>
               <template v-if="!isMe(m)">
                 <template v-if="perms?.changeRoles && m.role !== 'owner'">
                   <label :for="`role-${m.userId}`" class="visually-hidden">{{ m.displayName }} 역할</label>

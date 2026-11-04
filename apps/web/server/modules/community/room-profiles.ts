@@ -125,6 +125,19 @@ async function loadProfiles(db: DbExecutor, spaceId: string, userIds?: string[],
     .orderBy(asc(roomProfiles.cohortLabel), asc(roomProfiles.createdAt), asc(roomProfiles.id))
 }
 
+/**
+ * 표시명 방의 멤버 목록에 쓸 방별 이름(ADR 0060 D-01): 플래그가 켜진 alumni 방에서, 숨기지 않고 이름이 있는 프로필만.
+ * 플래그가 꺼지면 글·댓글처럼 방별 이름을 쓰지 않습니다.
+ */
+export async function roomProfileNames(db: DbExecutor, space: { id: string; template: SpaceTemplate }, userIds: string[]): Promise<Map<string, string>> {
+  if (effectiveTemplate(space) !== 'alumni' || userIds.length === 0) return new Map()
+  const rows = await db
+    .select({ userId: roomProfiles.userId, displayName: roomProfiles.displayName })
+    .from(roomProfiles)
+    .where(and(eq(roomProfiles.spaceId, space.id), inArray(roomProfiles.userId, userIds), isNull(roomProfiles.hiddenAt)))
+  return new Map(rows.flatMap((r) => (r.displayName ? [[r.userId, r.displayName] as const] : [])))
+}
+
 function nameOf(mode: 'real' | 'display', row: { profile: ProfileRow; realName: string | null }): string {
   if (mode === 'real') return row.realName?.trim() || REAL_NAME_MISSING_LABEL
   return row.profile.displayName ?? ROOM_PROFILE_NAME_MISSING_LABEL

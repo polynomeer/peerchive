@@ -22,13 +22,13 @@ import {
 } from '@peerchive/db'
 import { analyticsPepper } from '../server/modules/analytics/analytics'
 import { createSchool } from '../server/modules/catalog/catalog'
-import { approveMember, changeMemberRole, joinSpace, leaveSpace, rejectMember, removeMember } from '../server/modules/community/memberships'
+import { approveMember, changeMemberRole, joinSpace, leaveSpace, listMembers, rejectMember, removeMember } from '../server/modules/community/memberships'
 import { cancelNameModeChange, getNameModeState, loadScheduledChange, nameModeNow, scheduleNameModeChange } from '../server/modules/community/name-modes'
 import { listMyCommunityNotices, markCommunityNoticesRead } from '../server/modules/community/notices'
 import { createOfficialPage, restrictSpace } from '../server/modules/community/official'
 import { archiveSpace, createRoom, getSpaceDetail, listMySpaces, updateSpace } from '../server/modules/community/spaces'
 import { getMe, getPublicProfile, updateRealName } from '../server/modules/identity/profiles'
-import { closeTestDb, createUser, databaseUrl, expectServiceError, minutes, verifiedAffiliation, withRollback } from './helpers'
+import { closeTestDb, createUser, databaseUrl, expectServiceError, insertDisplayPersona, minutes, verifiedAffiliation, withRollback } from './helpers'
 
 const T0 = new Date('2026-11-03T09:00:00Z')
 const at = (n: number) => new Date(T0.getTime() + minutes(n))
@@ -293,6 +293,65 @@ describe.skipIf(!databaseUrl)('name mode changes (PostgreSQL)', () => {
       expect(audit.map((a) => a.metadata)).toEqual([{ set: true }])
       expect(JSON.stringify(audit)).not.toContain('홍')
       expect((await updateRealName(tx, me, { realName: '' })).realName).toBeNull()
+    })
+  })
+
+  // ADR 0060 D-01: 멤버 목록의 이름은 지금 효력이 있는 방식을 따릅니다.
+  describe('member list names (D-01)', () => {
+    const roster = async (tx: DbExecutor, slug: string, viewer: { userId: string }, now?: Date) => {
+      const list = await listMembers(tx, viewer, slug, now)
+      return { list, byId: new Map([...list.members, ...list.pending].map((m) => [m.userId, m])), json: JSON.stringify(list) }
+    }
+
+    it('display room: persona name or the missing label; no account name or real handle in the JSON', async () => {
+      await withRollback(async (tx) => {
+        const r = await room(tx, 'display')
+        await insertDisplayPersona(tx, r.M.userId, '페르소나이름')
+        const { byId, json } = await roster(tx, r.slug, r.O)
+        expect(byId.get(r.M.userId)).toMatchObject({ displayName: '페르소나이름', handle: null })
+        expect(byId.get(r.A.userId)).toMatchObject({ displayName: '표시명 없음', handle: null })
+        expect(byId.get(r.P.userId)).toMatchObject({ displayName: '표시명 없음', handle: null, status: 'pending' })
+        for (const name of ['방장', '운영진', '멤버', '대기']) expect(json).not.toContain(`"displayName":"${name}"`)
+        const handles = await tx.select({ handle: profiles.handle }).from(profiles).where(inArray(profiles.userId, [r.O.userId, r.A.userId, r.M.userId, r.P.userId]))
+        expect(handles).toHaveLength(4)
+        for (const { handle } of handles) expect(json).not.toContain(handle)
+        // 운영진(admin) 시야도 같고, 승인·역할 변경·방장 이전은 이름과 무관하게 그대로 동작합니다.
+        expect((await roster(tx, r.slug, r.A)).byId.get(r.M.userId)?.displayName).toBe('페르소나이름')
+        await approveMember(tx, r.O, r.slug, r.P.userId, at(4))
+        const transferred = await changeMemberRole(tx, r.O, r.slug, r.M.userId, { role: 'owner' }, at(5))
+        expect(transferred.members.find((m) => m.userId === r.M.userId)).toMatchObject({ role: 'owner', displayName: '페르소나이름' })
+      })
+    })
+
+    it('real room stays unchanged: account name and real handle', async () => {
+      await withRollback(async (tx) => {
+        const r = await room(tx, 'real')
+        const { byId } = await roster(tx, r.slug, r.O)
+        const [own] = await tx.select({ handle: profiles.handle }).from(profiles).where(eq(profiles.userId, r.M.userId))
+        expect(byId.get(r.M.userId)).toMatchObject({ displayName: '멤버', handle: own!.handle })
+      })
+    })
+
+    it('anonymous room: every row is the neutral label, even a member with a display persona', async () => {
+      await withRollback(async (tx) => {
+        const r = await room(tx, 'anonymous')
+        await insertDisplayPersona(tx, r.M.userId, '페르소나이름')
+        const { list, json } = await roster(tx, r.slug, r.O)
+        expect(new Set([...list.members, ...list.pending].map((m) => m.displayName))).toEqual(new Set(['익명 멤버']))
+        expect(list.members.every((m) => m.handle === null)).toBe(true)
+        expect(json).not.toContain('페르소나이름')
+        expect(json).not.toContain('방장')
+      })
+    })
+
+    it('uses the effective mode: a due scheduled change applies before the worker runs', async () => {
+      await withRollback(async (tx) => {
+        const r = await room(tx, 'real')
+        await scheduleNameModeChange(tx, r.O, r.slug, { toMode: 'display' }, at(10))
+        const effective = new Date(at(10).getTime() + NAME_MODE_CHANGE_DELAY_MS)
+        expect((await roster(tx, r.slug, r.O, new Date(effective.getTime() - 1000))).byId.get(r.M.userId)?.displayName).toBe('멤버')
+        expect((await roster(tx, r.slug, r.O, effective)).byId.get(r.M.userId)).toMatchObject({ displayName: '표시명 없음', handle: null })
+      })
     })
   })
 })

@@ -9,6 +9,8 @@
  * - 나가기: owner가 나가면 가장 오래된 admin → 가장 오래된 다른 active 멤버에게 넘기고, 아무도 없으면 방을 보관(archived)합니다.
  *   탈퇴 정리(worker purge)도 같은 규칙(chooseOwnerSuccessor)을 씁니다.
  * - 멤버 목록은 owner·admin만 봅니다(이름·핸들·역할·가입 시각). 공식 페이지에는 멤버 목록이 없습니다.
+ *   이름은 지금 효력이 있는 방식을 따릅니다(ADR 0060 D-01): real은 계정 이름·실명 handle, display는 방별 이름 → 표시명 페르소나 → `표시명 없음`,
+ *   익명 방은 모두 `익명 멤버`. display·익명 방에서는 계정 이름과 실명 handle을 내보내지 않습니다.
  * 공간 행 → 멤버십 순서로 잠급니다(정원·승계 경쟁 방지).
  * 스터디 기록(C-08, ADR 0026)이 켜진 방이면 멤버십을 바꾼 같은 트랜잭션에서 과제 멤버십을 다시 계산합니다(syncStudyRecordInTx).
  */
@@ -22,8 +24,10 @@ import {
   hasRoomFor,
   isOperatorSpaceKind,
   type JoinDecision,
+  type NameMode,
+  spaceMemberName,
 } from '@peerchive/domain'
-import { and, asc, eq, inArray, profiles, spaceMemberships, users, type DbExecutor } from '@peerchive/db'
+import { and, asc, eq, inArray, personas, profiles, spaceMemberships, users, type DbExecutor } from '@peerchive/db'
 import { emitAnalytics } from '../analytics/analytics'
 import { recordAudit } from '../audit/audit'
 import { type Actor, ServiceError, conflict, forbidden, notFound } from '../errors'
@@ -32,7 +36,8 @@ import { parseInput } from '../validation'
 import { type MembershipRow, type SpaceContext, findMembership, loadReadableSpace, loadSpaceContext, membershipFacts } from './access'
 import { deleteGatheringDataInTx } from './alumni-room'
 import { deleteDirectoryEntryInTx } from './member-directory'
-import { deleteRoomProfileInTx } from './room-profiles'
+import { loadScheduledChange, nameModeNow } from './name-modes'
+import { deleteRoomProfileInTx, roomProfileNames } from './room-profiles'
 import { archiveSpaceInTx, assertCanManage, toSpaceSummary } from './spaces'
 import { syncStudyRecordInTx } from './study-records'
 import type { JoinResultDto, SpaceMemberDto, SpaceMembersDto } from '../../../shared/types/api'
@@ -178,18 +183,29 @@ export async function leaveSpace(
 
 // ── 관리 ─────────────────────────────────────────────────────────────────
 
-async function memberDtos(db: DbExecutor, rows: MembershipRow[]): Promise<SpaceMemberDto[]> {
+async function memberDtos(db: DbExecutor, space: SpaceContext['space']['row'], mode: NameMode, rows: MembershipRow[]): Promise<SpaceMemberDto[]> {
   if (rows.length === 0) return []
+  const userIds = rows.map((r) => r.userId)
   const people = await db
     .select({ id: users.id, displayName: users.displayName, handle: profiles.handle })
     .from(users)
     .leftJoin(profiles, eq(profiles.userId, users.id))
-    .where(inArray(users.id, rows.map((r) => r.userId)))
+    .where(inArray(users.id, userIds))
+  const displayPersonas = await db
+    .select({ userId: personas.userId, displayName: personas.displayName })
+    .from(personas)
+    .where(and(inArray(personas.userId, userIds), eq(personas.kind, 'display'), eq(personas.status, 'active')))
+  const roomNames = await roomProfileNames(db, space, userIds)
   const byId = new Map(people.map((p) => [p.id, p]))
+  const personaNames = new Map(displayPersonas.map((p) => [p.userId, p.displayName]))
   return rows.map((r) => ({
     userId: r.userId,
-    displayName: byId.get(r.userId)?.displayName ?? '',
-    handle: byId.get(r.userId)?.handle ?? null,
+    ...spaceMemberName(mode, {
+      accountName: byId.get(r.userId)?.displayName ?? '',
+      realHandle: byId.get(r.userId)?.handle ?? null,
+      roomProfileName: roomNames.get(r.userId) ?? null,
+      displayPersonaName: personaNames.get(r.userId) ?? null,
+    }),
     role: r.role,
     status: r.status,
     joinedAt: r.joinedAt?.toISOString() ?? null,
@@ -200,7 +216,7 @@ async function memberDtos(db: DbExecutor, rows: MembershipRow[]): Promise<SpaceM
 const ROLE_ORDER = { owner: 0, admin: 1, moderator: 2, member: 3 } as const
 
 /** GET /community/spaces/:slug/members — owner·admin만(403). 공식 페이지는 409 `no_member_list`. */
-export async function listMembers(db: DbExecutor, actor: Actor, ref: unknown): Promise<SpaceMembersDto> {
+export async function listMembers(db: DbExecutor, actor: Actor, ref: unknown, now = new Date()): Promise<SpaceMembersDto> {
   const ctx = await loadReadableSpace(db, actor, ref)
   if (isOperatorSpaceKind(ctx.space.row.kind)) throw conflict('no_member_list')
   const m = membershipFacts(ctx.membership)
@@ -211,7 +227,8 @@ export async function listMembers(db: DbExecutor, actor: Actor, ref: unknown): P
     .from(spaceMemberships)
     .where(and(eq(spaceMemberships.spaceId, ctx.space.row.id), inArray(spaceMemberships.status, ['active', 'pending'])))
     .orderBy(asc(spaceMemberships.joinedAt), asc(spaceMemberships.requestedAt), asc(spaceMemberships.createdAt))
-  const dtos = await memberDtos(db, rows)
+  const { mode } = nameModeNow(ctx.space.row.currentNameMode, await loadScheduledChange(db, ctx.space.row.id), now)
+  const dtos = await memberDtos(db, ctx.space.row, mode, rows)
   return {
     members: dtos.filter((d) => d.status === 'active').sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role]),
     pending: dtos.filter((d) => d.status === 'pending'),
@@ -246,7 +263,7 @@ export async function approveMember(db: DbExecutor, actor: Actor, ref: unknown, 
       now,
     })
   })
-  return listMembers(db, actor, ref)
+  return listMembers(db, actor, ref, now)
 }
 
 /** POST /community/spaces/:slug/members/:userId/reject — owner·admin. 거절은 removed(사유 없음, 새 초대로만 다시 들어옴). */
@@ -259,7 +276,7 @@ export async function rejectMember(db: DbExecutor, actor: Actor, ref: unknown, u
     await tx.update(spaceMemberships).set({ status: 'removed', endedAt: now, updatedAt: now }).where(eq(spaceMemberships.id, target.id))
     await recordAudit(tx, { actorId: actor.userId, action: 'community.member_reject', targetType: 'community_space', targetId: ctx.space.row.id, metadata: {} })
   })
-  return listMembers(db, actor, ref)
+  return listMembers(db, actor, ref, now)
 }
 
 /** DELETE /community/spaces/:slug/members/:userId — owner(owner 말고 모두)·admin(moderator·member만). 자기 자신은 나가기로(409 `use_leave`). */
@@ -278,7 +295,7 @@ export async function removeMember(db: DbExecutor, actor: Actor, ref: unknown, u
     await syncStudyRecordInTx(tx, ctx.space.row.id, now)
     await recordAudit(tx, { actorId: actor.userId, action: 'community.member_remove', targetType: 'community_space', targetId: ctx.space.row.id, metadata: { role: target.role } })
   })
-  return listMembers(db, actor, ref)
+  return listMembers(db, actor, ref, now)
 }
 
 export const changeRoleSchema = z.object({ role: z.enum(ASSIGNABLE_SPACE_ROLES, { error: (i) => (i.input === undefined ? 'required' : 'invalid') }) })
@@ -311,5 +328,5 @@ export async function changeMemberRole(db: DbExecutor, actor: Actor, ref: unknow
     })
   })
   // 소유권을 넘기면 나는 admin이므로 목록은 그대로 볼 수 있습니다.
-  return listMembers(db, actor, ref)
+  return listMembers(db, actor, ref, now)
 }

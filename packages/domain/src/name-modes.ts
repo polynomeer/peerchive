@@ -29,6 +29,23 @@ export const REAL_NAME_MISSING_LABEL = '실명 미입력'
 export const DISPLAY_PERSONA_MISSING_LABEL = '표시명 없음'
 /** 탈퇴(정리)한 작성자. 실명·표시명 글에서 이름 대신 씁니다. */
 export const WITHDRAWN_AUTHOR_LABEL = '탈퇴한 사용자'
+/** 익명 방의 멤버 목록에서 모든 사람에게 쓰는 이름(ADR 0060 D-01). 방장도 누가 누구인지 이름으로 잇지 못합니다. */
+export const ANONYMOUS_MEMBER_LABEL = '익명 멤버'
+
+/**
+ * 방 관리자(owner·admin)가 보는 멤버 목록의 이름·handle (ADR 0060 D-01). 지금 효력이 있는 방식으로 고릅니다.
+ * - real: 계정 표시 이름과 실명 handle(그대로).
+ * - display: 방별 이름 → active 표시명 페르소나 이름 → `표시명 없음`. 계정 이름·실명 handle은 내지 않습니다.
+ * - anonymous·affiliated_anonymous: 모두 `익명 멤버`. 운영자의 감사 기록 조회(ADR 0023)는 이 목록과 별개입니다.
+ */
+export function spaceMemberName(
+  mode: NameMode,
+  person: { accountName: string; realHandle: string | null; roomProfileName: string | null; displayPersonaName: string | null },
+): { displayName: string; handle: string | null } {
+  if (mode === 'real') return { displayName: person.accountName, handle: person.realHandle }
+  if (isAnonymousMode(mode)) return { displayName: ANONYMOUS_MEMBER_LABEL, handle: null }
+  return { displayName: person.roomProfileName ?? person.displayPersonaName ?? DISPLAY_PERSONA_MISSING_LABEL, handle: null }
+}
 
 export function nameModeEffectiveAt(requestedAt: Date): Date {
   return new Date(requestedAt.getTime() + NAME_MODE_CHANGE_DELAY_MS)
