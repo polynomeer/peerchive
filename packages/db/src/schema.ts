@@ -5112,6 +5112,11 @@ export const roomPolls = pgTable(
     createdBy: uuid('created_by').references(() => users.id),
     /** A-07(ADR 0045): 운영 조치(hide_room_item)로 숨김. 목록·투표에서 빠집니다. */
     hiddenAt: timestamp('hidden_at', { withTimezone: true }),
+    /**
+     * 마감할 때 고정한 선택지별 표 수(ADR 0060 D-03, `options`와 같은 순서·길이). 열린 투표는 null. 수만 담으며 사람은 담지 않습니다.
+     * 표 행을 지우는 경로(나가기·내보내기·탈퇴 정리)는 지우기 전에 고정합니다(freezeClosedPollTallies).
+     */
+    finalTally: integer('final_tally').array(),
     createdAt: createdAt(),
   },
   (t) => [
@@ -5119,12 +5124,13 @@ export const roomPolls = pgTable(
     index('room_polls_created_by_idx').on(t.createdBy),
     check('room_polls_question_check', sql`char_length(${t.question}) between 1 and 120`),
     check('room_polls_options_check', sql`cardinality(${t.options}) between 2 and 10`),
+    check('room_polls_final_tally_check', sql`${t.finalTally} is null or cardinality(${t.finalTally}) = cardinality(${t.options})`),
   ],
 )
 
 /**
  * 투표 한 표(A-02, SYSTEM_DESIGN §6.7.2 PollVote). (투표, 사람) 하나 — 두 번 투표할 수 없고 바꾸지 않습니다. option_index는 0부터.
- * 방을 나가거나 내보내지거나 탈퇴하면 그 사람의 표를 지웁니다(집계도 그만큼 줄어듦, 마감한 투표 포함 — ADR 0039).
+ * 방을 나가거나 내보내지거나 탈퇴하면 그 사람의 표를 지웁니다. 열린 투표는 집계도 그만큼 줄고, 마감한 투표의 결과는 `room_polls.final_tally`로 그대로 남습니다(ADR 0060 D-03).
  */
 export const roomPollVotes = pgTable(
   'room_poll_votes',

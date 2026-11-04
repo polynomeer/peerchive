@@ -10,6 +10,7 @@ A-02는 DELIVERY_PLAN §4.3 P2 백로그의 두 번째 졸업생 공간 항목�
 - PROOFU_EVOLUTION_PLAN §8.9.9: 일정·참석 응답(홈커밍·네트워킹, 반복 모임), 공지 읽음 확인·투표(장소·날짜)·앨범(행사 사진, 파일 검사 적용). 회비·결제는 하지 않음.
 - SYSTEM_DESIGN §6.7.2: Event(`recurrence none/weekly/monthly`, 회차는 `occurrence_date`), EventRsvp(`(event_id, occurrence_date, user_id)` 유일, 응답자 목록은 방 멤버에게만 RoomProfile 이름으로), NoticeRead(`notice` 게시판 글에만, 멱등, 읽음 수만), Poll/PollVote(결과는 집계만), Album/AlbumItem(§10 파일 검사·격리를 거친 것만, 멤버에게만 짧은 서명 URL, 방을 나가도 올린 사진은 남되 본인이 삭제 가능). §8.4: 일정 생성은 방장·admin, 응답은 멤버, 공지 읽음 확인은 누구든 수만.
 - ADR 0038(A-01): alumni 템플릿 방·방별 프로필·`requireFeature('alumni')`. ADR 0037 §1(P2 플래그, 꺼지면 404). ADR 0007(파일 검사·격리·메타데이터 제거)·0037(수료증: 격리 키에만, 서명 URL). ADR 0019·0022·0023(공간·게시판·글, 공지 게시판은 모더레이터 이상 쓰기). ADR 0021·0029(커뮤니티 구역 표는 공개·소셜 경로가 읽지 않음, 속성 테스트). ADR 0016(탈퇴 정리·삭제 장부).
+- 변경: D-03: 마감한 투표의 결과는 `final_tally`로 고정되어 멤버가 나가도 바뀌지 않습니다 ([ADR 0060](0060-open-question-decisions.md)).
 
 투입 시간이 부족하면 투표·앨범을 먼저 미뤄도 된다고 했지만(DELIVERY_PLAN §4.3), 다섯 가지를 모두 이번 범위에 넣었습니다(미룬 것 없음).
 

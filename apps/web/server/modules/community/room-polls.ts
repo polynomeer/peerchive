@@ -5,12 +5,14 @@
  * - 방장·운영진(admin)이 만들고(질문·선택지 2~10개·마감 시각) 일찍 마감할 수 있습니다. 모더레이터·멤버는 403.
  * - 멤버는 마감 전 한 번만 투표합니다(바꾸지 않음): 두 번째 투표 409 `already_voted`, 마감 뒤 409 `poll_closed`.
  * - **결과는 선택지별 개수만**: 누가 무엇을 골랐는지는 방장·운영진·운영자를 포함해 누구에게도 내보내지 않습니다. 응답에는 내 선택(`myVote`)만.
- * - 방을 나가거나 내보내지거나 탈퇴하면 그 사람의 표를 지웁니다(집계도 줄어듦, 마감한 투표 포함 — ADR 0039).
+ * - 방을 나가거나 내보내지거나 탈퇴하면 그 사람의 표를 지웁니다. 열린 투표의 집계는 그만큼 줄어듭니다.
+ * - 마감한 투표의 결과는 `final_tally`에 고정한 값만 읽습니다(ADR 0060 D-03, 언제 고정하는지는 @peerchive/db `freezeClosedPollTallies`).
+ *   이 값은 선택지별 수뿐이고 나간 사람이 있어도 바뀌지 않으므로, 전후를 비교해 그 사람의 선택을 알아낼 수도 없습니다.
  * - 감사 기록에는 id·개수만(질문·선택지·누가 무엇을 골랐는지 없음). 투표 자체는 감사 기록을 남기지 않습니다(누가 투표했는지도 남기지 않음).
  * - A-07(ADR 0045): 운영 조치로 숨긴 투표(`hidden_at`)는 목록에서 빠지고 투표·마감 경로는 404입니다(방장·운영진 포함).
  */
 import { ROOM_POLL_OPEN_LIMIT, canManageRoomGatherings, checkRoomPollInput, isPollOpen } from '@peerchive/domain'
-import { and, desc, eq, gt, inArray, isNull, roomPollVotes, roomPolls, type DbExecutor } from '@peerchive/db'
+import { and, desc, eq, freezeClosedPollTallies, gt, inArray, isNull, roomPollVotes, roomPolls, sql, type DbExecutor } from '@peerchive/db'
 import { recordAudit } from '../audit/audit'
 import { type Actor, conflict, forbidden, invalid, notFound, rateLimited, sqlState } from '../errors'
 import { hitRateLimit } from '../security/rate-limit'
@@ -26,15 +28,33 @@ function manageable(room: AlumniRoom): boolean {
   return room.ctx.space.row.status === 'active' && canManageRoomGatherings(room.ctx.membership?.role)
 }
 
-async function toPollDtos(db: DbExecutor, room: AlumniRoom, rows: PollRow[], viewerId: string, now: Date): Promise<RoomPollDto[]> {
-  if (rows.length === 0) return []
+/** 고정한 값이 있으면 마감한 투표입니다(시각과 무관). 없으면 마감 시각으로 판단합니다. */
+function pollOpen(row: PollRow, now: Date): boolean {
+  return row.finalTally === null && isPollOpen(row, now)
+}
+
+/** 마감 시각이 지난 투표를 처음 읽을 때 고정하고, 고정된 행을 다시 읽어 돌려줍니다. */
+async function withFrozenTallies(db: DbExecutor, rows: PollRow[], now: Date): Promise<PollRow[]> {
+  const due = rows.filter((r) => r.finalTally === null && !isPollOpen(r, now)).map((r) => r.id)
+  if (due.length === 0) return rows
+  await freezeClosedPollTallies(db, sql`p.id in (${sql.join(due.map((id) => sql`${id}::uuid`), sql`, `)})`, now)
+  const frozen = new Map((await db.select({ id: roomPolls.id, finalTally: roomPolls.finalTally }).from(roomPolls).where(inArray(roomPolls.id, due))).map((r) => [r.id, r.finalTally]))
+  return rows.map((r) => (frozen.has(r.id) ? { ...r, finalTally: frozen.get(r.id)! } : r))
+}
+
+async function toPollDtos(db: DbExecutor, room: AlumniRoom, unfrozen: PollRow[], viewerId: string, now: Date): Promise<RoomPollDto[]> {
+  if (unfrozen.length === 0) return []
+  const rows = await withFrozenTallies(db, unfrozen, now)
   const ids = rows.map((r) => r.id)
-  // 집계만 읽습니다(사람별 행을 응답 쪽으로 가져오지 않음). 나간 사람의 표는 나갈 때 지워집니다.
-  const counts = await db
-    .select({ pollId: roomPollVotes.pollId, optionIndex: roomPollVotes.optionIndex, n: countAll })
-    .from(roomPollVotes)
-    .where(inArray(roomPollVotes.pollId, ids))
-    .groupBy(roomPollVotes.pollId, roomPollVotes.optionIndex)
+  // 열린 투표만 집계합니다(사람별 행을 응답 쪽으로 가져오지 않음). 나간 사람의 표는 나갈 때 지워집니다. 마감한 투표는 고정한 값을 씁니다.
+  const liveIds = rows.filter((r) => r.finalTally === null).map((r) => r.id)
+  const counts = liveIds.length
+    ? await db
+        .select({ pollId: roomPollVotes.pollId, optionIndex: roomPollVotes.optionIndex, n: countAll })
+        .from(roomPollVotes)
+        .where(inArray(roomPollVotes.pollId, liveIds))
+        .groupBy(roomPollVotes.pollId, roomPollVotes.optionIndex)
+    : []
   const mine = await db
     .select({ pollId: roomPollVotes.pollId, optionIndex: roomPollVotes.optionIndex })
     .from(roomPollVotes)
@@ -43,8 +63,8 @@ async function toPollDtos(db: DbExecutor, room: AlumniRoom, rows: PollRow[], vie
   const mineMap = new Map(mine.map((m) => [m.pollId, m.optionIndex]))
   const writable = room.ctx.space.row.status === 'active' && !room.ctx.viewer.writeRestriction
   return rows.map((row) => {
-    const options = row.options.map((label, index) => ({ index, label, count: countMap.get(`${row.id}:${index}`) ?? 0 }))
-    const open = isPollOpen(row, now)
+    const options = row.options.map((label, index) => ({ index, label, count: row.finalTally?.[index] ?? countMap.get(`${row.id}:${index}`) ?? 0 }))
+    const open = pollOpen(row, now)
     const myVote = mineMap.get(row.id) ?? null
     return {
       id: row.id,
@@ -140,7 +160,7 @@ export async function voteOnPoll(db: DbExecutor, actor: Actor, ref: unknown, pol
       if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index >= poll.options.length) {
         throw invalid({ optionIndex: index === undefined ? 'required' : 'invalid' })
       }
-      if (!isPollOpen(poll, now)) throw conflict('poll_closed')
+      if (!pollOpen(poll, now)) throw conflict('poll_closed')
       const inserted = await tx
         .insert(roomPollVotes)
         .values({ pollId: poll.id, userId: actor.userId, optionIndex: index, createdAt: now })
@@ -155,15 +175,17 @@ export async function voteOnPoll(db: DbExecutor, actor: Actor, ref: unknown, pol
   }
 }
 
-/** POST /community/spaces/:slug/polls/:id/close — 방장·운영진이 일찍 마감(마감 시각 = 지금). 이미 마감이면 그대로(멱등). */
+/** POST /community/spaces/:slug/polls/:id/close — 방장·운영진이 일찍 마감(마감 시각 = 지금, 집계 고정). 이미 마감이면 그대로(멱등). */
 export async function closeRoomPoll(db: DbExecutor, actor: Actor, ref: unknown, pollId: unknown, now = new Date()): Promise<RoomPollDto> {
   return db.transaction(async (tx) => {
     const room = await loadAlumniRoom(tx, actor, ref, true, now)
     assertRoomWritable(room.ctx, { restricted: false })
     if (!canManageRoomGatherings(room.ctx.membership?.role)) throw forbidden()
     const poll = await loadPoll(tx, room.ctx.space.row.id, pollId, true)
-    if (!isPollOpen(poll, now)) return pollDto(tx, room, poll, actor.userId, now)
-    const [row] = await tx.update(roomPolls).set({ closesAt: now }).where(eq(roomPolls.id, poll.id)).returning()
+    if (!pollOpen(poll, now)) return pollDto(tx, room, poll, actor.userId, now)
+    await tx.update(roomPolls).set({ closesAt: now }).where(eq(roomPolls.id, poll.id))
+    await freezeClosedPollTallies(tx, sql`p.id = ${poll.id}::uuid`, now)
+    const [row] = await tx.select().from(roomPolls).where(eq(roomPolls.id, poll.id))
     await recordAudit(tx, { actorId: actor.userId, action: 'community.room_poll_close', targetType: 'community_space', targetId: room.ctx.space.row.id, metadata: { pollId: poll.id } })
     return pollDto(tx, room, row!, actor.userId, now)
   })

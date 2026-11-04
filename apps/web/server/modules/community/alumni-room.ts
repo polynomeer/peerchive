@@ -10,7 +10,7 @@
  * - 이 모듈들은 커뮤니티 모듈 안에 있고 social 모듈·공개 경로는 import하지 않습니다(S-02 경계 테스트가 확인).
  */
 import { REAL_NAME_MISSING_LABEL, ROOM_PROFILE_NAME_MISSING_LABEL, type NameMode } from '@peerchive/domain'
-import { and, eq, inArray, isNull, noticeReads, roomEventRsvps, roomEvents, roomPollVotes, roomPolls, roomProfiles, sql, users, type DbExecutor } from '@peerchive/db'
+import { and, eq, freezeClosedPollTallies, inArray, isNull, noticeReads, roomEventRsvps, roomEvents, roomPollVotes, roomPolls, roomProfiles, sql, users, type DbExecutor } from '@peerchive/db'
 import { type Actor, conflict, notFound } from '../errors'
 import { requireFeature } from '../features'
 import { type SpaceContext, loadReadableSpace, writeRestricted } from './access'
@@ -73,7 +73,7 @@ export interface GatheringDeletion {
  * 방을 나가거나 내보내질 때(같은 트랜잭션, 플래그와 무관하게): 그 사람의 그 방 참석 응답·공지 읽음·투표 표를 지웁니다.
  * 읽음 수·투표 집계는 그만큼 줄어듭니다(마감한 투표 포함, ADR 0039). 그 사람이 만든 일정·투표와 올린 앨범 사진은 방의 기록이라 남깁니다.
  */
-export async function deleteGatheringDataInTx(tx: DbExecutor, spaceId: string, userId: string): Promise<GatheringDeletion> {
+export async function deleteGatheringDataInTx(tx: DbExecutor, spaceId: string, userId: string, now: Date): Promise<GatheringDeletion> {
   const rsvps = await tx
     .delete(roomEventRsvps)
     .where(and(eq(roomEventRsvps.userId, userId), inArray(roomEventRsvps.eventId, tx.select({ id: roomEvents.id }).from(roomEvents).where(eq(roomEvents.spaceId, spaceId)))))
@@ -82,6 +82,8 @@ export async function deleteGatheringDataInTx(tx: DbExecutor, spaceId: string, u
     .delete(noticeReads)
     .where(and(eq(noticeReads.userId, userId), eq(noticeReads.spaceId, spaceId)))
     .returning({ id: noticeReads.postId })
+  // 마감한 투표의 결과는 표를 지워도 바뀌지 않게 먼저 고정합니다(ADR 0060 D-03).
+  await freezeClosedPollTallies(tx, sql`p.space_id = ${spaceId}`, now)
   const votes = await tx
     .delete(roomPollVotes)
     .where(and(eq(roomPollVotes.userId, userId), inArray(roomPollVotes.pollId, tx.select({ id: roomPolls.id }).from(roomPolls).where(eq(roomPolls.spaceId, spaceId)))))

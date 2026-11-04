@@ -765,6 +765,11 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
         { pollId: poll!.id, userId: U.id, optionIndex: 0 },
         { pollId: poll!.id, userId: M.id, optionIndex: 1 },
       ])
+      const [closedPoll] = await tx.insert(roomPolls).values({ spaceId: room!.id, question: '마감', options: ['a', 'b'], closesAt: new Date(NOW.getTime() - DAY) }).returning()
+      await tx.insert(roomPollVotes).values([
+        { pollId: closedPoll!.id, userId: U.id, optionIndex: 0 },
+        { pollId: closedPoll!.id, userId: M.id, optionIndex: 1 },
+      ])
       const key = `quarantine/${id()}` as const
       await storage.put(key, Readable.from([Buffer.from('photo')]), { maxBytes: 100 })
       await tx.insert(roomAlbumPhotos).values({ spaceId: room!.id, uploaderId: U.id, objectKey: key, declaredType: 'image/png', fileExtension: 'png', byteSize: 5 })
@@ -772,7 +777,7 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       await tx.insert(roomAlbumPhotos).values({ spaceId: room!.id, uploaderId: M.id, objectKey: otherKey, declaredType: 'image/png', fileExtension: 'png', byteSize: 5 })
 
       const counts = await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'purge' })
-      expect(counts).toMatchObject({ room_event_rsvps: 1, notice_reads: 1, room_poll_votes: 1, room_album_photos: 1, room_gathering_actors: 2 })
+      expect(counts).toMatchObject({ room_event_rsvps: 1, notice_reads: 1, room_poll_votes: 2, room_album_photos: 1, room_gathering_actors: 2 })
       expect(counts!.artifact_objects).toBeUndefined()
       expect(await count(tx, roomEventRsvps, eq(roomEventRsvps.userId, U.id))).toBe(0)
       expect(await count(tx, noticeReads, eq(noticeReads.userId, U.id))).toBe(0)
@@ -782,10 +787,13 @@ describe.skipIf(!url)('account purge and deletion ledger (PostgreSQL)', () => {
       // 남은 사람의 응답·읽음·표·사진과 방의 일정·투표는 그대로(만든 사람 칸만 비움).
       expect(await count(tx, roomEventRsvps, eq(roomEventRsvps.userId, M.id))).toBe(1)
       expect(await count(tx, noticeReads, eq(noticeReads.userId, M.id))).toBe(1)
-      expect(await count(tx, roomPollVotes, eq(roomPollVotes.userId, M.id))).toBe(1)
+      expect(await count(tx, roomPollVotes, eq(roomPollVotes.userId, M.id))).toBe(2)
       expect(await count(tx, roomAlbumPhotos, eq(roomAlbumPhotos.uploaderId, M.id))).toBe(1)
       expect((await tx.select().from(roomEvents).where(eq(roomEvents.id, event!.id)))[0]).toMatchObject({ createdBy: null, title: '홈커밍' })
-      expect((await tx.select().from(roomPolls).where(eq(roomPolls.id, poll!.id)))[0]).toMatchObject({ createdBy: null })
+      expect((await tx.select().from(roomPolls).where(eq(roomPolls.id, poll!.id)))[0]).toMatchObject({ createdBy: null, finalTally: null })
+      // ADR 0060 D-03: 탈퇴 정리는 마감한 투표의 결과를 표를 지우기 전에 고정합니다.
+      expect((await tx.select().from(roomPolls).where(eq(roomPolls.id, closedPoll!.id)))[0]).toMatchObject({ finalTally: [1, 1] })
+      expect(await count(tx, roomPollVotes, eq(roomPollVotes.pollId, closedPoll!.id))).toBe(1)
       const ledger = await tx.select().from(deletionLedger).where(eq(deletionLedger.subjectHash, hashSubject(DELETION_PEPPER, U.id)))
       expect(ledger.map((l) => l.entityKind)).toEqual(expect.arrayContaining(['room_event_rsvps', 'notice_reads', 'room_poll_votes', 'room_album_photos']))
       expect(await purgeAccount(tx, deps(), U.id, { now: NOW, source: 'reapply' })).toEqual({})

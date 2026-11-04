@@ -138,6 +138,7 @@ import {
   roomAlbumPhotos,
   roomEventRsvps,
   roomEvents,
+  freezeClosedPollTallies,
   roomPollVotes,
   roomPolls,
   roomProfileCohortChanges,
@@ -690,6 +691,8 @@ async function purgeCommunity(tx: DbExecutor, userId: string, c: Counter, now: D
   // 그 사람이 방장·운영진으로 만든 일정·투표는 방의 기록이라 남기고 만든 사람 칸만 비웁니다. 앨범 사진은 위(파일과 함께)에서 지웁니다.
   c.add('room_event_rsvps', (await tx.delete(roomEventRsvps).where(eq(roomEventRsvps.userId, userId)).returning({ id: roomEventRsvps.eventId })).length)
   c.add('notice_reads', (await tx.delete(noticeReads).where(eq(noticeReads.userId, userId)).returning({ id: noticeReads.postId })).length)
+  // 마감한 투표의 결과는 표를 지워도 바뀌지 않게 먼저 고정합니다(ADR 0060 D-03).
+  await freezeClosedPollTallies(tx, sql`p.id in (select v.poll_id from room_poll_votes v where v.user_id = ${userId})`, now)
   c.add('room_poll_votes', (await tx.delete(roomPollVotes).where(eq(roomPollVotes.userId, userId)).returning({ id: roomPollVotes.pollId })).length)
   // 멤버 명부(A-03, ADR 0040): 그 사람의 모든 방 명부 행을 지웁니다.
   c.add('directory_entries', (await tx.delete(directoryEntries).where(eq(directoryEntries.userId, userId)).returning({ id: directoryEntries.spaceId })).length)

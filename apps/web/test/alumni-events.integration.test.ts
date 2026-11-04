@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { auditEvents, eq, noticeReads, operators, outboxEvents, roomAlbumPhotos, roomEventRsvps, roomPollVotes, type DbExecutor } from '@peerchive/db'
+import { auditEvents, eq, noticeReads, operators, outboxEvents, roomAlbumPhotos, roomEventRsvps, roomPollVotes, roomPolls, type DbExecutor } from '@peerchive/db'
 import { ALBUM_PHOTO_SCAN_QUEUE, createFilesystemStorage, createSignatureOnlyScanner, readAll, scanAlbumPhoto, type ObjectStorage } from '@peerchive/files'
 import { createSchool } from '../server/modules/catalog/catalog'
 import { changeMemberRole, joinSpace, leaveSpace, removeMember } from '../server/modules/community/memberships'
@@ -369,6 +369,54 @@ describe.skipIf(!databaseUrl)('A-02 alumni room events, notice reads, polls and 
       // 15분이 지나면 내용을 받지 않음.
       const late = await requestAlbumUpload(tx, w.member, r.slug, { declaredType: 'image/jpeg', fileName: 'b.jpg', byteSize: JPEG_GPS.length }, at(10))
       await expectServiceError(uploadAlbumPhoto(tx, storage, w.member, r.slug, late.photo.id, Readable.from([JPEG_GPS]), {}, at(26)), 'GONE', 'upload_expired')
+    })
+  })
+
+  // ADR 0060 D-03: 마감한 투표의 결과는 고정됩니다.
+  it('closed polls keep their frozen tally when votes are removed; open polls stay live', async () => {
+    await withRollback(async (tx) => {
+      const w = await world(tx)
+      const r = await room(tx, w, 'display')
+      const poll = (question: string, closesAt: Date) => createRoomPoll(tx, w.owner, r.slug, { question, options: ['a', 'b', 'c'], closesAt: closesAt.toISOString() }, at(1))
+      const early = await poll('일찍 마감', at(100))
+      const timed = await poll('시간 마감', at(10))
+      const open = await poll('열림', at(1000))
+      for (const p of [early, timed, open]) {
+        await voteOnPoll(tx, w.member, r.slug, p.id, { optionIndex: 1 }, at(2))
+        await voteOnPoll(tx, w.member2, r.slug, p.id, { optionIndex: 1 }, at(2))
+        await voteOnPoll(tx, w.admin, r.slug, p.id, { optionIndex: 2 }, at(2))
+      }
+      const tally = async (id: string) => (await tx.select({ t: roomPolls.finalTally }).from(roomPolls).where(eq(roomPolls.id, id)))[0]!.t
+      const counts = async (id: string, now: Date, viewer = w.owner) => (await listRoomPolls(tx, viewer, r.slug, now)).polls.find((p) => p.id === id)!.options.map((o) => o.count)
+
+      // 일찍 마감: 바로 고정. 시간 마감: 아직 읽거나 지운 적이 없어 비어 있음.
+      await closeRoomPoll(tx, w.owner, r.slug, early.id, at(3))
+      expect(await tally(early.id)).toEqual([0, 2, 1])
+      expect(await tally(timed.id)).toBeNull()
+      expect(await tally(open.id)).toBeNull()
+
+      // 시간 마감 뒤 아무도 읽기 전에 나가도 나가기가 먼저 고정합니다. 열린 투표만 줄어듭니다.
+      await leaveSpace(tx, w.member, r.slug, at(20))
+      expect(await tally(timed.id)).toEqual([0, 2, 1])
+      expect(await counts(early.id, at(21))).toEqual([0, 2, 1])
+      expect(await counts(timed.id, at(21))).toEqual([0, 2, 1])
+      expect(await counts(open.id, at(21))).toEqual([0, 1, 1])
+      await removeMember(tx, w.owner, r.slug, w.member2.userId, at(22))
+      expect(await tally(open.id)).toBeNull()
+      expect(await counts(open.id, at(23))).toEqual([0, 0, 1])
+      expect(await counts(early.id, at(23))).toEqual([0, 2, 1])
+      expect(await tx.select().from(roomPollVotes).where(eq(roomPollVotes.pollId, timed.id))).toHaveLength(1)
+
+      // 마감 시각이 지난 투표를 처음 읽을 때도 고정합니다. 그 뒤에는 값이 바뀌지 않고, 고정한 투표는 표를 받지 않습니다.
+      expect(await counts(open.id, at(2000))).toEqual([0, 0, 1])
+      expect(await tally(open.id)).toEqual([0, 0, 1])
+      await tx.delete(roomPollVotes).where(eq(roomPollVotes.pollId, open.id))
+      expect(await counts(open.id, at(2001))).toEqual([0, 0, 1])
+      await expectServiceError(voteOnPoll(tx, w.moderator, r.slug, open.id, { optionIndex: 0 }, at(30)), 'CONFLICT', 'poll_closed')
+      // 응답에는 수만 있고 사람 키가 없습니다.
+      const json = JSON.stringify(await listRoomPolls(tx, w.owner, r.slug, at(2002)))
+      expect(json).not.toContain(w.admin.userId)
+      expect(json).not.toContain('userId')
     })
   })
 

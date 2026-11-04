@@ -206,7 +206,7 @@ async function deletePhoto(id: string) {
     <template v-else-if="events">
       <p class="small"><NuxtLink :to="`/community/s/${slug}`">← {{ space?.name ?? '방으로' }}</NuxtLink></p>
       <h1>모임</h1>
-      <p class="hint">이 방 멤버에게만 보입니다. 공개 프로필·검색·피드에는 나오지 않습니다. 방을 나가면 내 참석 응답·공지 읽음·투표는 지워집니다(올린 사진은 방에 남으니 먼저 지우세요).</p>
+      <p class="hint">이 방 멤버에게만 보입니다. 공개 프로필·검색·피드에는 나오지 않습니다. 방을 나가면 내 참석 응답·공지 읽음·투표는 지워집니다(마감한 투표의 결과 수는 그대로, 올린 사진은 방에 남으니 먼저 지우세요).</p>
       <nav aria-label="모임 메뉴" class="row small">
         <a href="#events">일정</a> · <a href="#polls">투표</a> · <a href="#album">앨범</a>
         <template v-if="noticeBoard"> · <NuxtLink :to="`/community/b/${noticeBoard.id}`">운영진 공지</NuxtLink></template>
