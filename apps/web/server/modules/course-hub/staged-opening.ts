@@ -2,13 +2,14 @@
  * 과목 허브 단계적 개방 (E-02, PROOFU_EVOLUTION_PLAN §8.6, DELIVERY_PLAN §4.4 E-02, ADR 0047).
  *
  * - 플래그 `hubStagedOpening`(`PEERCHIVE_FEATURE_HUB_STAGED_OPENING`, 기본 꺼짐)이 꺼져 있으면 모든 허브가 지금처럼 열려 있고 여기서는 세지 않습니다.
- * - 켜져 있으면 과목(정본 + 병합된 id)의 **공개 사례 + 선배 노트** 합계를 요청마다 셉니다(저장·캐시 없음). 기준(`PEERCHIVE_HUB_OPEN_THRESHOLD`, 기본 3)
+ * - 켜져 있으면 과목(정본 + 병합된 id)의 **공개 사례 + 선배 노트** 합계를 요청마다 셉니다. 합계가 기준 이상이면 `courses.hub_opened_at`을 조건부 갱신으로 한 번 채우고(ADR 0060 D-07)
+ *   그 뒤로는 세지 않고 계속 엽니다. 플래그가 꺼져 있으면 쓰지 않습니다. 기준(`PEERCHIVE_HUB_OPEN_THRESHOLD`, 기본 3)
  *   이상이면 열린 허브, 미만이면 "준비 중"(과목 이름만, 내용 목록 없음). 기준에 이르면 다음 요청부터 열리고 운영자 조작은 필요 없습니다.
  *   - 공개 사례: 허브와 같은 `servableReleaseSql`(공개·release 게시, 지금 release, 엠바고 없음). 철회·대체·엠바고 중인 것은 세지 않습니다.
  *   - 선배 노트: status = 'published'만(초안·철회·숨김 제외).
  *   - 막힘 Q&A·체크인 통계·개념 태그는 세지 않습니다(§8.6 기준은 사례·노트).
  * - 가리는 것은 **허브 모음 페이지**뿐입니다. 공개 사례(/p/:slug)는 이미 공개된 것이라 그대로 열리고 검색의 사례·막힘 결과도 그대로입니다.
- *   허브 안에서만 읽을 수 있는 선배 노트·막힘 Q&A 검색 결과(경로가 /c/:id#…)는 준비 중인 과목이면 빼서, 내용 없는 페이지로 보내지 않습니다.
+ *   허브 안에서만 읽을 수 있는 선배 노트·막힘 Q&A 검색 결과(경로가 /c/:id#…)는 준비 중인 과목이면 검색 SQL에서 뺍니다(hubOpenSql, 제한 전, ADR 0060 D-07). 내용 없는 페이지로 보내지 않습니다.
  * - 운영자 화면(`getHubOpeningProgress`)은 과목별 공개 항목 수와 기준만 봅니다. 알림 신청·등록 수는 싣지 않습니다(course-registrations 모듈을 import하지 않음).
  */
 import { hubOpeningStatus, type HubContentCount, type HubOpeningStatus } from '@peerchive/domain'
@@ -17,6 +18,7 @@ import {
   courses,
   eq,
   inArray,
+  isNotNull,
   isNull,
   projects,
   publicationCandidates,
@@ -26,6 +28,7 @@ import {
   sql,
   type DbExecutor,
   type SQL,
+  type SQLWrapper,
 } from '@peerchive/db'
 import { loadCanonicalCourse } from '../catalog/catalog'
 import { requireOperator } from '../catalog/operators'
@@ -74,12 +77,34 @@ export async function hubContentCounts(db: DbExecutor, canonicalIds: readonly st
   return out
 }
 
-/** 정본 과목 하나의 개방 상태. 플래그가 꺼져 있으면 세지 않고 open. */
+/** 정본 과목들의 저장된 개방 시각. */
+async function hubOpenedAts(db: DbExecutor, canonicalIds: readonly string[]): Promise<Map<string, Date>> {
+  if (canonicalIds.length === 0) return new Map()
+  const rows = await db
+    .select({ id: courses.id, hubOpenedAt: courses.hubOpenedAt })
+    .from(courses)
+    .where(and(inArray(courses.id, [...canonicalIds]), isNotNull(courses.hubOpenedAt)))
+  return new Map(rows.map((r) => [r.id, r.hubOpenedAt!]))
+}
+
+/** 기준 이상을 본 과목의 개방 시각을 채웁니다. 조건부 갱신이라 동시에 여러 요청이 와도 처음 값이 남습니다. */
+async function latchHubOpened(db: DbExecutor, canonicalIds: readonly string[], now: Date): Promise<void> {
+  if (canonicalIds.length === 0) return
+  await db
+    .update(courses)
+    .set({ hubOpenedAt: now })
+    .where(and(inArray(courses.id, [...canonicalIds]), isNull(courses.hubOpenedAt)))
+}
+
+/** 정본 과목 하나의 개방 상태. 플래그가 꺼져 있으면 세지 않고 쓰지 않고 open. 기준 이상이면 개방 시각을 저장합니다(ADR 0060 D-07). */
 export async function courseHubOpening(db: DbExecutor, canonicalCourseId: string, now: Date): Promise<HubOpening> {
   const threshold = hubOpenThreshold()
   if (!stagedOpeningOn()) return { status: 'open', count: { cases: 0, notes: 0 }, threshold }
   const count = (await hubContentCounts(db, [canonicalCourseId], now)).get(canonicalCourseId) ?? { cases: 0, notes: 0 }
-  return { status: hubOpeningStatus(count, threshold, true), count, threshold }
+  const openedAt = (await hubOpenedAts(db, [canonicalCourseId])).get(canonicalCourseId) ?? null
+  const status = hubOpeningStatus(count, threshold, true, openedAt)
+  if (status === 'open' && !openedAt) await latchHubOpened(db, [canonicalCourseId], now)
+  return { status, count, threshold }
 }
 
 /** 정본 과목 id들 중 허브가 열린 것(플래그가 꺼져 있으면 모두). */
@@ -88,7 +113,32 @@ export async function openCourseIds(db: DbExecutor, canonicalIds: readonly strin
   if (!stagedOpeningOn()) return new Set(unique)
   const threshold = hubOpenThreshold()
   const counts = await hubContentCounts(db, unique, now)
-  return new Set(unique.filter((id) => hubOpeningStatus(counts.get(id) ?? { cases: 0, notes: 0 }, threshold, true) === 'open'))
+  const opened = await hubOpenedAts(db, unique)
+  const open = unique.filter((id) => hubOpeningStatus(counts.get(id) ?? { cases: 0, notes: 0 }, threshold, true, opened.get(id) ?? null) === 'open')
+  await latchHubOpened(db, open.filter((id) => !opened.has(id)), now)
+  return new Set(open)
+}
+
+/**
+ * 검색용 SQL 조건: `courseColumn`(병합 전 id일 수 있음)의 허브가 열렸는지(ADR 0060 D-07, 결과 제한 전에 거르기 위해 hubContentCounts와 같은 규칙을 SQL로).
+ * 저장된 개방 시각이 있거나 공개 사례 + 선배 노트 합계가 기준 이상. 읽기만 하고 개방 시각을 쓰지는 않습니다. 플래그가 꺼져 있으면 조건 없음.
+ */
+export function hubOpenSql(courseColumn: SQLWrapper, now: Date): SQL | undefined {
+  if (!stagedOpeningOn()) return undefined
+  return sql`exists (
+    select 1 from ${courses} hc
+    join ${courses} hcanon on hcanon.id = coalesce(hc.merged_into, hc.id)
+    where hc.id = ${courseColumn}
+      and (hcanon.hub_opened_at is not null or (
+        (select count(*) from ${seniorNotes} hn join ${courses} hnc on hnc.id = hn.course_id
+          where hn.status = 'published' and coalesce(hnc.merged_into, hnc.id) = hcanon.id)
+        + (select count(*) from ${publications}
+            join ${publicationCandidates} on ${publicationCandidates.id} = ${publications.currentReleaseId}
+            join ${projects} on ${projects.id} = ${publications.projectId}
+            join ${courses} hpc on hpc.id = ${publicationCandidates.courseId}
+            where ${servableReleaseSql(now)} and coalesce(hpc.merged_into, hpc.id) = hcanon.id)
+      ) >= ${hubOpenThreshold()})
+  )`
 }
 
 /**
@@ -119,10 +169,12 @@ export async function getHubOpeningProgress(db: DbExecutor, actor: Actor, now = 
   const stagedOpening = stagedOpeningOn()
   const threshold = hubOpenThreshold()
   const counts = await hubContentCounts(db, null, now)
-  const ids = [...counts.keys()]
+  // 내용이 있는 과목 + 한 번 열린 과목(지금 내용이 줄었어도 열려 있음).
+  const latched = await db.select({ id: courses.id }).from(courses).where(and(isNotNull(courses.hubOpenedAt), isNull(courses.mergedInto)))
+  const ids = [...new Set([...counts.keys(), ...latched.map((r) => r.id)])]
   const rows = ids.length
     ? await db
-        .select({ id: courses.id, title: courses.title, code: courses.code, schoolName: schools.name })
+        .select({ id: courses.id, title: courses.title, code: courses.code, schoolName: schools.name, hubOpenedAt: courses.hubOpenedAt })
         .from(courses)
         .innerJoin(schools, eq(schools.id, courses.schoolId))
         .where(and(inArray(courses.id, ids), isNull(courses.mergedInto)))
@@ -134,8 +186,9 @@ export async function getHubOpeningProgress(db: DbExecutor, actor: Actor, now = 
       cases: count.cases,
       notes: count.notes,
       total: count.cases + count.notes,
-      // 플래그가 꺼져 있어도 켰을 때의 상태를 보여 줍니다.
-      status: hubOpeningStatus(count, threshold, true),
+      // 플래그가 꺼져 있어도 켰을 때의 상태를 보여 줍니다. 이 화면은 개방 시각을 쓰지 않습니다.
+      status: hubOpeningStatus(count, threshold, true, c.hubOpenedAt),
+      openedAt: c.hubOpenedAt?.toISOString() ?? null,
     }
   })
   all.sort((a, b) => b.total - a.total || a.course.title.localeCompare(b.course.title, 'ko') || a.course.id.localeCompare(b.course.id))

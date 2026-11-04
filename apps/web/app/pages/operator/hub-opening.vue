@@ -42,7 +42,7 @@ if (import.meta.server && denied.value) {
             <td>{{ item.cases }}</td>
             <td>{{ item.notes }}</td>
             <td>{{ item.total }} / {{ data.threshold }}</td>
-            <td>{{ item.status === 'open' ? '열림' : '준비 중' }}</td>
+            <td>{{ item.status === 'open' ? '열림' : '준비 중' }}<template v-if="item.openedAt"> · {{ formatDateTime(item.openedAt) }}부터(수가 줄어도 유지)</template></td>
           </tr>
         </tbody>
       </table>

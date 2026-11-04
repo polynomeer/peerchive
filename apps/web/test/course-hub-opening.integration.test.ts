@@ -12,7 +12,9 @@ import {
   and,
   courseHubNotices,
   courseRegistrations,
+  courses,
   eq,
+  inArray,
   operators,
   publicationCandidates,
   searchDocuments,
@@ -23,7 +25,7 @@ import { createCourse, createCourseTerm, createSchool } from '../server/modules/
 import { mergeCourse } from '../server/modules/catalog/merge'
 import { getPublicCourseHub } from '../server/modules/course-hub/hub'
 import { createPublicCourseHubHandler } from '../server/modules/course-hub/public-http'
-import { searchPublic } from '../server/modules/course-hub/search'
+import { SEARCH_RESULT_LIMIT, searchPublic } from '../server/modules/course-hub/search'
 import { createSeniorNote, publishSeniorNote } from '../server/modules/course-hub/senior-notes'
 import { getCourseHubView, getHubOpeningProgress } from '../server/modules/course-hub/staged-opening'
 import {
@@ -170,6 +172,8 @@ describe.skipIf(!databaseUrl)('E-02 course hub staged opening (PostgreSQL)', () 
       setFeatureEnvForTesting({ ...ON, PEERCHIVE_HUB_OPEN_THRESHOLD: '2' })
       expect((await getCourseHubView(tx, course.id, at(10))).status).toBe('open')
       setFeatureEnvForTesting(ON)
+      // 이 확인으로 저장된 개방 시각을 지워 기준 3으로 다시 봅니다(ADR 0060 D-07).
+      await tx.update(courses).set({ hubOpenedAt: null }).where(eq(courses.id, course.id))
 
       // 세 번째 항목이 공개되면 다음 요청부터 열립니다(수동 조작 없음).
       await publishNote(tx, owner.id, course.id)
@@ -180,9 +184,11 @@ describe.skipIf(!databaseUrl)('E-02 course hub staged opening (PostgreSQL)', () 
       expect(open.seniorNotes).toHaveLength(2)
       // 엠바고가 풀리면 그 사례도 셉니다(같은 판정).
       expect((await getCourseHubView(tx, course.id, new Date('2027-07-01T00:00:00Z'))).status).toBe('open')
-      // 다시 기준 밑으로 내려가면 "준비 중"입니다.
+      // 다시 기준 밑으로 내려가도 한 번 열린 허브는 열려 있고(ADR 0060 D-07), 철회한 사례는 바로 사라집니다.
       await withdrawPublication(tx, actor, live.publication.id, {}, at(12))
-      expect((await getCourseHubView(tx, course.id, at(13))).status).toBe('preparing')
+      const stillOpen = await getCourseHubView(tx, course.id, at(13))
+      if (stillOpen.status !== 'open') throw new Error('expected open')
+      expect(stillOpen.cases).toEqual([])
       await expectServiceError(getCourseHubView(tx, crypto.randomUUID(), at(13)), 'NOT_FOUND')
     })
   })
@@ -349,9 +355,94 @@ describe.skipIf(!databaseUrl)('E-02 course hub staged opening (PostgreSQL)', () 
         notes: 1,
         total: 2,
         status: 'preparing',
+        openedAt: null,
       })
       const json = JSON.stringify(progress)
       for (const leak of [student.userId, owner.id, 'notify', 'request']) expect(json).not.toContain(leak)
     })
   })
+  // ADR 0060 D-07: 개방 고정, 병합, 검색 제한.
+  const opened = async (tx: DbExecutor, id: string) => (await tx.select({ t: courses.hubOpenedAt }).from(courses).where(eq(courses.id, id)))[0]!.t
+  /** 그 학교 인증을 가진 새 사람이 쓴 노트(사람마다 한 편). */
+  const noteBy = async (tx: DbExecutor, schoolId: string, courseId: string) => {
+    const author = await createUser(tx)
+    await verifiedAffiliation(tx, author.id, schoolId)
+    return publishNote(tx, author.id, courseId)
+  }
+
+  it('latch: a hub that reached the threshold stays open when content drops; items still vanish; the flag off writes nothing', async () => {
+    await withRollback(async (tx) => {
+      const { course, schoolId } = await courseFixture(tx, (await createUser(tx)).id)
+      const notes = [await noteBy(tx, schoolId, course.id), await noteBy(tx, schoolId, course.id), await noteBy(tx, schoolId, course.id)]
+      // 플래그 꺼짐: 세지도 쓰지도 않습니다.
+      setFeatureEnvForTesting({})
+      expect((await getCourseHubView(tx, course.id, at(11))).status).toBe('open')
+      expect(await opened(tx, course.id)).toBeNull()
+      setFeatureEnvForTesting(ON)
+
+      expect((await getCourseHubView(tx, course.id, at(12))).status).toBe('open')
+      expect(await opened(tx, course.id)).toEqual(at(12))
+      // 다시 봐도 처음 시각 그대로.
+      await getCourseHubView(tx, course.id, at(13))
+      expect(await opened(tx, course.id)).toEqual(at(12))
+
+      // 두 편을 내려도 허브는 열려 있고, 내린 노트는 바로 사라집니다. 운영자 화면에도 개방 시각이 보입니다.
+      await tx.update(seniorNotes).set({ status: 'withdrawn' }).where(inArray(seniorNotes.id, [notes[0]!.id, notes[1]!.id]))
+      const view = JSON.stringify(await getCourseHubView(tx, course.id, at(14)))
+      expect(view).toContain('"status":"open"')
+      expect(view).not.toContain(notes[0]!.id)
+      expect(view).toContain(notes[2]!.id)
+      const op = await createUser(tx)
+      await tx.insert(operators).values({ userId: op.id })
+      const item = (await getHubOpeningProgress(tx, { userId: op.id }, at(14))).items.find((i) => i.course.id === course.id)
+      expect(item).toMatchObject({ status: 'open', total: 1, openedAt: at(12).toISOString() })
+    })
+  })
+
+  it('merge keeps the earliest opened time on the canonical course', async () => {
+    await withRollback(async (tx) => {
+      const U = (await createUser(tx)).id
+      const keep = await courseFixture(tx, U)
+      const dup = await courseFixture(tx, U, keep.schoolId)
+      await tx.update(courses).set({ hubOpenedAt: at(50) }).where(eq(courses.id, keep.course.id))
+      await tx.update(courses).set({ hubOpenedAt: at(5) }).where(eq(courses.id, dup.course.id))
+      const op = (await createUser(tx)).id
+      await tx.insert(operators).values({ userId: op })
+      await mergeCourse(tx, { userId: op }, dup.course.id, { into: keep.course.id }, at(60))
+      expect(await opened(tx, keep.course.id)).toEqual(at(5))
+      // 정본에 값이 없으면 원본 값을 받습니다.
+      const third = await courseFixture(tx, U, keep.schoolId)
+      const fourth = await courseFixture(tx, U, keep.schoolId)
+      await tx.update(courses).set({ hubOpenedAt: at(7) }).where(eq(courses.id, fourth.course.id))
+      await mergeCourse(tx, { userId: op }, fourth.course.id, { into: third.course.id }, at(60))
+      expect(await opened(tx, third.course.id)).toEqual(at(7))
+    })
+  })
+
+  it('search filters preparing hubs before the limit, so open-course results still fill the page', async () => {
+    await withRollback(async (tx) => {
+      const U = (await createUser(tx)).id
+      const marker = `검색표식${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`
+      const addNote = async (schoolId: string, courseId: string, publishedAt: Date) => {
+        const note = await noteBy(tx, schoolId, courseId)
+        await tx.update(seniorNotes).set({ publishedAt }).where(eq(seniorNotes.id, note.id))
+        const [row] = await tx.select().from(seniorNotes).where(eq(seniorNotes.id, note.id))
+        const doc = searchDocFromSeniorNote({ answers: row!.answers, termLabel: row!.termLabel })
+        await tx.insert(searchDocuments).values({ kind: 'note', seniorNoteId: row!.id, noteVersion: row!.version, ...doc, searchText: `${doc.searchText} ${marker}` })
+      }
+      const preparing = await courseFixture(tx, U)
+      const open = await courseFixture(tx, U)
+      // 준비 중 과목(기준 3 미만)의 노트 2개가 가장 새 글입니다. 예전에는 이 두 줄이 제한 안에서 잘려 나가 쪽이 18개가 됐습니다.
+      await addNote(preparing.schoolId, preparing.course.id, at(100))
+      await addNote(preparing.schoolId, preparing.course.id, at(101))
+      for (let i = 0; i < SEARCH_RESULT_LIMIT + 2; i++) await addNote(open.schoolId, open.course.id, at(i))
+      const results = (await searchPublic(tx, { q: marker, type: 'note' }, at(200))).results
+      expect(results).toHaveLength(SEARCH_RESULT_LIMIT)
+      expect(new Set(results.map((r) => r.course?.id))).toEqual(new Set([open.course.id]))
+      // 개방 시각이 저장된 과목은 수가 기준 미만이어도 검색에 나옵니다.
+      await tx.update(courses).set({ hubOpenedAt: at(1) }).where(eq(courses.id, preparing.course.id))
+      const again = (await searchPublic(tx, { q: marker, type: 'note', course: preparing.course.id }, at(200))).results
+      expect(again).toHaveLength(2)
+    })
+  }, 120_000)
 })

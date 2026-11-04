@@ -11,7 +11,6 @@
  *   이미 내 노트(초안 포함, 철회 제외)가 있거나, 닫았거나, 같은 과목의 E-01 학기 종료 알림이 아직 떠 있으면(같은 요청이라) 보이지 않습니다.
  * - 신청·닫음 행은 본인만 봅니다. 신청 수는 공개·운영자 화면 어디에도 내보내지 않고, 감사 기록·분석 이벤트도 남기지 않습니다.
  */
-import { hubOpeningStatus } from '@peerchive/domain'
 import {
   and,
   courseHubNotices,
@@ -228,7 +227,8 @@ export async function listMyHubNotices(db: DbExecutor, actor: Actor, now = new D
 
   const finished = await finishedCourseIds(db, actor.userId, now)
   const counts = await hubContentCounts(db, finished, now)
-  const preparing = finished.filter((id) => hubOpeningStatus(counts.get(id) ?? { cases: 0, notes: 0 }, threshold, true) === 'preparing')
+  const openFinished = await openCourseIds(db, finished, now)
+  const preparing = finished.filter((id) => !openFinished.has(id))
   const withNote = await coursesWithMyNote(db, actor.userId, preparing)
   const withPrompt = await coursesWithTermPrompt(db, actor.userId)
   const dismissed = preparing.length

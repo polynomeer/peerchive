@@ -251,6 +251,11 @@ export async function mergeCourse(db: DbExecutor, actor: Actor, sourceId: unknow
         and exists (select 1 from ${courseHubNotices} t where t.course_id = ${target.id} and t.user_id = n.user_id and t.kind = n.kind)`)
     await tx.update(courseHubNotices).set({ courseId: target.id }).where(eq(courseHubNotices.courseId, source.id))
 
+    // 과목 허브 개방 시각(ADR 0060 D-07): 둘 중 더 이른 값을 정본에 남깁니다.
+    await tx.execute(sql`
+      update ${courses} t set hub_opened_at = least(t.hub_opened_at, s.hub_opened_at)
+      from ${courses} s where t.id = ${target.id} and s.id = ${source.id} and s.hub_opened_at is not null`)
+
     // 학생 큐레이터(E-03, ADR 0048): 지정 행을 정본으로 옮깁니다. 같은 사람이 정본에도 지정돼 있으면 원본 쪽 행을 해제합니다(운영자 해제와 같은 모양).
     // 옮긴 뒤 정본에 2명을 넘을 수 있습니다(운영자 정리 대상, 태그 12개와 같음). 과제 유형 요약은 정본에 없을 때만 옮기고, 병합 제안·신고 의견은 정본으로.
     const curatorsClosed = await tx.execute<{ id: string }>(sql`

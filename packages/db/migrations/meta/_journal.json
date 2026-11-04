@@ -400,6 +400,13 @@
       "when": 1793806228101,
       "tag": "0056_course_registered_event",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1793806463663,
+      "tag": "0057_hub_opened_at",
+      "breakpoints": true
     }
   ]
 }

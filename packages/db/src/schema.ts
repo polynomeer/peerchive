@@ -794,6 +794,11 @@ export const courses = pgTable(
      * 정본 과목의 값만 봅니다. 공개 과목 허브 응답에는 싣지 않습니다.
      */
     teamFindingDisabled: boolean('team_finding_disabled').notNull().default(false),
+    /**
+     * 과목 허브가 처음 열린 시각(E-02, ADR 0060 D-07). 플래그가 켜진 요청이 기준 이상을 본 순간 조건부 갱신으로 한 번 채우고, 그 뒤로는 수가 줄어도 허브는 열려 있습니다.
+     * 정본 과목 행의 값만 읽고, 병합은 더 이른 값을 남깁니다.
+     */
+    hubOpenedAt: timestamp('hub_opened_at', { withTimezone: true }),
     createdBy: uuid('created_by').references(() => users.id),
     createdAt: createdAt(),
   },

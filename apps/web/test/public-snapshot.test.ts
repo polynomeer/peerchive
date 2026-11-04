@@ -243,7 +243,7 @@ function source(overrides: Partial<SnapshotSource> = {}): SnapshotSource {
     codeKey: S('CODE_KEY'),
     title: '운영체제',
     titleKey: S('TITLE_KEY'),
-    teamFindingDisabled: false,
+    teamFindingDisabled: false, hubOpenedAt: null,
     mergedInto: null,
     mergedAt: null,
     createdBy: A,

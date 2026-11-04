@@ -28,4 +28,9 @@ describe('hub open threshold (E-02)', () => {
     expect(hubOpeningStatus({ cases: 3, notes: 0 }, 3, true)).toBe('open')
     expect(hubOpeningStatus({ cases: 0, notes: 0 }, 1, true)).toBe('preparing')
   })
+
+  it('a hub that opened once stays open when the count drops (ADR 0060 D-07)', () => {
+    expect(hubOpeningStatus({ cases: 0, notes: 0 }, 3, true, new Date('2026-11-01T00:00:00Z'))).toBe('open')
+    expect(hubOpeningStatus({ cases: 0, notes: 0 }, 3, true, null)).toBe('preparing')
+  })
 })

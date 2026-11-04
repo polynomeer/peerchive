@@ -1712,7 +1712,7 @@ export interface OperatorHubOpeningDto {
   stagedOpening: boolean
   threshold: number
   summary: { coursesWithContent: number; open: number; preparing: number }
-  items: Array<{ course: HubNoticeCourseDto; cases: number; notes: number; total: number; status: 'open' | 'preparing' }>
+  items: Array<{ course: HubNoticeCourseDto; cases: number; notes: number; total: number; openedAt: string | null; status: 'open' | 'preparing' }>
 }
 
 /** 공개 막힘 Q&A(C-09, ADR 0025). 커뮤니티 질문·채택된 답변을 두 사람의 동의로 복사한 것. */

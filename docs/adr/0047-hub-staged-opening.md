@@ -9,6 +9,7 @@ E-02는 DELIVERY_PLAN §4.4 P1 보완 백로그의 두 번째 항목입니다: "
 
 - PROOFU_EVOLUTION_PLAN §8.6(과목 허브 단계적 개방: 공개 사례·선배 노트가 기준 개수에 이르면 공개, 그 전에는 등록한 학생에게 준비 중·알림 신청, 마친 학생에게 선배 노트 요청), §8.7(이번 학기 과목 등록).
 - ADR 0012(공개 읽기는 요청마다 DB 상태 확인), 0013(과목 허브·선배 노트·검색, `servableReleaseSql`·`courseScopeSql`), 0025(막힘 Q&A), 0029(S-02 경계 lint·social DB 역할), 0037(기능 플래그 helper), 0046(과목 등록: 본인만, 학기 종료 알림, 허브 수강 인원은 5명 이상만).
+- 변경: D-07: 한 번 기준에 닿은 허브는 `courses.hub_opened_at`으로 계속 열려 있고, 준비 중 과목의 노트·Q&A 제외는 검색 결과 제한 전에 SQL에서 합니다 ([ADR 0060](0060-open-question-decisions.md)).
 
 ## 결정
 

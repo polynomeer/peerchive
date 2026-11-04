@@ -4,7 +4,8 @@
  * - 플래그 `PEERCHIVE_FEATURE_HUB_STAGED_OPENING`(기본 꺼짐, features.ts)이 꺼져 있으면 모든 과목 허브는 지금처럼 열려 있습니다.
  * - 켜져 있으면 과목(정본 + 병합된 과목)의 **공개 사례 + 선배 노트** 합계가 기준(`PEERCHIVE_HUB_OPEN_THRESHOLD`, 기본 3) 이상일 때만
  *   허브 모음 페이지를 보여 주고, 그 전에는 "준비 중"입니다. 막힘 Q&A·체크인 통계·태그는 세지 않습니다(§8.6은 사례·노트만 셈).
- * - 판정은 요청마다 그 순간의 값으로 합니다(저장하지 않음). 기준에 이르면 다음 요청부터 열리고, 철회·숨김으로 기준 밑으로 내려가면 다시 "준비 중"입니다.
+ * - ADR 0060 D-07: 한 번 기준에 닿으면 `courses.hub_opened_at`에 저장해 계속 열어 둡니다(아래 판정의 openedAt). 개별 철회·숨김은 기존대로 바로 반영됩니다.
+ * - 저장되기 전까지는 요청마다 그 순간의 값으로 합니다. 기준에 이르면 다음 요청부터 열리고, 철회·숨김으로 기준 밑으로 내려가면 다시 "준비 중"입니다.
  *
  * 런타임 의존성 없음.
  */
@@ -31,8 +32,8 @@ export interface HubContentCount {
 
 export type HubOpeningStatus = 'open' | 'preparing'
 
-/** 허브가 열렸는지. 플래그가 꺼져 있으면 항상 open. */
-export function hubOpeningStatus(count: HubContentCount, threshold: number, stagedOpening: boolean): HubOpeningStatus {
-  if (!stagedOpening) return 'open'
+/** 허브가 열렸는지. 플래그가 꺼져 있으면 항상 open. 한 번 열린 허브(openedAt)는 수가 줄어도 open입니다(ADR 0060 D-07). */
+export function hubOpeningStatus(count: HubContentCount, threshold: number, stagedOpening: boolean, openedAt: Date | null = null): HubOpeningStatus {
+  if (!stagedOpening || openedAt) return 'open'
   return count.cases + count.notes >= threshold ? 'open' : 'preparing'
 }

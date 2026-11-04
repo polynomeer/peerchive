@@ -1,0 +1,1 @@
+ALTER TABLE "courses" ADD COLUMN "hub_opened_at" timestamp with time zone;
