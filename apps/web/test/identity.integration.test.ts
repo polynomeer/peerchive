@@ -83,10 +83,10 @@ describe.skipIf(!databaseUrl)('identity services (PostgreSQL)', () => {
     it('signs an existing user in (no new user) and sends onboarding only without a profile', async () => {
       await withRollback(async (tx) => {
         const email = uniqueEmail()
-        const first = await verifyMagicLink(tx, { token: (await requestLink(tx, email)).token })
+        const first = await verifyMagicLink(tx, { token: (await requestLink(tx, email)).token, now: new Date(T0.getTime() + minutes(1)) })
         if (!first.ok) throw new Error('first login failed')
         await upsertProfile(tx, { userId: first.userId }, { handle: `h-${crypto.randomUUID().slice(0, 8)}`, displayName: '김학생' })
-        const again = await verifyMagicLink(tx, { token: (await requestLink(tx, email)).token })
+        const again = await verifyMagicLink(tx, { token: (await requestLink(tx, email)).token, now: new Date(T0.getTime() + minutes(2)) })
         expect(again.ok && again.userId).toBe(first.userId)
         expect(again.ok && again.isNewUser).toBe(false)
         expect(again.ok && again.needsOnboarding).toBe(false)
