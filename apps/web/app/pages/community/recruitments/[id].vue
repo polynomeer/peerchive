@@ -10,6 +10,7 @@ import type {
   MyApplicationDto,
   RecruitmentApplicationDto,
   RecruitmentDetailDto,
+  RecruitmentLockedDto,
   RecruitmentInvitationDto,
 } from '~~/shared/types/api'
 
@@ -19,8 +20,11 @@ useCommunityPage()
 const route = useRoute()
 const id = computed(() => String(route.params.id ?? ''))
 const fetcher = useRequestFetch()
-const { data, error, refresh } = await useAsyncData(`recruitment-${id.value}`, () => fetcher<RecruitmentDetailDto>(`/api/v1/community/recruitments/${id.value}`))
-const missing = computed(() => !!error.value || !data.value)
+const { data: fetched, error, refresh } = await useAsyncData(`recruitment-${id.value}`, () => fetcher<RecruitmentDetailDto | RecruitmentLockedDto>(`/api/v1/community/recruitments/${id.value}`))
+// 과목을 등록하지 않은 인증 사용자에게는 내용 없이 안내만 옵니다(ADR 0060 D-05).
+const locked = computed(() => !!fetched.value && 'registrationRequired' in fetched.value)
+const data = computed(() => (fetched.value && !('registrationRequired' in fetched.value) ? fetched.value : null))
+const missing = computed(() => !!error.value || !fetched.value)
 if (import.meta.server && missing.value) {
   const event = useRequestEvent()
   if (event) setResponseStatus(event, 404)
@@ -126,6 +130,10 @@ const reportTargets = computed(() => (data.value ? [{ id: data.value.id, label: 
       <h1>모집을 찾을 수 없습니다</h1>
       <p>주소가 틀렸거나, 이 모집을 볼 수 있는 학교 인증·멤버십이 없습니다.</p>
       <p><NuxtLink to="/community/recruitments">내 모집·내 지원</NuxtLink></p>
+    </template>
+    <template v-else-if="locked">
+      <h1>모집</h1>
+      <p class="notice" role="status" data-testid="recruitment-registration-required">과목을 등록하면 볼 수 있습니다. <NuxtLink to="/me/courses">내 과목에서 등록하기</NuxtLink></p>
     </template>
     <template v-else-if="data">
       <p class="small">

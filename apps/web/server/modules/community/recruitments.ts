@@ -13,6 +13,10 @@
  *   발급해 돌려줍니다 — 수락해야 멤버가 됩니다(자동 멤버십 없음). 과제 공간 제목은 과목 이름으로 만들고 모집 글 내용은 옮기지 않습니다(커뮤니티 글이
  *   커뮤니티 테이블 밖으로 나가지 않게, C-05 센티넬).
  * - 커뮤니티 모듈은 서버 로그를 남기지 않습니다.
+ * - 과목 모집(ADR 0060 D-05): 공간에 걸리지 않은 과목 모집은 그 학교 인증에 더해 **그 과목을 지금·앞으로의 학기로 등록한 사람**만 읽고 지원하고 올립니다
+ *   (course-registrations `isRegisteredForCourse`, 본인 참거짓만). 인증은 있지만 등록하지 않았으면 목록은 내용 없이 `registrationRequired: true`, 상세는 그 값 하나,
+ *   지원·쓰기는 403 `course_registration_required`입니다. 인증이 없으면 그대로 404. 모집자 본인과 이미 지원한 사람은 등록이 끝나도 자기 모집·지원을 이어 갑니다(취소·초대 받기).
+ *   공간에 걸린 모집은 과목을 골랐어도 공간 읽기 규칙을 따릅니다(공간 안에서 누가 읽는지는 공간이 정함).
  */
 import { z } from 'zod'
 import {
@@ -67,6 +71,7 @@ import {
   profiles,
   projectMembers,
   publications,
+  or,
   recruitmentApplications,
   recruitments,
   schools,
@@ -99,6 +104,7 @@ import {
   membershipFacts,
   writeRestricted,
 } from './access'
+import { isRegisteredForCourse } from '../course-registrations/course-gate'
 import { issueSpaceInvitationInTx } from './invitations'
 import { createStudyRoomInternal } from './spaces'
 import type {
@@ -111,6 +117,7 @@ import type {
   RecruitmentApplicationDto,
   RecruitmentDetailDto,
   RecruitmentListDto,
+  RecruitmentLockedDto,
   RecruitmentSummaryDto,
 } from '../../../shared/types/api'
 
@@ -200,7 +207,22 @@ async function loadViewableRecruitment(db: DbExecutor, actor: Actor, id: unknown
   const course = row.courseId ? await loadCourseFacts(db, row.courseId) : null
   const facts = recruitmentFacts(row, host, course)
   if (!canViewRecruitment(viewer, facts)) throw notFound()
+  await assertCourseRegistration(db, actor, row, course, now)
   return { row, viewer, host, course, facts }
+}
+
+const courseRegistrationRequired = () => new ServiceError('FORBIDDEN', 'course_registration_required', undefined, { requirement: 'course_registration' })
+
+/** 공간에 걸리지 않은 과목 모집: 등록했거나, 내 모집이거나, 이미 지원했어야 합니다(ADR 0060 D-05). 내 등록 여부만 봅니다. */
+async function assertCourseRegistration(db: DbExecutor, actor: Actor, row: RecruitmentRow, course: CourseFacts | null, now: Date): Promise<void> {
+  if (!course || row.spaceId || row.createdBy === actor.userId) return
+  if (await isRegisteredForCourse(db, actor.userId, course.id, now)) return
+  const [applied] = await db
+    .select({ id: recruitmentApplications.id })
+    .from(recruitmentApplications)
+    .where(and(eq(recruitmentApplications.recruitmentId, row.id), eq(recruitmentApplications.applicantId, actor.userId)))
+    .limit(1)
+  if (!applied) throw courseRegistrationRequired()
 }
 
 const isRecruiter = (ctx: RecruitmentContext, actor: Actor) => ctx.row.createdBy === actor.userId
@@ -447,6 +469,8 @@ export async function createRecruitment(db: DbExecutor, actor: Actor, rawInput: 
       if (decision.reason === 'write_restricted' && viewer.writeRestriction) throw writeRestricted(viewer.writeRestriction)
       throw postError(decision.reason)
     }
+    // 공간에 걸지 않은 과목 모집은 모집자도 그 과목을 등록해야 합니다(ADR 0060 D-05).
+    if (course && !host && !(await isRegisteredForCourse(tx, actor.userId, course.id, now))) throw courseRegistrationRequired()
     if (!(await hitRateLimit(tx, 'community_recruitment_create', actor.userId, RECRUITMENT_CREATE_LIMIT, now))) throw rateLimited()
     const [row] = await tx
       .insert(recruitments)
@@ -486,6 +510,16 @@ export async function getRecruitment(db: DbExecutor, actor: Actor, id: unknown, 
   return detailOf(db, actor, ctx, now)
 }
 
+/** 라우트용 상세: 등록하지 않은 인증 사용자에게는 내용 없이 안내 표시만(ADR 0060 D-05). */
+export async function getRecruitmentView(db: DbExecutor, actor: Actor, id: unknown, now = new Date()): Promise<RecruitmentDetailDto | RecruitmentLockedDto> {
+  try {
+    return await getRecruitment(db, actor, id, now)
+  } catch (error) {
+    if (error instanceof ServiceError && error.reason === 'course_registration_required') return { registrationRequired: true }
+    throw error
+  }
+}
+
 const listSchema = z.object({
   space: z.string({ error: 'invalid' }).optional(),
   course: z.string({ error: 'invalid' }).optional(),
@@ -495,6 +529,7 @@ const listSchema = z.object({
 /**
  * GET /community/recruitments?space=slug | ?course=id [&kind=] — 공간(읽을 수 있는 사람) 또는 과목(그 학교 인증 사용자) 맥락의 모집 목록.
  * 최근 것부터 50개. 가린 모집·팀원 찾기가 꺼진 과목의 팀원 모집은 모집자 본인에게만 나옵니다. 읽을 수 없으면 404.
+ * 과목 맥락에서 인증은 있지만 등록하지 않았으면 `registrationRequired: true`이고 항목은 내가 올렸거나 지원한 것뿐, 쓰기·학기 목록도 없습니다(ADR 0060 D-05).
  */
 export async function listRecruitments(db: DbExecutor, actor: Actor, query: unknown, now = new Date()): Promise<RecruitmentListDto> {
   const q = parseInput(listSchema, query)
@@ -503,6 +538,7 @@ export async function listRecruitments(db: DbExecutor, actor: Actor, query: unkn
   let course: CourseFacts | null = null
   let viewer: LoadedViewer
   let where
+  let registrationRequired = false
   if (q.space) {
     host = await loadReadableSpace(db, actor, q.space, false, now)
     viewer = host.viewer
@@ -513,7 +549,16 @@ export async function listRecruitments(db: DbExecutor, actor: Actor, query: unkn
     viewer = await loadViewer(db, actor, null, now)
     // 과목 맥락은 그 과목 학교(정본)의 active 인증 사용자만(공개 과목 허브와 달리 커뮤니티 데이터). 아니면 404.
     if (!course || viewer.status !== 'active' || !hasSchoolAffiliation(viewer, course.schoolId)) throw notFound()
-    where = eq(recruitments.courseId, course.id)
+    registrationRequired = !(await isRegisteredForCourse(db, actor.userId, course.id, now))
+    where = registrationRequired
+      ? and(
+          eq(recruitments.courseId, course.id),
+          or(
+            eq(recruitments.createdBy, actor.userId),
+            inArray(recruitments.id, db.select({ id: recruitmentApplications.recruitmentId }).from(recruitmentApplications).where(eq(recruitmentApplications.applicantId, actor.userId))),
+          ),
+        )
+      : eq(recruitments.courseId, course.id)
   }
   const rows = await db
     .select()
@@ -524,17 +569,19 @@ export async function listRecruitments(db: DbExecutor, actor: Actor, query: unkn
   const items = await visibleSummaries(db, actor, viewer, rows, { host, course }, now)
 
   const board = host ? await recruitingBoardOf(db, host.space.row.id) : null
-  const post = (kind: RecruitmentKind) =>
-    canPostRecruitment(viewer, {
-      ...hostFacts(host, course),
-      kind,
-      hasCourse: course !== null,
-      teamFindingDisabled: course?.teamFindingDisabled ?? false,
-      recruitingBoard: board,
-    })
+  const post = (kind: RecruitmentKind): { ok: true } | { ok: false; reason: string } =>
+    registrationRequired
+      ? { ok: false, reason: 'course_registration_required' }
+      : canPostRecruitment(viewer, {
+          ...hostFacts(host, course),
+          kind,
+          hasCourse: course !== null,
+          teamFindingDisabled: course?.teamFindingDisabled ?? false,
+          recruitingBoard: board,
+        })
   const team = post('team')
   const study = post('study')
-  const terms = course
+  const terms = course && !registrationRequired
     ? await db
         .select({ id: courseTerms.id, year: courseTerms.year, semester: courseTerms.semester })
         .from(courseTerms)
@@ -548,6 +595,7 @@ export async function listRecruitments(db: DbExecutor, actor: Actor, query: unkn
       course: course ? { id: course.id, title: course.title, code: course.code, schoolName: course.schoolName } : null,
     },
     items: items.slice(0, RECRUITMENT_PAGE_SIZE),
+    registrationRequired,
     canPost: { team: team.ok, study: study.ok },
     postBlockedReasons: { team: team.ok ? null : team.reason, study: study.ok ? null : study.reason },
     teamFindingDisabled: course?.teamFindingDisabled ?? false,

@@ -51,3 +51,12 @@ export async function verifyByApi(api: Api, schoolId: string, domain: string, pr
   expect(verified.status(), await verified.text()).toBe(200)
   return email
 }
+
+/** 과목 모집을 읽고 쓰려면 그 과목을 지금 학기로 등록해야 합니다(ADR 0060 D-05). */
+export async function registerForCourse(api: Api, courseId: string): Promise<void> {
+  const { registrableTerms } = await api.get<{ registrableTerms: Array<{ year: number; semester: string }> }>('/api/v1/me/course-registrations')
+  const term = registrableTerms[0]!
+  const res = await api.raw('POST', '/api/v1/me/course-registrations', { courseId, year: term.year, semester: term.semester })
+  // 같은 사람이 같은 과목으로 여러 번 불러도 됩니다.
+  expect([201, 409], await res.text()).toContain(res.status())
+}

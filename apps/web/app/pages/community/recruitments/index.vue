@@ -164,10 +164,13 @@ function cardMeta(r: RecruitmentSummaryDto): string {
       <p class="hint">
         팀원 찾기와 스터디 모집을 한 목록에서 봅니다. 지원자 목록은 모집자만 보고, 지원자를 활동량·순위로 정렬하지 않으며, 거절 사유를 남기지 않습니다.
       </p>
+      <p v-if="data.registrationRequired" class="notice" role="status" data-testid="recruitment-registration-required">
+        과목을 등록하면 볼 수 있습니다. <NuxtLink to="/me/courses">내 과목에서 등록하기</NuxtLink>
+      </p>
       <p v-if="data.teamFindingDisabled" class="notice" role="status">이 과목은 수업에서 팀을 배정해 팀원 찾기를 쓰지 않습니다. 스터디 모집은 올릴 수 있습니다.</p>
       <p v-if="notice" :class="['notice', notice.kind]" :role="notice.kind === 'error' ? 'alert' : 'status'">{{ notice.text }}</p>
 
-      <section aria-labelledby="recruitment-list">
+      <section v-if="!data.registrationRequired || data.items.length" aria-labelledby="recruitment-list">
         <h2 id="recruitment-list">모집 글</h2>
         <ul v-if="data.items.length" class="plain hub-list" data-testid="recruitment-list">
           <li v-for="r in data.items" :key="r.id" class="hub-card" data-testid="recruitment-card">
@@ -243,7 +246,7 @@ function cardMeta(r: RecruitmentSummaryDto): string {
           <p class="actions"><button type="submit" :disabled="busy">모집 올리기</button></p>
         </form>
       </section>
-      <p v-else class="small muted" data-testid="post-blocked">모집 글 쓰기: {{ blockedText(data.postBlockedReasons.study ?? data.postBlockedReasons.team) }}</p>
+      <p v-else-if="!data.registrationRequired" class="small muted" data-testid="post-blocked">모집 글 쓰기: {{ blockedText(data.postBlockedReasons.study ?? data.postBlockedReasons.team) }}</p>
       <p><NuxtLink to="/community/recruitments">내 모집·내 지원 보기</NuxtLink></p>
     </template>
     <p><NuxtLink to="/community">커뮤니티로 돌아가기</NuxtLink></p>

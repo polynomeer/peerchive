@@ -13,6 +13,7 @@ import {
   analyticsEvents,
   communityNotices,
   communitySpaces,
+  courseRegistrations,
   eq,
   invitations,
   operators,
@@ -42,6 +43,7 @@ import {
   createRecruitment,
   declineApplication,
   getRecruitment,
+  getRecruitmentView,
   issueRecruitmentInvitation,
   listApplications,
   listMyRecruitments,
@@ -96,6 +98,12 @@ async function world(tx: DbExecutor): Promise<World> {
   const recruiter = await student(tx, school.id, '모집자')
   const course = await createCourse(tx, recruiter, school.id, { title: `운영체제${rand()}`, code: `OS-${rand().slice(0, 4)}`, confirmNew: true }, T0)
   const { term } = await createCourseTerm(tx, recruiter, course.id, { year: 2026, semester: 'fall' }, T0)
+  // 과목 모집을 읽고 쓰는 사람은 그 과목을 등록합니다(ADR 0060 D-05). 등록하지 않은 사람은 아래 테스트가 따로 만듭니다.
+  const registered = async (u: { userId: string; affiliationId: string }) => {
+    await tx.insert(courseRegistrations).values({ userId: u.userId, courseTermId: term.id, createdAt: T0 })
+    return u
+  }
+  await registered(recruiter)
   const official = await createOfficialPage(tx, op, { schoolId: school.id, name: `모집대 공식 ${rand()}` }, T0)
   return {
     op,
@@ -104,9 +112,9 @@ async function world(tx: DbExecutor): Promise<World> {
     termId: term.id,
     officialSlug: official.slug,
     recruiter,
-    a: await student(tx, school.id, '지원자A'),
-    b: await student(tx, school.id, '지원자B'),
-    c: await student(tx, school.id, '지원자C'),
+    a: await registered(await student(tx, school.id, '지원자A')),
+    b: await registered(await student(tx, school.id, '지원자B')),
+    c: await registered(await student(tx, school.id, '지원자C')),
     other: await student(tx, otherSchool.id, '다른학교'),
   }
 }
@@ -417,10 +425,13 @@ describe.skipIf(!databaseUrl)('C-07 recruitments (PostgreSQL)', () => {
       await expectServiceError(createRecruitment(tx, w.recruiter, study(w), at(6)), 'RATE_LIMITED')
       const many: string[] = [...ids]
       const second = await student(tx, w.schoolId, '두번째모집자')
+      await tx.insert(courseRegistrations).values({ userId: second.userId, courseTermId: w.termId, createdAt: T0 })
       for (let i = 0; i < 5; i++) many.push((await createRecruitment(tx, second, study(w, { title: `둘째 ${i}` }), at(i))).id)
       const third = await student(tx, w.schoolId, '세번째모집자')
+      await tx.insert(courseRegistrations).values({ userId: third.userId, courseTermId: w.termId, createdAt: T0 })
       for (let i = 0; i < 5; i++) many.push((await createRecruitment(tx, third, study(w, { title: `셋째 ${i}` }), at(i))).id)
       const fourth = await student(tx, w.schoolId, '네번째모집자')
+      await tx.insert(courseRegistrations).values({ userId: fourth.userId, courseTermId: w.termId, createdAt: T0 })
       for (let i = 0; i < 6; i++) many.push((await createRecruitment(tx, fourth, study(w, { title: `넷째 ${i}` }), at(i)).catch(() => ({ id: '' }))).id)
       const targets = many.filter(Boolean)
       expect(targets.length).toBe(20)
@@ -505,6 +516,55 @@ describe.skipIf(!databaseUrl)('C-07 recruitments (PostgreSQL)', () => {
       expect(JSON.stringify(await getPublicProfile(tx, p!.handle))).not.toContain(sentinel)
       // 이 테스트에서 만든 지원 행이 그대로 둘(지원 메시지는 커뮤니티 테이블에만)
       expect((await tx.select().from(recruitmentApplications).where(eq(recruitmentApplications.applicantId, w.a.userId))).length).toBe(2)
+    })
+  }, DB_TIMEOUT)
+
+  // ADR 0060 D-05: 과목 모집은 그 과목을 등록한 학교 인증 사용자에게 보입니다.
+  it('course-scoped recruitments: registered readers only; unregistered verified users get no content; registrations stay invisible', async () => {
+    await withRollback(async (tx) => {
+      const w = await world(tx)
+      const rec = await createRecruitment(tx, w.recruiter, study(w), at(1))
+      const stranger = await student(tx, w.schoolId, '미등록')
+
+      // 등록 안 한 인증 사용자: 내용 없이 표시만, 지원·글쓰기 거부. 인증 없는 사람은 그대로 404.
+      const list = await listRecruitments(tx, stranger, { course: w.courseId }, at(2))
+      expect(list).toMatchObject({ registrationRequired: true, items: [], terms: [], canPost: { team: false, study: false } })
+      expect(JSON.stringify(list)).not.toContain(rec.title)
+      expect(await getRecruitmentView(tx, stranger, rec.id, at(2))).toEqual({ registrationRequired: true })
+      await expectServiceError(applyToRecruitment(tx, stranger, rec.id, {}, at(2)), 'FORBIDDEN', 'course_registration_required')
+      await expectServiceError(createRecruitment(tx, stranger, study(w), at(2)), 'FORBIDDEN', 'course_registration_required')
+      await expectServiceError(listRecruitments(tx, w.other, { course: w.courseId }, at(2)), 'NOT_FOUND')
+      await expectServiceError(getRecruitmentView(tx, w.other, rec.id, at(2)), 'NOT_FOUND')
+      const noAffiliation = { userId: (await createUser(tx)).id }
+      await expectServiceError(listRecruitments(tx, noAffiliation, { course: w.courseId }, at(2)), 'NOT_FOUND')
+      await expectServiceError(getRecruitmentView(tx, noAffiliation, rec.id, at(2)), 'NOT_FOUND')
+
+      // 끝난 학기만 등록한 사람도 아직 등록하지 않은 것과 같습니다. 앞으로의 학기로 등록하면 모집 글의 학기와 무관하게 보입니다.
+      const { term: past } = await createCourseTerm(tx, w.recruiter, w.courseId, { year: 2025, semester: 'spring' }, T0)
+      await tx.insert(courseRegistrations).values({ userId: stranger.userId, courseTermId: past.id, createdAt: T0 })
+      expect((await listRecruitments(tx, stranger, { course: w.courseId }, at(3))).registrationRequired).toBe(true)
+      const { term: spring } = await createCourseTerm(tx, w.recruiter, w.courseId, { year: 2027, semester: 'spring' }, T0)
+      const [future] = await tx.insert(courseRegistrations).values({ userId: stranger.userId, courseTermId: spring.id, createdAt: T0 }).returning()
+      expect((await listRecruitments(tx, stranger, { course: w.courseId }, at(3)))).toMatchObject({ registrationRequired: false, canPost: { study: true } })
+      expect(await getRecruitmentView(tx, stranger, rec.id, at(3))).toMatchObject({ id: rec.id, title: rec.title })
+
+      // 지원한 뒤 등록을 지워도 자기 지원은 이어지고 목록에는 그 글만 보입니다. 모집자도 자기 글을 봅니다.
+      await applyToRecruitment(tx, stranger, rec.id, {}, at(4))
+      await tx.delete(courseRegistrations).where(eq(courseRegistrations.id, future!.id))
+      expect((await getRecruitmentView(tx, stranger, rec.id, at(5))) as { myApplication: unknown }).toMatchObject({ myApplication: { status: 'pending' } })
+      const applied = await listRecruitments(tx, stranger, { course: w.courseId }, at(5))
+      expect(applied.registrationRequired).toBe(true)
+      expect(applied.items.map((i) => i.id)).toEqual([rec.id])
+      await tx.delete(courseRegistrations).where(eq(courseRegistrations.userId, w.recruiter.userId))
+      expect(await getRecruitmentView(tx, w.recruiter, rec.id, at(5))).toMatchObject({ mine: true })
+
+      // 공간에 걸린 모집은 공간 규칙을 따릅니다.
+      const inSpace = await createRecruitment(tx, w.recruiter, study(w, { spaceSlug: w.officialSlug }), at(6))
+      expect(await getRecruitmentView(tx, stranger, inSpace.id, at(7))).toMatchObject({ id: inSpace.id })
+
+      // 응답 어디에도 다른 사람의 등록 정보가 없습니다.
+      const asRecruiter = JSON.stringify(await listRecruitments(tx, w.a, { course: w.courseId }, at(8)))
+      expect(asRecruiter).not.toMatch(/registered|registration(?!Required)|courseTermId/i)
     })
   }, DB_TIMEOUT)
 })

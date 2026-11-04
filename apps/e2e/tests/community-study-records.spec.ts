@@ -7,11 +7,13 @@
  */
 import type { LogDto, ProjectDetailDto, RecruitmentDetailDto, StudyRecordStateDto } from '../../web/shared/types/api'
 import { type Api, createCandidate, consent, pastTerm, progressLog, publish, rand, setCourseTerm } from '../support/api'
-import { schoolMailbox, verifyByApi } from '../support/affiliation'
+import { registerForCourse, schoolMailbox, verifyByApi } from '../support/affiliation'
 import { expect, expectNoHorizontalScroll, test } from '../support/fixtures'
 
 /** 스터디 모집(과목) → 지원 → 선정 → 마감 → 선정된 사람이 초대를 받아 수락. 방 slug를 돌려줍니다. */
 async function studyRoomViaRecruitment(recruiter: Api, member: Api, courseId: string, title: string, roomNameMode: 'display' | 'anonymous'): Promise<string> {
+  await registerForCourse(recruiter, courseId)
+  await registerForCourse(member, courseId)
   const rec = await recruiter.post<RecruitmentDetailDto>('/api/v1/community/recruitments', { kind: 'study', courseId, title, capacity: 2, roomNameMode })
   const app = await member.post<{ id: string }>(`/api/v1/community/recruitments/${rec.id}/applications`, { message: '함께해요' })
   await recruiter.post(`/api/v1/community/recruitments/${rec.id}/applications/${app.id}/accept`)

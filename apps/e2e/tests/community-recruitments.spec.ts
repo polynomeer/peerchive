@@ -8,7 +8,7 @@
  */
 import type { RecruitmentDetailDto } from '../../web/shared/types/api'
 import { futureTerm, pastTerm, rand } from '../support/api'
-import { schoolMailbox, verifyByApi } from '../support/affiliation'
+import { registerForCourse, schoolMailbox, verifyByApi } from '../support/affiliation'
 import { expect, expectNoHorizontalScroll, test } from '../support/fixtures'
 
 test('C-07: 스터디 모집 → 둘 지원 → 한 명 선정 → 마감 → 스터디 방 → 초대 수락', async ({ newUser, anon }) => {
@@ -19,6 +19,7 @@ test('C-07: 스터디 모집 → 둘 지원 → 한 명 선정 → 마감 → �
   const school = await pastTerm(recruiter.api)
   const { domain } = schoolMailbox(school.schoolId)
   for (const [u, prefix] of [[recruiter, 'r'], [first, 'a'], [second, 'b']] as const) await verifyByApi(u.api, school.schoolId, domain, prefix)
+  await registerForCourse(recruiter.api, school.courseId)
   const title = `E2E 운영체제 스터디 ${rand(3)}`
 
   // 과목 허브: 같은 학교 인증 사용자에게만 "이 과목 팀원 찾기"(비로그인은 없음)
@@ -44,6 +45,17 @@ test('C-07: 스터디 모집 → 둘 지원 → 한 명 선정 → 마감 → �
   const id = new URL(page.url()).pathname.split('/').pop()!
   await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible()
   await expect(page.getByTestId('recruitment-kind')).toHaveText('스터디')
+
+  // 등록하지 않은 인증 사용자에게는 글 내용 없이 안내만(ADR 0060 D-05).
+  await first.page.goto(`/community/recruitments?course=${school.courseId}`)
+  await expect(first.page.getByTestId('recruitment-registration-required')).toBeVisible()
+  await expect(first.page.getByRole('link', { name: title })).toHaveCount(0)
+  expect(await first.api.get(`/api/v1/community/recruitments/${id}`)).toEqual({ registrationRequired: true })
+  await first.page.goto(`/community/recruitments/${id}`)
+  await expect(first.page.getByTestId('recruitment-registration-required')).toBeVisible()
+  await expect(first.page.getByRole('heading', { level: 1, name: title })).toHaveCount(0)
+  await registerForCourse(first.api, school.courseId)
+  await registerForCourse(second.api, school.courseId)
 
   // 두 사람이 지원(화면). 먼저 지원한 사람이 먼저 보임.
   for (const [u, msg] of [[first, '첫 번째 지원'], [second, '두 번째 지원']] as const) {
@@ -109,7 +121,10 @@ test('C-07: 팀원 찾기 → 지원 → 선정 → 마감 → 비공개 과제 
   const mate = await newUser('teammate')
   const school = await futureTerm(recruiter.api)
   const { domain } = schoolMailbox(school.schoolId)
-  for (const [u, prefix] of [[recruiter, 'r'], [mate, 'm']] as const) await verifyByApi(u.api, school.schoolId, domain, prefix)
+  for (const [u, prefix] of [[recruiter, 'r'], [mate, 'm']] as const) {
+    await verifyByApi(u.api, school.schoolId, domain, prefix)
+    await registerForCourse(u.api, school.courseId)
+  }
   const title = `E2E 팀원 구해요 ${rand(3)}`
 
   const page = recruiter.page

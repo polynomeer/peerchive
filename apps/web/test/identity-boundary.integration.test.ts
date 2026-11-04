@@ -257,6 +257,9 @@ const REGISTRATION_ALLOWED = [
   'api/v1/me/course-hub-notices/[id]/dismiss.post.ts',
   // E-03(ADR 0048): 큐레이터 지정 자격(그 과목을 마쳤는지, 참거짓만). 운영자 라우트는 이 모듈을 거치며 등록 테이블·모듈을 직접 부르지 않습니다.
   'modules/curators/assignments.ts',
+  // ADR 0060 D-05: 과목 모집 글은 그 과목을 등록한 사람에게만 보입니다. 모집 모듈은 요청한 본인의 참거짓(course-gate)만 받고, 다른 사람의 등록 여부는 읽지 않습니다.
+  'modules/course-registrations/course-gate.ts',
+  'modules/community/recruitments.ts',
 ].map((p) => join(SERVER, p))
 
 describe('E-01 boundary lint: course registrations stay with their owner (source)', () => {

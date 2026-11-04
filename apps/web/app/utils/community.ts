@@ -131,6 +131,7 @@ export const NAME_MODE_HINTS: Record<keyof typeof NAME_MODE_LABELS, string> = {
 
 export const COMMUNITY_ERROR_MESSAGES: Record<string, string> = {
   affiliation_required: '학교 메일 인증이 필요합니다. 학교 인증을 마친 뒤 다시 시도하세요.',
+  course_registration_required: '이 과목을 등록하면 볼 수 있습니다. 내 과목에서 지금 학기나 다음 학기로 등록하세요.',
   topic_exists: '같은 이름의 토픽이 이미 있습니다.',
   already_member: '이미 이 방의 멤버입니다.',
   already_pending: '이미 가입을 요청했습니다. 방장의 승인을 기다리세요.',

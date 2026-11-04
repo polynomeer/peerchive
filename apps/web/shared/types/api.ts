@@ -4036,7 +4036,14 @@ export interface RecruitmentDetailDto extends RecruitmentSummaryDto {
   canReport: boolean
 }
 
+/** GET /community/recruitments/:id: 과목을 등록하지 않은 학교 인증 사용자에게 내용 없이 보내는 안내(ADR 0060 D-05). */
+export interface RecruitmentLockedDto {
+  registrationRequired: true
+}
+
 export interface RecruitmentListDto {
+  /** 과목 맥락: 이 과목을 등록하지 않음. 항목은 내가 올렸거나 지원한 것뿐이고 화면은 "과목을 등록하면 볼 수 있습니다"를 보여 줍니다(ADR 0060 D-05). */
+  registrationRequired: boolean
   context: { space: { slug: string; name: string; official: boolean } | null; course: { id: string; title: string; code: string | null; schoolName: string } | null }
   items: RecruitmentSummaryDto[]
   /** 이 맥락에서 올릴 수 있는 종류. */
