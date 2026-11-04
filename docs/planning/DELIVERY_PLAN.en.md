@@ -168,6 +168,7 @@ Items from the P1 rows of [product plan §16](../PROOFU_EVOLUTION_PLAN.md) (AI a
 | E-12 | AI retrospective interview (§6.4) | T-09 | Only when the student turns it on; log drafts are saved only after student approval and marked `AI 초안`; uses only that team's data; no-training API terms; the form check-in keeps working with AI off |
 | E-13 | AI meeting summary (§6.5) | T-08, E-12 | Only meeting channels the team agreed to; 🗣️ meeting log drafts (decisions, follow-ups) saved after team approval; raw conversation not stored |
 | E-14 | AI case polishing (§10.3) | T-13, E-12 | Only within the visibility the student chose; every sentence cites a source log; uncited sentences are highlighted and must be fixed or removed before publishing; records `generator = ai` |
+| E-15 | Short lounge videos (deferred from A-04) | A-04 | Video duration and size limits, container metadata removal (in an isolated job), short signed URLs only for readers of the post, 0 in public, social and search outputs |
 
 Start order: E-01 → E-02 → E-03 → E-04 → E-06 → E-07 → E-08 → E-09 → E-10 → E-05 → E-11 → E-12 → E-13 → E-14. AI items (E-12–E-14) stay off without a provider key, and core features must work without AI (product plan §15).
 
