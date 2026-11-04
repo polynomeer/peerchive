@@ -64,7 +64,11 @@ test('C-02: 방 만들기 → 초대 → 수락 → 방장 나가기(승계)', a
 
   // 방장 화면: 멤버 목록에 손님
   await page.reload()
-  await expect(page.getByRole('region', { name: '멤버', exact: true })).toContainText(guest.displayName)
+  // 표시명 방의 멤버 목록에는 계정 이름·실명 handle이 없습니다(ADR 0060 D-01).
+  const roster = page.getByRole('region', { name: '멤버', exact: true })
+  await expect(roster.getByText('표시명 없음 · 멤버')).toBeVisible()
+  await expect(roster).not.toContainText(guest.displayName)
+  await expect(roster).not.toContainText(guest.handle)
 
   // 방장 나가기 → 손님이 방장
   page.once('dialog', (d) => void d.accept())
