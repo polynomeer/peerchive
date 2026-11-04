@@ -26,8 +26,8 @@ import {
   setStuckQaHelpful,
   withdrawStuckQaPost,
 } from '../server/modules/course-hub/stuck-qa'
-import { grantCourseCurator } from '../server/modules/curators/assignments'
-import { listCuratorReports } from '../server/modules/curators/report-review'
+import { acceptCuratorProposal, grantCourseCurator, listMyCuratorProposals } from '../server/modules/curators/assignments'
+import { listCuratorReports, recommendOnReport } from '../server/modules/curators/report-review'
 import { addProjectEmbargo } from '../server/modules/embargo/embargo'
 import { setFeatureEnvForTesting } from '../server/modules/features'
 import { createLog } from '../server/modules/logs/logs'
@@ -361,11 +361,18 @@ describe.skipIf(!databaseUrl)('E-04 stuck Q&A threads (PostgreSQL)', () => {
       const curator = await verified(tx, f.schoolId)
       await createProject(tx, { userId: curator.id }, { title: '지난 학기 과제', courseTermId: f.term.id }, T0)
       await grantCourseCurator(tx, f.O, f.course.id, { userId: curator.id }, at(7))
+      for (const p of await listMyCuratorProposals(tx, { userId: curator.id })) await acceptCuratorProposal(tx, { userId: curator.id }, p.id, at(7))
 
       const report = await createReport(tx, { userId: R.id }, { targetType: 'stuck_qa_post', targetRef: { stuckQaPostId: answerId }, reason: 'answer_sharing', details: '판매' }, at(8))
       expect(report).toMatchObject({ created: true })
       const groups = await listCuratorReports(tx, { userId: curator.id }, f.course.id, at(8))
       expect(groups).toHaveLength(1)
+      // ADR 0060 D-08: 큐레이터 본인이 쓴 글의 신고는 목록에서 빠지고 의견도 404입니다.
+      const own = await createStuckQaAnswer(tx, { userId: curator.id }, thread.id, { body: '제가 쓴 답입니다' }, at(8))
+      const ownId = own.posts.filter((p) => p.kind === 'answer').at(-1)!.id
+      const ownReport = await createReport(tx, { userId: R.id }, { targetType: 'stuck_qa_post', targetRef: { stuckQaPostId: ownId }, reason: 'spam' }, at(8))
+      expect((await listCuratorReports(tx, { userId: curator.id }, f.course.id, at(8))).map((g) => g.reportId)).toEqual([report.id])
+      await expectServiceError(recommendOnReport(tx, { userId: curator.id }, f.course.id, ownReport.id, { recommendation: 'dismiss' }, at(8)), 'NOT_FOUND')
       expect(groups[0]).toMatchObject({ targetType: 'stuck_qa_post', content: { kind: 'stuck_qa_post', post: { label: '익명1', body: '정답 코드 판매합니다' } } })
       expect(JSON.stringify(groups)).not.toContain(B.id)
 

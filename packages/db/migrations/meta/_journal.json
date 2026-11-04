@@ -414,6 +414,13 @@
       "when": 1793806913327,
       "tag": "0058_activity_cards_cohort_rule",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1793807079334,
+      "tag": "0059_curator_acceptance",
+      "breakpoints": true
     }
   ]
 }

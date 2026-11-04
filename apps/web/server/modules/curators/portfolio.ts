@@ -8,11 +8,11 @@
  * 이 파일은 공개 프로필 경로에서 닿으므로 큐레이터 지정 테이블·과목·학교만 읽습니다(등록·신고·커뮤니티 테이블 없음).
  */
 import { z } from 'zod'
-import { and, asc, courseCurators, courses, eq, isNull, schools, sql, users, type DbExecutor } from '@peerchive/db'
+import { and, asc, courseCurators, courses, eq, institutionAffiliations, schools, sql, users, type DbExecutor } from '@peerchive/db'
 import { loadCanonicalCourse } from '../catalog/catalog'
 import { type Actor, notFound } from '../errors'
 import { parseInput } from '../validation'
-import { courseRefs } from './access'
+import { courseRefs, currentCuratorSql } from './access'
 import type { CuratedCourseLabelDto, MyCuratedCourseDto } from '../../../shared/types/api'
 
 const canonical = sql<string>`coalesce(${courses.mergedInto}, ${courses.id})`
@@ -23,7 +23,7 @@ async function myRows(db: DbExecutor, userId: string) {
     .from(courseCurators)
     .innerJoin(courses, eq(courses.id, courseCurators.courseId))
     .innerJoin(users, eq(users.id, courseCurators.userId))
-    .where(and(eq(courseCurators.userId, userId), isNull(courseCurators.revokedAt), eq(users.status, 'active')))
+    .where(and(eq(courseCurators.userId, userId), currentCuratorSql()))
     .orderBy(asc(courseCurators.grantedAt), asc(courseCurators.id))
 }
 
@@ -56,7 +56,11 @@ export async function publicCuratedCourses(db: DbExecutor, userId: string): Prom
     join ${courses} c on c.id = cc.course_id
     join ${courses} canon on canon.id = coalesce(c.merged_into, c.id)
     join ${schools} s on s.id = canon.school_id
-    where cc.user_id = ${userId} and cc.revoked_at is null and cc.show_in_portfolio and u.status = 'active'
+    where cc.user_id = ${userId} and cc.revoked_at is null and cc.accepted_at is not null and cc.show_in_portfolio and u.status = 'active'
+      and exists (
+        select 1 from ${institutionAffiliations} ia join ${schools} ias on ias.id = ia.school_id
+        where ia.user_id = cc.user_id and ia.status = 'active' and coalesce(ias.merged_into, ias.id) = coalesce(s.merged_into, s.id)
+      )
     order by canon.title, s.name`)
   return rows.map((r) => ({ courseTitle: r.title, schoolName: r.school_name }))
 }

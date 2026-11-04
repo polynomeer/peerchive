@@ -11,6 +11,8 @@
  *   큐레이터마다 하나(다시 내면 고침). 처리 전이 아니거나 다른 과목·범위 밖 대상이면 404. 사용자별 시간당 60회(429).
  *   감사 `curator.report_recommend`(신고 id·과목 id·의견 종류). **신고 상태·담당·조치는 바뀌지 않습니다** — 처리·가리기·철회·계정 조치는 운영자만.
  * - 큐레이터 전용 경로입니다(운영자는 자기 대기열에서 의견을 봄, operator.ts).
+ * - **이해 충돌**(ADR 0060 D-08): 본인이 쓴 선배 노트·막힘 Q&A(질문자·답변자)·스레드 글, 본인이 멤버인 과제의 공개 사례와 그 안의 항목·막힘 카드 글은 목록에서 빠지고
+ *   의견도 404입니다. 판정은 **이 큐레이터 본인의** 작성·멤버십만 보므로, 빠진 것이 있어도 다른 사람이 쓴 익명 글의 작성자를 알아낼 길은 없습니다(남의 글은 이 조건으로 달라지지 않음).
  */
 import { z } from 'zod'
 import { CURATOR_NOTE_MAX, CURATOR_RECOMMENDATIONS, CURATOR_REVIEW_TARGETS, type CuratorReviewTarget } from '@peerchive/domain'
@@ -49,7 +51,7 @@ const targetList = sql.join(
 )
 
 /** 그 과목(정본)의 처리 전 신고(오래된 것부터, 최대 500). 범위 밖 대상 종류는 빠집니다. */
-async function openCourseReports(db: DbExecutor, canonicalCourseId: string, onlyReportId?: string): Promise<ReportRow[]> {
+async function openCourseReports(db: DbExecutor, canonicalCourseId: string, curatorId: string, onlyReportId?: string): Promise<ReportRow[]> {
   const ids = await db.execute<{ id: string }>(sql`
     select r.id from reports r
     left join senior_notes n on n.id = r.senior_note_id
@@ -63,6 +65,17 @@ async function openCourseReports(db: DbExecutor, canonicalCourseId: string, only
     join courses c on c.id = coalesce(n.course_id, q.course_id, pc.course_id, sqc.course_id)
     where r.status::text in ('open', 'in_review') and r.target_type::text in (${targetList})
       and coalesce(c.merged_into, c.id) = ${canonicalCourseId}
+      and not (
+        coalesce(n.author_id = ${curatorId}, false)
+        or coalesce(q.asker_id = ${curatorId}, false)
+        or coalesce(q.answerer_id = ${curatorId}, false)
+        or coalesce(sp.author_id = ${curatorId}, false)
+        or coalesce(sc.author_id = ${curatorId}, false)
+        or exists (
+          select 1 from publications own join project_members pm on pm.project_id = own.project_id
+          where own.id = coalesce(r.publication_id, sc.publication_id) and pm.user_id = ${curatorId}
+        )
+      )
       ${onlyReportId ? sql`and r.target_key = (select target_key from reports where id = ${onlyReportId})` : sql``}
     order by r.created_at, r.id
     limit 500`)
@@ -112,7 +125,7 @@ async function contentFor(db: DbExecutor, report: ReportRow, now: Date): Promise
 /** GET /curator/courses/:id/reports — 그 과목 큐레이터만(403 `curator_only`). */
 export async function listCuratorReports(db: DbExecutor, actor: Actor, courseId: unknown, now = new Date()): Promise<CuratorReportGroupDto[]> {
   const course = await requireCourseCurator(db, actor, courseId)
-  const rows = await openCourseReports(db, course.id)
+  const rows = await openCourseReports(db, course.id, actor.userId)
   const groups = new Map<string, ReportRow[]>()
   for (const r of rows) groups.set(r.targetKey, [...(groups.get(r.targetKey) ?? []), r])
   const anchors = [...groups.values()].map((g) => g[0]!)
@@ -163,7 +176,7 @@ export async function recommendOnReport(
   if (!isUuid(reportId)) throw notFound()
   return db.transaction(async (tx) => {
     // 이 신고와 같은 대상의, 이 과목 범위의 처리 전 신고(가장 오래된 것이 묶음의 기준).
-    const members = await openCourseReports(tx, course.id, reportId.toLowerCase())
+    const members = await openCourseReports(tx, course.id, actor.userId, reportId.toLowerCase())
     if (!members.some((m) => m.id === reportId.toLowerCase())) throw notFound()
     const anchor = members[0]!
     if (!(await hitRateLimit(tx, 'curator_report_recommend', actor.userId, RECOMMENDATION_RATE_LIMIT, now))) throw rateLimited()

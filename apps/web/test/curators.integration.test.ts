@@ -11,6 +11,8 @@ import { afterAll, describe, expect, it } from 'vitest'
 import {
   and,
   auditEvents,
+  courseQaItems,
+  institutionAffiliations,
   conceptTags,
   courseCurators,
   courseRegistrations,
@@ -27,8 +29,8 @@ import { setCourseTeamFindingAsCurator } from '../server/modules/community/recru
 import { getPublicCourseHub } from '../server/modules/course-hub/hub'
 import { createSeniorNote, publishSeniorNote } from '../server/modules/course-hub/senior-notes'
 import { curatedCourseIds, requireCourseCurator } from '../server/modules/curators/access'
-import { grantCourseCurator, listAllCurators, listCourseCurators, revokeCourseCurator } from '../server/modules/curators/assignments'
-import { listMyCuratedCourses, setCuratorPortfolioDisplay } from '../server/modules/curators/portfolio'
+import { acceptCuratorProposal, declineCuratorProposal, grantCourseCurator, listAllCurators, listCourseCurators, listMyCuratorProposals, revokeCourseCurator } from '../server/modules/curators/assignments'
+import { listMyCuratedCourses, publicCuratedCourses, setCuratorPortfolioDisplay } from '../server/modules/curators/portfolio'
 import { listCuratorReports, recommendOnReport } from '../server/modules/curators/report-review'
 import { putAssignmentTypeSummary } from '../server/modules/curators/summaries'
 import { approveTagMergeProposal, listTagMergeProposals, proposeTagMerge, rejectTagMergeProposal } from '../server/modules/curators/tag-proposals'
@@ -67,6 +69,13 @@ async function fixture(db: DbExecutor) {
   const { term } = await createCourseTerm(db, { userId: op.id }, course.id, { year: 2025, semester: 'fall' }, T0)
   const { term: otherTerm } = await createCourseTerm(db, { userId: op.id }, other.id, { year: 2025, semester: 'fall' }, T0)
   return { O: { userId: op.id }, schoolId: school.id, course, other, term, otherTerm, t }
+}
+
+/** 운영자가 제안하고 본인이 수락합니다(ADR 0060 D-08). */
+async function assign(db: DbExecutor, f: { O: { userId: string } }, courseId: string, userId: string, when: Date) {
+  await grantCourseCurator(db, f.O, courseId, { userId }, when)
+  const proposals = await listMyCuratorProposals(db, { userId })
+  for (const p of proposals) await acceptCuratorProposal(db, { userId }, p.id, when)
 }
 
 /** 과목을 마친(끝난 학기 과제 공간의 멤버) + 학교 인증이 있는 사용자. */
@@ -132,7 +141,7 @@ describe.skipIf(!databaseUrl)('E-03 student curators (PostgreSQL)', () => {
       await verifiedAffiliation(tx, registered.id, f.schoolId)
 
       const list = await grantCourseCurator(tx, f.O, f.course.id, { userId: A.id }, at(2))
-      expect(list).toEqual([{ id: expect.any(String), course: { id: f.course.id, title: f.course.title, code: f.course.code, schoolName: expect.any(String) }, userId: A.id, displayName: '큐레이터 후보', grantedAt: at(2).toISOString() }])
+      expect(list).toEqual([{ id: expect.any(String), course: { id: f.course.id, title: f.course.title, code: f.course.code, schoolName: expect.any(String) }, userId: A.id, displayName: '큐레이터 후보', grantedAt: at(2).toISOString(), status: 'pending' }])
       await expectServiceError(grantCourseCurator(tx, f.O, f.course.id, { userId: A.id }, at(3)), 'CONFLICT', 'already_curator')
       expect(await grantCourseCurator(tx, f.O, f.course.id, { userId: registered.id }, at(3))).toHaveLength(2)
       await expectServiceError(grantCourseCurator(tx, f.O, f.course.id, { userId: B.id }, at(4)), 'CONFLICT', 'limit_reached')
@@ -159,7 +168,7 @@ describe.skipIf(!databaseUrl)('E-03 student curators (PostgreSQL)', () => {
       const f = await fixture(tx)
       const C = await finishedVerified(tx, f.schoolId, f.term.id)
       const stranger = await finishedVerified(tx, f.schoolId, f.term.id)
-      await grantCourseCurator(tx, f.O, f.course.id, { userId: C.id }, at(1))
+      await assign(tx, f, f.course.id, C.id, at(1))
       const me = { userId: C.id }
 
       // 큐레이터가 아니면 403(과목이 없어도 먼저), 다른 과목도 403.
@@ -239,8 +248,8 @@ describe.skipIf(!databaseUrl)('E-03 student curators (PostgreSQL)', () => {
       const C = await finishedVerified(tx, f.schoolId, f.term.id)
       const C2 = await finishedVerified(tx, f.schoolId, f.term.id)
       await createProject(tx, { userId: C2.id }, { title: '다른 과목 과제', courseTermId: f.otherTerm.id }, T0)
-      await grantCourseCurator(tx, f.O, f.course.id, { userId: C.id }, at(1))
-      await grantCourseCurator(tx, f.O, f.other.id, { userId: C2.id }, at(1))
+      await assign(tx, f, f.course.id, C.id, at(1))
+      await assign(tx, f, f.other.id, C2.id, at(1))
       const author = await createUser(tx, { displayName: '노트 작성자' })
       await verifiedAffiliation(tx, author.id, f.schoolId)
       const note = await createSeniorNote(tx, { userId: author.id }, f.course.id, NOTE_INPUT, at(2))
@@ -326,7 +335,7 @@ describe.skipIf(!databaseUrl)('E-03 student curators (PostgreSQL)', () => {
       const C = await finishedVerified(tx, f.schoolId, f.term.id, handle)
       const me = { userId: C.id }
       expect((await getPublicPortfolioProfile(tx, handle, at(1))).juniorContribution.curatedCourses).toEqual([])
-      await grantCourseCurator(tx, f.O, f.course.id, { userId: C.id }, at(1))
+      await assign(tx, f, f.course.id, C.id, at(1))
       expect(await listMyCuratedCourses(tx, me)).toEqual([{ course: expect.objectContaining({ id: f.course.id }), grantedAt: at(1).toISOString(), showInPortfolio: false }])
       expect((await getPublicPortfolioProfile(tx, handle, at(2))).juniorContribution.curatedCourses).toEqual([])
       expect((await setCuratorPortfolioDisplay(tx, me, f.course.id, { showInPortfolio: true })).showInPortfolio).toBe(true)
@@ -352,9 +361,9 @@ describe.skipIf(!databaseUrl)('E-03 student curators (PostgreSQL)', () => {
       const A = await finishedVerified(tx, f.schoolId, dupTerm.id)
       const B = await finishedVerified(tx, f.schoolId, dupTerm.id)
       await createProject(tx, { userId: B.id }, { title: '정본 과목 과제', courseTermId: f.term.id }, T0)
-      await grantCourseCurator(tx, f.O, dup.id, { userId: A.id }, at(1))
-      await grantCourseCurator(tx, f.O, dup.id, { userId: B.id }, at(1))
-      await grantCourseCurator(tx, f.O, f.course.id, { userId: B.id }, at(1))
+      await assign(tx, f, dup.id, A.id, at(1))
+      await assign(tx, f, dup.id, B.id, at(1))
+      await assign(tx, f, f.course.id, B.id, at(1))
       await putAssignmentTypeSummary(tx, { userId: A.id }, dup.id, { body: '중복 과목에서 쓴 요약', expectedVersion: 0 }, at(2))
 
       await mergeCourse(tx, f.O, dup.id, { into: f.course.id }, at(3))
@@ -365,6 +374,118 @@ describe.skipIf(!databaseUrl)('E-03 student curators (PostgreSQL)', () => {
       expect((await getPublicCourseHub(tx, f.course.id, at(4))).assignmentTypeSummary?.body).toBe('중복 과목에서 쓴 요약')
       const audit = await tx.select().from(auditEvents).where(and(eq(auditEvents.action, 'course.merge'), eq(auditEvents.targetId, dup.id)))
       expect(audit[0]!.metadata).toMatchObject({ curatorsMoved: 2, curatorsClosed: 1 })
+    })
+  })
+
+  // ADR 0060 D-08: 지정은 제안이고, 인증은 요청마다 보고, 본인 글의 신고는 빠집니다.
+  it('assignment is a proposal: no powers until accepted, pending counts toward the limit, eligibility is rechecked, decline frees the seat', async () => {
+    await withRollback(async (tx) => {
+      const f = await fixture(tx)
+      const [A, B, C] = [await finishedVerified(tx, f.schoolId, f.term.id), await finishedVerified(tx, f.schoolId, f.term.id), await finishedVerified(tx, f.schoolId, f.term.id)]
+      const listed = await grantCourseCurator(tx, f.O, f.course.id, { userId: A.id }, at(1))
+      expect(listed[0]).toMatchObject({ userId: A.id, status: 'pending' })
+      const a = { userId: A.id }
+      // 대기 중에는 권한·포트폴리오·큐레이터 과목 목록이 없습니다.
+      expect(await curatedCourseIds(tx, A.id)).toEqual([])
+      await expectServiceError(requireCourseCurator(tx, a, f.course.id), 'FORBIDDEN', 'curator_only')
+      await expectServiceError(listCuratorReports(tx, a, f.course.id, at(2)), 'FORBIDDEN', 'curator_only')
+      expect(await listMyCuratedCourses(tx, a)).toEqual([])
+      const [proposal] = await listMyCuratorProposals(tx, a)
+      expect(proposal).toMatchObject({ course: { id: f.course.id } })
+      expect(JSON.stringify(proposal)).not.toContain(f.O.userId)
+
+      // 대기 중인 제안도 한도에 셉니다.
+      await grantCourseCurator(tx, f.O, f.course.id, { userId: B.id }, at(2))
+      await expectServiceError(grantCourseCurator(tx, f.O, f.course.id, { userId: C.id }, at(3)), 'CONFLICT', 'limit_reached')
+      // 남은 제안에 손댈 수 없습니다.
+      await expectServiceError(acceptCuratorProposal(tx, { userId: B.id }, proposal!.id, at(3)), 'NOT_FOUND')
+      await expectServiceError(declineCuratorProposal(tx, { userId: B.id }, proposal!.id, at(3)), 'NOT_FOUND')
+
+      // 거절하면 자리가 비고 운영자는 다시 제안할 수 있습니다.
+      await declineCuratorProposal(tx, a, proposal!.id, at(4))
+      await expectServiceError(acceptCuratorProposal(tx, a, proposal!.id, at(4)), 'NOT_FOUND')
+      expect((await listCourseCurators(tx, f.O, f.course.id)).map((c) => c.userId)).toEqual([B.id])
+      await grantCourseCurator(tx, f.O, f.course.id, { userId: C.id }, at(5))
+
+      // 수락 때 자격을 다시 봅니다: 인증이 끝났으면 409, 행은 대기로 남습니다.
+      const [bProposal] = await listMyCuratorProposals(tx, { userId: B.id })
+      await tx.update(institutionAffiliations).set({ status: 'revoked', revokedAt: at(5), revokedReason: 'user_removed', emailHash: null }).where(eq(institutionAffiliations.userId, B.id))
+      const error = await expectServiceError(acceptCuratorProposal(tx, { userId: B.id }, bProposal!.id, at(6)), 'CONFLICT', 'curator_not_eligible')
+      expect(error.details).toEqual({ reason: 'not_verified' })
+      expect((await listMyCuratorProposals(tx, { userId: B.id })).map((p) => p.id)).toEqual([bProposal!.id])
+
+      // 수락하면 권한이 생기고 멱등이며, 수락한 뒤에는 거절할 수 없습니다. 감사에는 id만.
+      const [cProposal] = await listMyCuratorProposals(tx, { userId: C.id })
+      await acceptCuratorProposal(tx, { userId: C.id }, cProposal!.id, at(7))
+      await acceptCuratorProposal(tx, { userId: C.id }, cProposal!.id, at(8))
+      expect(await curatedCourseIds(tx, C.id)).toEqual([f.course.id])
+      expect((await listCourseCurators(tx, f.O, f.course.id)).find((c) => c.userId === C.id)?.status).toBe('accepted')
+      await expectServiceError(declineCuratorProposal(tx, { userId: C.id }, cProposal!.id, at(8)), 'CONFLICT', 'already_accepted')
+      const audits = await tx.select().from(auditEvents).where(and(eq(auditEvents.targetType, 'course_curator'), eq(auditEvents.targetId, cProposal!.id), eq(auditEvents.action, 'curator.accept')))
+      expect(audits).toHaveLength(1)
+      expect(audits[0]!.metadata).toEqual({ courseId: f.course.id, userId: C.id })
+    })
+  })
+
+  it('school verification is rechecked on every curator request: lapsed → 403 curator_only, row kept, returning verification restores it', async () => {
+    await withRollback(async (tx) => {
+      const f = await fixture(tx)
+      const C = await finishedVerified(tx, f.schoolId, f.term.id, `c-${f.t}`)
+      await assign(tx, f, f.course.id, C.id, at(1))
+      const c = { userId: C.id }
+      await setCuratorPortfolioDisplay(tx, c, f.course.id, { showInPortfolio: true })
+      expect(await publicCuratedCourses(tx, C.id)).toHaveLength(1)
+      await tx.update(institutionAffiliations).set({ status: 'revoked', revokedAt: at(2), revokedReason: 'user_removed', emailHash: null }).where(eq(institutionAffiliations.userId, C.id))
+      await expectServiceError(requireCourseCurator(tx, c, f.course.id), 'FORBIDDEN', 'curator_only')
+      await expectServiceError(listCuratorReports(tx, c, f.course.id, at(3)), 'FORBIDDEN', 'curator_only')
+      await expectServiceError(getCuratorWorkspace(tx, c, f.course.id), 'FORBIDDEN', 'curator_only')
+      expect(await publicCuratedCourses(tx, C.id)).toEqual([])
+      expect((await listCourseCurators(tx, f.O, f.course.id)).map((r) => r.userId)).toEqual([C.id])
+      await verifiedAffiliation(tx, C.id, f.schoolId, { standing: 'alumni' })
+      expect(await curatedCourseIds(tx, C.id)).toEqual([f.course.id])
+    })
+  })
+
+  it('reports on items the curator authored or is a member of are not shown and refuse a recommendation; other curators still see them; others stay unaffected', async () => {
+    await withRollback(async (tx) => {
+      const f = await fixture(tx)
+      const C = await finishedVerified(tx, f.schoolId, f.term.id)
+      const C2 = await finishedVerified(tx, f.schoolId, f.term.id)
+      await assign(tx, f, f.course.id, C.id, at(1))
+      await assign(tx, f, f.course.id, C2.id, at(1))
+      const c = { userId: C.id }
+      const reporter = { userId: (await createUser(tx)).id }
+      const reportNote = async (authorId: string) => {
+        const note = await createSeniorNote(tx, { userId: authorId }, f.course.id, NOTE_INPUT, at(2))
+        await publishSeniorNote(tx, { userId: authorId }, note.id, { expectedVersion: 1 }, at(3))
+        return (await createReport(tx, reporter, { targetType: 'senior_note', targetRef: { noteId: note.id }, reason: 'spam' }, at(10))).id
+      }
+      const own = await reportNote(C.id)
+      const theirs = await reportNote(C2.id)
+      // 큐레이터가 멤버인 과제의 공개 사례.
+      const mine = await publishCase(tx, C.id, f.term.id)
+      const ownCase = (await createReport(tx, reporter, { targetType: 'publication', targetRef: { slug: mine.slug }, reason: 'spam' }, at(11))).id
+      // 막힘 Q&A: 내가 질문자·답변자인 항목(익명으로 공개돼도 나만 빠짐).
+      const qa = (asker: string | null, answerer: string | null) =>
+        tx
+          .insert(courseQaItems)
+          .values({ courseId: f.course.id, questionTitle: '질문', questionBody: '본문', answerBody: '답', askerId: asker, answererId: answerer, askerLabel: '익명', askerAnonymous: true, answererLabel: '익명', answererAnonymous: true, transferId: crypto.randomUUID(), status: 'published', publishedAt: at(4) })
+          .returning({ id: courseQaItems.id })
+      const [asked] = await qa(C.id, C2.id)
+      const [answered] = await qa(C2.id, C.id)
+      const [neither] = await qa(C2.id, C2.id)
+      const qaReport = async (id: string) => (await createReport(tx, reporter, { targetType: 'course_qa', targetRef: { qaId: id }, reason: 'spam' }, at(12))).id
+      const [rAsked, rAnswered, rNeither] = [await qaReport(asked!.id), await qaReport(answered!.id), await qaReport(neither!.id)]
+
+      const seen = (await listCuratorReports(tx, c, f.course.id, at(13))).map((g) => g.reportId)
+      expect(seen.sort()).toEqual([theirs, rNeither].sort())
+      for (const id of [own, ownCase, rAsked, rAnswered]) await expectServiceError(recommendOnReport(tx, c, f.course.id, id, { recommendation: 'dismiss' }, at(14)), 'NOT_FOUND')
+      // 신고는 그대로 있고 다른 큐레이터는 봅니다(자기 글만 빠짐).
+      const seenByOther = (await listCuratorReports(tx, { userId: C2.id }, f.course.id, at(13))).map((g) => g.reportId)
+      expect(seenByOther.sort()).toEqual([own, ownCase].sort())
+      expect((await recommendOnReport(tx, { userId: C2.id }, f.course.id, own, { recommendation: 'dismiss' }, at(14))).reportId).toBe(own)
+      // 없는 신고와 내 글의 신고는 같은 404입니다(남의 익명 글이 달라지지 않으므로 다른 사람의 작성 여부는 알 수 없음).
+      await expectServiceError(recommendOnReport(tx, c, f.course.id, crypto.randomUUID(), { recommendation: 'dismiss' }, at(14)), 'NOT_FOUND')
     })
   })
 })

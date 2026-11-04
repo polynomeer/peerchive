@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 학생 큐레이터 운영(E-03, ADR 0048). 운영자가 아니면 404로 보입니다(API는 403 operator_only).
- * - 지정·해제: 과목 id와 사용자 id로 지정합니다(자격: 과목을 마침 + 그 학교 active 학교 인증, 과목당 2명). 해제하면 다음 요청부터 권한이 없습니다.
+ * - 지정·해제: 과목 id와 사용자 id로 제안합니다. 본인이 홈에서 수락해야 시작됩니다(ADR 0060 D-08, 자격: 과목을 마침 + 그 학교 active 학교 인증, 과목당 2명). 해제하면 다음 요청부터 권한이 없습니다.
  * - 개념 태그 병합 제안 대기열: 승인하면 기존 태그 병합을 실행하고, 거절하면 상태만 바꿉니다.
  * 신고에 대한 큐레이터 의견은 신고 상세에서 봅니다.
  */
@@ -36,7 +36,7 @@ async function grant() {
   message.value = null
   try {
     await $fetch(`/api/v1/operator/courses/${form.courseId.trim()}/curators`, { method: 'POST', body: { userId: form.userId.trim() } })
-    message.value = { kind: 'ok', text: '큐레이터로 지정했습니다.' }
+    message.value = { kind: 'ok', text: '큐레이터를 제안했습니다. 본인이 수락하면 시작됩니다.' }
     Object.assign(form, { courseId: '', userId: '' })
     await refresh()
   } catch (e) {
@@ -98,12 +98,13 @@ async function decide(p: ConceptTagProposalDto, decision: 'approve' | 'reject') 
       </section>
 
       <section aria-labelledby="op-curator-list">
-        <h2 id="op-curator-list">지금 큐레이터</h2>
+        <h2 id="op-curator-list">지금 큐레이터·수락 대기</h2>
         <ul v-if="curators?.length" class="plain operator-list">
           <li v-for="c in curators" :key="c.id">
             <p>
               <NuxtLink :to="`/curator/${c.course.id}`">{{ c.course.schoolName }} · {{ c.course.title }}</NuxtLink> — {{ c.displayName }}
               <span class="small muted">({{ c.userId }}, {{ formatDateTime(c.grantedAt) }} 지정)</span>
+              <span v-if="c.status === 'pending'" class="badge" data-testid="curator-pending">수락 대기</span>
               <button type="button" class="link-button" :disabled="busy" @click="revoke(c)">해제</button>
             </p>
           </li>

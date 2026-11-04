@@ -25,9 +25,15 @@ test('E-03: 운영자 지정 → 큐레이터가 과제 유형 요약 작성(허
   expect((await api.raw('GET', `/api/v1/curator/courses/${course.courseId}`)).status()).toBe(403)
   const assigned = await operator.api.post<OperatorCourseCuratorDto[]>(`/api/v1/operator/courses/${course.courseId}/curators`, { userId: curator.id })
   expect(assigned.map((c) => c.userId)).toEqual([curator.id])
+  expect(assigned[0]!.status).toBe('pending')
 
+  // 지정은 제안입니다. 수락 전에는 권한이 없고, 홈에서 수락합니다(ADR 0060 D-08).
+  expect((await api.raw('GET', `/api/v1/curator/courses/${course.courseId}`)).status()).toBe(403)
   await page.goto('/')
   const card = page.getByRole('region', { name: '큐레이터 과목' })
+  await expect(card.getByTestId('curator-proposals')).toContainText(course.courseTitle)
+  await card.getByRole('button', { name: '수락' }).click()
+  await expect(card.getByTestId('curator-proposals')).toHaveCount(0)
   await card.getByRole('link', { name: new RegExp(course.courseTitle) }).click()
   await expect(page.getByRole('heading', { level: 1, name: course.courseTitle })).toBeVisible()
   await page.getByTestId('curator-summary-body').fill('개인 구현 과제 4개와 팀 프로젝트 1개. 주차마다 짧은 보고서.')

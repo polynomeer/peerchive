@@ -2732,8 +2732,13 @@ export const courseCurators = pgTable(
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     revokedBy: uuid('revoked_by').references(() => users.id),
     showInPortfolio: boolean('show_in_portfolio').notNull().default(false),
+    /** 본인이 제안을 수락한 시각(ADR 0060 D-08). null이면 대기 중이라 권한이 없습니다. 대기 중인 행도 과목당 2명 한도에 셉니다. */
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    /** 본인이 제안을 거절한 시각. 거절은 revoked_at도 채워 열린 행에서 빠집니다(운영자는 다시 제안할 수 있음). */
+    declinedAt: timestamp('declined_at', { withTimezone: true }),
   },
   (t) => [
+    check('course_curators_declined_check', sql`${t.declinedAt} is null or (${t.revokedAt} is not null and ${t.acceptedAt} is null)`),
     uniqueIndex('course_curators_open_key').on(t.courseId, t.userId).where(sql`${t.revokedAt} is null`),
     index('course_curators_user_id_idx').on(t.userId),
     check('course_curators_revoked_check', sql`${t.revokedAt} is not null or ${t.revokedBy} is null`),

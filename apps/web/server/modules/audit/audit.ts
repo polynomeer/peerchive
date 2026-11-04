@@ -123,6 +123,8 @@ export type AuditAction =
   | 'institution_staff.revoke'
   // E-03(ADR 0048): 학생 큐레이터 지정·해제, 과제 유형 요약 고침, 개념 태그 병합 제안·결정, 1차 신고 의견. id·종류·version·플래그만(글 없음).
   | 'curator.grant'
+  | 'curator.accept'
+  | 'curator.decline'
   | 'curator.revoke'
   | 'curator.summary_update'
   | 'curator.tag_merge_propose'

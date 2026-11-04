@@ -4223,6 +4223,15 @@ export interface OperatorCourseCuratorDto {
   userId: string
   displayName: string
   grantedAt: string
+  /** pending: 본인 수락을 기다림(권한 없음, 한도에는 셈). accepted: 수락함(ADR 0060 D-08). */
+  status: 'pending' | 'accepted'
+}
+
+/** GET /api/v1/me/curator-proposals — 내게 온 대기 중인 큐레이터 제안. */
+export interface CuratorProposalDto {
+  id: string
+  course: CuratorCourseRefDto
+  grantedAt: string
 }
 
 /** GET /api/v1/me/curated-courses — 내가 지금 큐레이터인 과목. */
