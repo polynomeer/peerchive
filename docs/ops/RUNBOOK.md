@@ -595,7 +595,7 @@ select column_name from information_schema.columns where table_name = 'instituti
 - **사용량 점검(주 1회)**: `select day, feature, model, requests, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, refusals, fallbacks, failures from ai_usage_daily where day > current_date - 14 order by day desc, feature;` — 사람·과제·내용은 없습니다. `refusals`·`failures` 비율이 높으면 서버 로그의 `[ai] <기능>: <종류> (<상태>)` 줄을 봅니다(프롬프트·출력은 로그에 없음). `fallbacks`는 서버 쪽 거절 대체 모델이 답한 수입니다.
 - **끄기**: `PEERCHIVE_AI_ENABLED=off` + 재시작 → 다음 요청부터 404·칸 없음, 폼 체크인 그대로(§3.6.2). 학생의 켜기 행·승인한 로그는 남습니다(로그는 학생 자료, 출처 `AI 초안` 유지). 진행 중 세션·초안을 바로 지우려면 `delete from ai_retro_drafts; delete from ai_retro_sessions;`(로그 없음, 학생이 다시 켜면 새로 시작).
 - **보존**: 질문·답변은 초안을 만드는 순간 비움, 세션·초안은 처리 즉시 또는 만든 지 7일 뒤 `ai-retro-sessions`(매시 19분, `PEERCHIVE_CRON_AI_RETRO_SESSIONS`)가 삭제, 켜기를 끄면 즉시 삭제, 탈퇴 정리(`account-purge`). §8 표.
-- **SDK 버전**: `@anthropic-ai/sdk` 0.135.0(저장소 규칙상 공개 14일 지난 버전). 1.x로 올릴 때는 `packages/ai/test/ai.test.ts`(요청 모양·오류 분류)로 확인합니다.
+- **SDK 버전**: `@anthropic-ai/sdk` 1.1.0(Apache-2.0, 저장소 규칙상 공개 14일 지난 버전). API 버전은 SDK 기본값 `2026-10-21`이고, 키는 `Authorization: Bearer`로 나갑니다. 앞단 프록시를 두면 `X-Api-Key`가 아니라 이 헤더를 전달하도록 설정합니다. 올릴 때는 `packages/ai/test/ai.test.ts`(요청 모양·오류 분류)로 확인합니다.
 
 ### 4.13 AI 회의 요약(E-13, ADR 0058)
 

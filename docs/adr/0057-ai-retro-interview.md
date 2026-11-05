@@ -59,7 +59,7 @@ E-12는 DELIVERY_PLAN §4.4 P1 보완 백로그의 열두 번째 항목입니다
 
 ### 6. 공용 Claude 클라이언트 `@peerchive/ai`
 
-- 공식 `@anthropic-ai/sdk`(직접 fetch·OpenAI 호환 shim 없음). 버전은 저장소의 "공개 14일 지난 버전만" 규칙(pnpm `minimumReleaseAge`)에 따라 **0.135.0**(MIT)입니다 — 1.x(2026-10-21~)는 아직 14일이 지나지 않아 설치되지 않습니다.
+- 공식 `@anthropic-ai/sdk`(직접 fetch·OpenAI 호환 shim 없음). 버전은 저장소의 "공개 14일 지난 버전만" 규칙(pnpm `minimumReleaseAge`)에 따라 처음에는 **0.135.0**(MIT)이었고, 2026-11-05에 **1.1.0**(Apache-2.0, API 버전 `2026-10-21`)으로 올렸습니다([ADR 0060](0060-open-question-decisions.md)).
 - 인터페이스 `AiProvider.generateStructured({feature, system, messages, schema(zod), maxTokens, effort})` → `{data, usage, model, fallback}`. 실패는 `AiError(kind: refusal | max_tokens | invalid_output | rate_limited | unavailable, status, usage)` — 메시지에는 종류·상태만. E-13·E-14는 이 인터페이스와 웹 `callAi`(상한·사용량·오류 변환)를 그대로 씁니다.
 - 요청 모양(claude-api 지침): `client.beta.messages.create` + `betas: ['server-side-fallback-2026-07-01']` + `fallbacks: 'default'`(분류기 거절 때 API가 Anthropic 권장 대체 모델로 같은 요청을 다시 돌림, `PEERCHIVE_AI_FALLBACKS=off`로 끔) + `output_config: {effort, format: json_schema}`(zod → `betaZodOutputFormat`의 JSON Schema). 구조화 출력과 서버 쪽 대체를 같이 쓰는 조합을 금지하는 문서가 없고 SDK 타입도 둘을 함께 받아 둘 다 씁니다(대체 모델 Claude Opus 5·Opus 4.8도 구조화 출력을 지원). 실제 키로 확인하지 않았으므로 400이 나오면 `PEERCHIVE_AI_FALLBACKS=off`로 내립니다(RUNBOOK).
 - 응답은 **`stop_reason`을 먼저** 봅니다: `refusal`(대체 모델까지 거절 — 부분 출력 버림, `stop_details.category`는 정보용) → `ai_declined`, `max_tokens` → 실패, `end_turn`일 때만 텍스트를 JSON.parse + zod 검증. SDK의 `parse()`는 잘린 출력에서도 먼저 파싱하다 출력 일부가 섞인 예외를 던지므로 쓰지 않습니다.
@@ -94,7 +94,7 @@ E-12는 DELIVERY_PLAN §4.4 P1 보완 백로그의 열두 번째 항목입니다
 ## 결과
 
 - 서버에 키를 넣고 학생이 켜면, 체크인 옆에서 3분 안팎의 질문에 답해 막힘·결정·검증 로그 초안을 받고 고쳐서 남길 수 있습니다. 학생이 승인하지 않은 AI 글은 빌드 로그·공개·검색·기여 장부 어디에도 들어가지 않고, 승인한 글은 `AI 초안`으로 끝까지 표시됩니다.
-- 새 패키지 `@peerchive/ai`(`@anthropic-ai/sdk` 0.135.0 MIT, `zod` 4.6.5), migration `0052_ai_retro_interview`(enum `ai_retro_session_status`, 분석 이벤트 enum 두 값, 테이블 `ai_retro_opt_ins`·`ai_retro_sessions`·`ai_retro_drafts`·`ai_usage_daily`, 빈 DB 처음부터 migrate 확인), 도메인 `ai-retro.ts`, 웹 `server/modules/ai/{ai,retro-interview}.ts`, 화면 `AiRetroSection.vue`, worker 작업 `ai-retro-sessions`.
+- 새 패키지 `@peerchive/ai`(`@anthropic-ai/sdk` 0.135.0 MIT(이후 1.1.0 Apache-2.0), `zod` 4.6.5), migration `0052_ai_retro_interview`(enum `ai_retro_session_status`, 분석 이벤트 enum 두 값, 테이블 `ai_retro_opt_ins`·`ai_retro_sessions`·`ai_retro_drafts`·`ai_usage_daily`, 빈 DB 처음부터 migrate 확인), 도메인 `ai-retro.ts`, 웹 `server/modules/ai/{ai,retro-interview}.ts`, 화면 `AiRetroSection.vue`, worker 작업 `ai-retro-sessions`.
 - 테스트: `@peerchive/ai` 단위(설정·요청 모양·거절·상한·형식 오류·SDK 오류 변환·내용 비노출·가짜 공급자), domain(질문 수·초안 변환·구획 무력화), web 통합(꺼짐 404·폼 체크인 그대로, 켜기 범위·권한, 질문 흐름·최소/최대 질문·일찍 끝내기·낡은 질문 409, 초안 검증·버림, 보낸 데이터 표지 검사, 팀원에게 안 보임, 승인 로그 source ai·revision 표시·공개 스냅샷 출처, 버리기 0건, 거절·상한·공급자 오류 503·저장 없음·사용량, 비용 상한 3종, 7일 만료·끄기 삭제, 분석 수집 거부), worker(만료 정리·탈퇴 정리), E2E `e12-ai-retro.spec.ts`(공급자 없는 기본 서버: 404·칸 없음·폼 체크인 동작).
 - 한계: 실제 Claude 응답으로는 확인하지 않았습니다(키 없음, 네트워크 금지). 질문·초안 품질·한국어 어투·effort·max_tokens는 pilot에서 조정합니다. 거절·실패가 잦으면 학생은 폼 체크인·직접 작성으로 돌아갑니다. 팀에서 나간 멤버의 세션·켜기 행은 7일 정리·탈퇴 정리 전까지 남습니다(읽기는 404). 학기 말 15분 인터뷰·케이스 재료 생성은 범위 밖입니다.
 

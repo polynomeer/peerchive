@@ -105,8 +105,9 @@ describe('anthropic adapter (fake fetch, no network)', () => {
     const [call] = captured
     expect(call!.url).toMatch(/\/v1\/messages\?beta=true$/)
     expect(call!.headers.get('anthropic-beta')).toBe(SERVER_SIDE_FALLBACK_BETA)
-    expect(call!.headers.get('x-api-key')).toBe('sk-test')
-    expect(call!.headers.get('authorization')).toBeNull()
+    expect(call!.headers.get('authorization')).toBe('Bearer sk-test')
+    expect(call!.headers.get('x-api-key')).toBeNull()
+    expect(call!.headers.get('anthropic-version')).toBe('2026-10-21')
     const body = call!.body
     expect(body.model).toBe('claude-opus-5-5')
     expect(body.max_tokens).toBe(4096)

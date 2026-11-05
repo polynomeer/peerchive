@@ -13,7 +13,8 @@
  * - 프롬프트 캐싱: 고정 system 블록에 `cache_control`(5분), 요청마다 바뀌는 내용은 그 뒤 messages에만 둡니다.
  *   (system이 최소 캐시 길이 512토큰보다 짧으면 표시가 있어도 조용히 캐시되지 않습니다 — 오류 아님.)
  * - 클라이언트 `timeout`(ms)·`maxRetries`(SDK가 429·5xx·연결 오류를 지수 백오프로 재시도).
- * - 인증: 서버의 `ANTHROPIC_API_KEY`만 넘기고 `authToken`은 null로 둡니다(둘 다 보내면 401).
+ * - 인증: 서버의 `ANTHROPIC_API_KEY`만 `apiKey`로 넘깁니다. SDK 1.x는 이 키를 `Authorization: Bearer`로 보내고, 넘긴 자격 증명 하나만 씁니다(환경 변수·디스크를 더 찾지 않음).
+ * - API 버전: SDK 기본값(`2026-10-21`)을 그대로 씁니다. 코드에서 정하지 않습니다.
  * - 오류는 SDK 타입 오류 클래스로만 분류합니다(메시지 문자열 비교 없음). 공급자 응답 본문·입력 글은 오류에 싣지 않습니다.
  */
 import Anthropic from '@anthropic-ai/sdk'
@@ -74,7 +75,6 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): AiPr
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY is empty')
   const client = new Anthropic({
     apiKey,
-    authToken: null,
     timeout: options.timeoutMs,
     maxRetries: options.maxRetries,
     ...(options.fetch && { fetch: options.fetch }),
