@@ -51,8 +51,10 @@ test('E-03: 운영자 지정 → 큐레이터가 과제 유형 요약 작성(허
   await expect(page.getByRole('heading', { name: '후배 기여' })).toBeVisible()
   await expect(page.getByTestId('curated-courses')).toHaveCount(0)
   await page.goto('/')
+  // 체크 표시는 저장보다 먼저 바뀌므로 응답을 기다립니다. 바로 페이지를 옮기면 저장 요청이 취소될 수 있습니다.
+  const saved = page.waitForResponse((r) => r.url().includes('/api/v1/me/curated-courses/') && r.request().method() === 'PATCH' && r.ok())
   await page.getByRole('region', { name: '큐레이터 과목' }).getByRole('checkbox').check()
-  await expect(page.getByRole('region', { name: '큐레이터 과목' }).getByRole('checkbox')).toBeChecked()
+  await saved
   await page.goto(`/u/${curator.handle}`)
   await expect(page.getByTestId('curated-courses')).toContainText(course.courseTitle)
 
