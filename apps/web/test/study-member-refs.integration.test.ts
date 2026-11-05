@@ -80,7 +80,7 @@ import {
 import { listMyPublishedConsents, publishCandidate, revokeConsent, withdrawPublication } from '../server/modules/publication/releases'
 import { completeTask, convertTask, createTask, deleteTask, listTasks, reorderTasks, updateTask } from '../server/modules/tasks/tasks'
 import type { LogDto } from '../shared/types/api'
-import { closeTestDb, createUser, databaseUrl, expectServiceError, minutes, verifiedAffiliation, withRollback } from './helpers'
+import { insertDisplayPersona, closeTestDb, createUser, databaseUrl, expectServiceError, minutes, verifiedAffiliation, withRollback } from './helpers'
 
 const T0 = new Date('2026-11-06T09:00:00Z')
 const at = (n: number) => new Date(T0.getTime() + minutes(n))
@@ -244,7 +244,7 @@ async function person(tx: DbExecutor, schoolId: string, displayName: string): Pr
 }
 
 /** 학교·과목·스터디 방(방장 A + 초대 수락한 B·C)과 켠 기록, A·B가 함께 쓰는 일반 팀 과제. */
-async function world(tx: DbExecutor, mode: 'anonymous' | 'display' = 'anonymous') {
+async function world(tx: DbExecutor, mode: 'anonymous' | 'display' | 'real' = 'anonymous') {
   const t = rand()
   const founder = { userId: (await createUser(tx)).id }
   const school = await createSchool(tx, founder, { name: `가명대${t}학교`, confirmNew: true }, T0)
@@ -304,9 +304,10 @@ describe.skipIf(!databaseUrl)('study member refs (PostgreSQL)', () => {
     setMemberRefEnvForTesting(null)
   })
 
-  it('no project route leaks another member’s real id, handle, email or name in an anonymous study record', async () => {
+  // 표시명 기록도 같은 규칙입니다(ADR 0060). 이 세계의 멤버는 표시명 페르소나가 없어 이름도 번호 이름으로 같습니다.
+  it.each(['anonymous', 'display'] as const)('no project route leaks another member’s real id, handle, email or name in a %s study record', async (mode) => {
     await withRollback(async (tx) => {
-      const w = await world(tx)
+      const w = await world(tx, mode)
       const { a, b, c, projectId } = w
       const A = { userId: a.userId }
 
@@ -597,9 +598,41 @@ describe.skipIf(!databaseUrl)('study member refs (PostgreSQL)', () => {
     })
   })
 
-  it('non-anonymous study records keep real ids and names', async () => {
+  it('display study records show pen names under keys, with the numbered label when there is no pen name', async () => {
     await withRollback(async (tx) => {
       const w = await world(tx, 'display')
+      const pen = await insertDisplayPersona(tx, w.b.userId, `펜네임${rand().slice(0, 6)}`)
+      const members = await listMembers(tx, w.a, w.projectId)
+      const others = members.filter((m) => m.userId !== w.a.userId)
+      expect(others.every((m) => MEMBER_REF_PATTERN.test(m.userId) && m.handle === null && m.joinedAt === null)).toBe(true)
+      expect(others.map((m) => m.displayName).sort()).toEqual([pen.displayName, expect.stringMatching(/^스터디 멤버 \d$/)].sort())
+      expect(members.find((m) => m.userId === w.a.userId)?.displayName).toBe(w.a.displayName)
+      const json = JSON.stringify(members)
+      for (const secret of [...secretsOf(w.b), ...secretsOf(w.c)]) expect(json).not.toContain(secret)
+      // 입력: 키만 받고 다른 사람의 실제 id는 422
+      const keyB = others.find((m) => m.displayName === pen.displayName)!.userId
+      expect((await createTask(tx, w.a, w.projectId, { title: '할 일', assigneeId: keyB }, at(3))).assignee).toMatchObject({ userId: keyB, displayName: pen.displayName })
+      const e = await expectServiceError(createTask(tx, w.a, w.projectId, { title: 'x', assigneeId: w.b.userId }, at(3)), 'VALIDATION')
+      expect(e.fields).toEqual({ assigneeId: 'not_member' })
+    })
+  })
+
+  it('display study candidates allow the name exposure only for yourself', async () => {
+    await withRollback(async (tx) => {
+      const w = await world(tx, 'display')
+      const A = { userId: w.a.userId }
+      const keyB = (await listMembers(tx, A, w.projectId)).map((m) => m.userId).find((k) => k !== w.a.userId)!
+      const input = (exposure: Record<string, 'name' | 'anonymous'>) => ({ level: 'summary', title: '공개', summary: '요약', slug: `x-${rand().slice(0, 8)}`, exposure })
+      const e = await expectServiceError(createCandidate(tx, A, w.projectId, input({ [keyB]: 'name' }), at(3), ORIGINS), 'VALIDATION')
+      expect(e.fields).toEqual({ exposure: 'display_study' })
+      const ok = await createCandidate(tx, A, w.projectId, input({ [w.a.userId]: 'name', [keyB]: 'anonymous' }), at(3), ORIGINS)
+      expect(ok.selection.exposure).toMatchObject({ [w.a.userId]: 'name', [keyB]: 'anonymous' })
+    })
+  })
+
+  it('real study records keep real ids and names', async () => {
+    await withRollback(async (tx) => {
+      const w = await world(tx, 'real')
       const members = await listMembers(tx, w.a, w.projectId)
       expect(members.map((m) => m.userId).sort()).toEqual([w.a.userId, w.b.userId, w.c.userId].sort())
       expect(members.every((m) => m.joinedAt !== null)).toBe(true)

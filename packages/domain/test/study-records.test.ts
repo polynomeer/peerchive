@@ -2,7 +2,7 @@
  * C-08 도메인 규칙(ADR 0026): 방 역할 → 과제 역할, 방 멤버십 → 과제 멤버십 계획(멱등), 익명 스터디의 포트폴리오·노출 규칙, 이름 가림 표, 분석 허용 목록.
  */
 import { describe, expect, it } from 'vitest'
-import {
+import { displayStudyExposureAllowed,
   STUDY_MEMBER_LABEL,
   type StudyProjectMember,
   type StudySpaceMember,
@@ -151,5 +151,18 @@ describe('study analytics', () => {
     expect(sanitizeAnalyticsProps('log_saved', { tag: 'progress', origin: 'study' }).ok).toBe(true)
     expect(sanitizeAnalyticsProps('publication_published', { level: 'summary', origin: 'study' }).ok).toBe(true)
     expect(sanitizeAnalyticsProps('log_saved', { origin: 'room' }).ok).toBe(false)
+  })
+})
+
+describe('displayStudyExposureAllowed (ADR 0060)', () => {
+  const self = '11111111-1111-4111-8111-111111111111'
+  it('allows the name exposure only for yourself in a display study record', () => {
+    expect(displayStudyExposureAllowed('display', { [self]: 'name', sm_0000000000000000: 'anonymous' }, self)).toBe(true)
+    expect(displayStudyExposureAllowed('display', { [self.toUpperCase()]: 'name' }, self)).toBe(true)
+    expect(displayStudyExposureAllowed('display', { sm_0000000000000000: 'name' }, self)).toBe(false)
+  })
+  it('does not apply outside display study records', () => {
+    expect(displayStudyExposureAllowed('real', { sm_0000000000000000: 'name' }, self)).toBe(true)
+    expect(displayStudyExposureAllowed(null, { sm_0000000000000000: 'name' }, self)).toBe(true)
   })
 })

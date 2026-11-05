@@ -257,6 +257,9 @@ const formatDate = (iso: string) => new Date(iso).toLocaleString('ko-KR', { date
         <template v-if="project.studyNameMode === 'anonymous'">
           익명 스터디 방이라 다른 멤버는 ‘스터디 멤버 N’으로 보이고, 공개는 모두 익명으로만 할 수 있으며 포트폴리오에는 연결할 수 없습니다.
         </template>
+        <template v-else-if="project.studyNameMode === 'display'">
+          표시명 스터디 방이라 다른 멤버는 표시명으로, 표시명이 없으면 ‘스터디 멤버 N’으로 보입니다.
+        </template>
       </p>
       <p v-if="notice" :class="['notice', notice.kind]" :role="notice.kind === 'error' ? 'alert' : 'status'">
         {{ notice.text }}

@@ -1,5 +1,8 @@
 /**
- * 과제 응답의 멤버 참조(ADR 0026 부록 — 익명 스터디 기록의 사용자 id 가명화).
+ * 과제 응답의 멤버 참조(ADR 0026 부록 — 익명 스터디 기록의 사용자 id 가명화, ADR 0060 — 표시명 스터디 기록도 같은 규칙).
+ *
+ * 표시명 스터디 방의 기록도 아래 규칙을 그대로 따릅니다. 다른 점은 이름뿐입니다: 다른 멤버는 표시명 페르소나 이름으로, 표시명이 없으면 "스터디 멤버 N"으로 보입니다.
+ * 방별 이름(A-01)은 커뮤니티 테이블이라 과제 모듈에서 읽지 않습니다.
  *
  * 익명 스터디 방의 기록(kind study + study_name_mode anonymous)에서는 다른 멤버의 이름뿐 아니라 **사용자 id도** 응답에 싣지 않습니다.
  * 같은 사람과 다른(익명이 아닌) 과제·방·팀을 함께 쓰는 멤버가 그쪽 응답의 id와 맞춰 보면 "스터디 멤버 N"이 누구인지 알 수 있기 때문입니다.
@@ -11,7 +14,7 @@
  *   번호를 사람에게 잇지 못하게). 멤버가 들고 나면 번호가 바뀔 수 있습니다.
  * - 입력: 멤버를 가리키는 입력(할 일 담당자, 회의 참석자, 공개 노출 방식, 로그 작성자 필터)은 이 키(또는 본인 id)를 받아
  *   서버에서 실제 id로 바꿉니다. 모르는 키·다른 사람의 실제 id는 422(`not_member`)입니다.
- * - 익명 스터디 기록이 아니면 모든 함수가 그대로 돌려줍니다(입력도 기존 검사 그대로).
+ * - 실명 방의 기록과 일반 과제는 모든 함수가 그대로 돌려줍니다(입력도 기존 검사 그대로).
  *
  * DB에는 실제 id가 그대로 남습니다(회의 참석자 payload 포함). 바뀌는 것은 API 응답과 그 입력뿐입니다.
  * 과제 서비스는 DTO를 만들 때 이 모듈의 `loadMemberRefs` 하나만 씁니다(문자열 치환 없음).
@@ -20,7 +23,7 @@ import { createHmac } from 'node:crypto'
 import { z } from 'zod'
 import { isProductionMode, MEMBER_REF_PEPPER_ENV, resolvePepper } from '@peerchive/db'
 import { studyMemberLabels } from '@peerchive/domain'
-import { eq, projectMembers, projects, type DbExecutor } from '@peerchive/db'
+import { and, eq, inArray, personas, projectMembers, projects, type DbExecutor } from '@peerchive/db'
 import { invalid } from '../errors'
 import type { ProjectRow } from './access'
 
@@ -105,6 +108,10 @@ type ProjectKey = Pick<ProjectRow, 'id' | 'kind' | 'studyNameMode'>
 export const isAnonymousStudyProject = (project: Pick<ProjectRow, 'kind' | 'studyNameMode'>): boolean =>
   project.kind === 'study' && project.studyNameMode === 'anonymous'
 
+/** 다른 멤버의 이름과 사용자 id를 가리는 기록인지. 실명 방의 기록만 그대로 보입니다(ADR 0060). */
+const isPseudonymousStudyProject = (project: Pick<ProjectRow, 'kind' | 'studyNameMode'>): boolean =>
+  project.kind === 'study' && project.studyNameMode !== 'real'
+
 function strictResolveAll(resolve: (ref: string) => string | null) {
   return (refs: readonly string[], field: string): string[] => {
     const out: string[] = []
@@ -145,7 +152,7 @@ export async function loadMemberRefs(db: DbExecutor, project: ProjectKey | strin
       .where(eq(projects.id, project))
       .limit(1)
   } else row = project
-  if (!row || !isAnonymousStudyProject(row)) return PASSTHROUGH
+  if (!row || !isPseudonymousStudyProject(row)) return PASSTHROUGH
   const projectId = row.id
   const pepper = memberRefPepper()
   const viewer = viewerId.toLowerCase()
@@ -163,10 +170,22 @@ export async function loadMemberRefs(db: DbExecutor, project: ProjectKey | strin
   const byKey = new Map(members.map((m) => [key(m.userId), m.userId.toLowerCase()]))
   // 번호는 가명 키 순서(가입 순서와 이어지지 않게).
   const label = studyMemberLabels(members.map((m) => m.userId.toLowerCase()).sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0)))
+  // 표시명 기록: 지금 active인 표시명 페르소나 이름(없으면 위 번호 이름). 익명 기록은 읽지 않습니다.
+  const memberIds = members.map((m) => m.userId)
+  const penNames = new Map(
+    !isAnonymousStudyProject(row) && memberIds.length
+      ? (
+          await db
+            .select({ userId: personas.userId, displayName: personas.displayName })
+            .from(personas)
+            .where(and(inArray(personas.userId, memberIds), eq(personas.kind, 'display'), eq(personas.status, 'active')))
+        ).map((p) => [p.userId.toLowerCase(), p.displayName] as const)
+      : [],
+  )
   const isViewer = (userId: string) => userId.toLowerCase() === viewer
   const ref = (userId: string) => (isViewer(userId) ? userId : key(userId))
   const maskName = <T extends PersonRef>(person: T): T =>
-    isViewer(person.userId) ? person : { ...person, displayName: label(person.userId.toLowerCase()), handle: null }
+    isViewer(person.userId) ? person : { ...person, displayName: penNames.get(person.userId.toLowerCase()) ?? label(person.userId.toLowerCase()), handle: null }
   const resolve = (input: string): string | null => {
     const value = input.trim().toLowerCase()
     if (value === viewer) return viewerId

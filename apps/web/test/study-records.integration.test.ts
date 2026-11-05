@@ -257,7 +257,7 @@ describe.skipIf(!databaseUrl)('C-08 study records (PostgreSQL)', () => {
   it('publishes through candidate → every room member consents → publish; snapshot, public page and course hub say study', async () => {
     await withRollback(async (tx) => {
       setAnalyticsEnvForTesting({ NODE_ENV: 'test', PEERCHIVE_ANALYTICS_PEPPER: 'study-record-analytics-pepper-for-tests-0123456789' })
-      const w = await world(tx, 'display')
+      const w = await world(tx, 'real')
       const projectId = (await enableStudyRecord(tx, w.owner, w.room.slug, { courseTermId: w.term.id }, at(2))).projectId!
       const log = (await createLog(tx, w.a, projectId, { tag: 'progress', body: '3주차: 그래프 탐색 정리', links: [] }, at(3))).log
       const milestone = await createMilestone(tx, w.a, projectId, { title: '그래프 주간' }, at(3))
@@ -278,7 +278,7 @@ describe.skipIf(!databaseUrl)('C-08 study records (PostgreSQL)', () => {
       expect(candidate.status).toBe('awaiting_consent')
       const preview = (await previewCandidate(tx, w.owner, candidate.id)).snapshot
       expect(preview.kind).toBe('study')
-      expect(preview.studyNameMode).toBe('display')
+      expect(preview.studyNameMode).toBe('real')
       expect((await listMyConsentRequests(tx, w.b)).map((r) => r.candidateId)).toContain(candidate.id)
 
       const blocked = await expectServiceError(publishCandidate(tx, w.owner, candidate.id, { manifestHash: candidate.manifestHash }, at(5)), 'CONFLICT', 'publish_blocked')
@@ -290,7 +290,7 @@ describe.skipIf(!databaseUrl)('C-08 study records (PostgreSQL)', () => {
       expect(published.release.version).toBe(1)
 
       const pub = await getPublicPublication(tx, slug, at(8))
-      expect(pub.snapshot).toMatchObject({ kind: 'study', studyNameMode: 'display', title: '자료구조 스터디 회고' })
+      expect(pub.snapshot).toMatchObject({ kind: 'study', studyNameMode: 'real', title: '자료구조 스터디 회고' })
       expect(pub.snapshot.members.find((m) => !m.anonymous)?.label).toBe('멤버이')
       expect(JSON.stringify(pub)).not.toContain(ROOM_SENTINEL)
       const hub = await getPublicCourseHub(tx, w.course.id, at(8))
@@ -300,7 +300,7 @@ describe.skipIf(!databaseUrl)('C-08 study records (PostgreSQL)', () => {
       expect((await eventsOf(tx, w.owner.userId)).find((e) => e.name === 'publication_published')?.props).toMatchObject({ origin: 'study' })
       expect((await eventsOf(tx, w.a.userId)).find((e) => e.name === 'log_saved')?.props).toMatchObject({ origin: 'study' })
 
-      // 표시명 방: 케이스 스터디(포트폴리오) 가능, 모집 첨부에도 나옴
+      // 실명 방: 케이스 스터디(포트폴리오) 가능, 모집 첨부에도 나옴(표시명 방의 판정은 도메인 테스트)
       const cs = await createCaseStudy(tx, w.a, { releaseSlug: slug, jobTarget: 'backend' }, at(9))
       expect(cs.source.slug).toBe(slug)
       expect((await attachmentOptions(tx, w.a, at(9))).cases.map((c) => c.slug)).toContain(slug)
@@ -309,7 +309,7 @@ describe.skipIf(!databaseUrl)('C-08 study records (PostgreSQL)', () => {
       await tx.update(communitySpaces).set({ currentNameMode: 'anonymous' }).where(eq(communitySpaces.id, w.room.id))
       await tx.update(projects).set({ studyNameMode: 'anonymous' }).where(eq(projects.id, projectId))
       const still = await getPublicPublication(tx, slug, at(10))
-      expect(still.snapshot.studyNameMode).toBe('display')
+      expect(still.snapshot.studyNameMode).toBe('real')
       expect(still.snapshot.members.find((m) => !m.anonymous)?.label).toBe('멤버이')
       await createCaseStudy(tx, w.a, { releaseSlug: slug, jobTarget: 'general' }, at(10))
       // 새 후보는 지금 방식(익명): 이름 노출 422, 모두 익명이면 studyNameMode anonymous

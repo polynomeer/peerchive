@@ -30,6 +30,7 @@ useHead({ title: '공개 준비 — Peerchive', meta: [{ name: 'robots', content
 const { data: projectInfo } = await useFetch<ProjectDetailDto>(() => `/api/v1/projects/${id.value}`)
 const isStudy = computed(() => projectInfo.value?.kind === 'study')
 const anonymousStudy = computed(() => isStudy.value && projectInfo.value?.studyNameMode === 'anonymous')
+const displayStudy = computed(() => isStudy.value && projectInfo.value?.studyNameMode === 'display')
 
 const candidate = computed(() => state.value?.candidate ?? null)
 const openCandidate = computed(() =>
@@ -146,6 +147,7 @@ async function submit() {
 
 const SELECTION_ERRORS: Record<string, string> = {
   anonymous_study: '익명 스터디 방의 기록은 모든 사람을 익명으로만 공개할 수 있습니다.',
+  display_study: '표시명 스터디 방의 기록은 본인만 이름으로 공개할 수 있습니다.',
   not_found: '이 과제에서 찾을 수 없는 항목이 있습니다. 새로고침 후 다시 고르세요.',
   not_clean: '검사를 통과한(사용 가능) 파일만 고를 수 있습니다.',
   metadata_not_stripped: '메타데이터(위치 정보 등)를 아직 지우지 않은 이전 이미지가 있습니다. 운영자가 정리 작업을 마친 뒤 다시 시도하거나 새 버전으로 다시 올리세요.',
@@ -553,11 +555,12 @@ const bytes = (n: number) => formatBytes(n)
               스터디 기록은 내용이 들어가지 않은 멤버를 포함해 지금 스터디 방 멤버 모두가 동의해야 게시됩니다.
             </p>
             <p v-if="anonymousStudy" class="notice">익명 스터디 방의 기록이라 모든 사람을 익명으로만 공개하며, 이 공개 사례는 포트폴리오에 연결할 수 없습니다.</p>
+            <p v-if="displayStudy" class="notice">표시명 스터디 방의 기록이라 다른 멤버는 익명으로만 공개합니다. 본인을 이름으로 공개하면 표시명이 아니라 계정 이름이 나갑니다.</p>
             <div v-for="m in exposureMembers" :key="m.userId" class="row">
               <span>{{ m.displayName || '이름 미설정' }}<span v-if="m.status !== 'active'" class="muted small"> (나간 멤버)</span></span>
               <span class="inline-options">
                 <label class="check"><input v-model="form.exposure[m.userId]" type="radio" :name="`exp-${m.userId}`" value="anonymous" /> 익명</label>
-                <label v-if="!anonymousStudy" class="check"><input v-model="form.exposure[m.userId]" type="radio" :name="`exp-${m.userId}`" value="name" /> 이름</label>
+                <label v-if="!anonymousStudy && (!displayStudy || m.userId === me?.id)" class="check"><input v-model="form.exposure[m.userId]" type="radio" :name="`exp-${m.userId}`" value="name" /> 이름</label>
               </span>
             </div>
             <p v-if="errors.exposure" class="field-error">{{ errorFor('exposure') }}</p>

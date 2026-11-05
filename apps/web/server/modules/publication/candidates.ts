@@ -30,6 +30,7 @@ import {
   type PublicationState,
   canManagePublication,
   STUDY_MEMBER_SCOPE,
+  displayStudyExposureAllowed,
   studyExposureAllowed,
   canPreparePublication,
   claimStatusSummary,
@@ -783,6 +784,8 @@ export async function createCandidate(
     await assertPublishable(tx, actor, project.id, now)
     // 익명 스터디 기록의 이름 노출은 키를 보기 전에 422 anonymous_study(ADR 0026). 그다음 멤버 참조를 실제 id로(모르면 422 not_member).
     if (!studyExposureAllowed(project.kind === 'study' ? project.studyNameMode : null, input.exposure)) throw invalid({ exposure: 'anonymous_study' })
+    // 표시명 스터디 기록은 본인만 이름으로 고를 수 있습니다(ADR 0060). 파생 후보(exclude-declined)는 이미 검사한 선택을 이어받으므로 여기서만 봅니다.
+    if (!displayStudyExposureAllowed(project.kind === 'study' ? project.studyNameMode : null, input.exposure, actor.userId)) throw invalid({ exposure: 'display_study' })
     const refs = await loadMemberRefs(tx, project, actor.userId)
     const exposureEntries = Object.entries(input.exposure)
     const exposureIds = refs.resolveAll(exposureEntries.map(([key]) => key), 'exposure')

@@ -68,7 +68,7 @@ test('C-08: 스터디 방에서 기록 켜기 → 기록 탭에서 로그 → �
   const outsider = await newUser('studyout')
   expect((await outsider.api.raw('GET', `/api/v1/projects/${projectId}`)).status()).toBe(404)
 
-  // 공개 후보(준비는 API, 멤버 이름 노출) → 멤버는 동의 화면에서 동의
+  // 공개 후보(준비는 API, 본인 이름 노출) → 멤버는 동의 화면에서 동의
   const logs = await owner.api.get<{ items: LogDto[] }>(`/api/v1/projects/${projectId}/logs`)
   const publicTitle = `스터디 회고 ${rand()}`
   const publicSlug = `e2e-study-${rand(4)}`
@@ -77,9 +77,14 @@ test('C-08: 스터디 방에서 기록 켜기 → 기록 탭에서 로그 → �
     title: publicTitle,
     slug: publicSlug,
     logIds: logs.items.map((l) => l.id),
-    exposure: { [member.id]: 'name' },
+    exposure: { [owner.id]: 'name' },
   })
-  expect(candidate.subjects.map((s) => s.userId).sort()).toEqual([owner.id, member.id].sort())
+  // 표시명 방의 기록: 다른 멤버는 과제별 가명 키이고, 실제 id로는 이름 노출도 입력도 받지 않음(ADR 0060)
+  expect(candidate.subjects.map((s) => s.userId)).toContain(owner.id)
+  expect(candidate.subjects.filter((s) => s.userId !== owner.id).every((s) => /^sm_[0-9a-f]{16}$/.test(s.userId))).toBe(true)
+  for (const path of ['members', 'logs', 'tasks', 'contribution', 'publication']) {
+    expect(JSON.stringify(await owner.api.get(`/api/v1/projects/${projectId}/${path}`))).not.toContain(member.id)
+  }
   expect((await owner.api.raw('POST', `/api/v1/candidates/${candidate.id}/publish`, { manifestHash: candidate.manifestHash })).status()).toBe(409)
   await member.page.goto('/consents')
   await member.page.getByRole('listitem').filter({ hasText: publicTitle }).getByRole('link', { name: '미리보기·결정' }).click()

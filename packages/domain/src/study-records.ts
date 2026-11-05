@@ -100,6 +100,15 @@ export function studyExposureAllowed(nameMode: NameMode | null, exposure: Readon
 }
 
 /**
+ * 표시명 스터디 기록의 후보에서 이름('name') 노출은 본인에게만 고를 수 있는지. 이름 노출은 계정 이름을 스냅샷에 넣으므로, 남을 고르면 동의 전 미리보기에서 그 사람의 계정 이름이 보입니다(ADR 0060).
+ */
+export function displayStudyExposureAllowed(nameMode: NameMode | null, exposure: Readonly<Record<string, 'name' | 'anonymous'>>, selfId: string): boolean {
+  if (nameMode !== 'display') return true
+  const self = selfId.toLowerCase()
+  return Object.entries(exposure).every(([key, mode]) => mode !== 'name' || key.trim().toLowerCase() === self)
+}
+
+/**
  * 익명 스터디 기록 안에서 사람 이름을 가리는 표. 본인은 자기 이름, 다른 사람은 과제 멤버가 된 순서대로 "스터디 멤버 N".
  * `orderedUserIds`의 순서가 번호입니다(웹은 과제별 멤버 가명 키 순서 — 가입 순서와 잇지 않음, ADR 0026 부록). 목록에 없는 사람(예: 오래전 정리된 계정)은 번호 없이 "스터디 멤버".
  */
