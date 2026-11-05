@@ -177,7 +177,7 @@ const reportTargets = computed(() => (data.value ? [{ id: data.value.id, label: 
       <!-- 지원하기 -->
       <section v-else-if="data.canApply" aria-labelledby="apply">
         <h2 id="apply">지원하기</h2>
-        <p class="hint">지원하면 모집자에게 내 표시 이름과 아래 내용이 보입니다. 다른 지원자·모더레이터·운영자에게는 보이지 않습니다.</p>
+        <p class="hint">지원하면 모집자에게 내 계정 이름(표시명 페르소나 이름이 아닙니다)과 아래 내용이 보입니다. 다른 지원자·모더레이터·운영자에게는 보이지 않습니다.</p>
         <form class="stack" novalidate @submit.prevent="apply">
           <div class="field">
             <label for="apply-message">하고 싶은 말(선택)</label>
